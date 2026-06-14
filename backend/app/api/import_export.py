@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from typing import List, Optional
 import io
 import json
@@ -41,7 +41,6 @@ def parse_merged_cells(ws):
 async def import_excel(
     file: UploadFile = File(...),
     series_name: Optional[str] = Query(None),
-    clear_existing: bool = Query(False, description="是否清除已有数据"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -85,23 +84,32 @@ async def import_excel(
                 # 不合并同名系列，每个连续区域单独存储
                 series_ranges_list.append((series_name_from_excel, col, info['max_col']))
 
-    # 合并同名系列的范围（同一系列可能在 Excel 中有多个非连续列区域）
-    merged_series = {}  # name -> [min_col, max_col]
-    for name, col_start, col_end in series_ranges_list:
-        if name not in merged_series:
-            merged_series[name] = [col_start, col_end]
+    # 合并相邻的同名系列范围（同一系列在 Excel 中可能是每 4 列一个连续合并区域）
+    # 注意：只合并相邻/重叠的范围，不合并有间隔的（间隔中可能包含其他系列）
+    sorted_ranges = sorted(series_ranges_list, key=lambda x: x[1])  # 按 col_start 排序
+    merged_series = []  # [(name, col_start, col_end)]
+    for name, col_start, col_end in sorted_ranges:
+        if merged_series and merged_series[-1][0] == name and merged_series[-1][2] + 1 >= col_start:
+            # 同名且相邻/重叠 → 合并范围
+            merged_series[-1] = (name, merged_series[-1][1], max(merged_series[-1][2], col_end))
         else:
-            existing = merged_series[name]
-            existing[0] = min(existing[0], col_start)
-            existing[1] = max(existing[1], col_end)
+            merged_series.append([name, col_start, col_end])
 
-    # 转换为列表
+    # 同名系列可能有多个非连续范围（如 VINNO 9_Private 远离其他型号列）
+    # 合并为一条记录，存储所有子范围，避免同系列被多次迭代导致变更检测错误
+    series_groups = {}  # name -> [(col_start, col_end), ...]
+    for name, col_start, col_end in merged_series:
+        if name not in series_groups:
+            series_groups[name] = []
+        series_groups[name].append((col_start, col_end))
+
     series_list = []
-    for name, (col_start, col_end) in merged_series.items():
+    for name, ranges in series_groups.items():
         series_list.append({
             'name': name,
-            'col_start': col_start,
-            'col_end': col_end
+            'ranges': ranges,  # 所有子范围列表，模型解析时逐个迭代
+            'col_start': min(r[0] for r in ranges),  # 最早列
+            'col_end': max(r[1] for r in ranges),    # 最晚列
         })
 
     # 如果没有解析到系列，使用文件名
@@ -173,23 +181,16 @@ async def import_excel(
                             val = model_vals.get(field) if model_vals else None
                             snapshot_values[(ipn_str, snap_model_name, field)] = val
 
-            # 如果需要清除已有数据
-            if clear_existing:
-                # 删除该系列的配置值（通过关联的型号）
-                models_result = await db.execute(
-                    select(ProductModel.id).where(ProductModel.series_id == series.id)
+            # 计算快照中所有字段均为 N/A 值的配对 —— 这些应视为"新增"而非"修改"
+            NA_VALUES = {'N/A', '', None, '-', 'None', 'null', '未定义'}
+            snapshot_all_na_pairs = set()
+            for ipn_str, snap_model_name in snapshot_pairs:
+                all_na = all(
+                    snapshot_values.get((ipn_str, snap_model_name, f)) in NA_VALUES
+                    for f in ("final_config", "current_config", "selection_config", "rd_status")
                 )
-                model_ids = [m[0] for m in models_result.fetchall()]
-
-                if model_ids:
-                    await db.execute(
-                        delete(ConfigValue).where(ConfigValue.model_id.in_(model_ids))
-                    )
-                    await db.execute(
-                        delete(ProductModel).where(ProductModel.series_id == series.id)
-                    )
-                # 注意：ConfigItem 是全局通用的，不应该删除
-                await db.flush()
+                if all_na:
+                    snapshot_all_na_pairs.add((ipn_str, snap_model_name))
 
             # 预加载所有已存在的型号（跨系列），避免重复创建
             existing_models_map = {}
@@ -199,66 +200,65 @@ async def import_excel(
                     existing_models_map[m.name] = []
                 existing_models_map[m.name].append(m)
 
-            # 解析产品型号（第2行）
+            # 解析产品型号（第2行），遍历该系列的所有子列范围
             models = []
-            col = col_start
-            while col <= col_end:
-                cell = ws.cell(row=2, column=col)
-                model_name = None
+            for range_start, range_end in series_info.get('ranges', [(col_start, col_end)]):
+                col = range_start
+                while col <= range_end:
+                    cell = ws.cell(row=2, column=col)
+                    model_name = None
 
-                # 检查是否是合并单元格的起始
-                if (2, col) in merged_info:
-                    info = merged_info[(2, col)]
-                    raw_value = info['value']
-                    model_end_col = info['max_col']
-                else:
-                    raw_value = cell.value
-                    model_end_col = col + 3  # 默认4列
-
-                if raw_value:
-                    # 处理格式：型号名//uuid
-                    model_name = str(raw_value).split('//')[0].strip()
-
-                    # 检查当前系列内是否已有该型号
-                    model_result = await db.execute(
-                        select(ProductModel).where(
-                            ProductModel.series_id == series.id,
-                            ProductModel.name == model_name
-                        )
-                    )
-                    model = model_result.scalar_one_or_none()
-
-                    if not model:
-                        # 检查其他系列是否已有同名型号
-                        if model_name in existing_models_map:
-                            # 如果其他系列已有，仍然在当前系列创建新的（配置独立）
-                            # 但记录日志
-                            existing_series = [m.series_id for m in existing_models_map[model_name]]
-                            print(f"  注意: 型号 {model_name} 在系列 {existing_series} 中已存在，将在当前系列创建新实例")
-
-                        model = ProductModel(
-                            series_id=series.id,
-                            name=model_name,
-                            column_start=col,
-                            column_end=model_end_col,
-                            sort_order=len(models)
-                        )
-                        db.add(model)
-                        await db.flush()
-
-                        # 更新预加载的map
-                        if model_name not in existing_models_map:
-                            existing_models_map[model_name] = []
-                        existing_models_map[model_name].append(model)
+                    # 检查是否是合并单元格的起始
+                    if (2, col) in merged_info:
+                        info = merged_info[(2, col)]
+                        raw_value = info['value']
+                        model_end_col = info['max_col']
                     else:
-                        # 重用已有型号时，更新列范围以匹配当前 Excel 中的实际位置
-                        model.column_start = col
-                        model.column_end = model_end_col
+                        raw_value = cell.value
+                        model_end_col = col + 3  # 默认4列
 
-                    models.append(model)
-                    col = model_end_col + 1
-                else:
-                    col += 1
+                    if raw_value:
+                        # 处理格式：型号名//uuid
+                        model_name = str(raw_value).split('//')[0].strip()
+
+                        # 检查当前系列内是否已有该型号
+                        model_result = await db.execute(
+                            select(ProductModel).where(
+                                ProductModel.series_id == series.id,
+                                ProductModel.name == model_name
+                            )
+                        )
+                        model = model_result.scalar_one_or_none()
+
+                        if not model:
+                            # 检查其他系列是否已有同名型号
+                            if model_name in existing_models_map:
+                                existing_series = [m.series_id for m in existing_models_map[model_name]]
+                                print(f"  注意: 型号 {model_name} 在系列 {existing_series} 中已存在，将在当前系列创建新实例")
+
+                            model = ProductModel(
+                                series_id=series.id,
+                                name=model_name,
+                                column_start=col,
+                                column_end=model_end_col,
+                                sort_order=len(models)
+                            )
+                            db.add(model)
+                            await db.flush()
+
+                            # 更新预加载的map
+                            if model_name not in existing_models_map:
+                                existing_models_map[model_name] = []
+                            existing_models_map[model_name].append(model)
+                        else:
+                            # 重用已有型号时，更新列范围以匹配当前 Excel 中的实际位置
+                            model.column_start = col
+                            model.column_end = model_end_col
+
+                        models.append(model)
+                        col = model_end_col + 1
+                    else:
+                        col += 1
 
             # 解析配置数据（从第5行开始）
             current_category = None
@@ -320,7 +320,7 @@ async def import_excel(
 
             # 批量查询已存在的 ConfigItem（按 IPN）
             existing_items_map = {}
-            if all_ipns and not clear_existing:
+            if all_ipns:
                 existing_items_result = await db.execute(
                     select(ConfigItem).where(ConfigItem.ipn.in_(all_ipns))
                 )
@@ -442,9 +442,18 @@ async def import_excel(
                     rd_status = ws.cell(row=item_data['row_idx'], column=model_col + 3).value
 
                     # 追踪Excel中的 (IPN, 型号名) 对
+                    # 仅当4个字段至少有一个有意义值时加入配对，全N/A值不产生变更
                     pair_key = (item_ipn, model.name) if item_ipn else None
                     if pair_key:
-                        excel_pairs.add(pair_key)
+                        excel_values = [
+                            str(final_config).strip() if final_config else None,
+                            str(current_config).strip() if current_config else None,
+                            str(selection_config).strip() if selection_config else None,
+                            str(rd_status).strip() if rd_status else None,
+                        ]
+                        has_meaningful = any(v and v not in NA_VALUES for v in excel_values)
+                        if has_meaningful:
+                            excel_pairs.add(pair_key)
 
                     key = (item.id, model.id)
                     if key in existing_values_map:
@@ -460,11 +469,22 @@ async def import_excel(
                             # 如果该 (IPN, 型号) 对在快照中不存在，则不创建"修改"草稿
                             # 该对会由下面的"新增"逻辑处理
                             if pair_key and pair_key not in snapshot_pairs:
-                                continue
+                                # 注意：仍要更新ConfigValue（不跳过），仅跳过草稿创建
+                                pass
+                            # 快照中该配对4字段全为N/A：更新ConfigValue但不产生修改草稿（归类为"新增"）
+                            skip_draft = (
+                                (pair_key and pair_key not in snapshot_pairs) or
+                                (pair_key and pair_key in snapshot_all_na_pairs)
+                            )
                             # 从预计算快照值字典O(1)取值（替代原来的get_snapshot_value循环查找）
                             snap_val = snapshot_values.get((item_ipn, model.name, field_name))
                             old_val = getattr(val, field_name) if snap_val is None else snap_val
                             old_val_str = str(old_val).strip() if old_val else None
+                            # 始终更新ConfigValue字段值（为新增/修改配对写入Excel数据）
+                            if old_val_str != new_val:
+                                setattr(val, field_name, new_val)
+                            if skip_draft:
+                                continue
                             if old_val_str != new_val:
                                 draft_changes.append({
                                     "change_type": "update",
@@ -495,6 +515,9 @@ async def import_excel(
                             # 如果该 (IPN, 型号) 对在快照中不存在，则不创建"修改"草稿
                             # 该对会由下面的"新增"逻辑处理
                             if pair_key and pair_key not in snapshot_pairs:
+                                continue
+                            # 快照中该配对4字段全为N/A，视为无数据，不产生修改草稿
+                            if pair_key and pair_key in snapshot_all_na_pairs:
                                 continue
                             # 从预计算快照值字典O(1)取值
                             snap_val = snapshot_values.get((item_ipn, model.name, field_name))
@@ -535,8 +558,32 @@ async def import_excel(
             })
             change_log.extend(changes)
 
+            # 构建 item_id → item 映射（用于后续查询）
+            all_items_by_id = {}
+            for item in existing_items_map.values():
+                if item and item.id:
+                    all_items_by_id[item.id] = item
+            for item in processed_ipns.values():
+                if item and item.id:
+                    all_items_by_id[item.id] = item
+
+            # 补充该系列所有型号到 models 列表和 excel_pairs
+            # 确保后续变更检测覆盖该系列所有型号，而不是仅限于当前文件列范围
+            series_models_from_db = await db.execute(
+                select(ProductModel).where(ProductModel.series_id == series.id)
+            )
+            series_model_names = {m.name for m in models}
+            for m in series_models_from_db.scalars().all():
+                if m.name not in series_model_names:
+                    models.append(m)
+            # 注意：不补充已有ConfigValue配对到excel_pairs
+            # excel_pairs 必须仅包含 Excel 中实际有意义的配对（含于第436-448行的NA过滤）
+            # 否则全N/A的配对被误加入 excel_pairs 会变成"新增"
+
             # 创建草稿批次和草稿记录（用于前端展示变更）
-            need_draft = bool(draft_changes) or bool(excel_pairs - snapshot_pairs) or bool(snapshot_pairs - excel_pairs)
+            real_create_pairs = (excel_pairs - snapshot_pairs) | (excel_pairs & snapshot_all_na_pairs)
+            real_delete_pairs = (snapshot_pairs - excel_pairs) - snapshot_all_na_pairs
+            need_draft = bool(draft_changes) or bool(real_create_pairs) or bool(real_delete_pairs)
             if need_draft:
                 draft_result = await db.execute(
                     select(DraftBatch).where(
@@ -551,62 +598,99 @@ async def import_excel(
                         id=str(uuid.uuid4()),
                         series_id=series.id,
                         filename=file.filename,
-                        status="draft"
+                        status="draft",
+                        total_count=0,
+                        create_count=0,
+                        update_count=0,
+                        delete_count=0
                     )
                     db.add(draft_batch)
                     # 新增批次，无需清除草稿
                     batch_is_new = True
                 else:
                     batch_is_new = False
+                    # 确保计数不为 None（新创建的 DraftBatch 有 default=0，但从数据库加载的可能为 NULL）
+                    if draft_batch.total_count is None:
+                        draft_batch.total_count = 0
+                    if draft_batch.create_count is None:
+                        draft_batch.create_count = 0
+                    if draft_batch.update_count is None:
+                        draft_batch.update_count = 0
+                    if draft_batch.delete_count is None:
+                        draft_batch.delete_count = 0
 
-                # 清除同字段的已有草稿（仅对已有批次，新批次无草稿可清）
-                if draft_changes and not batch_is_new:
-                    value_keys = set(
-                        (e["item_id"], e["model_id"], e["field_name"])
-                        for e in draft_changes
+                # 非新增批次：清除旧草稿，重新创建
+                # 旧草稿可能包含之前（修复前）产生的错误数据
+                existing_drafts_by_key = set()  # (change_type, item_id, model_id, field_name)
+                if not batch_is_new:
+                    # 清除该批次所有旧草稿，重新基于最新逻辑创建
+                    old_drafts = await db.execute(
+                        select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
                     )
-                    # 直接查该批次所有update类型草稿，用Python过滤（避免SQL交叉IN匹配）
-                    existing_drafts_result = await db.execute(
-                        select(ConfigDraft).where(
-                            ConfigDraft.batch_id == draft_batch.id,
-                            ConfigDraft.change_type == "update"
-                        )
-                    )
-                    removed_update = 0
-                    for stale in existing_drafts_result.scalars().all():
-                        if (stale.item_id, stale.model_id, stale.field_name) in value_keys:
-                            await db.delete(stale)
-                            removed_update += 1
-                    # 调整批次统计（减去被覆盖的草稿）
-                    draft_batch.update_count = max(0, draft_batch.update_count - removed_update)
-                    draft_batch.total_count = max(0, draft_batch.total_count - removed_update)
+                    for d in old_drafts.scalars().all():
+                        await db.delete(d)
+                    # 重置计数（将重新计算）
+                    draft_batch.total_count = 0
+                    draft_batch.create_count = 0
+                    draft_batch.update_count = 0
+                    draft_batch.delete_count = 0
 
-                # 将"全部改为 N/A"的更新草稿合并为删除草稿
-                na_values = {'N/A', '', None}
-                update_to_delete = []  # (item_id, model_id) 转为删除的项
-                filtered_changes = []
-                # 按 (item_id, model_id) 分组
+                # === 先筛选draft_changes：将"Excel全N/A但快照有有效值"的配对转为删除 ===
+                # 必须在创建DB草稿之前完成，避免update草稿和delete草稿同时存在
+                update_to_delete = set()  # (item_id, model_id) 转为删除的项
+                converted_to_delete_pairs = set()  # (ipn, model_name)，避免 deleted_pairs 重复
+
+                # 构建 item_id→ipn, model_id→name 映射
+                item_id_to_ipn = {}
+                for item in all_items_by_id.values():
+                    if item and item.ipn:
+                        item_id_to_ipn[item.id] = str(item.ipn).strip()
+                model_id_to_name = {}
+                for m in models:
+                    if m.id:
+                        model_id_to_name[m.id] = m.name
+
+                # 按(item_id, model_id)分组
                 groups = {}
                 for entry in draft_changes:
                     key = (entry['item_id'], entry['model_id'])
                     if key not in groups:
                         groups[key] = []
                     groups[key].append(entry)
+
+                filtered_changes = []
                 for key, entries in groups.items():
-                    # 检查是否4个字段全部变为 N/A
-                    if len(entries) == 4:
-                        fields_set = {e['field_name'] for e in entries}
-                        if fields_set == {'final_config', 'current_config', 'selection_config', 'rd_status'}:
-                            all_na = all(e['new_value'] in na_values for e in entries)
-                            if all_na:
-                                update_to_delete.append(key)
-                                continue  # 跳过这条，不加到 filtered_changes
+                    item_id, model_id = key
+                    ipn = item_id_to_ipn.get(item_id)
+                    model_name = model_id_to_name.get(model_id)
+                    pair_key = (ipn, model_name) if ipn and model_name else None
+
+                    # 该配对应转为删除的判断：
+                    # 快照中有有效值 且 Excel全为N/A（不在excel_pairs） 且 快照不全为N/A
+                    should_be_delete = (
+                        pair_key and
+                        pair_key in snapshot_pairs and
+                        pair_key not in excel_pairs and
+                        pair_key not in snapshot_all_na_pairs
+                    )
+                    if should_be_delete:
+                        update_to_delete.add(key)
+                        converted_to_delete_pairs.add(pair_key)
+                        continue
                     filtered_changes.extend(entries)
+
+                # 计算被转换的条目数（用于修正count）
+                converted_entries_count = sum(
+                    len(entries) for key, entries in groups.items() if key in update_to_delete
+                )
                 draft_changes = filtered_changes
 
-                # 为值级变更创建草稿记录（逐字段）—— 仅快照中已存在的 (IPN, 型号) 对
+                # === 创建更新草稿（已排除应转为删除的配对） ===
                 value_update_count = 0
                 for entry in draft_changes:
+                    draft_key = ("update", entry["item_id"], entry["model_id"], entry["field_name"])
+                    if draft_key in existing_drafts_by_key:
+                        continue
                     draft = ConfigDraft(
                         series_id=series.id,
                         batch_id=draft_batch.id,
@@ -620,11 +704,14 @@ async def import_excel(
                     db.add(draft)
                     value_update_count += 1
 
-                draft_batch.update_count += value_update_count
-                draft_batch.total_count += len(draft_changes) + len(update_to_delete)
+                draft_batch.update_count = value_update_count
+                draft_batch.total_count = len(draft_changes) + len(update_to_delete)
 
-                # 为"全部改为 N/A"的项创建删除草稿
+                # 为"全部Excel值为N/A"的配对创建删除草稿
                 for (del_item_id, del_model_id) in update_to_delete:
+                    draft_key = ("delete", del_item_id, del_model_id, None)
+                    if draft_key in existing_drafts_by_key:
+                        continue
                     delete_draft = ConfigDraft(
                         series_id=series.id,
                         batch_id=draft_batch.id,
@@ -637,17 +724,12 @@ async def import_excel(
                     )
                     db.add(delete_draft)
                     draft_batch.delete_count += 1
-                    draft_batch.total_count += 0  # 已在上面 +len(update_to_delete)
-                    # 从 deleted_pairs 中排除,避免重复删除
-                    for g_entry in groups.get((del_item_id, del_model_id), []):
-                        ipn = g_entry.get('_ipn')
-                        mname = g_entry.get('_model_name')
-                        if ipn and mname:
-                            deleted_pairs.discard((ipn, mname))
 
                 # 按机型创建"新增"草稿：每个 (IPN, 型号名) 对在 Excel 中有但快照中没有的
+                # 或被快照标记为"全 N/A"（视为无数据）的配对
                 models_by_name = {m.name: m for m in models}
-                for (pair_ipn, pair_model_name) in excel_pairs - snapshot_pairs:
+                pairs_to_create = (excel_pairs - snapshot_pairs) | (excel_pairs & snapshot_all_na_pairs)
+                for (pair_ipn, pair_model_name) in pairs_to_create:
                     # 查找 ConfigItem
                     pair_item = existing_items_map.get(pair_ipn) or processed_ipns.get(pair_ipn)
                     if not pair_item or not pair_item.id:
@@ -656,6 +738,9 @@ async def import_excel(
                     pair_model = models_by_name.get(pair_model_name)
                     if not pair_model or not pair_model.id:
                         continue
+                    draft_key = ("create", pair_item.id, pair_model.id, None)
+                    if draft_key in existing_drafts_by_key:
+                        continue  # 已有相同新增草稿，跳过
                     create_draft = ConfigDraft(
                         series_id=series.id,
                         batch_id=draft_batch.id,
@@ -671,7 +756,8 @@ async def import_excel(
                     draft_batch.total_count += 1
 
                 # 按机型创建"删除"草稿：每个 (IPN, 型号名) 对在快照中有但 Excel 中没有的
-                deleted_pairs = snapshot_pairs - excel_pairs
+                # 排除快照中所有字段均为 N/A 的配对（视为无数据，不产生删除）
+                deleted_pairs = (snapshot_pairs - excel_pairs) - snapshot_all_na_pairs - converted_to_delete_pairs
                 if deleted_pairs:
                     # 批量查询所有可能需要的 ConfigItem 和 ProductModel
                     del_ipns = {p[0] for p in deleted_pairs}
@@ -739,6 +825,10 @@ async def import_excel(
                                 del_ipns.discard(del_ipn)
                             continue
 
+                        delete_key = ("delete", del_item.id, del_model.id, None)
+                        if delete_key in existing_drafts_by_key:
+                            continue
+
                         delete_draft = ConfigDraft(
                             series_id=series.id,
                             batch_id=draft_batch.id,
@@ -769,6 +859,104 @@ async def import_excel(
         "details": results,
         "total_series": len(results),
         "change_log": change_log
+    }
+
+
+@router.post("/import/cleanup-duplicate-models")
+async def cleanup_duplicate_models(db: AsyncSession = Depends(get_db)):
+    """清理因系列范围合并Bug产生的重复机型归属
+
+    旧的 merged_series 合并逻辑会扩大系列列范围，导致其他系列的机型
+    被错误地创建到当前系列下。此端点检测同名机型跨系列重复的情况，
+    自动保留在总型号数最少的系列中（正确系列），删除其他副本。
+    """
+    from app.models import ConfigValue, ConfigDraft
+
+    # 1. 查找所有跨系列的同名机型
+    # 按型号名称分组，筛选出出现在多个系列中的型号
+    name_groups_result = await db.execute(
+        select(
+            ProductModel.name,
+            func.count(ProductModel.id).label('total_instances'),
+            func.count(func.distinct(ProductModel.series_id)).label('series_count')
+        ).group_by(ProductModel.name)
+        .having(func.count(func.distinct(ProductModel.series_id)) > 1)
+    )
+    duplicate_names_rows = name_groups_result.fetchall()
+    duplicate_names = [r[0] for r in duplicate_names_rows]
+
+    if not duplicate_names:
+        return {"message": "没有发现重复的机型归属", "deleted": []}
+
+    # 2. 获取所有重复机型及其所属系列
+    # 先查询所有系列的总型号数索引
+    all_models = await db.execute(select(ProductModel))
+    all_models_list = all_models.scalars().all()
+
+    # 统计每个系列的总型号数
+    series_model_count = {}
+    for m in all_models_list:
+        series_model_count[m.series_id] = series_model_count.get(m.series_id, 0) + 1
+
+    # 按名称分组
+    models_by_name = {}
+    for m in all_models_list:
+        if m.name in duplicate_names:
+            if m.name not in models_by_name:
+                models_by_name[m.name] = []
+            models_by_name[m.name].append(m)
+
+    # 3. 对每组重复机型，决定保留和删除
+    deleted_models = []  # [(model_id, model_name, series_name)]
+    kept_models = []     # [(model_id, model_name, series_name)]
+
+    for model_name, dup_models in models_by_name.items():
+        # 按所属系列的总型号数升序排列
+        dup_models_sorted = sorted(
+            dup_models,
+            key=lambda m: series_model_count.get(m.series_id, 0)
+        )
+
+        # 保留在总型号数最少的系列中的机型
+        keep_model = dup_models_sorted[0]
+        keep_series_result = await db.execute(
+            select(ProductSeries).where(ProductSeries.id == keep_model.series_id)
+        )
+        keep_series = keep_series_result.scalar_one_or_none()
+        kept_models.append((keep_model.id, model_name, keep_series.name if keep_series else "Unknown"))
+
+        # 删除在其他系列中的机型
+        for delete_model in dup_models_sorted[1:]:
+            del_series_result = await db.execute(
+                select(ProductSeries).where(ProductSeries.id == delete_model.series_id)
+            )
+            del_series = del_series_result.scalar_one_or_none()
+            del_series_name = del_series.name if del_series else "Unknown"
+
+            # 删除关联的配置值
+            await db.execute(
+                delete(ConfigValue).where(ConfigValue.model_id == delete_model.id)
+            )
+            # 删除关联的草稿
+            await db.execute(
+                delete(ConfigDraft).where(ConfigDraft.model_id == delete_model.id)
+            )
+            # 删除机型本身
+            await db.delete(delete_model)
+
+            deleted_models.append({
+                "model_id": delete_model.id,
+                "model_name": model_name,
+                "deleted_from_series": del_series_name,
+                "kept_in_series": keep_series.name if keep_series else "Unknown"
+            })
+
+    await db.commit()
+
+    return {
+        "message": f"清理完成，删除了 {len(deleted_models)} 个重复机型归属",
+        "deleted": deleted_models,
+        "kept": kept_models
     }
 
 

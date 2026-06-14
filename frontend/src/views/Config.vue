@@ -272,69 +272,14 @@
       </el-card>
     </transition>
 
-    <!-- 快捷操作提示（可展开） -->
-    <el-card class="tips-card collapsed" shadow="never" v-if="showTips">
-      <template #header>
-        <div class="tips-header" @click="toggleTipsExpand">
-          <span><el-icon><InfoFilled /></el-icon> Excel-like 快捷操作</span>
-          <div class="tips-actions">
-            <el-icon class="expand-icon" :class="{ 'is-expanded': tipsExpanded }"><ArrowDown /></el-icon>
-            <el-button type="primary" link size="small" @click.stop="showTips = false">关闭</el-button>
-          </div>
-        </div>
-      </template>
-      <div v-show="tipsExpanded" class="tips-content">
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">右键菜单</div>
-              <div class="tip-desc">右键点击任意单元格，可快速复制、粘贴、应用到所有机型</div>
-            </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">多选 (Ctrl+点击)</div>
-              <div class="tip-desc">按住 Ctrl 点击多个单元格，可批量选择和粘贴</div>
-            </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">键盘导航</div>
-              <div class="tip-desc">方向键移动焦点，Enter 编辑，Esc 取消，Ctrl+A 全选</div>
-            </div>
-          </el-col>
-        </el-row>
-        <el-row :gutter="20" style="margin-top: 10px;">
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">拖拽填充</div>
-              <div class="tip-desc">按住单元格向下拖拽，可将值填充到其他行</div>
-            </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">复制整行配置</div>
-              <div class="tip-desc">右键菜单选择"复制整行配置"，可将某功能配置复制到其他功能</div>
-            </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="tip-item">
-              <div class="tip-title">应用到所有机型</div>
-              <div class="tip-desc">右键菜单选择"应用到所有机型"，一键同步当前值到所有型号</div>
-            </div>
-          </el-col>
-        </el-row>
-      </div>
-    </el-card>
-
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="selectedRows.length > 0 || selectedCells.length > 0" class="batch-bar" shadow="never">
+      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never">
         <div class="batch-info">
           <span v-if="selectedRows.length > 0">已选择 <strong>{{ selectedRows.length }}</strong> 行</span>
-          <span v-if="selectedCells.length > 0">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
+          <span v-if="false">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
           <el-button v-if="selectedRows.length > 0" size="small" @click="handleBatchEdit">批量修改</el-button>
-          <el-button v-if="copiedCell && selectedCells.length > 0" type="primary" size="small" @click="pasteToSelectedCells">粘贴到选中单元格</el-button>
+          <el-button v-if="false" type="primary" size="small" @click="pasteToSelectedCells">粘贴到选中单元格</el-button>
           <el-button size="small" @click="clearSelection">取消选择</el-button>
         </div>
       </el-card>
@@ -350,6 +295,8 @@
         :height="tableMaxHeight"
         v-loading="loading"
         @selection-change="handleSelectionChange"
+        @header-dragend="onConfigDragEnd"
+        @mouseup="onConfigMouseUp"
         row-key="id"
       >
         <el-table-column type="selection" width="50" fixed />
@@ -365,7 +312,7 @@
           :key="modelId"
           :label="getModelName(modelId)"
         >
-          <el-table-column v-if="visibleColumns.final_config" label="最终配置" width="100">
+          <el-table-column v-if="visibleColumns.final_config" label="最终配置" :width="fieldColWidths.final_config">
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -417,7 +364,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="visibleColumns.current_config" label="当前配置" width="100">
+          <el-table-column v-if="visibleColumns.current_config" label="当前配置" :width="fieldColWidths.current_config">
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -469,7 +416,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="visibleColumns.selection_config" label="选型类别" width="100">
+          <el-table-column v-if="visibleColumns.selection_config" label="选型类别" :width="fieldColWidths.selection_config">
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -521,7 +468,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="visibleColumns.rd_status" label="研发状态" width="100">
+          <el-table-column v-if="visibleColumns.rd_status" label="研发状态" :width="fieldColWidths.rd_status">
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -686,7 +633,7 @@
       <div class="menu-divider"></div>
       <div class="menu-item" @click="pasteToSelectedCells" :class="{ 'menu-disabled': !copiedCell || selectedCells.length === 0 }">
         <el-icon><CopyDocument /></el-icon>
-        <span v-if="selectedCells.length > 0">粘贴到所有选中单元格 ({{ selectedCells.length }}个)</span>
+        <span v-if="false">粘贴到所有选中单元格 ({{ selectedCells.length }}个)</span>
         <span v-else>粘贴到所有选中单元格</span>
       </div>
       <div class="menu-divider"></div>
@@ -945,6 +892,33 @@ const draftFilter = ref('')  // 草稿筛选: '', 'create', 'update', 'delete'
 const showDiffOnly = ref(false)  // 是否只显示有差异的配置
 const diffFilterMode = ref('')  // 差异筛选模式: '', 'all', 'final_config', 'current_config', 'selection_config', 'rd_status'
 const showRdIncomplete = ref(false)  // 是否高亮并筛选未完成的研发状态
+// 同类型字段列宽联动 + localStorage 持久化
+const FW_KEY = "config_field_widths"
+const fieldColWidths = reactive(
+  (() => { try { const s = localStorage.getItem(FW_KEY); return s ? JSON.parse(s) : { final_config: 100, current_config: 100, selection_config: 100, rd_status: 100 } } catch { return { final_config: 100, current_config: 100, selection_config: 100, rd_status: 100 } } })()
+)
+const onConfigDragEnd = (newWidth, oldWidth, column) => {
+  const m = { "最终配置": "final_config", "当前配置": "current_config", "选型类别": "selection_config", "研发状态": "rd_status" }
+  const k = m[column?.label] || column?.columnKey || ""
+  if (k in fieldColWidths && newWidth > 0) { fieldColWidths[k] = newWidth; localStorage.setItem(FW_KEY, JSON.stringify(fieldColWidths)) }
+}
+const onConfigMouseUp = () => {
+  nextTick(() => {
+    const el = tableRef.value?.$el
+    const row = el?.querySelector(".el-table__header-wrapper tr:last-child")
+    if (!row) return
+    const m = { "最终配置": "final_config", "当前配置": "current_config", "选型类别": "selection_config", "研发状态": "rd_status" }
+    const max = {}
+    row.querySelectorAll("th").forEach(th => {
+      const k = m[th.querySelector(".cell")?.textContent?.trim() || ""]
+      if (k && th.offsetWidth > 0) max[k] = Math.max(max[k] || 0, th.offsetWidth)
+    })
+    let ch = false
+    for (const [k, w] of Object.entries(max)) { if (fieldColWidths[k] !== w && w > 0) { fieldColWidths[k] = w; ch = true } }
+    if (ch) localStorage.setItem(FW_KEY, JSON.stringify(fieldColWidths))
+  })
+}
+
 
 // 枚举值
 const enumValues = reactive({
@@ -3565,14 +3539,12 @@ onMounted(() => {
   loadEnumValues()
   calculateTableHeight()
   window.addEventListener('resize', calculateTableHeight)
-  window.addEventListener('keydown', handleKeyDown)
-  window.addEventListener('keyup', handleKeyUp)
+  // Excel-like keyboard events removed
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', calculateTableHeight)
-  window.removeEventListener('keydown', handleKeyDown)
-  window.removeEventListener('keyup', handleKeyUp)
+  // Excel-like keyboard events removed
 })
 
 // 监听 activeSeriesId 变化，重新初始化草稿

@@ -13,7 +13,7 @@
         </div>
       </template>
 
-      <el-table :data="tableData" border stripe v-loading="loading">
+      <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="型号名称" min-width="200" />
         <el-table-column prop="description" label="描述" width="200" show-overflow-tooltip />
@@ -28,8 +28,10 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" @click="moveRow(row, -1)" :disabled="tableData.indexOf(row) === 0" :icon="ArrowUp" />
+            <el-button size="small" @click="moveRow(row, 1)" :disabled="tableData.indexOf(row) === tableData.length - 1" :icon="ArrowDown" />
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -80,7 +82,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import { getSeriesList, getModels, createModel, updateModel, deleteModel } from '../api/data'
 
 const seriesList = ref([])
@@ -90,6 +92,18 @@ const loading = ref(false)
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
+const tableRef = ref(null)
+
+// 排序移动
+const moveRow = async (row, direction) => {
+  const idx = tableData.value.findIndex(m => m.id === row.id)
+  const newIdx = idx + direction
+  if (newIdx < 0 || newIdx >= tableData.value.length) return
+  const moved = tableData.value.splice(idx, 1)[0]
+  tableData.value.splice(newIdx, 0, moved)
+  const updates = tableData.value.map((m, i) => ({ id: m.id, sort_order: i }))
+  await Promise.all(updates.map(u => updateModel(u.id, { sort_order: u.sort_order })))
+}
 
 const dialogVisible = ref(false)
 const editingId = ref(null)

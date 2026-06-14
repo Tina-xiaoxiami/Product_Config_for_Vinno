@@ -12,9 +12,25 @@
         <div class="select-row">
           <div class="select-item">
             <label>产品系列：</label>
-            <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="loadModels" style="width: 200px">
+            <el-select
+              v-model="selectedSeries"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="选择产品系列（可多选）"
+              style="width: 400px"
+              @change="loadModels"
+            >
               <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
+            <el-checkbox
+              v-model="selectAllSeries"
+              :indeterminate="isIndeterminateSeries"
+              style="margin-left:12px"
+              @change="handleSelectAllSeries"
+            >
+              全选
+            </el-checkbox>
           </div>
 
           <div class="select-item">
@@ -26,8 +42,20 @@
               collapse-tags-tooltip
               placeholder="选择要对比的型号（至少2个）"
               style="width: 500px"
+              popper-class="model-select-dropdown"
             >
-              <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
+              <el-option-group
+                v-for="group in modelGroups"
+                :key="group.seriesId"
+                :label="group.seriesName"
+              >
+                <el-option
+                  v-for="m in group.models"
+                  :key="m.id"
+                  :label="m.name"
+                  :value="m.id"
+                />
+              </el-option-group>
             </el-select>
           </div>
         </div>
@@ -53,9 +81,9 @@
         </div>
       </div>
 
-      <!-- 草稿状态栏 -->
+      <!-- 草稿状态栏（仅单选系列时可用） -->
       <transition name="el-zoom-in-top">
-        <el-card v-if="draftStats.total > 0" class="draft-bar" shadow="never">
+        <el-card v-if="draftStats.total > 0 && selectedSeries.length === 1" class="draft-bar" shadow="never">
           <div class="draft-info">
             <el-icon><EditPen /></el-icon>
             <span>当前有 <strong>{{ draftStats.total }}</strong> 条草稿：</span>
@@ -92,83 +120,70 @@
       </template>
 
       <el-table
-        :data="filteredTableData"
+        ref="compareTableRef"
+        :data="paginatedTableData"
         border
         stripe
         :max-height="500"
-        @filter-change="handleFilterChange"
+        size="small"
+        style="width: 100%"
+        @header-dragend="syncColumnWidth"
+        @mouseup="onTableMouseUp"
       >
-        <el-table-column prop="rd_name" label="研发名称" width="280" fixed show-overflow-tooltip />
-        <el-table-column prop="ipn" label="IPN号" width="120" show-overflow-tooltip />
-        <el-table-column
-          prop="field_name"
-          label="对比字段"
-          width="100"
-          :filters="fieldFilters"
-          :filter-method="filterField"
-        >
-          <template #default="{ row }">
-            <el-tag size="small" :type="getFieldTagType(row.field_name)">
-              {{ getFieldLabel(row.field_name) }}
-            </el-tag>
-          </template>
-        </el-table-column>
+        <el-table-column prop="rd_name" label="研发名称" width="220" fixed show-overflow-tooltip />
+        <el-table-column prop="ipn" label="IPN号" width="110" fixed show-overflow-tooltip />
 
-        <el-table-column
-          v-for="modelId in selectedModels"
-          :key="modelId"
-          :label="getModelName(modelId)"
-          min-width="120"
-        >
-          <template #default="{ row }">
-            <div
-              class="value-cell"
-              :class="[
-                getValueClass(row, modelId),
-                { 'cell-changed': isFieldChanged(row.item_id, modelId, row.field_name) }
-              ]"
-              @click="startEdit(row, modelId)"
-            >
-              <template v-if="editingCell?.itemId === row.item_id && editingCell?.modelId === modelId && editingCell?.field === row.field_name">
-                <el-select
-                  ref="editSelectRef"
-                  v-model="row.values[modelId]"
-                  size="small"
-                  placeholder="-"
-                  clearable
-                  filterable
-                  allow-create
-                  @change="finishEdit(row, modelId, row.values[modelId])"
-                  @blur="editingCell = null"
-                  style="width: 100%"
-                >
-                  <el-option v-for="v in getEnumOptions(row.field_name)" :key="v" :label="v" :value="v" />
-                </el-select>
-              </template>
-              <template v-else>
-                <span>{{ row.values[modelId] || '-' }}</span>
-                <span v-if="isFieldChanged(row.item_id, modelId, row.field_name)" class="original-hint">
-                  ({{ getOriginalValue(row.item_id, modelId, row.field_name) || '-' }})
+        <template v-for="modelId in selectedModels" :key="modelId">
+          <el-table-column :label="getModelName(modelId)" align="center">
+            <el-table-column v-if="compareFields.includes('final_config')" label="最终配置" :width="fieldColumnWidths.final_config" column-key="final_config">
+              <template #default="{ row }">
+                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.final_config }">
+                  {{ row.model_values[modelId]?.final_config || '-' }}
                 </span>
               </template>
-            </div>
-          </template>
-        </el-table-column>
+            </el-table-column>
+            <el-table-column v-if="compareFields.includes('current_config')" label="当前配置" :width="fieldColumnWidths.current_config" column-key="current_config">
+              <template #default="{ row }">
+                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.current_config }">
+                  {{ row.model_values[modelId]?.current_config || '-' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="compareFields.includes('selection_config')" label="选型类别" :width="fieldColumnWidths.selection_config" column-key="selection_config">
+              <template #default="{ row }">
+                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.selection_config }">
+                  {{ row.model_values[modelId]?.selection_config || '-' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="compareFields.includes('rd_status')" label="研发状态" :width="fieldColumnWidths.rd_status" column-key="rd_status">
+              <template #default="{ row }">
+                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.rd_status }">
+                  {{ row.model_values[modelId]?.rd_status || '-' }}
+                </span>
+              </template>
+            </el-table-column>
+          </el-table-column>
+        </template>
 
-        <el-table-column label="差异" width="80" fixed="right">
+        <el-table-column label="差异" width="70" fixed="right">
           <template #default="{ row }">
-            <el-tag v-if="hasDiff(row)" type="warning" size="small">差异</el-tag>
+            <el-tag
+              v-if="selectedModels.some(mid => row.model_values[mid] && Object.values(row.model_values[mid]._hasDiff || {}).some(Boolean))"
+              type="warning"
+              size="small"
+            >差异</el-tag>
             <el-tag v-else type="info" size="small">相同</el-tag>
           </template>
         </el-table-column>
       </el-table>
 
       <!-- 分页 -->
-      <div class="pagination-wrapper" v-if="compareResult.items.length > pageSize">
+      <div class="pagination-wrapper" v-if="filteredTableData.length > pageSize">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :total="compareResult.items.length"
+          :total="filteredTableData.length"
           :page-sizes="[50, 100, 200]"
           layout="total, sizes, prev, pager, next"
         />
@@ -203,7 +218,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Download, EditPen } from '@element-plus/icons-vue'
 import {
@@ -213,9 +228,10 @@ import {
   getEnumValues
 } from '../api/data'
 
+defineOptions({ name: 'Compare' })
+
 // 数据
 const seriesList = ref([])
-const modelList = ref([])
 const loading = ref(false)
 
 // 枚举值
@@ -242,8 +258,68 @@ const submitForm = {
   description: ''
 }
 
+// 同类型字段列宽同步（从localStorage恢复）
+const FIELD_WIDTH_KEY = 'compare_field_widths'
+const loadFieldWidths = () => {
+  try {
+    const saved = localStorage.getItem(FIELD_WIDTH_KEY)
+    if (saved) return JSON.parse(saved)
+  } catch (e) { /* ignore */ }
+  return { final_config: 90, current_config: 90, selection_config: 90, rd_status: 90 }
+}
+const saveFieldWidths = (w) => {
+  localStorage.setItem(FIELD_WIDTH_KEY, JSON.stringify(w))
+}
+
+const fieldColumnWidths = reactive(loadFieldWidths())
+
+const compareTableRef = ref(null)
+
+// header-dragend 可能对嵌套列 fire 不正常，用 mouseup 兜底
+const onTableMouseUp = () => {
+  // 延迟一帧等 DOM 更新后读取并同步
+  nextTick(() => {
+    syncAllColumnWidths()
+  })
+}
+
+const syncAllColumnWidths = () => {
+  if (!compareTableRef.value) return
+  const tableEl = compareTableRef.value.$el
+  const headerRow = tableEl?.querySelector('.el-table__header-wrapper tr:last-child')
+  if (!headerRow) return
+  const ths = headerRow.querySelectorAll('th')
+  const labelMap = { '最终配置': 'final_config', '当前配置': 'current_config', '选型类别': 'selection_config', '研发状态': 'rd_status' }
+  const maxByKey = {}
+  ths.forEach(th => {
+    const label = th.querySelector('.cell')?.textContent?.trim() || ''
+    const key = labelMap[label]
+    if (key && th.offsetWidth > 0) {
+      maxByKey[key] = Math.max(maxByKey[key] || 0, th.offsetWidth)
+    }
+  })
+  let changed = false
+  for (const [key, w] of Object.entries(maxByKey)) {
+    if (fieldColumnWidths[key] !== w && w > 0) {
+      fieldColumnWidths[key] = w
+      changed = true
+    }
+  }
+  if (changed) saveFieldWidths({ ...fieldColumnWidths })
+}
+
+const syncColumnWidth = (newWidth, oldWidth, column) => {
+  const labelMap = { '最终配置': 'final_config', '当前配置': 'current_config', '选型类别': 'selection_config', '研发状态': 'rd_status' }
+  const key = labelMap[column?.label] || column?.columnKey || column?.property || ''
+  if (key in fieldColumnWidths && newWidth > 0) {
+    fieldColumnWidths[key] = newWidth
+    saveFieldWidths({ ...fieldColumnWidths })
+  }
+}
+
 // 筛选条件
-const selectedSeries = ref(null)
+const selectedSeries = ref([])
+const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesName }
 const selectedModels = ref([])
 const compareFields = ref(['current_config', 'final_config'])
 const showOnlyDiff = ref(true)  // 默认只显示差异项
@@ -263,26 +339,94 @@ const fieldFilters = [
   { text: '研发状态', value: 'rd_status' }
 ]
 
+// 系列全选
+const selectAllSeries = ref(false)
+const isIndeterminateSeries = computed(() =>
+  selectedSeries.value.length > 0 && selectedSeries.value.length < seriesList.value.length
+)
+
+const handleSelectAllSeries = (val) => {
+  selectedSeries.value = val ? seriesList.value.map(s => s.id) : []
+  loadModels()
+}
+
+// 按系列分组的型号列表
+const modelGroups = computed(() => {
+  const seriesMap = new Map()
+  for (const [id, m] of allModelsMap.value) {
+    const key = m.seriesId
+    if (!seriesMap.has(key)) {
+      seriesMap.set(key, { seriesId: key, seriesName: m.seriesName, models: [] })
+    }
+    seriesMap.get(key).models.push(m)
+  }
+  return Array.from(seriesMap.values())
+})
+
 // 当前过滤的字段
 const currentFieldFilter = ref([])
 
-// 过滤后的表格数据
-const filteredTableData = computed(() => {
+// 将 field-per-row 格式重组为 item-per-row（每个配置项一行，字段横向展开）
+const groupedTableData = computed(() => {
   if (!compareResult.value) return []
 
-  let data = compareResult.value.items
-
-  // 按字段过滤
-  if (currentFieldFilter.value.length > 0) {
-    data = data.filter(item => currentFieldFilter.value.includes(item.field_name))
+  const itemMap = new Map()
+  for (const row of compareResult.value.items) {
+    if (!itemMap.has(row.item_id)) {
+      itemMap.set(row.item_id, {
+        item_id: row.item_id,
+        rd_name: row.rd_name,
+        ipn: row.ipn,
+        row_index: row.row_index,
+        model_values: {}  // { modelId: { final_config, current_config, selection_config, rd_status, hasDiff: {field: bool} } }
+      })
+    }
+    const item = itemMap.get(row.item_id)
+    for (const modelId of Object.keys(row.values)) {
+      if (!item.model_values[modelId]) {
+        item.model_values[modelId] = { final_config: null, current_config: null, selection_config: null, rd_status: null }
+      }
+      item.model_values[modelId][row.field_name] = row.values[modelId]
+    }
   }
+
+  // 标记差异
+  const normalize = (v) => (!v || v === '-' || v === 'N/A' || v === '未定义' || v === '' ? null : v)
+  for (const item of itemMap.values()) {
+    for (const field of ['final_config', 'current_config', 'selection_config', 'rd_status']) {
+      const values = selectedModels.value.map(mid => normalize(item.model_values[mid]?.[field])).filter(v => v !== undefined)
+      const uniqueVals = new Set(values)
+      const hasDiff = uniqueVals.size > 1
+      for (const mid of selectedModels.value) {
+        if (item.model_values[mid]) {
+          if (!item.model_values[mid]._hasDiff) item.model_values[mid]._hasDiff = {}
+          item.model_values[mid]._hasDiff[field] = hasDiff
+        }
+      }
+    }
+  }
+
+  let data = Array.from(itemMap.values())
 
   // 仅显示差异项
   if (showOnlyDiff.value) {
-    data = data.filter(item => hasDiff(item))
+    data = data.filter(item =>
+      selectedModels.value.some(mid =>
+        item.model_values[mid] && Object.values(item.model_values[mid]._hasDiff || {}).some(Boolean)
+      )
+    )
   }
 
   return data
+})
+
+// 过滤后的表格数据
+const filteredTableData = groupedTableData
+
+// 分页后的表格数据
+const paginatedTableData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredTableData.value.slice(start, start + pageSize.value)
 })
 
 // 加载产品系列
@@ -290,8 +434,8 @@ const loadSeries = async () => {
   try {
     const res = await getSeriesList()
     seriesList.value = res.items || []
-    if (seriesList.value.length > 0) {
-      selectedSeries.value = seriesList.value[0].id
+    if (seriesList.value.length > 0 && selectedSeries.value.length === 0) {
+      selectedSeries.value = [seriesList.value[0].id]
       await loadModels()
     }
   } catch (error) {
@@ -299,22 +443,33 @@ const loadSeries = async () => {
   }
 }
 
-// 加载产品型号
+// 加载产品型号（从所有选中系列）
 const loadModels = async () => {
-  if (!selectedSeries.value) return
+  allModelsMap.value.clear()
+  if (selectedSeries.value.length === 0) return
 
   try {
-    const res = await getModels(selectedSeries.value)
-    modelList.value = res.items || []
+    const results = await Promise.all(
+      selectedSeries.value.map(sid => getModels(sid))
+    )
+    results.forEach((res, idx) => {
+      const seriesId = selectedSeries.value[idx]
+      const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
+      for (const m of (res.items || [])) {
+        allModelsMap.value.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
+      }
+    })
+    // 清除无效的已选型号
+    selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
   } catch (error) {
     console.error('加载产品型号失败:', error)
   }
 }
 
-// 获取型号名称
+// 获取型号名称（跨系列）
 const getModelName = (modelId) => {
-  const model = modelList.value.find(m => m.id === modelId)
-  return model ? model.name : ''
+  const m = allModelsMap.value.get(modelId)
+  return m ? `${m.seriesName} / ${m.name}` : ''
 }
 
 // 执行对比
@@ -339,6 +494,10 @@ const handleCompare = async () => {
 
     compareResult.value = res
     currentPage.value = 1
+    // 延迟等table渲染后应用保存的列宽
+    nextTick(() => {
+      nextTick(() => compareTableRef.value?.doLayout())
+    })
 
     // 保存原始值
     originalValues.value.clear()
@@ -349,10 +508,10 @@ const handleCompare = async () => {
       }
     }
 
-    // 初始化草稿批次
-    if (selectedSeries.value) {
+    // 初始化草稿批次（仅单选系列时可用）
+    if (selectedSeries.value.length === 1) {
       try {
-        const batchRes = await createDraftBatch(selectedSeries.value)
+        const batchRes = await createDraftBatch(selectedSeries.value[0])
         draftBatchId.value = batchRes.id
       } catch (error) {
         console.error('初始化草稿失败:', error)
@@ -448,13 +607,13 @@ const isValueChanged = (oldVal, newVal) => {
 
 // 保存草稿
 const saveDraft = async (row, modelId, newValue, oldValue) => {
-  if (!draftBatchId.value || !selectedSeries.value) return
+  if (!draftBatchId.value || selectedSeries.value.length !== 1) return
 
   const key = `${row.item_id}_${modelId}_${row.field_name}`
 
   try {
     const res = await createDraft({
-      series_id: selectedSeries.value,
+      series_id: selectedSeries.value[0],
       batch_id: draftBatchId.value,
       change_type: 'update',
       item_id: row.item_id,
@@ -730,15 +889,12 @@ onMounted(() => {
   gap: 40px;
 }
 
-.value-cell {
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.value-diff {
+.diff-value {
   background-color: #fdf6ec;
   color: #E6A23C;
-  font-weight: 500;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 .pagination-wrapper {
