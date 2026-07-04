@@ -162,6 +162,14 @@
           <el-icon><EditPen /></el-icon>
           <span>当前有 <strong>{{ draftItemSummary.total }}</strong> 项有变更：</span>
           <el-tag
+            :type="draftFilter === 'all' ? 'primary' : 'info'"
+            size="small"
+            class="clickable-tag"
+            @click="toggleDraftFilter('all')"
+          >
+            全部 {{ draftItemSummary.total }}
+          </el-tag>
+          <el-tag
             v-if="draftItemSummary.create > 0"
             :type="draftFilter === 'create' ? 'success' : 'info'"
             size="small"
@@ -713,6 +721,8 @@
       <div v-if="rowDiffDialog.row" class="row-diff-content">
         <el-descriptions :column="1" border size="small" style="margin-bottom: 20px;">
           <el-descriptions-item label="研发名称">{{ rowDiffDialog.row.rd_name }}</el-descriptions-item>
+          <el-descriptions-item label="中文名称">{{ rowDiffDialog.row.zh_desc || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="英文名称">{{ rowDiffDialog.row.en_desc || '-' }}</el-descriptions-item>
           <el-descriptions-item label="IPN号">{{ rowDiffDialog.row.ipn }}</el-descriptions-item>
           <el-descriptions-item label="V代码">{{ rowDiffDialog.row.v_code }}</el-descriptions-item>
           <el-descriptions-item label="分类">{{ rowDiffDialog.row.category }}</el-descriptions-item>
@@ -1245,7 +1255,7 @@ const filteredTableData = computed(() => {
     const changedRowIds = new Set()
 
     // update 筛选：检查变更机型是否在选中列表中，支持按字段筛选
-    if (draftFilter.value === 'update') {
+    if (draftFilter.value === 'update' || draftFilter.value === 'all') {
       for (const [key, change] of draftChanges.value.entries()) {
         if (change.changeType === 'update') {
           const parts = key.split('_')
@@ -1262,7 +1272,7 @@ const filteredTableData = computed(() => {
     }
 
     // create 筛选：仅当至少有一个新增机型在选中列表中
-    if (draftFilter.value === 'create') {
+    if (draftFilter.value === 'create' || draftFilter.value === 'all') {
       for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
         for (const mid of modelSet) {
           if (selectedSet.has(mid)) {
@@ -1274,7 +1284,7 @@ const filteredTableData = computed(() => {
     }
 
     // delete 筛选：仅当至少有一个删除机型在选中列表中
-    if (draftFilter.value === 'delete') {
+    if (draftFilter.value === 'delete' || draftFilter.value === 'all') {
       for (const [itemId, modelSet] of deletedItemModelMap.value.entries()) {
         for (const mid of modelSet) {
           if (selectedSet.has(mid)) {

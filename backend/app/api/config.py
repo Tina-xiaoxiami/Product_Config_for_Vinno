@@ -212,6 +212,9 @@ async def compare_configs(
                         "row_index": item.row_index,
                         "rd_name": item.rd_name,
                         "ipn": item.ipn,
+                        "v_code": item.v_code,
+                        "zh_desc": item.zh_desc,
+                        "en_desc": item.en_desc,
                         "model_id": first_model_id,
                         "model_name": model.name if model else "",
                         "field_name": field,
@@ -227,6 +230,9 @@ async def compare_configs(
                     "row_index": item.row_index,
                     "rd_name": item.rd_name,
                     "ipn": item.ipn,
+                    "v_code": item.v_code,
+                    "zh_desc": item.zh_desc,
+                    "en_desc": item.en_desc,
                     "model_id": first_model_id,
                     "model_name": model.name if model else "",
                     "field_name": field,
@@ -389,6 +395,9 @@ async def export_compare_result(
             compare_data.append({
                 "rd_name": item.rd_name,
                 "ipn": item.ipn,
+                "v_code": item.v_code,
+                "zh_desc": item.zh_desc,
+                "en_desc": item.en_desc,
                 "field_name": field,
                 "values": field_values,
                 "has_diff": has_diff
@@ -418,7 +427,7 @@ async def export_compare_result(
         "rd_status": "研发状态"
     }
 
-    headers = ["研发名称", "IPN号", "对比字段", "差异"] + [models[mid].name for mid in data.model_ids]
+    headers = ["研发名称", "中文名称", "英文名称", "V代码", "IPN号", "对比字段", "差异"] + [models[mid].name for mid in data.model_ids]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = header_font
@@ -428,11 +437,14 @@ async def export_compare_result(
     # 数据行
     for row_idx, item in enumerate(compare_data, 2):
         ws.cell(row=row_idx, column=1, value=item["rd_name"]).border = thin_border
-        ws.cell(row=row_idx, column=2, value=item["ipn"]).border = thin_border
-        ws.cell(row=row_idx, column=3, value=field_labels.get(item["field_name"], item["field_name"])).border = thin_border
-        ws.cell(row=row_idx, column=4, value="是" if item["has_diff"] else "否").border = thin_border
+        ws.cell(row=row_idx, column=2, value=item.get("zh_desc", "")).border = thin_border
+        ws.cell(row=row_idx, column=3, value=item.get("en_desc", "")).border = thin_border
+        ws.cell(row=row_idx, column=4, value=item.get("v_code", "")).border = thin_border
+        ws.cell(row=row_idx, column=5, value=item["ipn"]).border = thin_border
+        ws.cell(row=row_idx, column=6, value=field_labels.get(item["field_name"], item["field_name"])).border = thin_border
+        ws.cell(row=row_idx, column=7, value="是" if item["has_diff"] else "否").border = thin_border
 
-        for col_idx, model_id in enumerate(data.model_ids, 5):
+        for col_idx, model_id in enumerate(data.model_ids, 8):
             value = item["values"].get(model_id, "")
             cell = ws.cell(row=row_idx, column=col_idx, value=value or "-")
             cell.border = thin_border

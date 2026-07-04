@@ -80,6 +80,9 @@ class ConfigDiffItem(BaseModel):
     row_index: int
     rd_name: Optional[str] = None
     ipn: Optional[str] = None
+    v_code: Optional[str] = None
+    zh_desc: Optional[str] = None
+    en_desc: Optional[str] = None
     model_id: int
     model_name: str
     field_name: str

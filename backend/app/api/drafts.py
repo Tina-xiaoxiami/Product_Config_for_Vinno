@@ -184,6 +184,8 @@ async def get_draft_list(
 
         draft_list.append({
             "id": d.id,
+            "item_id": d.item_id,
+            "model_id": d.model_id,
             "change_type": d.change_type,
             "rd_name": item.rd_name if item else None,
             "ipn": item.ipn if item else None,

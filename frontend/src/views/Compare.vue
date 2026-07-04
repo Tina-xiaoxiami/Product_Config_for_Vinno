@@ -72,6 +72,17 @@
           </div>
 
           <div class="select-item">
+            <label>显示列：</label>
+            <el-checkbox-group v-model="showNameColumns">
+              <el-checkbox label="rd_name">研发名称</el-checkbox>
+              <el-checkbox label="zh_desc">中文名称</el-checkbox>
+              <el-checkbox label="en_desc">英文名称</el-checkbox>
+              <el-checkbox label="v_code">V代码</el-checkbox>
+              <el-checkbox label="ipn">IPN号</el-checkbox>
+            </el-checkbox-group>
+          </div>
+
+          <div class="select-item">
             <el-checkbox v-model="showOnlyDiff" border>仅显示差异项</el-checkbox>
           </div>
 
@@ -81,9 +92,9 @@
         </div>
       </div>
 
-      <!-- 草稿状态栏（仅单选系列时可用） -->
+      <!-- 草稿状态栏（跨系列） -->
       <transition name="el-zoom-in-top">
-        <el-card v-if="draftStats.total > 0 && selectedSeries.length === 1" class="draft-bar" shadow="never">
+        <el-card v-if="draftStats.total > 0" class="draft-bar" shadow="never">
           <div class="draft-info">
             <el-icon><EditPen /></el-icon>
             <span>当前有 <strong>{{ draftStats.total }}</strong> 条草稿：</span>
@@ -117,6 +128,36 @@
             <el-button :icon="Download" @click="handleExportResult">导出结果</el-button>
           </div>
         </div>
+        <div v-if="draftStats.total > 0" class="draft-filter-bar">
+          <el-tag
+            :type="draftFilter === 'all' ? 'primary' : 'info'"
+            size="small"
+            class="clickable-tag"
+            @click="toggleDraftFilter('all')"
+          >全部草稿 {{ draftStats.total }}</el-tag>
+          <el-tag
+            v-if="draftStats.create > 0"
+            :type="draftFilter === 'create' ? 'success' : 'info'"
+            size="small"
+            class="clickable-tag"
+            @click="toggleDraftFilter('create')"
+          >新增 {{ draftStats.create }}</el-tag>
+          <el-tag
+            v-if="draftStats.update > 0"
+            :type="draftFilter === 'update' ? 'warning' : 'info'"
+            size="small"
+            class="clickable-tag"
+            @click="toggleDraftFilter('update')"
+          >修改 {{ draftStats.update }}</el-tag>
+          <el-tag
+            v-if="draftStats.delete > 0"
+            :type="draftFilter === 'delete' ? 'danger' : 'info'"
+            size="small"
+            class="clickable-tag"
+            @click="toggleDraftFilter('delete')"
+          >删除 {{ draftStats.delete }}</el-tag>
+          <el-button v-if="draftFilter" type="primary" link size="small" @click="clearDraftFilter()" style="margin-left:8px">清除筛选</el-button>
+        </div>
       </template>
 
       <el-table
@@ -130,35 +171,58 @@
         @header-dragend="syncColumnWidth"
         @mouseup="onTableMouseUp"
       >
-        <el-table-column prop="rd_name" label="研发名称" width="220" fixed show-overflow-tooltip />
-        <el-table-column prop="ipn" label="IPN号" width="110" fixed show-overflow-tooltip />
+        <el-table-column v-if="showNameColumns.includes('rd_name')" prop="rd_name" label="研发名称" width="200" fixed show-overflow-tooltip />
+        <el-table-column v-if="showNameColumns.includes('zh_desc')" prop="zh_desc" label="中文名称" width="200" fixed show-overflow-tooltip />
+        <el-table-column v-if="showNameColumns.includes('en_desc')" prop="en_desc" label="英文名称" width="200" fixed show-overflow-tooltip />
+        <el-table-column v-if="showNameColumns.includes('v_code')" prop="v_code" label="V代码" width="100" fixed show-overflow-tooltip />
+        <el-table-column v-if="showNameColumns.includes('ipn')" prop="ipn" label="IPN号" width="110" fixed show-overflow-tooltip />
 
         <template v-for="modelId in selectedModels" :key="modelId">
           <el-table-column :label="getModelName(modelId)" align="center">
             <el-table-column v-if="compareFields.includes('final_config')" label="最终配置" :width="fieldColumnWidths.final_config" column-key="final_config">
               <template #default="{ row }">
-                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.final_config }">
+                <span :class="{
+                  'diff-value': showOnlyDiff && row.model_values[modelId]?._hasDiff?.final_config,
+                  'cell-changed cell-updated': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'final_config') === 'update',
+                  'cell-changed cell-created': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'final_config') === 'create',
+                  'cell-changed cell-deleted': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'final_config') === 'delete'
+                }">
                   {{ row.model_values[modelId]?.final_config || '-' }}
                 </span>
               </template>
             </el-table-column>
             <el-table-column v-if="compareFields.includes('current_config')" label="当前配置" :width="fieldColumnWidths.current_config" column-key="current_config">
               <template #default="{ row }">
-                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.current_config }">
+                <span :class="{
+                  'diff-value': showOnlyDiff && row.model_values[modelId]?._hasDiff?.current_config,
+                  'cell-changed cell-updated': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'current_config') === 'update',
+                  'cell-changed cell-created': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'current_config') === 'create',
+                  'cell-changed cell-deleted': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'current_config') === 'delete'
+                }">
                   {{ row.model_values[modelId]?.current_config || '-' }}
                 </span>
               </template>
             </el-table-column>
             <el-table-column v-if="compareFields.includes('selection_config')" label="选型类别" :width="fieldColumnWidths.selection_config" column-key="selection_config">
               <template #default="{ row }">
-                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.selection_config }">
+                <span :class="{
+                  'diff-value': showOnlyDiff && row.model_values[modelId]?._hasDiff?.selection_config,
+                  'cell-changed cell-updated': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'selection_config') === 'update',
+                  'cell-changed cell-created': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'selection_config') === 'create',
+                  'cell-changed cell-deleted': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'selection_config') === 'delete'
+                }">
                   {{ row.model_values[modelId]?.selection_config || '-' }}
                 </span>
               </template>
             </el-table-column>
             <el-table-column v-if="compareFields.includes('rd_status')" label="研发状态" :width="fieldColumnWidths.rd_status" column-key="rd_status">
               <template #default="{ row }">
-                <span :class="{ 'diff-value': row.model_values[modelId]?._hasDiff?.rd_status }">
+                <span :class="{
+                  'diff-value': showOnlyDiff && row.model_values[modelId]?._hasDiff?.rd_status,
+                  'cell-changed cell-updated': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'rd_status') === 'update',
+                  'cell-changed cell-created': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'rd_status') === 'create',
+                  'cell-changed cell-deleted': !showOnlyDiff && getDraftCellType(row.item_id, modelId, 'rd_status') === 'delete'
+                }">
                   {{ row.model_values[modelId]?.rd_status || '-' }}
                 </span>
               </template>
@@ -223,7 +287,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Download, EditPen } from '@element-plus/icons-vue'
 import {
   getSeriesList, getModels, compareConfigs, exportCompareResult,
-  createDraftBatch, getDraftStats, createDraft,
+  createDraftBatch, getCurrentDraftBatch, getDraftList, createDraft,
   submitDraftBatch, discardDraftBatch, deleteDraftByKey,
   getEnumValues
 } from '../api/data'
@@ -242,9 +306,10 @@ const enumValues = ref({
 })
 
 // 草稿
-const draftBatchId = ref(null)
+const draftBatchMap = ref(new Map())  // seriesId -> batchId
 const draftStats = ref({ total: 0, create: 0, update: 0, delete: 0 })
 const draftChanges = ref(new Map())
+const draftItemTypes = ref(new Map())  // item_id → Set<change_type>
 
 // 编辑状态
 const editingCell = ref(null)
@@ -322,7 +387,9 @@ const selectedSeries = ref([])
 const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesName }
 const selectedModels = ref([])
 const compareFields = ref(['current_config', 'final_config'])
+const showNameColumns = ref(['rd_name', 'zh_desc', 'v_code', 'ipn'])  // 默认显示的标识列
 const showOnlyDiff = ref(true)  // 默认只显示差异项
+const draftFilter = ref('')  // 草稿筛选: '', 'all', 'update'
 
 // 对比结果
 const compareResult = ref(null)
@@ -377,6 +444,9 @@ const groupedTableData = computed(() => {
         item_id: row.item_id,
         rd_name: row.rd_name,
         ipn: row.ipn,
+        v_code: row.v_code,
+        zh_desc: row.zh_desc,
+        en_desc: row.en_desc,
         row_index: row.row_index,
         model_values: {}  // { modelId: { final_config, current_config, selection_config, rd_status, hasDiff: {field: bool} } }
       })
@@ -408,6 +478,23 @@ const groupedTableData = computed(() => {
 
   let data = Array.from(itemMap.values())
 
+  // 叠加草稿值：用 draftChanges 中的 newValue 覆盖已提交值
+  for (const item of data) {
+    let hasDraft = draftItemTypes.value.has(item.item_id)
+    for (const [key, change] of draftChanges.value.entries()) {
+      const parts = key.split('_')
+      const itemId = parseInt(parts[0])
+      if (itemId !== item.item_id) continue
+      const modelId = parseInt(parts[1])
+      const fieldName = parts.slice(2).join('_')
+      if (item.model_values[modelId] && fieldName in item.model_values[modelId]) {
+        item.model_values[modelId][fieldName] = change.newValue
+        hasDraft = true
+      }
+    }
+    item._hasDraft = hasDraft
+  }
+
   // 仅显示差异项
   if (showOnlyDiff.value) {
     data = data.filter(item =>
@@ -420,8 +507,20 @@ const groupedTableData = computed(() => {
   return data
 })
 
-// 过滤后的表格数据
-const filteredTableData = groupedTableData
+// 过滤后的表格数据（叠加草稿筛选）
+const filteredTableData = computed(() => {
+  let data = groupedTableData.value
+
+  // 草稿筛选
+  if (draftFilter.value) {
+    data = data.filter(item => {
+      if (draftFilter.value === 'all') return item._hasDraft
+      return draftItemTypes.value.get(item.item_id)?.has(draftFilter.value) || false
+    })
+  }
+
+  return data
+})
 
 // 分页后的表格数据
 const paginatedTableData = computed(() => {
@@ -508,15 +607,60 @@ const handleCompare = async () => {
       }
     }
 
-    // 初始化草稿批次（仅单选系列时可用）
-    if (selectedSeries.value.length === 1) {
+    // 初始化草稿批次（跨系列）
+    draftChanges.value.clear()
+    draftItemTypes.value.clear()
+    draftBatchMap.value.clear()
+    const newBatchMap = new Map()
+    const statsAcc = { total: 0, create: 0, update: 0, delete: 0 }
+    for (const seriesId of selectedSeries.value) {
       try {
-        const batchRes = await createDraftBatch(selectedSeries.value[0])
-        draftBatchId.value = batchRes.id
+        let batchRes, batchId
+        try { batchRes = await getCurrentDraftBatch(seriesId) } catch { batchRes = null }
+        if (batchRes?.exists) {
+          batchId = batchRes.batch.id
+        } else {
+          // 无现有批次，创建一个新批次
+          const newBatch = await createDraftBatch(seriesId)
+          batchId = newBatch.id
+        }
+        newBatchMap.set(seriesId, batchId)
+        // 加载该系列的已有草稿（只统计当前选中型号）
+        try {
+          const drafts = await getDraftList(batchId)
+          for (const d of (drafts.items || drafts || [])) {
+            // 只统计当前选中的型号
+            if (d.model_id && !selectedModels.value.includes(d.model_id)) continue
+            statsAcc.total++
+            if (d.change_type === 'create') statsAcc.create++
+            else if (d.change_type === 'update') statsAcc.update++
+            else if (d.change_type === 'delete') statsAcc.delete++
+            // 记录 item_id 的所有草稿类型（用于筛选）
+            if (d.item_id) {
+              if (!draftItemTypes.value.has(d.item_id)) {
+                draftItemTypes.value.set(d.item_id, new Set())
+              }
+              draftItemTypes.value.get(d.item_id).add(d.change_type)
+            }
+            if (d.change_type === 'update') {
+              const key = `${d.item_id}_${d.model_id}_${d.field_name}`
+              draftChanges.value.set(key, {
+                oldValue: d.old_value,
+                newValue: d.new_value,
+                draftId: d.id
+              })
+              if (!originalValues.value.has(key)) {
+                originalValues.value.set(key, d.old_value)
+              }
+            }
+          }
+        } catch (e) { console.error('加载草稿列表失败:', e) }
       } catch (error) {
-        console.error('初始化草稿失败:', error)
+        console.error(`系列 ${seriesId} 初始化草稿失败:`, error)
       }
     }
+    draftBatchMap.value = newBatchMap
+    draftStats.value = statsAcc
 
     // 加载枚举值
     await loadEnumValues()
@@ -605,16 +749,24 @@ const isValueChanged = (oldVal, newVal) => {
   return String(oldVal || '') !== String(newVal || '')
 }
 
+// 根据 modelId 查找对应的 seriesId
+const findSeriesIdByModelId = (modelId) => {
+  const m = allModelsMap.value.get(typeof modelId === 'number' ? modelId : parseInt(modelId))
+  return m ? m.seriesId : null
+}
+
 // 保存草稿
 const saveDraft = async (row, modelId, newValue, oldValue) => {
-  if (!draftBatchId.value || selectedSeries.value.length !== 1) return
+  const seriesId = findSeriesIdByModelId(modelId)
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
 
+  const batchId = draftBatchMap.value.get(seriesId)
   const key = `${row.item_id}_${modelId}_${row.field_name}`
 
   try {
     const res = await createDraft({
-      series_id: selectedSeries.value[0],
-      batch_id: draftBatchId.value,
+      series_id: seriesId,
+      batch_id: batchId,
       change_type: 'update',
       item_id: row.item_id,
       model_id: parseInt(modelId),
@@ -623,8 +775,18 @@ const saveDraft = async (row, modelId, newValue, oldValue) => {
       old_value: oldValue
     })
 
+    const isNew = !draftChanges.value.has(key)
     draftChanges.value.set(key, { oldValue, newValue, draftId: res.draft_id })
-    await loadDraftStats()
+    if (isNew) {
+      if (row.item_id) {
+        if (!draftItemTypes.value.has(row.item_id)) {
+          draftItemTypes.value.set(row.item_id, new Set())
+        }
+        draftItemTypes.value.get(row.item_id).add('update')
+      }
+      draftStats.value.total++
+      draftStats.value.update++
+    }
   } catch (error) {
     console.error('保存草稿失败:', error)
     ElMessage.error('保存失败')
@@ -633,26 +795,29 @@ const saveDraft = async (row, modelId, newValue, oldValue) => {
 
 // 删除草稿变更
 const removeDraftChange = async (itemId, modelId, fieldName, key) => {
-  if (!draftBatchId.value) return
+  const seriesId = findSeriesIdByModelId(modelId)
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
+
+  const batchId = draftBatchMap.value.get(seriesId)
 
   try {
-    await deleteDraftByKey(draftBatchId.value, itemId, parseInt(modelId), fieldName)
+    await deleteDraftByKey(batchId, itemId, parseInt(modelId), fieldName)
     draftChanges.value.delete(key)
-    await loadDraftStats()
+    // 检查该 item 是否还有其他 update 草稿
+    let hasUpdateLeft = false
+    for (const [k] of draftChanges.value.entries()) {
+      if (k.startsWith(`${itemId}_`)) { hasUpdateLeft = true; break }
+    }
+    if (!hasUpdateLeft && draftItemTypes.value.has(itemId)) {
+      draftItemTypes.value.get(itemId).delete('update')
+      if (draftItemTypes.value.get(itemId).size === 0) {
+        draftItemTypes.value.delete(itemId)
+      }
+    }
+    draftStats.value.total--
+    draftStats.value.update--
   } catch (error) {
     console.error('删除草稿失败:', error)
-  }
-}
-
-// 加载草稿统计
-const loadDraftStats = async () => {
-  if (!draftBatchId.value) return
-
-  try {
-    const res = await getDraftStats(draftBatchId.value)
-    draftStats.value = res
-  } catch (error) {
-    console.error('加载草稿统计失败:', error)
   }
 }
 
@@ -707,6 +872,17 @@ const getFieldTagType = (field) => {
     'rd_status': 'info'
   }
   return types[field] || ''
+}
+
+// 获取单元格的草稿变更类型（优先 item 级别的 delete/create，其次 cell 级别的 update）
+const getDraftCellType = (itemId, modelId, fieldName) => {
+  const types = draftItemTypes.value.get(itemId)
+  if (types) {
+    if (types.has('delete')) return 'delete'
+    if (types.has('create')) return 'create'
+  }
+  const key = `${itemId}_${modelId}_${fieldName}`
+  return draftChanges.value.has(key) ? 'update' : null
 }
 
 // 判断是否有差异
@@ -776,15 +952,18 @@ const handleSubmitDraft = () => {
   submitDialogVisible.value = true
 }
 
-// 确认提交草稿
+// 确认提交草稿（提交所有系列批次）
 const confirmSubmitDraft = async () => {
-  if (!draftBatchId.value) return
+  const entries = Array.from(draftBatchMap.value.entries())
+  if (entries.length === 0) return
 
   try {
-    await submitDraftBatch(draftBatchId.value, {
-      version_number: submitForm.version_number || undefined,
-      description: submitForm.description || undefined
-    })
+    await Promise.all(entries.map(([seriesId, batchId]) =>
+      submitDraftBatch(batchId, {
+        version_number: submitForm.version_number || undefined,
+        description: submitForm.description || undefined
+      })
+    ))
 
     ElMessage.success('提交成功')
     submitDialogVisible.value = false
@@ -804,9 +983,10 @@ const confirmSubmitDraft = async () => {
   }
 }
 
-// 废弃草稿
+// 废弃草稿（废弃所有系列批次）
 const handleDiscardDraft = async () => {
-  if (!draftBatchId.value) return
+  const entries = Array.from(draftBatchMap.value.entries())
+  if (entries.length === 0) return
 
   try {
     await ElMessageBox.confirm('确认废弃所有草稿？此操作不可恢复。', '确认', {
@@ -815,7 +995,7 @@ const handleDiscardDraft = async () => {
       type: 'warning'
     })
 
-    await discardDraftBatch(draftBatchId.value)
+    await Promise.all(entries.map(([seriesId, batchId]) => discardDraftBatch(batchId)))
     ElMessage.success('已废弃')
 
     // 清空草稿状态
@@ -833,6 +1013,16 @@ const handleDiscardDraft = async () => {
       ElMessage.error('废弃失败')
     }
   }
+}
+
+// 草稿筛选切换
+const toggleDraftFilter = (type) => {
+  draftFilter.value = draftFilter.value === type ? '' : type
+  currentPage.value = 1
+}
+const clearDraftFilter = () => {
+  draftFilter.value = ''
+  currentPage.value = 1
 }
 
 onMounted(() => {
@@ -890,11 +1080,32 @@ onMounted(() => {
 }
 
 .diff-value {
-  background-color: #fdf6ec;
-  color: #E6A23C;
+  background-color: #f4f0fd;
+  color: #7c3aed;
   font-weight: 600;
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+/* 草稿修改样式 — 沿用配置管理模块 */
+.cell-changed {
+  border-radius: 4px;
+}
+.cell-changed.cell-updated {
+  background-color: #fdf6ec;
+  color: #e6a23c;
+  font-weight: 500;
+}
+.cell-changed.cell-created {
+  background-color: #f0f9eb;
+  color: #67c23a;
+  font-weight: 500;
+}
+.cell-changed.cell-deleted {
+  background-color: #fef0f0;
+  color: #f56c6c;
+  text-decoration: line-through;
+  font-weight: 500;
 }
 
 .pagination-wrapper {
@@ -902,6 +1113,16 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
 }
+
+/* 草稿筛选栏 */
+.draft-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  flex-wrap: wrap;
+}
+.clickable-tag { cursor: pointer }
 
 :deep(.el-checkbox-group) {
   display: flex;
@@ -943,17 +1164,6 @@ onMounted(() => {
   margin-left: auto;
   display: flex;
   gap: 8px;
-}
-
-/* 已修改的单元格高亮 */
-.cell-changed {
-  background-color: #fdf6ec;
-  border-radius: 4px;
-}
-
-.cell-changed span:first-child {
-  color: #e6a23c;
-  font-weight: 500;
 }
 
 /* 原值提示 */
