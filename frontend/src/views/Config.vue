@@ -4,7 +4,7 @@
     <el-card class="toolbar-card" shadow="never">
       <div class="toolbar">
         <div class="left">
-          <el-select v-model="selectedSeries" placeholder="选择产品系列（可多选）" @change="handleSeriesSelect" multiple collapse-tags collapse-tags-tooltip style="width: 280px">
+          <el-select v-model="selectedSeries" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 280px">
             <template #header>
               <div style="display: flex; justify-content: space-between; padding: 4px 12px; gap: 8px;">
                 <el-button size="small" @click="selectAllSeries" :disabled="selectedSeries.length === seriesList.length && seriesList.length > 0">全选</el-button>
@@ -14,27 +14,45 @@
             <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
 
-          <div v-if="selectedSeries.length > 1" class="series-tags" style="margin-left: 8px;">
-            <el-tag
-              v-for="s in seriesList.filter(ss => selectedSeries.includes(ss.id))"
-              :key="s.id"
-              size="small"
-              :type="activeSeriesId === s.id ? 'primary' : 'info'"
-              class="clickable-tag"
-              style="cursor: pointer;"
-              @click="switchActiveSeries(s.id)"
-            >{{ s.name }}</el-tag>
-          </div>
-
           <el-select
-            v-model="selectedModels"
+            v-model="tempSelectedModels"
             multiple
             collapse-tags
             collapse-tags-tooltip
             placeholder="选择产品型号（可多选）"
             style="width: 350px"
+            popper-class="model-select-dropdown"
+            @visible-change="onModelDropdownVisibleChange"
           >
-            <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
+            <template #header>
+              <div style="padding: 4px 12px 8px;">
+                <el-input
+                  v-model="modelFilterText"
+                  placeholder="输入搜索型号..."
+                  size="small"
+                  clearable
+                  @keydown.stop
+                />
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 4px 12px; gap: 8px;">
+                <el-button size="small" @click="selectAllModels" :disabled="allModelsMap.size === 0">全选</el-button>
+                <el-button size="small" @click="clearAllModels" :disabled="tempSelectedModels.length === 0">取消</el-button>
+                <el-button size="small" @click="invertModelSelection" :disabled="allModelsMap.size === 0">反选</el-button>
+                <el-button size="small" @click="selectMatchingModels" :disabled="!modelFilterText">选中匹配</el-button>
+              </div>
+            </template>
+            <el-option-group
+              v-for="group in filteredModelGroups"
+              :key="group.seriesId"
+              :label="group.seriesName"
+            >
+              <el-option
+                v-for="m in group.models"
+                :key="m.id"
+                :label="m.name"
+                :value="m.id"
+              />
+            </el-option-group>
           </el-select>
 
           <el-select
@@ -121,7 +139,7 @@
           <el-button :icon="Download" @click="handleExport">导出Excel</el-button>
 
           <!-- 批量操作 -->
-          <el-dropdown v-if="selectedSeries.length > 1" @command="handleBatchOperation" style="margin: 0 4px;">
+          <el-dropdown v-if="selectedSeries.length > 0" @command="handleBatchOperation" style="margin: 0 4px;">
             <el-button type="warning">
               批量操作 ({{ selectedSeries.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
@@ -255,7 +273,7 @@
               type="primary"
               size="small"
               :disabled="selectedDraftItemIds.size === 0"
-              @click="handleSubmitDraft(selectedDraftItemIds.value)"
+              @click="handleSubmitDraft(selectedDraftItemIds)"
             >提交选中项</el-button>
           </div>
           <div class="draft-items-list">
@@ -297,7 +315,7 @@
     <el-card shadow="never">
       <el-table
         ref="tableRef"
-        :data="filteredTableData"
+        :data="paginatedTableData"
         border
         stripe
         :height="tableMaxHeight"
@@ -315,11 +333,13 @@
         <el-table-column v-if="visibleColumns.zh_desc" :fixed="fixedColumns.zh_desc ? 'left' : false" prop="zh_desc" label="中文描述" width="200" show-overflow-tooltip />
         <el-table-column v-if="visibleColumns.en_desc" :fixed="fixedColumns.en_desc ? 'left' : false" prop="en_desc" label="英文描述" width="200" show-overflow-tooltip />
 
-        <el-table-column
-          v-for="modelId in selectedModels"
-          :key="modelId"
-          :label="getModelName(modelId)"
-        >
+        <template v-for="group in groupedSelectedModels" :key="group.seriesId">
+          <el-table-column :label="group.seriesName">
+            <el-table-column
+              v-for="modelId in group.modelIds"
+              :key="modelId"
+              :label="getModelShortName(modelId)"
+            >
           <el-table-column v-if="visibleColumns.final_config" label="最终配置" :width="fieldColWidths.final_config">
             <template #default="{ row }">
               <div
@@ -529,23 +549,23 @@
               </div>
             </template>
           </el-table-column>
-        </el-table-column>
+            </el-table-column>
+          </el-table-column>
+        </template>
 
         <template #empty>
           <el-empty description="暂无数据，请导入Excel或选择产品系列" />
         </template>
       </el-table>
 
-      <!-- 分页 -->
-      <div class="pagination-wrapper" v-if="total > 0">
+      <!-- 分页（前端分页） -->
+      <div class="pagination-wrapper" v-if="filteredTableData.length > 0">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[50, 100, 200, 500]"
-          :total="total"
+          :total="filteredTableData.length"
           layout="total, sizes, prev, pager, next, jumper"
-          @size-change="loadData"
-          @current-change="loadData"
         />
       </div>
     </el-card>
@@ -874,12 +894,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown } from '@element-plus/icons-vue'
 import {
   getSeriesList, getModels, getConfigRows,
-  getCurrentDraftBatch, createDraftBatch, getDraftStats, createDraft,
+  getCurrentDraftBatch, createDraftBatch, createDraft,
   submitDraftBatch, discardDraftBatch, deleteDraftByKey,
   importExcel, exportExcel, createVersion,
   getEnumValues, previewImport,
@@ -888,11 +908,45 @@ import {
 
 // 数据
 const seriesList = ref([])
-const modelList = ref([])
+const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesName }
 const tableData = ref([])
 const originalData = ref([])  // 存储原始数据，用于比较变化
 const loading = ref(false)
 const selectedRows = ref([])
+
+// 按系列分组的型号列表（用于 optgroup 下拉）
+const modelGroups = computed(() => {
+  const seriesMap = new Map()
+  for (const [id, m] of allModelsMap.value) {
+    const key = m.seriesId
+    if (!seriesMap.has(key)) {
+      seriesMap.set(key, { seriesId: key, seriesName: m.seriesName, models: [] })
+    }
+    seriesMap.get(key).models.push(m)
+  }
+  return Array.from(seriesMap.values())
+})
+
+// 机型搜索文本（下拉内搜索框）
+const modelFilterText = ref('')
+
+// 根据搜索文本过滤后的型号分组
+const filteredModelGroups = computed(() => {
+  const q = modelFilterText.value.trim().toLowerCase()
+  if (!q) return modelGroups.value
+  return modelGroups.value
+    .map(g => ({
+      ...g,
+      models: g.models.filter(m => m.name.toLowerCase().includes(q))
+    }))
+    .filter(g => g.models.length > 0)
+})
+
+// 根据 modelId 查找对应的 seriesId
+const findSeriesIdByModelId = (modelId) => {
+  const m = allModelsMap.value.get(typeof modelId === 'number' ? modelId : parseInt(modelId))
+  return m ? m.seriesId : null
+}
 
 // 草稿变更记录（用于UI高亮和撤销）
 // key: `${rowId}_${modelId}_${field}`
@@ -939,9 +993,8 @@ const enumValues = reactive({
 
 // 筛选条件
 const selectedSeries = ref([])
-const activeSeriesId = ref(null)
-const selectedSeriesCount = computed(() => selectedSeries.value.length)
 const selectedModels = ref([])
+const tempSelectedModels = ref([])  // 机型下拉临时选择，收起时才同步到 selectedModels
 const selectedCategories = ref([])
 const searchText = ref('')
 
@@ -952,22 +1005,10 @@ const tempSearchText = ref('')
 // 分页
 const currentPage = ref(1)
 const pageSize = ref(100)
-const total = ref(0)
-
-// 是否显示操作提示
-const showTips = ref(true)
-// 提示是否展开
-const tipsExpanded = ref(false)
-
-// 切换提示展开/收缩
-const toggleTipsExpand = () => {
-  tipsExpanded.value = !tipsExpanded.value
-}
 
 // 列筛选
 const VISIBLE_COLUMNS_KEY = 'config_visible_columns'
 const FIXED_COLUMNS_KEY = 'config_fixed_columns'
-const SHOW_TIPS_KEY = 'config_show_tips'
 const SERIES_SELECTION_KEY = 'config_series_selection'
 
 const defaultVisibleColumns = {
@@ -1020,8 +1061,7 @@ const loadColumnSettings = () => {
 const saveSeriesSelection = () => {
   try {
     localStorage.setItem(SERIES_SELECTION_KEY, JSON.stringify({
-      selected_ids: selectedSeries.value,
-      active_id: activeSeriesId.value
+      selected_ids: selectedSeries.value
     }))
   } catch (e) {
     console.error('保存系列选择失败:', e)
@@ -1056,8 +1096,7 @@ const editingCell = ref(null)
 const editSelectRef = ref(null)  // 编辑时的select组件引用
 
 // 草稿
-const draftBatchId = ref(null)
-const draftBatchMap = ref({})  // series_id → batch_id 映射
+const draftBatchMap = ref(new Map())  // seriesId -> batchId
 const draftStats = reactive({
   total: 0,
   create: 0,
@@ -1241,13 +1280,26 @@ const someDraftSelected = computed(() => {
 const draftModels = computed(() => {
   return Array.from(draftModelIdSet.value).map(id => ({
     id,
-    name: modelList.value.find(m => m.id === id)?.name || `型号 ${id}`
+    name: allModelsMap.value.get(id)?.name || `型号 ${id}`
   }))
 })
+
+const isEmptyValue = (v) => v == null || v === '' || v === '-' || v === 'N/A' || v === '未定义'
 
 // 根据草稿筛选过滤表格数据
 const filteredTableData = computed(() => {
   let data = tableData.value
+
+  // 隐藏全空行：所有选中机型的当前可见配置字段都为空
+  const visibleFields = visibleConfigFields.value
+  data = data.filter(row => {
+    if (!row.model_values || visibleFields.length === 0) return false
+    return selectedModels.value.some(modelId => {
+      const mv = row.model_values[modelId]
+      if (!mv) return false
+      return visibleFields.some(f => !isEmptyValue(mv[f]))
+    })
+  })
 
   // 草稿筛选
   if (draftFilter.value) {
@@ -1333,7 +1385,11 @@ const filteredTableData = computed(() => {
       // 根据筛选模式决定要检查的字段
       let fieldsToCheck = []
       if (diffFilterMode.value === 'all') {
-        fieldsToCheck = ['final', 'current', 'selection', 'rd']
+        // 只看差异：仅检查当前可见的配置列字段
+        fieldsToCheck = visibleConfigFields.value.map(f => {
+          const m = { final_config: 'final', current_config: 'current', selection_config: 'selection', rd_status: 'rd' }
+          return m[f]
+        }).filter(Boolean)
       } else {
         // 特定字段筛选
         const fieldMap = {
@@ -1385,6 +1441,12 @@ const filteredTableData = computed(() => {
   }
 
   return data
+})
+
+// 前端分页后的表格数据
+const paginatedTableData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredTableData.value.slice(start, start + pageSize.value)
 })
 
 // 导入预览
@@ -1582,33 +1644,27 @@ const loadSeries = async () => {
           )
           if (validIds.length > 0) {
             selectedSeries.value = validIds
-            activeSeriesId.value = parsed.active_id && validIds.includes(parsed.active_id)
-              ? parsed.active_id
-              : validIds[0]
           } else {
             selectedSeries.value = []
-            activeSeriesId.value = null
           }
         } catch {
           // JSON 解析失败，保持空选择
           selectedSeries.value = []
-          activeSeriesId.value = null
         }
       } else {
         // 没有保存的选择，默认不选任何系列
         selectedSeries.value = []
-        activeSeriesId.value = null
       }
 
-      // 如果有 activeSeriesId，加载机型
-      if (activeSeriesId.value) {
+      // 如果有选中系列，加载型号
+      if (selectedSeries.value.length > 0) {
         await loadModels()
       }
     } else {
       selectedSeries.value = []
-      activeSeriesId.value = null
-      modelList.value = []
+      allModelsMap.value.clear()
       selectedModels.value = []
+      tempSelectedModels.value = []
       tableData.value = []
     }
   } catch (error) {
@@ -1621,9 +1677,6 @@ const loadSeries = async () => {
 const selectAllSeries = () => {
   const allIds = seriesList.value.map(s => s.id)
   selectedSeries.value = allIds
-  if (!activeSeriesId.value || !allIds.includes(activeSeriesId.value)) {
-    activeSeriesId.value = allIds.length > 0 ? allIds[0] : null
-  }
   saveSeriesSelection()
   handleSeriesSelect(allIds)
 }
@@ -1631,63 +1684,125 @@ const selectAllSeries = () => {
 // 清空系列
 const clearAllSeries = () => {
   selectedSeries.value = []
-  activeSeriesId.value = null
-  modelList.value = []
+  allModelsMap.value.clear()
   selectedModels.value = []
+  tempSelectedModels.value = []
   tableData.value = []
   saveSeriesSelection()
+}
+
+// 机型下拉 visible-change：收起时才同步到 selectedModels
+const onModelDropdownVisibleChange = (visible) => {
+  if (!visible) {
+    selectedModels.value = [...tempSelectedModels.value]
+  } else {
+    // 打开时用当前生效的选择初始化临时值
+    tempSelectedModels.value = [...selectedModels.value]
+  }
+}
+
+// 机型全选
+const selectAllModels = () => {
+  tempSelectedModels.value = Array.from(allModelsMap.value.keys())
+}
+
+// 机型取消全选
+const clearAllModels = () => {
+  tempSelectedModels.value = []
+}
+
+// 机型反选
+const invertModelSelection = () => {
+  const currentSet = new Set(tempSelectedModels.value)
+  tempSelectedModels.value = Array.from(allModelsMap.value.keys()).filter(id => !currentSet.has(id))
+}
+
+// 选中所有匹配搜索文本的型号
+const selectMatchingModels = () => {
+  const q = modelFilterText.value.trim().toLowerCase()
+  if (!q) return
+  const matched = []
+  for (const [id, m] of allModelsMap.value) {
+    if (m.name.toLowerCase().includes(q)) {
+      matched.push(id)
+    }
+  }
+  if (matched.length > 0) {
+    const current = new Set(tempSelectedModels.value)
+    for (const id of matched) current.add(id)
+    tempSelectedModels.value = Array.from(current)
+  }
+}
+
+// 记录下拉打开时的系列选择，用于比较是否真的变化
+const prevSelectedSeries = ref([])
+
+// 系列下拉 visible-change 事件：收起时才真正刷新数据
+const onSeriesDropdownVisibleChange = (visible) => {
+  if (!visible) {
+    // 下拉收起，检查选择是否真的变了
+    const prev = prevSelectedSeries.value
+    const curr = selectedSeries.value
+    const changed = prev.length !== curr.length || prev.some(id => !curr.includes(id)) || curr.some(id => !prev.includes(id))
+    if (changed) {
+      handleSeriesSelect(curr)
+    }
+  } else {
+    // 下拉打开，记录当前选择
+    prevSelectedSeries.value = [...selectedSeries.value]
+  }
 }
 
 // 处理系列选择变化
 const handleSeriesSelect = (val) => {
   const ids = Array.isArray(val) ? val : [val]
   if (ids.length === 0) {
-    activeSeriesId.value = null
-    modelList.value = []
+    allModelsMap.value.clear()
     selectedModels.value = []
+    tempSelectedModels.value = []
     tableData.value = []
     saveSeriesSelection()
     return
   }
-  // 如果当前 activeSeriesId 不在选中列表中，切换到第一个
-  if (!ids.includes(activeSeriesId.value)) {
-    activeSeriesId.value = ids[0]
-  }
   currentPage.value = 1
   diffFilterMode.value = ''
   saveSeriesSelection()
   loadModels()
 }
 
-// 切换 activeSeriesId
-const switchActiveSeries = (seriesId) => {
-  activeSeriesId.value = seriesId
-  currentPage.value = 1
-  diffFilterMode.value = ''
-  saveSeriesSelection()
-  loadModels()
-}
-
-// 加载产品型号
+// 加载产品型号（从所有选中系列并行加载）
 const loadModels = async () => {
-  if (!activeSeriesId.value) {
-    modelList.value = []
+  allModelsMap.value.clear()
+  if (selectedSeries.value.length === 0) {
     selectedModels.value = []
+    tempSelectedModels.value = []
     return
   }
 
   try {
-    const res = await getModels(activeSeriesId.value)
-    // 如果返回404或空数据，说明系列可能已被删除
-    if (!res.items || res.items.length === 0) {
-      modelList.value = []
-      selectedModels.value = []
-      tableData.value = []
-      return
+    const results = await Promise.all(
+      selectedSeries.value.map(sid => getModels(sid))
+    )
+    results.forEach((res, idx) => {
+      const seriesId = selectedSeries.value[idx]
+      const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
+      for (const m of (res.items || [])) {
+        allModelsMap.value.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
+      }
+    })
+    // 清除无效的已选型号，自动全选所有型号
+    selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
+    if (selectedModels.value.length === 0) {
+      selectedModels.value = Array.from(allModelsMap.value.keys())
+    } else {
+      // 补充新加载但未选中的型号
+      const existingSet = new Set(selectedModels.value)
+      for (const id of allModelsMap.value.keys()) {
+        if (!existingSet.has(id)) selectedModels.value.push(id)
+      }
     }
-    modelList.value = res.items || []
-    selectedModels.value = modelList.value.map(m => m.id)
     diffFilterMode.value = ''   // 加载新型号列表时重置差异筛选
+    tempSelectedModels.value = [...selectedModels.value]  // 同步临时选择
     await loadData()
     await initDraft()
   } catch (error) {
@@ -1700,39 +1815,68 @@ const loadModels = async () => {
   }
 }
 
-// 加载配置数据
+// 加载配置数据（从所有选中系列并行加载，按 IPN 合并）
 const loadData = async () => {
-  if (!activeSeriesId.value) {
+  if (selectedSeries.value.length === 0) {
     tableData.value = []
-    total.value = 0
     return
   }
 
   loading.value = true
   try {
-    // 草稿或差异筛选时加载全部数据
-    const isLoadingAll = !!draftFilter.value || !!diffFilterMode.value
-    const params = {
-      series_id: activeSeriesId.value,
+    // 加载全部数据（limit: 99999），前端分页
+    const paramsBase = {
       categories: selectedCategories.value.length > 0 ? selectedCategories.value.join(',') : undefined,
       search: searchText.value || undefined,
-      include_empty: isLoadingAll || undefined,
-      skip: isLoadingAll ? 0 : (currentPage.value - 1) * pageSize.value,
-      limit: isLoadingAll ? 99999 : pageSize.value
+      include_empty: true,
+      skip: 0,
+      limit: 99999
     }
 
-    const res = await getConfigRows(params)
-    tableData.value = res.items || []
+    const results = await Promise.all(
+      selectedSeries.value.map(sid => getConfigRows({ ...paramsBase, series_id: sid }))
+    )
+
+    // 按 IPN 合并 model_values
+    const mergedMap = new Map() // ipn -> mergedRow
+    results.forEach((res, idx) => {
+      const seriesId = selectedSeries.value[idx]
+      for (const item of (res.items || [])) {
+        const ipn = item.ipn || `__no_ipn_${item.id}`
+        if (!mergedMap.has(ipn)) {
+          // 以第一个出现的 ConfigItem 字段为权威值
+          mergedMap.set(ipn, {
+            id: item.id,
+            ipn: item.ipn,
+            rd_name: item.rd_name,
+            v_code: item.v_code,
+            zh_desc: item.zh_desc,
+            en_desc: item.en_desc,
+            category: item.category,
+            model_values: {}
+          })
+        }
+        const merged = mergedMap.get(ipn)
+        // 合并 model_values
+        if (item.model_values) {
+          for (const [modelId, values] of Object.entries(item.model_values)) {
+            const mid = parseInt(modelId)
+            if (!merged.model_values[mid]) {
+              merged.model_values[mid] = values
+            }
+          }
+        }
+      }
+    })
+
+    tableData.value = Array.from(mergedMap.values())
     // 深拷贝保存原始数据
-    originalData.value = JSON.parse(JSON.stringify(res.items || []))
-    total.value = res.total || 0
+    originalData.value = JSON.parse(JSON.stringify(tableData.value))
   } catch (error) {
     console.error('加载配置数据失败:', error)
-    // 如果404错误，说明系列已被删除
     if (error.response?.status === 404) {
       ElMessage.warning('当前选中的系列已被删除，请重新选择')
       tableData.value = []
-      total.value = 0
       await loadSeries()
     } else {
       ElMessage.error('加载数据失败')
@@ -1856,115 +2000,161 @@ const applyFilters = async () => {
   selectedCategories.value = [...tempCategories.value]
   searchText.value = tempSearchText.value
   currentPage.value = 1
+  // 不做草稿重载，仅刷新数据
   await loadData()
-  await initDraft()
 }
 
-// 初始化草稿批次
+// 初始化草稿批次（多系列）
 const initDraft = async () => {
-  if (!activeSeriesId.value) return
+  if (selectedSeries.value.length === 0) return
 
-  try {
-    // 先尝试获取当前用户的草稿批次
-    const res = await getCurrentDraftBatch(activeSeriesId.value)
+  // 先清空旧状态
+  draftChanges.value.clear()
+  draftItemInfo.value = new Map()
+  newItemModelMap.value = new Map()
+  deletedItemModelMap.value = new Map()
+  newItemIds.value = new Set()
+  deletedItemIds.value = new Set()
+  draftDeleteValues.value = new Map()
+  draftModelIdSet.value = new Set()
+  draftStats.total = 0
+  draftStats.create = 0
+  draftStats.update = 0
+  draftStats.delete = 0
 
-    if (res.exists) {
-      // 有未提交的草稿，恢复它
-      draftBatchId.value = res.batch.id
-      draftStats.total = res.batch.total_count || 0
-      draftStats.create = res.batch.create_count || 0
-      draftStats.update = res.batch.update_count || 0
-      draftStats.delete = res.batch.delete_count || 0
+  const newBatchMap = new Map()
+  const createModelMap = new Map()
+  const deleteModelMap = new Map()
+  const infoMap = new Map()
+  const modelIdSet = new Set()
 
-      // 恢复草稿变更记录到 draftChanges，并把新值应用到 tableData
-      const createModelMap = new Map()
-      const deleteModelMap = new Map()
-      // 构建草稿项名称索引
-      const infoMap = new Map()
-      const modelIdSet = new Set()  // 直接从后端响应收集有变更的机型ID
-      for (const d of res.drafts) {
-        if (d.item_id && !infoMap.has(d.item_id)) {
-          infoMap.set(d.item_id, { rdName: d.rd_name, ipn: d.ipn })
-        }
-        if (d.change_type === 'create' && d.item_id && d.model_id) {
-          if (!createModelMap.has(d.item_id)) createModelMap.set(d.item_id, new Set())
-          createModelMap.get(d.item_id).add(d.model_id)
-          modelIdSet.add(d.model_id)
-        } else if (d.change_type === 'delete' && d.item_id && d.model_id) {
-          if (!deleteModelMap.has(d.item_id)) deleteModelMap.set(d.item_id, new Set())
-          deleteModelMap.get(d.item_id).add(d.model_id)
-          modelIdSet.add(d.model_id)
-          // 存储删除项的旧值（来自快照）
-          if (d.snapshot_values) {
-            try {
-              const snapVals = JSON.parse(d.snapshot_values)
-              const snapKey = `${d.item_id}_${d.model_id}`
-              draftDeleteValues.value.set(snapKey, snapVals)
-            } catch (e) {
-              // ignore parse errors
+  for (const seriesId of selectedSeries.value) {
+    try {
+      let batchId
+      try {
+        const res = await getCurrentDraftBatch(seriesId)
+        if (res?.exists) {
+          batchId = res.batch.id
+          // 恢复草稿变更记录
+          for (const d of (res.drafts || [])) {
+            if (d.item_id && !infoMap.has(d.item_id)) {
+              infoMap.set(d.item_id, { rdName: d.rd_name, ipn: d.ipn })
+            }
+            if (d.change_type === 'create' && d.item_id && d.model_id) {
+              if (!createModelMap.has(d.item_id)) createModelMap.set(d.item_id, new Set())
+              createModelMap.get(d.item_id).add(d.model_id)
+              modelIdSet.add(d.model_id)
+              draftStats.create++
+              draftStats.total++
+            } else if (d.change_type === 'delete' && d.item_id && d.model_id) {
+              if (!deleteModelMap.has(d.item_id)) deleteModelMap.set(d.item_id, new Set())
+              deleteModelMap.get(d.item_id).add(d.model_id)
+              modelIdSet.add(d.model_id)
+              draftStats.delete++
+              draftStats.total++
+              if (d.snapshot_values) {
+                try {
+                  const snapVals = JSON.parse(d.snapshot_values)
+                  draftDeleteValues.value.set(`${d.item_id}_${d.model_id}`, snapVals)
+                } catch (e) { /* ignore */ }
+              }
+            } else if (d.change_type === 'update' && d.item_id && d.model_id) {
+              modelIdSet.add(d.model_id)
+              const key = `${d.item_id}_${d.model_id}_${d.field_name}`
+              draftChanges.value.set(key, {
+                oldValue: d.old_value,
+                newValue: d.new_value,
+                draftId: d.id,
+                changeType: d.change_type
+              })
+              draftStats.update++
+              draftStats.total++
+              // 把草稿中的新值应用到 tableData（用 IPN 匹配）
+              const row = tableData.value.find(r => r.ipn === d.ipn)
+              if (row && row.model_values[d.model_id]) {
+                row.model_values[d.model_id][d.field_name] = d.new_value
+              }
             }
           }
-        } else if (d.change_type === 'update' && d.item_id && d.model_id) {
-          modelIdSet.add(d.model_id)
-          const key = `${d.item_id}_${d.model_id}_${d.field_name}`
-          draftChanges.value.set(key, {
-            oldValue: d.old_value,
-            newValue: d.new_value,
-            draftId: d.id,
-            changeType: d.change_type
-          })
-
-          // 把草稿中的新值应用到 tableData
-          const row = tableData.value.find(r => r.id === d.item_id)
-          if (row && row.model_values[d.model_id]) {
-            row.model_values[d.model_id][d.field_name] = d.new_value
-          }
         }
+      } catch (e) { /* no existing batch */ }
+
+      if (!batchId) {
+        const batchRes = await createDraftBatch(seriesId)
+        batchId = batchRes.id
       }
-      draftItemInfo.value = infoMap
-      newItemModelMap.value = createModelMap
-      deletedItemModelMap.value = deleteModelMap
-      newItemIds.value = new Set(createModelMap.keys())
-      deletedItemIds.value = new Set(deleteModelMap.keys())
-      draftModelIdSet.value = modelIdSet
-    } else {
-      // 没有草稿，创建新的批次
-      newItemModelMap.value = new Map()
-      deletedItemModelMap.value = new Map()
-      newItemIds.value = new Set()
-      deletedItemIds.value = new Set()
-      draftItemInfo.value = new Map()
-      draftDeleteValues.value = new Map()
-      draftModelIdSet.value = new Set()
-      const batchRes = await createDraftBatch(activeSeriesId.value)
-      draftBatchId.value = batchRes.id
-      await loadDraftStats()
+      newBatchMap.set(seriesId, batchId)
+    } catch (error) {
+      console.error(`系列 ${seriesId} 初始化草稿失败:`, error)
     }
-  } catch (error) {
-    console.error('初始化草稿失败:', error)
   }
+
+  draftBatchMap.value = newBatchMap
+  draftItemInfo.value = infoMap
+  newItemModelMap.value = createModelMap
+  deletedItemModelMap.value = deleteModelMap
+  newItemIds.value = new Set(createModelMap.keys())
+  deletedItemIds.value = new Set(deleteModelMap.keys())
+  draftModelIdSet.value = modelIdSet
 }
 
-// 加载草稿统计
-const loadDraftStats = async () => {
-  if (!draftBatchId.value) return
-
-  try {
-    const res = await getDraftStats(draftBatchId.value)
-    draftStats.total = res.total || 0
-    draftStats.create = res.create || 0
-    draftStats.update = res.update || 0
-    draftStats.delete = res.delete || 0
-  } catch (error) {
-    console.error('加载草稿统计失败:', error)
-  }
-}
-
-// 获取型号名称
+// 获取型号名称（跨系列格式：seriesName / modelName，用于下拉显示等）
 const getModelName = (modelId) => {
-  const model = modelList.value.find(m => m.id === modelId)
-  return model ? model.name : ''
+  const m = allModelsMap.value.get(modelId)
+  return m ? `${m.seriesName} / ${m.name}` : ''
 }
+
+// 获取型号简称（仅 modelName，自动省略与系列名重复的前缀）
+const getModelShortName = (modelId) => {
+  const m = allModelsMap.value.get(modelId)
+  if (!m) return ''
+  const modelName = m.name
+  const seriesName = m.seriesName
+
+  // 型号名以系列名开头 → 省略系列名，只保留差异部分
+  // 如 "VINNO ULTIMUS-70" → "-70"（系列名=VINNO ULTIMUS）
+  if (seriesName && modelName.startsWith(seriesName)) {
+    const suffix = modelName.slice(seriesName.length)
+    // 如果系列名后面紧跟分隔符或空格，保留分隔符
+    if (suffix) return suffix
+  }
+
+  // 找所有同系列型号的最长公共前缀并省略
+  const siblingNames = []
+  for (const [id, info] of allModelsMap.value) {
+    if (info.seriesId === m.seriesId) siblingNames.push(info.name)
+  }
+  if (siblingNames.length > 1) {
+    let prefix = siblingNames[0]
+    for (const name of siblingNames) {
+      while (!name.startsWith(prefix) && prefix.length > 0) {
+        prefix = prefix.slice(0, -1)
+      }
+    }
+    if (prefix.length >= 3 && modelName.length > prefix.length) {
+      return modelName.slice(prefix.length)
+    }
+  }
+
+  return modelName
+}
+
+// 按系列分组的已选型号（用于表头层级显示）
+const groupedSelectedModels = computed(() => {
+  const groups = []
+  const seen = new Set()
+  for (const modelId of selectedModels.value) {
+    const m = allModelsMap.value.get(modelId)
+    if (!m) continue
+    const key = m.seriesId
+    if (!seen.has(key)) {
+      seen.add(key)
+      groups.push({ seriesId: key, seriesName: m.seriesName, modelIds: [] })
+    }
+    groups.find(g => g.seriesId === key).modelIds.push(modelId)
+  }
+  return groups
+})
 
 const getModelNames = (modelIds) => {
   return Array.from(modelIds).map(id => getModelName(id)).filter(Boolean).join(', ')
@@ -2019,12 +2209,16 @@ const finishEdit = async (row, modelId, field, newValue) => {
 
 // 删除草稿变更
 const removeDraftChange = async (rowId, modelId, field, key) => {
-  if (!draftBatchId.value) return
+  const seriesId = findSeriesIdByModelId(modelId)
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
 
+  const batchId = draftBatchMap.value.get(seriesId)
   try {
-    await deleteDraftByKey(draftBatchId.value, rowId, modelId, field)
+    await deleteDraftByKey(batchId, rowId, modelId, field)
     draftChanges.value.delete(key)
-    await loadDraftStats()
+    // 本地递减 stats
+    if (draftStats.update > 0) draftStats.update--
+    if (draftStats.total > 0) draftStats.total--
   } catch (error) {
     console.error('删除草稿失败:', error)
   }
@@ -2032,14 +2226,16 @@ const removeDraftChange = async (rowId, modelId, field, key) => {
 
 // 单元格变更
 const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
-  if (!draftBatchId.value) return
+  const seriesId = findSeriesIdByModelId(modelId)
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
 
+  const batchId = draftBatchMap.value.get(seriesId)
   const key = `${row.id}_${modelId}_${field}`
 
   try {
     const res = await createDraft({
-      series_id: activeSeriesId.value,
-      batch_id: draftBatchId.value,
+      series_id: seriesId,
+      batch_id: batchId,
       change_type: 'update',
       item_id: row.id,
       model_id: modelId,
@@ -2049,6 +2245,7 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
     })
 
     // 记录变更用于UI高亮
+    const isNew = !draftChanges.value.has(key)
     draftChanges.value.set(key, {
       oldValue,
       newValue,
@@ -2056,7 +2253,10 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
       changeType: 'update'
     })
 
-    await loadDraftStats()
+    if (isNew) {
+      draftStats.total++
+      draftStats.update++
+    }
   } catch (error) {
     console.error('保存草稿失败:', error)
     ElMessage.error('保存失败')
@@ -2171,46 +2371,56 @@ const confirmImport = async () => {
   await loadEnumValues()
 }
 
-// 导出Excel
+// 导出Excel（每个系列分别导出）
 const handleExport = async () => {
-  if (!activeSeriesId.value) {
+  if (selectedSeries.value.length === 0) {
     ElMessage.warning('请先选择产品系列')
     return
   }
 
   try {
     ElMessage.info('正在导出，请稍候...')
-    const res = await exportExcel(activeSeriesId.value)
 
-    // 构建文件名
-    const seriesName = seriesList.value.find(s => s.id === activeSeriesId.value)?.name || ''
+    for (const seriesId of selectedSeries.value) {
+      const res = await exportExcel(seriesId)
+      const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
 
-    // 合并型号名称（相同前缀合并）
-    const modelNamesList = selectedModels.value.map(id => getModelName(id))
-    const mergedModelNames = mergeModelNames(modelNamesList)
+      // 获取该系列的型号
+      const seriesModelIds = []
+      for (const [mid, m] of allModelsMap.value) {
+        if (m.seriesId === seriesId && selectedModels.value.includes(mid)) {
+          seriesModelIds.push(mid)
+        }
+      }
+      const modelNamesList = seriesModelIds.map(id => {
+        const m = allModelsMap.value.get(id)
+        return m ? m.name : ''
+      }).filter(Boolean)
+      const mergedModelNames = mergeModelNames(modelNamesList)
 
-    const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
+      const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
 
-    let suffix = seriesName
-    if (mergedModelNames) {
-      suffix += `_${mergedModelNames}`
+      let suffix = seriesName
+      if (mergedModelNames) {
+        suffix += `_${mergedModelNames}`
+      }
+      if (categoryNames) {
+        suffix += `_${categoryNames}`
+      }
+
+      const filename = `Export_SpecExcel_${suffix}.xlsx`
+
+      const url = window.URL.createObjectURL(new Blob([res]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', filename)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
     }
-    if (categoryNames) {
-      suffix += `_${categoryNames}`
-    }
 
-    const filename = `Export_SpecExcel_${suffix}.xlsx`
-
-    const url = window.URL.createObjectURL(new Blob([res]))
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', filename)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-
-    ElMessage.success('导出成功')
+    ElMessage.success(`已导出 ${selectedSeries.value.length} 个系列`)
   } catch (error) {
     console.error('导出失败:', error)
     ElMessage.error('导出失败')
@@ -2306,15 +2516,22 @@ const handleCreateVersion = () => {
 }
 
 const confirmCreateVersion = async () => {
-  try {
-    await createVersion({
-      series_id: activeSeriesId.value,
-      version_number: versionForm.version_number || undefined,
-      version_name: versionForm.version_name || undefined,
-      description: versionForm.description || undefined
-    })
+  if (selectedSeries.value.length === 0) {
+    ElMessage.warning('请先选择产品系列')
+    return
+  }
 
-    ElMessage.success('版本创建成功，请前往"版本历史"页面查看')
+  try {
+    await Promise.all(selectedSeries.value.map(seriesId =>
+      createVersion({
+        series_id: seriesId,
+        version_number: versionForm.version_number || undefined,
+        version_name: versionForm.version_name || undefined,
+        description: versionForm.description || undefined
+      })
+    ))
+
+    ElMessage.success(`${selectedSeries.value.length} 个系列版本创建成功，请前往"版本历史"页面查看`)
     versionDialogVisible.value = false
 
     // 清空表单
@@ -2336,29 +2553,23 @@ const toggleDraftFilter = async (type) => {
     draftFilter.value = type
   }
   currentPage.value = 1
-  await loadData()
-  await initDraft()
 }
 
 // 清除草稿筛选
-const clearDraftFilter = async () => {
+const clearDraftFilter = () => {
   draftFilter.value = ''
   currentPage.value = 1
-  await loadData()
-  await initDraft()
 }
 
 // 切换差异筛选
-const toggleDiffFilter = async () => {
+const toggleDiffFilter = () => {
   diffFilterMode.value = diffFilterMode.value ? '' : 'all'
   currentPage.value = 1
-  await loadData()
-  await initDraft()
 }
 
 // 批量完成研发状态 - 将所有未完成的研发状态设为"已完成"
 const handleBatchCompleteRdStatus = async () => {
-  if (!draftBatchId.value) {
+  if (draftBatchMap.value.size === 0) {
     ElMessage.warning('请先创建草稿批次')
     return
   }
@@ -2761,6 +2972,9 @@ const handleSubmitDraft = (itemIds = null, modelIds = null) => {
 }
 
 const confirmSubmitDraft = async () => {
+  const entries = Array.from(draftBatchMap.value.entries())
+  if (entries.length === 0) return
+
   try {
     const params = {
       version_number: submitForm.version_number || undefined,
@@ -2772,7 +2986,9 @@ const confirmSubmitDraft = async () => {
     if (submitForm.model_ids && submitForm.model_ids.size > 0) {
       params.model_ids = Array.from(submitForm.model_ids)
     }
-    await submitDraftBatch(draftBatchId.value, params)
+    await Promise.all(entries.map(([seriesId, batchId]) =>
+      submitDraftBatch(batchId, params)
+    ))
 
     ElMessage.success('提交成功')
     submitDialogVisible.value = false
@@ -2787,6 +3003,7 @@ const confirmSubmitDraft = async () => {
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
     draftItemInfo.value = new Map()
+    draftBatchMap.value.clear()
 
     await loadData()  // 重新加载数据
     await initDraft()
@@ -2836,8 +3053,11 @@ const toggleDraftModel = (modelId) => {
   selectedDraftModelIds.value = newSet
 }
 
-// 废弃草稿
+// 废弃草稿（废弃所有系列批次）
 const handleDiscardDraft = async () => {
+  const entries = Array.from(draftBatchMap.value.entries())
+  if (entries.length === 0) return
+
   try {
     await ElMessageBox.confirm('确认废弃所有草稿？此操作不可恢复。', '确认', {
       confirmButtonText: '确定',
@@ -2845,7 +3065,7 @@ const handleDiscardDraft = async () => {
       type: 'warning'
     })
 
-    await discardDraftBatch(draftBatchId.value)
+    await Promise.all(entries.map(([seriesId, batchId]) => discardDraftBatch(batchId)))
     ElMessage.success('已废弃')
 
     draftStats.total = 0
@@ -2858,6 +3078,7 @@ const handleDiscardDraft = async () => {
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
     draftItemInfo.value = new Map()
+    draftBatchMap.value.clear()
 
     await loadData()  // 重新加载数据
     await initDraft()
@@ -2922,7 +3143,7 @@ const handleBatchDiscardDrafts = async () => {
       ElMessage.warning('没有成功撤销的草稿')
     }
 
-    // 刷新当前 activeSeriesId 的数据
+    // 刷新当前数据
     draftStats.total = 0
     draftStats.create = 0
     draftStats.update = 0
@@ -3026,7 +3247,7 @@ const confirmBatchSubmit = async () => {
       ElMessage.success(`成功提交 ${successCount} 个系列`)
     }
 
-    // 刷新当前 activeSeriesId 的数据
+    // 刷新当前数据
     draftStats.total = 0
     draftStats.create = 0
     draftStats.update = 0
@@ -3557,24 +3778,6 @@ onUnmounted(() => {
   // Excel-like keyboard events removed
 })
 
-// 监听 activeSeriesId 变化，重新初始化草稿
-watch(activeSeriesId, async (newVal, oldVal) => {
-  if (newVal && newVal !== oldVal) {
-    currentPage.value = 1
-    draftStats.total = 0
-    draftStats.create = 0
-    draftStats.update = 0
-    draftStats.delete = 0
-    draftChanges.value.clear()
-    draftFilter.value = ''
-    draftExpanded.value = false
-    selectedDraftItemIds.value = new Set()
-    selectedDraftModelIds.value = new Set()
-    draftItemInfo.value = new Map()
-    await loadData()
-    await initDraft()
-  }
-})
 </script>
 
 <style scoped>
