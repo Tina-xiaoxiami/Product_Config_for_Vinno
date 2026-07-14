@@ -20,6 +20,7 @@ class ProductModel(Base):
     column_start = Column(Integer)
     column_end = Column(Integer)
     sort_order = Column(Integer, default=0)
+    config_group = Column(String(200), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

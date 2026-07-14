@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.api import series, models, config, versions, drafts, import_export, enums, version_cleanup
+from app.api import probe_categories, probe_models as probe_models_api, applications, features, template_features, probe_config, probe_import
 
 app = FastAPI(
     title="产品配置管理系统",
@@ -34,6 +35,13 @@ app.include_router(drafts.router, prefix="/api/drafts", tags=["草稿管理"])
 app.include_router(import_export.router, prefix="/api/import-export", tags=["导入导出"])
 app.include_router(enums.router, prefix="/api/enums", tags=["枚举值"])
 app.include_router(version_cleanup.router, prefix="/api/version-cleanup", tags=["版本清理"])
+app.include_router(probe_categories.router, prefix="/api/probe-categories", tags=["探头类别"])
+app.include_router(probe_models_api.router, prefix="/api/probe-models", tags=["探头型号"])
+app.include_router(applications.router, prefix="/api/applications", tags=["应用定义"])
+app.include_router(features.router, prefix="/api/features", tags=["功能管理"])
+app.include_router(template_features.router, prefix="/api/template-features", tags=["模板配置"])
+app.include_router(probe_config.router, prefix="/api/probes/config", tags=["探头配置"])
+app.include_router(probe_import.router, prefix="/api/probes", tags=["探头导入"])
 
 
 @app.on_event("startup")

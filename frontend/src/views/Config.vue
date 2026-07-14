@@ -346,14 +346,14 @@
                 v-if="row.model_values[modelId]"
                 class="cell-value"
                 :class="{
-                  'cell-changed': isFieldChanged(row.id, modelId, 'final_config'),
-                  'cell-created': getCellChangeType(row.id, modelId, 'final_config') === 'create',
-                  'cell-updated': getCellChangeType(row.id, modelId, 'final_config') === 'update',
-                  'cell-deleted': getCellChangeType(row.id, modelId, 'final_config') === 'delete',
+                  'cell-changed': getCellState(row.id, modelId, 'final_config').isChanged,
+                  'cell-created': getCellState(row.id, modelId, 'final_config').changeType === 'create',
+                  'cell-updated': getCellState(row.id, modelId, 'final_config').changeType === 'update',
+                  'cell-deleted': getCellState(row.id, modelId, 'final_config').changeType === 'delete',
                   'cell-selected': isCellSelected(row.id, modelId, 'final_config'),
                   'cell-focused': focusedCell?.rowId === row.id && focusedCell?.modelId === modelId && focusedCell?.field === 'final_config',
                   'cell-drag-target': isDragTarget(row.id, modelId, 'final_config'),
-                  'cell-minority': isMinorityValue(row, modelId, 'final_config')
+                  'cell-minority': getCellState(row.id, modelId, 'final_config').isMinority
                 }"
                 :data-cell="`${row.id}-${modelId}-final_config`"
                 @click="handleCellClick($event, row, modelId, 'final_config')"
@@ -381,12 +381,12 @@
                 </template>
                 <template v-else>
                   <span class="value-text">
-                    {{ getCellChangeType(row.id, modelId, 'final_config') === 'delete'
+                    {{ getCellState(row.id, modelId, 'final_config').changeType === 'delete'
                        ? (getDeleteOldValue(row.id, modelId, 'final_config') || '-')
                        : (row.model_values[modelId].final_config || '-') }}
                   </span>
-                  <span v-if="getDraftOldValue(row.id, modelId, 'final_config') != null" class="original-hint">
-                    ({{ getDraftOldValue(row.id, modelId, 'final_config') }})
+                  <span v-if="getCellState(row.id, modelId, 'final_config').draftOldValue != null" class="original-hint">
+                    ({{ getCellState(row.id, modelId, 'final_config').draftOldValue }})
                   </span>
                 </template>
               </div>
@@ -398,14 +398,14 @@
                 v-if="row.model_values[modelId]"
                 class="cell-value"
                 :class="{
-                  'cell-changed': isFieldChanged(row.id, modelId, 'current_config'),
-                  'cell-created': getCellChangeType(row.id, modelId, 'current_config') === 'create',
-                  'cell-updated': getCellChangeType(row.id, modelId, 'current_config') === 'update',
-                  'cell-deleted': getCellChangeType(row.id, modelId, 'current_config') === 'delete',
+                  'cell-changed': getCellState(row.id, modelId, 'current_config').isChanged,
+                  'cell-created': getCellState(row.id, modelId, 'current_config').changeType === 'create',
+                  'cell-updated': getCellState(row.id, modelId, 'current_config').changeType === 'update',
+                  'cell-deleted': getCellState(row.id, modelId, 'current_config').changeType === 'delete',
                   'cell-selected': isCellSelected(row.id, modelId, 'current_config'),
                   'cell-focused': focusedCell?.rowId === row.id && focusedCell?.modelId === modelId && focusedCell?.field === 'current_config',
                   'cell-drag-target': isDragTarget(row.id, modelId, 'current_config'),
-                  'cell-minority': isMinorityValue(row, modelId, 'current_config')
+                  'cell-minority': getCellState(row.id, modelId, 'current_config').isMinority
                 }"
                 :data-cell="`${row.id}-${modelId}-current_config`"
                 @click="handleCellClick($event, row, modelId, 'current_config')"
@@ -433,12 +433,12 @@
                 </template>
                 <template v-else>
                   <span class="value-text">
-                    {{ getCellChangeType(row.id, modelId, 'current_config') === 'delete'
+                    {{ getCellState(row.id, modelId, 'current_config').changeType === 'delete'
                        ? (getDeleteOldValue(row.id, modelId, 'current_config') || '-')
                        : (row.model_values[modelId].current_config || '-') }}
                   </span>
-                  <span v-if="getDraftOldValue(row.id, modelId, 'current_config') != null" class="original-hint">
-                    ({{ getDraftOldValue(row.id, modelId, 'current_config') }})
+                  <span v-if="getCellState(row.id, modelId, 'current_config').draftOldValue != null" class="original-hint">
+                    ({{ getCellState(row.id, modelId, 'current_config').draftOldValue }})
                   </span>
                 </template>
               </div>
@@ -450,14 +450,14 @@
                 v-if="row.model_values[modelId]"
                 class="cell-value"
                 :class="{
-                  'cell-changed': isFieldChanged(row.id, modelId, 'selection_config'),
-                  'cell-created': getCellChangeType(row.id, modelId, 'selection_config') === 'create',
-                  'cell-updated': getCellChangeType(row.id, modelId, 'selection_config') === 'update',
-                  'cell-deleted': getCellChangeType(row.id, modelId, 'selection_config') === 'delete',
+                  'cell-changed': getCellState(row.id, modelId, 'selection_config').isChanged,
+                  'cell-created': getCellState(row.id, modelId, 'selection_config').changeType === 'create',
+                  'cell-updated': getCellState(row.id, modelId, 'selection_config').changeType === 'update',
+                  'cell-deleted': getCellState(row.id, modelId, 'selection_config').changeType === 'delete',
                   'cell-selected': isCellSelected(row.id, modelId, 'selection_config'),
                   'cell-focused': focusedCell?.rowId === row.id && focusedCell?.modelId === modelId && focusedCell?.field === 'selection_config',
                   'cell-drag-target': isDragTarget(row.id, modelId, 'selection_config'),
-                  'cell-minority': isMinorityValue(row, modelId, 'selection_config')
+                  'cell-minority': getCellState(row.id, modelId, 'selection_config').isMinority
                 }"
                 :data-cell="`${row.id}-${modelId}-selection_config`"
                 @click="handleCellClick($event, row, modelId, 'selection_config')"
@@ -485,12 +485,12 @@
                 </template>
                 <template v-else>
                   <span class="value-text">
-                    {{ getCellChangeType(row.id, modelId, 'selection_config') === 'delete'
+                    {{ getCellState(row.id, modelId, 'selection_config').changeType === 'delete'
                        ? (getDeleteOldValue(row.id, modelId, 'selection_config') || '-')
                        : (row.model_values[modelId].selection_config || '-') }}
                   </span>
-                  <span v-if="getDraftOldValue(row.id, modelId, 'selection_config') != null" class="original-hint">
-                    ({{ getDraftOldValue(row.id, modelId, 'selection_config') }})
+                  <span v-if="getCellState(row.id, modelId, 'selection_config').draftOldValue != null" class="original-hint">
+                    ({{ getCellState(row.id, modelId, 'selection_config').draftOldValue }})
                   </span>
                 </template>
               </div>
@@ -502,14 +502,14 @@
                 v-if="row.model_values[modelId]"
                 class="cell-value"
                 :class="{
-                  'cell-changed': isFieldChanged(row.id, modelId, 'rd_status'),
-                  'cell-created': getCellChangeType(row.id, modelId, 'rd_status') === 'create',
-                  'cell-updated': getCellChangeType(row.id, modelId, 'rd_status') === 'update',
-                  'cell-deleted': getCellChangeType(row.id, modelId, 'rd_status') === 'delete',
+                  'cell-changed': getCellState(row.id, modelId, 'rd_status').isChanged,
+                  'cell-created': getCellState(row.id, modelId, 'rd_status').changeType === 'create',
+                  'cell-updated': getCellState(row.id, modelId, 'rd_status').changeType === 'update',
+                  'cell-deleted': getCellState(row.id, modelId, 'rd_status').changeType === 'delete',
                   'cell-selected': isCellSelected(row.id, modelId, 'rd_status'),
                   'cell-focused': focusedCell?.rowId === row.id && focusedCell?.modelId === modelId && focusedCell?.field === 'rd_status',
                   'cell-drag-target': isDragTarget(row.id, modelId, 'rd_status'),
-                  'cell-minority': isMinorityValue(row, modelId, 'rd_status'),
+                  'cell-minority': getCellState(row.id, modelId, 'rd_status').isMinority,
                   'cell-rd-incomplete': showRdIncomplete && row.model_values[modelId].rd_status && row.model_values[modelId].rd_status !== '已完成' && row.model_values[modelId].rd_status !== 'N/A' && row.model_values[modelId].rd_status !== '-'
                 }"
                 :data-cell="`${row.id}-${modelId}-rd_status`"
@@ -538,12 +538,12 @@
                 </template>
                 <template v-else>
                   <span class="value-text">
-                    {{ getCellChangeType(row.id, modelId, 'rd_status') === 'delete'
+                    {{ getCellState(row.id, modelId, 'rd_status').changeType === 'delete'
                        ? (getDeleteOldValue(row.id, modelId, 'rd_status') || '-')
                        : (row.model_values[modelId].rd_status || '-') }}
                   </span>
-                  <span v-if="getDraftOldValue(row.id, modelId, 'rd_status') != null" class="original-hint">
-                    ({{ getDraftOldValue(row.id, modelId, 'rd_status') }})
+                  <span v-if="getCellState(row.id, modelId, 'rd_status').draftOldValue != null" class="original-hint">
+                    ({{ getCellState(row.id, modelId, 'rd_status').draftOldValue }})
                   </span>
                 </template>
               </div>
@@ -894,7 +894,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown } from '@element-plus/icons-vue'
 import {
@@ -966,7 +966,11 @@ const onConfigDragEnd = (newWidth, oldWidth, column) => {
   const k = m[column?.label] || column?.columnKey || ""
   if (k in fieldColWidths && newWidth > 0) { fieldColWidths[k] = newWidth; localStorage.setItem(FW_KEY, JSON.stringify(fieldColWidths)) }
 }
+let _configMouseUpTs = 0
 const onConfigMouseUp = () => {
+  const now = Date.now()
+  if (now - _configMouseUpTs < 500) return  // 500ms 节流
+  _configMouseUpTs = now
   nextTick(() => {
     const el = tableRef.value?.$el
     const row = el?.querySelector(".el-table__header-wrapper tr:last-child")
@@ -980,6 +984,23 @@ const onConfigMouseUp = () => {
     let ch = false
     for (const [k, w] of Object.entries(max)) { if (fieldColWidths[k] !== w && w > 0) { fieldColWidths[k] = w; ch = true } }
     if (ch) localStorage.setItem(FW_KEY, JSON.stringify(fieldColWidths))
+    syncHeaderTitles()
+  })
+}
+
+// 同步表头和数据单元格的 title 属性
+const syncHeaderTitles = () => {
+  const el = tableRef.value?.$el
+  if (!el) return
+  // header cells
+  el.querySelectorAll('.el-table__header-wrapper .cell').forEach(cell => {
+    const text = cell.textContent?.trim() || ''
+    cell.setAttribute('title', text)
+  })
+  // data cells（固定行高后内容溢出）
+  el.querySelectorAll('.el-table__body-wrapper .cell .cell-value').forEach(cell => {
+    const text = cell.textContent?.trim() || ''
+    cell.setAttribute('title', text)
   })
 }
 
@@ -1123,21 +1144,12 @@ const draftItemSummary = computed(() => {
   const updateItems = new Set()
   const deleteItems = new Set()
 
-  // 当有筛选时，只统计可见范围内的项
-  const hasFilter = selectedCategories.value.length > 0 || !!searchText.value || !!diffFilterMode.value
-  let visibleItemIds = null
-  if (hasFilter) {
-    if (diffFilterMode.value && selectedModels.value.length >= 2) {
-      // 差异筛选时使用 filteredTableData 的行（仅含差异行）
-      visibleItemIds = new Set(filteredTableData.value.map(r => r.id))
-    } else {
-      visibleItemIds = new Set(tableData.value.map(r => r.id))
-    }
-  }
+  // 基于 baseFilteredData 统计可见项（排除草稿筛选，统计数字不随草稿标签变化）
+  let visibleItemIds = new Set(baseFilteredData.value.map(r => r.id))
 
-  // 新增项：仅当至少有一个变更机型在选中列表中，且（有筛选时）在可见范围内
+  // 新增项：仅当至少有一个变更机型在选中列表中，且在可见范围内
   for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
-    if (visibleItemIds && !visibleItemIds.has(itemId)) continue
+    if (!visibleItemIds.has(itemId)) continue
     for (const mid of modelSet) {
       if (selectedSet.has(mid)) {
         createItems.add(itemId)
@@ -1146,12 +1158,26 @@ const draftItemSummary = computed(() => {
     }
   }
 
-  // 修改项：仅当变更所在的机型在选中列表中，且（有筛选时）在可见范围内，且匹配列筛选
+  // 单元格级新增（从未定义/空改为有值）：draftChanges 中 changeType 为 create
+  for (const [key, change] of draftChanges.value.entries()) {
+    if (change.changeType === 'create') {
+      const parts = key.split('_')
+      const rowId = parseInt(parts[0])
+      if (!visibleItemIds.has(rowId)) continue
+      const modelId = parseInt(parts[1])
+      const field = parts.slice(2).join('_')
+      if (selectedSet.has(modelId) && visibleConfigFields.value.includes(field)) {
+        createItems.add(rowId)
+      }
+    }
+  }
+
+  // 修改项：仅当变更所在的机型在选中列表中，且在可见范围内，且匹配列筛选
   for (const [key, change] of draftChanges.value.entries()) {
     if (change.changeType === 'update') {
       const parts = key.split('_')
       const rowId = parseInt(parts[0])
-      if (visibleItemIds && !visibleItemIds.has(rowId)) continue
+      if (!visibleItemIds.has(rowId)) continue
       const modelId = parseInt(parts[1])
       const field = parts.slice(2).join('_')
       if (selectedSet.has(modelId)) {
@@ -1162,9 +1188,9 @@ const draftItemSummary = computed(() => {
     }
   }
 
-  // 删除项：仅当至少有一个变更机型在选中列表中，且（有筛选时）在可见范围内
+  // 删除项：仅当至少有一个变更机型在选中列表中，且在可见范围内
   for (const [itemId, modelSet] of deletedItemModelMap.value.entries()) {
-    if (visibleItemIds && !visibleItemIds.has(itemId)) continue
+    if (!visibleItemIds.has(itemId)) continue
     for (const mid of modelSet) {
       if (selectedSet.has(mid)) {
         deleteItems.add(itemId)
@@ -1196,20 +1222,12 @@ const visibleConfigFields = computed(() => {
 const draftItems = computed(() => {
   const selectedSet = new Set(selectedModels.value)
   if (selectedSet.size === 0) return []
-  // 当有筛选时，只显示可见范围内的草稿项
-  const hasFilter = selectedCategories.value.length > 0 || !!searchText.value || !!diffFilterMode.value
-  let visibleItemIds = null
-  if (hasFilter) {
-    if (diffFilterMode.value && selectedModels.value.length >= 2) {
-      visibleItemIds = new Set(filteredTableData.value.map(r => r.id))
-    } else {
-      visibleItemIds = new Set(tableData.value.map(r => r.id))
-    }
-  }
+  // 基于 baseFilteredData 统计可见项（排除草稿筛选，统计数字不随草稿标签变化）
+  const visibleItemIds = new Set(baseFilteredData.value.map(r => r.id))
   const itemsMap = new Map()
-  // 新增项 — 仅当（有筛选时）在可见范围内且至少有一个变更机型在选中列表中
+  // 新增项 — 在可见范围内且至少有一个变更机型在选中列表中
   for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
-    if (visibleItemIds && !visibleItemIds.has(itemId)) continue
+    if (!visibleItemIds.has(itemId)) continue
     let hasMatch = false
     for (const mid of modelSet) {
       if (selectedSet.has(mid)) { hasMatch = true; break }
@@ -1224,13 +1242,39 @@ const draftItems = computed(() => {
       changeType: 'create'
     })
   }
+  // 单元格级新增（从未定义/空改为有值）— 来自 draftChanges
+  const seenCreateIds = new Set()
+  for (const [key, change] of draftChanges.value.entries()) {
+    if (change.changeType === 'create') {
+      const parts = key.split('_')
+      const rowId = parseInt(parts[0])
+      if (!visibleItemIds.has(rowId)) continue
+      const modelId = parseInt(parts[1])
+      const field = parts.slice(2).join('_')
+      if (selectedSet.size > 0 && !selectedSet.has(modelId)) continue
+      if (!visibleConfigFields.value.includes(field)) continue
+      if (!seenCreateIds.has(rowId)) {
+        seenCreateIds.add(rowId)
+        const info = draftItemInfo.value.get(rowId) || {}
+        const row = tableData.value.find(r => r.id === rowId)
+        if (!itemsMap.has(`create_${rowId}`)) {
+          itemsMap.set(`create_${rowId}`, {
+            itemId: rowId,
+            rdName: info.rdName || row?.rd_name || `ID: ${rowId}`,
+            ipn: info.ipn || row?.ipn || '',
+            changeType: 'create'
+          })
+        }
+      }
+    }
+  }
   // 修改项（按 item_id 去重）— 仅当（有筛选时）在可见范围内、变更机型在选中列表中、且匹配列筛选
   const seenUpdateIds = new Set()
   for (const [key, change] of draftChanges.value.entries()) {
     if (change.changeType === 'update') {
       const parts = key.split('_')
       const rowId = parseInt(parts[0])
-      if (visibleItemIds && !visibleItemIds.has(rowId)) continue
+      if (!visibleItemIds.has(rowId)) continue
       const modelId = parseInt(parts[1])
       const field = parts.slice(2).join('_')
       if (selectedSet.size > 0 && !selectedSet.has(modelId)) continue
@@ -1249,9 +1293,9 @@ const draftItems = computed(() => {
       }
     }
   }
-  // 删除项 — 仅当（有筛选时）在可见范围内且至少有一个变更机型在选中列表中
+  // 删除项 — 在可见范围内且至少有一个变更机型在选中列表中
   for (const [itemId, modelSet] of deletedItemModelMap.value.entries()) {
-    if (visibleItemIds && !visibleItemIds.has(itemId)) continue
+    if (!visibleItemIds.has(itemId)) continue
     let hasMatch = false
     for (const mid of modelSet) {
       if (selectedSet.has(mid)) { hasMatch = true; break }
@@ -1287,7 +1331,7 @@ const draftModels = computed(() => {
 const isEmptyValue = (v) => v == null || v === '' || v === '-' || v === 'N/A' || v === '未定义'
 
 // 根据草稿筛选过滤表格数据
-const filteredTableData = computed(() => {
+function _computeFilteredData(skipDraftFilter = false) {
   let data = tableData.value
 
   // 隐藏全空行：所有选中机型的当前可见配置字段都为空
@@ -1301,8 +1345,8 @@ const filteredTableData = computed(() => {
     })
   })
 
-  // 草稿筛选
-  if (draftFilter.value) {
+  // 草稿筛选（统计场景跳过此阶段）
+  if (!skipDraftFilter && draftFilter.value) {
     const selectedSet = new Set(selectedModels.value)
     const changedRowIds = new Set()
 
@@ -1324,12 +1368,26 @@ const filteredTableData = computed(() => {
     }
 
     // create 筛选：仅当至少有一个新增机型在选中列表中
-    if (draftFilter.value === 'create' || draftFilter.value === 'all') {
+    const includeCreate = draftFilter.value === 'create' || draftFilter.value === 'all'
+    if (includeCreate) {
+      // 整行新增（完整的新配置行）
       for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
         for (const mid of modelSet) {
           if (selectedSet.has(mid)) {
             changedRowIds.add(itemId)
             break
+          }
+        }
+      }
+      // 单元格级新增（从未定义/空改为有值）
+      for (const [key, change] of draftChanges.value.entries()) {
+        if (change.changeType === 'create') {
+          const parts = key.split('_')
+          const rowId = parseInt(parts[0])
+          const modelId = parseInt(parts[1])
+          const field = parts.slice(2).join('_')
+          if (selectedSet.has(modelId) && visibleConfigFields.value.includes(field)) {
+            changedRowIds.add(rowId)
           }
         }
       }
@@ -1441,13 +1499,133 @@ const filteredTableData = computed(() => {
   }
 
   return data
-})
+}
+
+const filteredTableData = computed(() => _computeFilteredData(false))
+
+// 不含草稿筛选的基础可见数据（用于统计，不随草稿标签变化）
+const baseFilteredData = computed(() => _computeFilteredData(true))
 
 // 前端分页后的表格数据
 const paginatedTableData = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredTableData.value.slice(start, start + pageSize.value)
 })
+
+// tableData / originalData O(1) 索引
+const tableDataMap = computed(() => new Map(tableData.value.map(r => [r.id, r])))
+const originalDataMap = computed(() => new Map(originalData.value.map(r => [r.id, r])))
+
+// 单元格状态缓存：预计算当前页所有可见单元格的状态，模板中 O(1) 查找
+const cellStateCache = computed(() => {
+  const cache = new Map()
+  if (!diffFilterMode.value || selectedModels.value.length < 2) {
+    // 无需 isMinority 计算时使用轻量模式
+    for (const row of paginatedTableData.value) {
+      const origRow = originalDataMap.value.get(row.id)
+      for (const mid of selectedModels.value) {
+        if (!row.model_values[mid]) continue
+        for (const field of visibleConfigFields.value) {
+          const key = `${row.id}_${mid}_${field}`
+          const origVal = origRow?.model_values?.[mid]?.[field]
+          cache.set(key, {
+            isChanged: computeIsChanged(row.id, mid, field, origVal),
+            changeType: computeChangeType(row.id, mid, field),
+            draftOldValue: computeDraftOldVal(row.id, mid, field),
+            isMinority: false
+          })
+        }
+      }
+    }
+  } else {
+    // 差异模式下需要 isMinority 计算
+    const normalize = (v) => (!v || v === '-' || v === 'N/A' || v === '未定义' || v === '' ? null : v)
+    for (const row of paginatedTableData.value) {
+      const origRow = originalDataMap.value.get(row.id)
+      // 预计算该行每个字段的少数派状态
+      const minorityFields = new Set()
+      for (const field of visibleConfigFields.value) {
+        const counts = new Map()
+        for (const mid of selectedModels.value) {
+          const v = normalize(row.model_values[mid]?.[field])
+          counts.set(v, (counts.get(v) || 0) + 1)
+        }
+        if (counts.size > 1) {
+          let minCount = Infinity
+          let minorityVals = new Set()
+          for (const [val, cnt] of counts) {
+            if (cnt < minCount) { minCount = cnt; minorityVals = new Set([val]) }
+            else if (cnt === minCount) minorityVals.add(val)
+          }
+          const maxCount = Math.max(...counts.values())
+          if (minCount < maxCount) {
+            // 有明确的少数派
+            for (const mid of selectedModels.value) {
+              const cellVal = normalize(row.model_values[mid]?.[field])
+              if (minorityVals.has(cellVal)) {
+                minorityFields.add(`${mid}_${field}`)
+              }
+            }
+          }
+        }
+      }
+      for (const mid of selectedModels.value) {
+        if (!row.model_values[mid]) continue
+        for (const field of visibleConfigFields.value) {
+          const key = `${row.id}_${mid}_${field}`
+          const origVal = origRow?.model_values?.[mid]?.[field]
+          cache.set(key, {
+            isChanged: computeIsChanged(row.id, mid, field, origVal),
+            changeType: computeChangeType(row.id, mid, field),
+            draftOldValue: computeDraftOldVal(row.id, mid, field),
+            isMinority: minorityFields.has(`${mid}_${field}`)
+          })
+        }
+      }
+    }
+  }
+  return cache
+})
+
+// 辅助：预计算 isChanged (优先草稿/增删标记，其次对比原始值)
+const computeIsChanged = (rowId, modelId, field, origVal) => {
+  const ct = computeChangeType(rowId, modelId, field)
+  if (ct) return true
+  const key = `${rowId}_${modelId}_${field}`
+  if (draftChanges.value.has(key)) return true
+  if (origVal !== undefined) {
+    const curVal = tableDataMap.value.get(rowId)?.model_values?.[modelId]?.[field]
+    return isValueChanged(origVal, curVal)
+  }
+  return false
+}
+
+// 辅助：预计算 changeType
+const computeChangeType = (rowId, modelId, field) => {
+  const key = `${rowId}_${modelId}_${field}`
+  const draftChange = draftChanges.value.get(key)
+  if (draftChange) return draftChange.changeType || 'update'
+  const createModels = newItemModelMap.value.get(rowId)
+  if (createModels && (createModels.size === 0 || createModels.has(modelId))) return 'create'
+  const deleteModels = deletedItemModelMap.value.get(rowId)
+  if (deleteModels && (deleteModels.size === 0 || deleteModels.has(modelId))) return 'delete'
+  return null
+}
+
+// 辅助：预计算草稿旧值
+const computeDraftOldVal = (rowId, modelId, field) => {
+  const key = `${rowId}_${modelId}_${field}`
+  const change = draftChanges.value.get(key)
+  return change ? change.oldValue : undefined
+}
+
+// 默认空状态
+const EMPTY_CELL_STATE = { isChanged: false, changeType: null, draftOldValue: undefined, isMinority: false }
+
+// 模板用：O(1) 获取单元格状态
+const getCellState = (rowId, modelId, field) => {
+  return cellStateCache.value.get(`${rowId}_${modelId}_${field}`) || EMPTY_CELL_STATE
+}
 
 // 导入预览
 const previewDialogVisible = ref(false)
@@ -1791,17 +1969,9 @@ const loadModels = async () => {
       }
     })
     // 清除无效的已选型号，自动全选所有型号
+    // 只清除已不存在的型号，不再自动全选
     selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
-    if (selectedModels.value.length === 0) {
-      selectedModels.value = Array.from(allModelsMap.value.keys())
-    } else {
-      // 补充新加载但未选中的型号
-      const existingSet = new Set(selectedModels.value)
-      for (const id of allModelsMap.value.keys()) {
-        if (!existingSet.has(id)) selectedModels.value.push(id)
-      }
-    }
-    diffFilterMode.value = ''   // 加载新型号列表时重置差异筛选
+    diffFilterMode.value = ''
     tempSelectedModels.value = [...selectedModels.value]  // 同步临时选择
     await loadData()
     await initDraft()
@@ -2041,11 +2211,29 @@ const initDraft = async () => {
               infoMap.set(d.item_id, { rdName: d.rd_name, ipn: d.ipn })
             }
             if (d.change_type === 'create' && d.item_id && d.model_id) {
-              if (!createModelMap.has(d.item_id)) createModelMap.set(d.item_id, new Set())
-              createModelMap.get(d.item_id).add(d.model_id)
-              modelIdSet.add(d.model_id)
-              draftStats.create++
-              draftStats.total++
+              // 有 field_name 的是单元格级新增（从未定义改为有值），放入 draftChanges
+              if (d.field_name) {
+                const key = `${d.item_id}_${d.model_id}_${d.field_name}`
+                draftChanges.value.set(key, {
+                  oldValue: d.old_value,
+                  newValue: d.new_value,
+                  draftId: d.id,
+                  changeType: 'create'
+                })
+                draftStats.create++
+                draftStats.total++
+                // 应用到 tableData
+                const row = tableData.value.find(r => r.ipn === d.ipn)
+                if (row && row.model_values[d.model_id]) {
+                  row.model_values[d.model_id][d.field_name] = d.new_value
+                }
+              } else {
+                if (!createModelMap.has(d.item_id)) createModelMap.set(d.item_id, new Set())
+                createModelMap.get(d.item_id).add(d.model_id)
+                modelIdSet.add(d.model_id)
+                draftStats.create++
+                draftStats.total++
+              }
             } else if (d.change_type === 'delete' && d.item_id && d.model_id) {
               if (!deleteModelMap.has(d.item_id)) deleteModelMap.set(d.item_id, new Set())
               deleteModelMap.get(d.item_id).add(d.model_id)
@@ -2061,13 +2249,20 @@ const initDraft = async () => {
             } else if (d.change_type === 'update' && d.item_id && d.model_id) {
               modelIdSet.add(d.model_id)
               const key = `${d.item_id}_${d.model_id}_${d.field_name}`
+              // 重新判断：旧值为空/未定义等应视为新增而非修改
+              const isValueEmpty = (v) => !v || v === '-' || v === 'N/A' || v === '未定义' || v === ''
+              const actualChangeType = isValueEmpty(d.old_value) ? 'create' : 'update'
               draftChanges.value.set(key, {
                 oldValue: d.old_value,
                 newValue: d.new_value,
                 draftId: d.id,
-                changeType: d.change_type
+                changeType: actualChangeType
               })
-              draftStats.update++
+              if (actualChangeType === 'create') {
+                draftStats.create++
+              } else {
+                draftStats.update++
+              }
               draftStats.total++
               // 把草稿中的新值应用到 tableData（用 IPN 匹配）
               const row = tableData.value.find(r => r.ipn === d.ipn)
@@ -2131,6 +2326,10 @@ const getModelShortName = (modelId) => {
         prefix = prefix.slice(0, -1)
       }
     }
+    // 将公共前缀回退到最后一个单词边界（空格/短横/下划线）
+    // 防止 "VINNO 10"+"VINNO 10-BRA" → 前缀"VINNO 10" 导致"VINNO 10"被完全吞掉
+    const boundaryIdx = Math.max(prefix.lastIndexOf(' '), prefix.lastIndexOf('-'), prefix.lastIndexOf('_'))
+    if (boundaryIdx > 0) prefix = prefix.slice(0, boundaryIdx + 1)
     if (prefix.length >= 3 && modelName.length > prefix.length) {
       return modelName.slice(prefix.length)
     }
@@ -2233,10 +2432,13 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
   const key = `${row.id}_${modelId}_${field}`
 
   try {
+    const isValueEmpty = (v) => !v || v === '-' || v === 'N/A' || v === '未定义' || v === ''
+    const changeType = isValueEmpty(oldValue) ? 'create' : 'update'
+
     const res = await createDraft({
       series_id: seriesId,
       batch_id: batchId,
-      change_type: 'update',
+      change_type: changeType,
       item_id: row.id,
       model_id: modelId,
       field_name: field,
@@ -2250,12 +2452,16 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
       oldValue,
       newValue,
       draftId: res.draft_id,
-      changeType: 'update'
+      changeType
     })
 
     if (isNew) {
       draftStats.total++
-      draftStats.update++
+      if (changeType === 'create') {
+        draftStats.create++
+      } else {
+        draftStats.update++
+      }
     }
   } catch (error) {
     console.error('保存草稿失败:', error)
@@ -2371,56 +2577,133 @@ const confirmImport = async () => {
   await loadEnumValues()
 }
 
-// 导出Excel（每个系列分别导出）
+// 导出Excel - 所见即所得，仅导出当前筛选视图的内容
 const handleExport = async () => {
   if (selectedSeries.value.length === 0) {
     ElMessage.warning('请先选择产品系列')
     return
   }
 
+  // 仅导出第一个选中的系列（当前视图对应的系列）
+  const seriesId = selectedSeries.value[0]
+  const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
+
   try {
-    ElMessage.info('正在导出，请稍候...')
-
-    for (const seriesId of selectedSeries.value) {
-      const res = await exportExcel(seriesId)
-      const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
-
-      // 获取该系列的型号
-      const seriesModelIds = []
-      for (const [mid, m] of allModelsMap.value) {
-        if (m.seriesId === seriesId && selectedModels.value.includes(mid)) {
-          seriesModelIds.push(mid)
-        }
-      }
-      const modelNamesList = seriesModelIds.map(id => {
-        const m = allModelsMap.value.get(id)
-        return m ? m.name : ''
-      }).filter(Boolean)
-      const mergedModelNames = mergeModelNames(modelNamesList)
-
-      const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
-
-      let suffix = seriesName
-      if (mergedModelNames) {
-        suffix += `_${mergedModelNames}`
-      }
-      if (categoryNames) {
-        suffix += `_${categoryNames}`
-      }
-
-      const filename = `Export_SpecExcel_${suffix}.xlsx`
-
-      const url = window.URL.createObjectURL(new Blob([res]))
-      const link = document.createElement('a')
-      link.href = url
-      link.setAttribute('download', filename)
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
+    // 使用 filteredTableData（已应用所有前端筛选：分类、搜索、草稿、差异、空行隐藏）
+    const visibleData = filteredTableData.value
+    if (visibleData.length === 0) {
+      ElMessage.warning('当前筛选视图没有数据可导出')
+      return
     }
 
-    ElMessage.success(`已导出 ${selectedSeries.value.length} 个系列`)
+    ElMessage.info(`正在导出 ${visibleData.length} 行数据，请稍候...`)
+
+    // 提取筛选后的行 ID
+    const visibleItemIds = visibleData.map(r => r.id).filter(id => id != null)
+
+    // 获取该系列当前选中的机型
+    const seriesModelIds = []
+    for (const [mid, m] of allModelsMap.value) {
+      if (m.seriesId === seriesId && selectedModels.value.includes(mid)) {
+        seriesModelIds.push(mid)
+      }
+    }
+
+    // 传入筛选后的行 ID、机型 ID 和可见列，后端按此生成 Excel
+    const exportParams = {}
+    // 有行级筛选（草稿/差异/研发未完成）时传 item_ids 精确保留结果
+    // 无行级筛选时不传 item_ids（避免 URL 超长），改传 categories/search 作为后备
+    const hasRowFilter = draftFilter.value || diffFilterMode.value || showRdIncomplete.value
+    if (hasRowFilter && visibleItemIds.length > 0) {
+      exportParams.item_ids = visibleItemIds.join(',')
+    } else {
+      if (selectedCategories.value.length > 0) {
+        exportParams.categories = selectedCategories.value.join(',')
+      }
+      if (searchText.value) {
+        exportParams.search = searchText.value
+      }
+    }
+    if (seriesModelIds.length > 0) {
+      exportParams.model_ids = seriesModelIds.join(',')
+    }
+    // 传入当前可见的配置列字段（最终配置/当前配置/选型类别/研发状态）
+    const visibleFields = visibleConfigFields.value
+    if (visibleFields.length > 0) {
+      exportParams.visible_fields = visibleFields.join(',')
+    }
+    // 传入草稿变更记录，使导出包含变更前后对比
+    const relatedDraftChanges = {}
+    const modelIdSet = new Set(seriesModelIds)
+    const itemIdSet = new Set(visibleItemIds)
+    for (const [key, change] of draftChanges.value.entries()) {
+      const parts = key.split('_')
+      const rowId = parseInt(parts[0])
+      const modelId = parseInt(parts[1])
+      if (itemIdSet.has(rowId) && modelIdSet.has(modelId)) {
+        relatedDraftChanges[key] = { oldValue: change.oldValue, newValue: change.newValue, changeType: change.changeType }
+      }
+    }
+    if (Object.keys(relatedDraftChanges).length > 0) {
+      exportParams.draft_changes = JSON.stringify(relatedDraftChanges)
+    }
+    // 传入删除项的快照值和新增项标识
+    const deletedItems = {}
+    for (const [itemId, modelSet] of deletedItemModelMap.value.entries()) {
+      if (!itemIdSet.has(itemId)) continue
+      for (const modelId of modelSet) {
+        if (modelIdSet.has(modelId)) {
+          const snapKey = `${itemId}_${modelId}`
+          const snapVals = draftDeleteValues.value.get(snapKey)
+          deletedItems[snapKey] = snapVals ? { ...snapVals } : {}
+        }
+      }
+    }
+    if (Object.keys(deletedItems).length > 0) {
+      exportParams.deleted_items = JSON.stringify(deletedItems)
+    }
+    const newItems = {}
+    for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
+      if (!itemIdSet.has(itemId)) continue
+      for (const modelId of modelSet) {
+        if (modelIdSet.has(modelId)) {
+          newItems[`${itemId}_${modelId}`] = true
+        }
+      }
+    }
+    if (Object.keys(newItems).length > 0) {
+      exportParams.new_items = JSON.stringify(newItems)
+    }
+
+    const res = await exportExcel(seriesId, exportParams)
+    const modelNamesList = seriesModelIds.map(id => {
+      const m = allModelsMap.value.get(id)
+      return m ? m.name : ''
+    }).filter(Boolean)
+    const mergedModelNames = mergeModelNames(modelNamesList)
+
+    const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
+
+    let suffix = seriesName
+    if (mergedModelNames) {
+      suffix += `_${mergedModelNames}`
+    }
+    if (categoryNames) {
+      suffix += `_${categoryNames}`
+    }
+
+    const filename = `Export_SpecExcel_${suffix}.xlsx`
+
+    const url = window.URL.createObjectURL(new Blob([res]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    ElMessage.success(`导出成功：${seriesName}`)
   } catch (error) {
     console.error('导出失败:', error)
     ElMessage.error('导出失败')
@@ -3771,11 +4054,17 @@ onMounted(() => {
   calculateTableHeight()
   window.addEventListener('resize', calculateTableHeight)
   // Excel-like keyboard events removed
+  nextTick(() => syncHeaderTitles())
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', calculateTableHeight)
   // Excel-like keyboard events removed
+})
+
+// 数据加载完成后同步表头 title
+watch(loading, (val) => {
+  if (!val) nextTick(() => syncHeaderTitles())
 })
 
 </script>
@@ -4326,5 +4615,22 @@ onUnmounted(() => {
   border-style: solid;
   border-width: 0 8px 8px 0;
   border-color: transparent #ef4444 transparent transparent;
+}
+
+/* 表头文字溢出省略号 + hover 显示完整内容 */
+:deep(.el-table__header-wrapper .cell) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 固定行高 + 溢出省略 */
+:deep(.el-table__body-wrapper .el-table__body tr.el-table__row) {
+  height: 40px;
+}
+:deep(.el-table__body-wrapper .cell) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

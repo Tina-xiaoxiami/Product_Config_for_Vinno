@@ -62,7 +62,9 @@ async def get_config_rows(
         query = query.where(
             (ConfigItem.rd_name.contains(search)) |
             (ConfigItem.ipn.contains(search)) |
-            (ConfigItem.v_code.contains(search))
+            (ConfigItem.v_code.contains(search)) |
+            (ConfigItem.zh_desc.contains(search)) |
+            (ConfigItem.en_desc.contains(search))
         )
 
     # 获取总数（在分页前）
@@ -73,7 +75,9 @@ async def get_config_rows(
         count_query = count_query.where(
             (ConfigItem.rd_name.contains(search)) |
             (ConfigItem.ipn.contains(search)) |
-            (ConfigItem.v_code.contains(search))
+            (ConfigItem.v_code.contains(search)) |
+            (ConfigItem.zh_desc.contains(search)) |
+            (ConfigItem.en_desc.contains(search))
         )
     count_result = await db.execute(count_query)
     total = count_result.scalar()

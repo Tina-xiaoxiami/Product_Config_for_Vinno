@@ -57,8 +57,10 @@ export const batchSubmitDrafts = (data) => api.post('/drafts/batch/submit', data
 // 不设置 Content-Type，让 axios 自动处理（包含 boundary）
 export const importExcel = (formData, params) => api.post('/import-export/import', formData, { params })
 export const previewImport = (formData) => api.post('/import-export/preview', formData)
-export const exportExcel = (seriesId, params) => api.get('/import-export/export', {
-  params: { series_id: seriesId, ...params },
+export const exportExcel = (seriesId, params) => api.post('/import-export/export', {
+  series_id: seriesId,
+  ...params
+}, {
   responseType: 'blob'
 })
 export const downloadTemplate = () => api.get('/import-export/template', {
@@ -70,3 +72,75 @@ export const getEnumValues = (params) => api.get('/enums/extract', { params })
 export const getSelectionTypes = () => api.get('/enums/selection-types')
 export const getRdStatuses = () => api.get('/enums/rd-statuses')
 export const getConfigValueOptions = () => api.get('/enums/config-values')
+
+// ==================== 探头配置 ====================
+// 探头类别
+export const getProbeCategories = (params) => api.get('/probe-categories', { params })
+export const createProbeCategory = (data) => api.post('/probe-categories', data)
+export const updateProbeCategory = (id, data) => api.put(`/probe-categories/${id}`, data)
+export const deleteProbeCategory = (id) => api.delete(`/probe-categories/${id}`)
+
+// 探头型号
+export const getProbeModels = (params) => api.get('/probe-models', { params })
+export const createProbeModel = (data) => api.post('/probe-models', data)
+export const updateProbeModel = (id, data) => api.put(`/probe-models/${id}`, data)
+export const deleteProbeModel = (id) => api.delete(`/probe-models/${id}`)
+export const getProbeModelApps = (modelId) => api.get(`/probe-models/${modelId}/apps`)
+export const exportVariantsExcel = () => api.get('/probe-models/variants/export', { responseType: 'blob' })
+export const importVariantsExcel = (formData) => api.post('/probe-models/variants/import', formData)
+export const exportModelVariantsExcel = (modelId) => api.get(`/probe-models/${modelId}/variants/export`, { responseType: 'blob' })
+export const importModelVariantsExcel = (modelId, formData) => api.post(`/probe-models/${modelId}/variants/import`, formData)
+export const autoPopulateVariants = () => api.post('/probe-models/variants/auto-populate')
+export const setProbeModelApps = (modelId, appIds) => api.post(`/probe-models/${modelId}/apps`, { app_ids: appIds })
+
+// 应用定义
+export const getApplications = (params) => api.get('/applications', { params })
+export const createApplication = (data) => api.post('/applications', data)
+export const updateApplication = (id, data) => api.put(`/applications/${id}`, data)
+export const deleteApplication = (id) => api.delete(`/applications/${id}`)
+
+// 功能组 & 功能
+export const getFeatureGroups = (params) => api.get('/features/groups', { params })
+export const createFeatureGroup = (data) => api.post('/features/groups', data)
+export const updateFeatureGroup = (id, data) => api.put(`/features/groups/${id}`, data)
+export const deleteFeatureGroup = (id) => api.delete(`/features/groups/${id}`)
+export const getFeatures = (params) => api.get('/features', { params })
+export const createFeature = (data) => api.post('/features', data)
+export const updateFeature = (id, data) => api.put(`/features/${id}`, data)
+export const deleteFeature = (id) => api.delete(`/features/${id}`)
+
+// 模板配置
+export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
+export const saveTemplateFeature = (data) => api.post('/template-features', data)
+export const deleteTemplateFeature = (id) => api.delete(`/template-features/${id}`)
+
+// 产品探头配置
+export const getProbeConfig = (productModelId) => api.get(`/probes/config/${productModelId}`)
+export const initProbeConfig = (productModelId, data) => api.post(`/probes/config/${productModelId}/init`, data)
+export const updateProbeFeature = (productModelId, data) => api.put(`/probes/config/${productModelId}/feature`, data)
+export const getProbeDrafts = (productModelId) => api.get(`/probes/config/${productModelId}/drafts`)
+export const submitProbeDrafts = (productModelId, data) => api.post(`/probes/config/${productModelId}/submit`, data)
+export const discardProbeDrafts = (productModelId) => api.post(`/probes/config/${productModelId}/discard`)
+export const getProbeVersions = (productModelId) => api.get(`/probes/config/${productModelId}/versions`)
+export const rollbackProbeVersion = (productModelId, versionId) => api.post(`/probes/config/${productModelId}/rollback/${versionId}`)
+export const exportProbeConfig = (productModelId) => api.get(`/probes/config/${productModelId}/export`, { responseType: 'blob' })
+export const applyTemplateToProduct = (productModelId) => api.post(`/probes/config/${productModelId}/apply-template`)
+export const batchSetStatus = (productModelId, data) => api.post(`/probes/config/${productModelId}/batch-set`, data)
+export const getProductProbes = (productModelId) => api.get(`/probes/config/${productModelId}/probes`)
+export const setProductProbes = (productModelId, data) => api.post(`/probes/config/${productModelId}/probes`, data)
+export const batchFromTemplate = (productModelId, data) => api.post(`/probes/config/${productModelId}/batch-from-template`, data)
+export const getSeriesProbes = (seriesIds) => api.get('/probes/config/by-series', { params: { series_ids: seriesIds.join(',') } })
+
+// ==================== 系列级探头配置 ====================
+export const getSeriesMatrix = (params) => api.get('/probes/config/series-matrix', { params })
+export const updateSeriesFeature = (data) => api.put('/probes/config/series-feature', data)
+export const getSeriesDrafts = (modelIds) => api.get('/probes/config/series-drafts', { params: { model_ids: modelIds.join(',') } })
+export const discardSeriesDrafts = (data) => api.post('/probes/config/series-discard', data)
+export const submitSeriesDrafts = (data) => api.post('/probes/config/series-submit', data)
+export const getSeriesProbeVersions = (seriesIds) => api.get('/probes/config/series-versions', { params: seriesIds?.length ? { series_ids: seriesIds.join(',') } : {} })
+export const rollbackSeriesVersion = (versionId) => api.post(`/probes/config/series-rollback/${versionId}`)
+export const getAllProbesByCategory = () => api.get('/probes/config/all-probes')
+export const setSeriesProbes = (data) => api.post('/probes/config/series-probes', data)
+
+// ==================== 机型分组 ====================
+export const getModelGroups = () => api.get('/model-groups')

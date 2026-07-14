@@ -21,19 +21,46 @@
             <el-menu-item index="/models">
               <span>产品型号</span>
             </el-menu-item>
+            <el-menu-item index="/probe-models">
+              <span>探头管理</span>
+            </el-menu-item>
+            <el-menu-item index="/applications">
+              <span>应用管理</span>
+            </el-menu-item>
+            <el-menu-item index="/template-features">
+              <span>模板管理</span>
+            </el-menu-item>
+            <el-menu-item index="/feature-manage">
+              <span>功能管理</span>
+            </el-menu-item>
           </el-sub-menu>
-          <el-menu-item index="/config">
-            <el-icon><Document /></el-icon>
-            <span>配置管理</span>
-          </el-menu-item>
-          <el-menu-item index="/compare">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>配置对比</span>
-          </el-menu-item>
-          <el-menu-item index="/versions">
-            <el-icon><Clock /></el-icon>
-            <span>版本历史</span>
-          </el-menu-item>
+          <el-sub-menu index="/product-config">
+            <template #title>
+              <el-icon><Document /></el-icon>
+              <span>机型配置</span>
+            </template>
+            <el-menu-item index="/config">
+              <span>配置管理</span>
+            </el-menu-item>
+            <el-menu-item index="/compare">
+              <span>配置对比</span>
+            </el-menu-item>
+            <el-menu-item index="/versions">
+              <span>版本历史</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-sub-menu index="/probe">
+            <template #title>
+              <el-icon><DataAnalysis /></el-icon>
+              <span>探头配置</span>
+            </template>
+            <el-menu-item index="/probe-config">
+              <span>探头配置管理</span>
+            </el-menu-item>
+            <el-menu-item index="/probe-versions">
+              <span>版本历史</span>
+            </el-menu-item>
+          </el-sub-menu>
         </el-menu>
       </el-aside>
       <el-main>

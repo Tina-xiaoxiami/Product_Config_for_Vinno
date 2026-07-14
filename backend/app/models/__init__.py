@@ -7,6 +7,13 @@ from app.models.config import ConfigItem, ConfigValue
 from app.models.version import ConfigVersion, ChangeLog
 from app.models.draft import DraftBatch, ConfigDraft
 from app.models.import_history import ImportHistory
+from app.models.probe import (
+    ProbeCategory, ProbeModel, ProbeModelVariant,
+    Application, CategoryApplication,
+    FeatureGroup, Feature, TemplateFeature,
+    ProductProbeModel, ProbeModelApp, ProductProbeConfig,
+    ProbeConfigDraft, ProbeConfigVersion,
+)
 
 __all__ = [
     "ProductSeries",
@@ -18,4 +25,19 @@ __all__ = [
     "DraftBatch",
     "ConfigDraft",
     "ImportHistory",
+    "ProbeCategory",
+    "ProbeModel",
+    "ProbeModelVariant",
+    "Application",
+    "CategoryApplication",
+    "FeatureGroup",
+    "Feature",
+    "TemplateFeature",
+    "ProductProbeModel",
+    "ProbeModelApp",
+    "ProductProbeConfig",
+    "ProbeConfigDraft",
+    "ProbeConfigVersion",
+    "TemplateDraft",
+    "TemplateVersion",
 ]

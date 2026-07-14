@@ -1,13 +1,28 @@
 """
 导入导出 API
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
 from typing import List, Optional
+from pydantic import BaseModel
 import io
 import json
+
+
+class ExportRequest(BaseModel):
+    """导出请求参数"""
+    series_id: int
+    include_main_unit: bool = False
+    item_ids: Optional[str] = None
+    categories: Optional[str] = None
+    search: Optional[str] = None
+    model_ids: Optional[str] = None
+    visible_fields: Optional[str] = None
+    draft_changes: Optional[str] = None
+    deleted_items: Optional[str] = None
+    new_items: Optional[str] = None
 import uuid
 from datetime import datetime
 
@@ -960,13 +975,61 @@ async def cleanup_duplicate_models(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/export")
+@router.post("/export")
 async def export_excel(
-    series_id: int,
-    include_main_unit: bool = Query(False, description="是否包含Main Unit分类"),
+    body: ExportRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """导出Excel文件"""
+    """导出Excel文件（所见即所得——由前端传入已筛选的行ID、机型ID和可见列字段）"""
+    series_id = body.series_id
+    include_main_unit = body.include_main_unit
+    item_ids = body.item_ids
+    categories = body.categories
+    search = body.search
+    model_ids = body.model_ids
+    visible_fields = body.visible_fields
+    draft_changes = body.draft_changes
+    deleted_items = body.deleted_items
+    new_items = body.new_items
+    # 解析可见配置列
+    ALL_CONFIG_FIELDS = ['final_config', 'current_config', 'selection_config', 'rd_status']
+    FIELD_LABELS = {
+        'final_config': '最终配置',
+        'current_config': '当前配置',
+        'selection_config': '选型类别',
+        'rd_status': '研发状态',
+    }
+    if visible_fields:
+        field_list = [f.strip() for f in visible_fields.split(',') if f.strip() in ALL_CONFIG_FIELDS]
+    else:
+        field_list = list(ALL_CONFIG_FIELDS)
+    field_count = len(field_list)
+
+    # 解析草稿变更记录
+    draft_changes_map = {}
+    if draft_changes:
+        try:
+            import json
+            draft_changes_map = json.loads(draft_changes)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 解析删除项和新增项
+    deleted_items_map = {}
+    if deleted_items:
+        try:
+            import json
+            deleted_items_map = json.loads(deleted_items)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    new_items_map = {}
+    if new_items:
+        try:
+            import json
+            new_items_map = json.loads(new_items)
+        except (json.JSONDecodeError, TypeError):
+            pass
     # 获取产品系列
     series_result = await db.execute(
         select(ProductSeries).where(ProductSeries.id == series_id)
@@ -976,29 +1039,48 @@ async def export_excel(
     if not series:
         raise HTTPException(status_code=404, detail="产品系列不存在")
 
-    # 获取型号
-    models_result = await db.execute(
-        select(ProductModel)
-        .where(ProductModel.series_id == series_id)
-        .order_by(ProductModel.sort_order)
-    )
+    # 获取型号（支持按 model_ids 筛选）
+    models_query = select(ProductModel).where(ProductModel.series_id == series_id)
+    if model_ids:
+        id_list = [int(x.strip()) for x in model_ids.split(',') if x.strip()]
+        if id_list:
+            models_query = models_query.where(ProductModel.id.in_(id_list))
+    models_query = models_query.order_by(ProductModel.sort_order)
+    models_result = await db.execute(models_query)
     models = models_result.scalars().all()
 
     if not models:
         raise HTTPException(status_code=400, detail="该系列下没有产品型号")
 
-    # 获取配置项
+    # 获取配置项（按 item_ids 筛选——所见即所得；无 item_ids 时回退到 categories/search）
     items_query = select(ConfigItem).order_by(ConfigItem.row_index)
-    if not include_main_unit:
-        items_query = items_query.where(ConfigItem.category != "Main Unit")
+    if item_ids:
+        id_list = [int(x.strip()) for x in item_ids.split(',') if x.strip()]
+        if id_list:
+            items_query = items_query.where(ConfigItem.id.in_(id_list))
+    else:
+        if categories:
+            category_list = [c.strip() for c in categories.split(',') if c.strip()]
+            if category_list:
+                items_query = items_query.where(ConfigItem.category.in_(category_list))
+        if search:
+            items_query = items_query.where(
+                (ConfigItem.rd_name.contains(search)) |
+                (ConfigItem.ipn.contains(search)) |
+                (ConfigItem.v_code.contains(search)) |
+                (ConfigItem.zh_desc.contains(search)) |
+                (ConfigItem.en_desc.contains(search))
+            )
+        if not include_main_unit:
+            items_query = items_query.where(ConfigItem.category != "Main Unit")
 
     items_result = await db.execute(items_query)
     items = items_result.scalars().all()
 
     # 获取配置值
-    model_ids = [m.id for m in models]
+    model_id_list = [m.id for m in models]
     values_result = await db.execute(
-        select(ConfigValue).where(ConfigValue.model_id.in_(model_ids))
+        select(ConfigValue).where(ConfigValue.model_id.in_(model_id_list))
     )
     values = values_result.scalars().all()
 
@@ -1025,6 +1107,11 @@ async def export_excel(
         top=Side(style='thin'),
         bottom=Side(style='thin')
     )
+    # 草稿变更样式
+    deleted_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+    deleted_font = Font(strike=True, color="CC0000")
+    new_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    updated_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
 
     # 第1行：产品系列
     ws.cell(row=1, column=1, value="研发名称")
@@ -1036,15 +1123,15 @@ async def export_excel(
     col = 6
     for model in models:
         ws.cell(row=1, column=col, value=series.name)
-        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + 3)
-        col += 4
+        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + field_count - 1)
+        col += field_count
 
     # 第2行：产品型号
     col = 6
     for model in models:
         ws.cell(row=2, column=col, value=model.name)
-        ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col + 3)
-        col += 4
+        ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col + field_count - 1)
+        col += field_count
 
     # 第3行：配置状态
     ws.cell(row=3, column=1, value="")  # A列
@@ -1055,11 +1142,9 @@ async def export_excel(
 
     col = 6
     for _ in models:
-        ws.cell(row=3, column=col, value="最终配置")
-        ws.cell(row=3, column=col + 1, value="当前配置")
-        ws.cell(row=3, column=col + 2, value="选型类别")
-        ws.cell(row=3, column=col + 3, value="研发状态")
-        col += 4
+        for fi, field_name in enumerate(field_list):
+            ws.cell(row=3, column=col + fi, value=FIELD_LABELS[field_name])
+        col += field_count
 
     # 设置表头样式
     for row in range(1, 4):
@@ -1092,16 +1177,54 @@ async def export_excel(
         ws.cell(row=row_idx, column=4, value=item.zh_desc)
         ws.cell(row=row_idx, column=5, value=item.en_desc)
 
-        # 写入配置值
+        # 写入配置值（仅可见列，含样式：绿=新增，红+删除线=删除，黄=修改）
         col = 6
         for model in models:
-            v = value_map.get(item.id, {}).get(model.id)
-            if v:
-                ws.cell(row=row_idx, column=col, value=v.final_config)
-                ws.cell(row=row_idx, column=col + 1, value=v.current_config)
-                ws.cell(row=row_idx, column=col + 2, value=v.selection_config)
-                ws.cell(row=row_idx, column=col + 3, value=v.rd_status)
-            col += 4
+            model_val = value_map.get(item.id, {}).get(model.id)
+            item_model_key = f"{item.id}_{model.id}"
+            is_deleted = item_model_key in deleted_items_map
+            is_new = item_model_key in new_items_map
+            for fi, field_name in enumerate(field_list):
+                cell = ws.cell(row=row_idx, column=col + fi)
+                # 基础值：优先从删除快照取（因为删除了，DB值可能已不可靠）
+                if is_deleted:
+                    snap = deleted_items_map[item_model_key]
+                    raw_value = snap.get(field_name, '') if isinstance(snap, dict) else ''
+                else:
+                    raw_value = getattr(model_val, field_name, '') if model_val else ''
+                # 检查是否有逐格草稿变更
+                change_key = f"{item.id}_{model.id}_{field_name}"
+                has_update_change = False
+                has_create_change = False
+                if change_key in draft_changes_map:
+                    dc = draft_changes_map[change_key]
+                    if dc.get('changeType') == 'update' and dc.get('oldValue') is not None:
+                        old_val = dc.get('oldValue', '') or '-'
+                        new_val = dc.get('newValue', raw_value) or '-'
+                        if old_val != '-':
+                            raw_value = f"{old_val} → {new_val}"
+                        else:
+                            raw_value = new_val
+                        has_update_change = True
+                    elif dc.get('changeType') == 'create':
+                        raw_value = dc.get('newValue', raw_value) or '-'
+                        has_create_change = True
+                # 应用样式
+                display_value = raw_value or '-'
+                if is_deleted:
+                    cell.value = display_value
+                    cell.fill = deleted_fill
+                    cell.font = deleted_font
+                elif has_update_change:
+                    cell.value = display_value
+                    cell.fill = updated_fill
+                elif is_new or has_create_change:
+                    cell.value = display_value
+                    cell.fill = new_fill
+                else:
+                    cell.value = display_value
+                cell.border = thin_border
+            col += field_count
 
         # 设置边框
         for col in range(1, ws.max_column + 1):
@@ -1118,11 +1241,9 @@ async def export_excel(
 
     col = 6
     for _ in models:
-        ws.column_dimensions[get_column_letter(col)].width = 12
-        ws.column_dimensions[get_column_letter(col + 1)].width = 12
-        ws.column_dimensions[get_column_letter(col + 2)].width = 10
-        ws.column_dimensions[get_column_letter(col + 3)].width = 10
-        col += 4
+        for fi in range(field_count):
+            ws.column_dimensions[get_column_letter(col + fi)].width = 12
+        col += field_count
 
     # 保存到内存
     output = io.BytesIO()
