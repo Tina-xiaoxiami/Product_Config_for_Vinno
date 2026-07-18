@@ -68,6 +68,14 @@
                     <span class="label">当前：</span>
                     <span>{{ row.values[model.id].current_config || '-' }}</span>
                   </div>
+                  <div class="config-item">
+                    <span class="label">选型：</span>
+                    <span>{{ row.values[model.id].selection_config || '-' }}</span>
+                  </div>
+                  <div class="config-item">
+                    <span class="label">研发：</span>
+                    <span>{{ row.values[model.id].rd_status || '-' }}</span>
+                  </div>
                 </div>
               </template>
             </el-table-column>

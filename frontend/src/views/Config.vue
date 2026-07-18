@@ -956,6 +956,14 @@ const draftFilter = ref('')  // 草稿筛选: '', 'create', 'update', 'delete'
 const showDiffOnly = ref(false)  // 是否只显示有差异的配置
 const diffFilterMode = ref('')  // 差异筛选模式: '', 'all', 'final_config', 'current_config', 'selection_config', 'rd_status'
 const showRdIncomplete = ref(false)  // 是否高亮并筛选未完成的研发状态
+
+// 机型列拖拽排序
+const MODEL_ORDER_KEY = 'config_model_order'
+const modelDragSource = ref(null)  // { modelId, sourceIndex }
+const isModelDragging = ref(false)
+const modelDragOverIndex = ref(-1)
+const modelDragPosition = ref('')  // 'before' | 'after'
+
 // 同类型字段列宽联动 + localStorage 持久化
 const FW_KEY = "config_field_widths"
 const fieldColWidths = reactive(
@@ -965,6 +973,82 @@ const onConfigDragEnd = (newWidth, oldWidth, column) => {
   const m = { "最终配置": "final_config", "当前配置": "current_config", "选型类别": "selection_config", "研发状态": "rd_status" }
   const k = m[column?.label] || column?.columnKey || ""
   if (k in fieldColWidths && newWidth > 0) { fieldColWidths[k] = newWidth; localStorage.setItem(FW_KEY, JSON.stringify(fieldColWidths)) }
+}
+
+// 机型列拖拽事件处理器
+const onModelDragStart = (e, modelId, sourceIndex) => {
+  e.stopPropagation()
+  modelDragSource.value = { modelId, sourceIndex }
+  isModelDragging.value = true
+  const th = e.target.closest('th')
+  if (th) {
+    th.classList.add('is-dragging-source')
+    // 给所有其他机型 th 添加半透明效果
+    const headerWrapper = th.closest('.el-table__header-wrapper')
+    if (headerWrapper) {
+      headerWrapper.querySelectorAll('th[data-model-id]').forEach(other => {
+        if (other !== th) other.classList.add('is-drag-dimmed')
+      })
+    }
+  }
+}
+
+const onModelDragOver = (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  const th = e.target.closest('th[data-model-id]')
+  if (!th || !modelDragSource.value) return
+  const targetIndex = parseInt(th.dataset.modelIndex)
+  // 清除所有 th 上的指示线
+  th.closest('.el-table__header-wrapper')?.querySelectorAll('th[data-model-id]').forEach(other => {
+    other.classList.remove('is-drag-over-before', 'is-drag-over-after')
+  })
+  if (targetIndex === modelDragSource.value.sourceIndex) {
+    modelDragOverIndex.value = -1
+    return
+  }
+  // 根据鼠标在 cell 水平方向的位置判定 before / after
+  const rect = th.getBoundingClientRect()
+  const midX = rect.left + rect.width / 2
+  const pos = e.clientX < midX ? 'before' : 'after'
+  modelDragOverIndex.value = targetIndex
+  modelDragPosition.value = pos
+  th.classList.remove('is-drag-over-before', 'is-drag-over-after')
+  th.classList.add(pos === 'before' ? 'is-drag-over-before' : 'is-drag-over-after')
+}
+
+const onModelDrop = (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  if (!modelDragSource.value) return
+  const sourceIdx = modelDragSource.value.sourceIndex
+  let targetIdx = modelDragOverIndex.value
+  if (targetIdx < 0) { cleanupModelDrag(); return }
+  if (sourceIdx === targetIdx) { cleanupModelDrag(); return }
+  // 如果拖到目标之后且 source 在 target 之前，实际插入位置要减1（因为源元素移除后索引前移）
+  const models = [...selectedModels.value]
+  const [removed] = models.splice(sourceIdx, 1)
+  const adjustedTarget = modelDragPosition.value === 'after'
+    ? (sourceIdx < targetIdx ? targetIdx : targetIdx + 1)
+    : (sourceIdx < targetIdx ? targetIdx - 1 : targetIdx)
+  models.splice(adjustedTarget, 0, removed)
+  selectedModels.value = models
+  saveModelOrder()
+  cleanupModelDrag()
+}
+
+const onModelDragEnd = () => {
+  cleanupModelDrag()
+}
+
+const cleanupModelDrag = () => {
+  modelDragSource.value = null
+  isModelDragging.value = false
+  modelDragOverIndex.value = -1
+  modelDragPosition.value = ''
+  document.querySelectorAll('.is-dragging-source, .is-drag-dimmed, .is-drag-over-before, .is-drag-over-after').forEach(el => {
+    el.classList.remove('is-dragging-source', 'is-drag-dimmed', 'is-drag-over-before', 'is-drag-over-after')
+  })
 }
 let _configMouseUpTs = 0
 const onConfigMouseUp = () => {
@@ -1002,6 +1086,152 @@ const syncHeaderTitles = () => {
     const text = cell.textContent?.trim() || ''
     cell.setAttribute('title', text)
   })
+}
+
+// 同步表头机型列的 data-model-id 并注入拖拽手柄
+const syncModelColumnHeaders = () => {
+  const el = tableRef.value?.$el
+  if (!el || selectedModels.value.length < 2) return
+  // 重置重试计数（每次显式调用都重试）
+  _modelSyncRetries = 0
+  if (_modelSyncTimer) { clearTimeout(_modelSyncTimer); _modelSyncTimer = null }
+  // Element Plus 的 fixed 列表头在 .el-table__fixed-header-wrapper 中
+  // 但机型列不在 fixed 中，所以主区 .el-table__header-wrapper 就够了
+  // 用 setTimeout 0 确保 Vue DOM 已更新完毕
+  requestAnimationFrame(() => _doSyncModelColumnHeaders(el))
+}
+
+let _modelSyncRetries = 0
+const _modelSyncMaxRetries = 5
+let _modelSyncTimer = null
+const _doSyncModelColumnHeaders = (el) => {
+  if (_modelSyncRetries >= _modelSyncMaxRetries) { _modelSyncRetries = 0; return }
+  _modelSyncRetries++
+  // 收集所有 header-wrapper 中所有行所有 th 的 label → th 映射
+  const headersWrappers = el.querySelectorAll('.el-table__header-wrapper, .el-table__fixed-header-wrapper, .el-table__fixed-right-header-wrapper')
+  if (!headersWrappers.length) { _scheduleRetry(el); return }
+  // 收集所有候选 th（在第二个 tr 中，label 匹配任一机型短名）
+  const shortNameMap = {}
+  selectedModels.value.forEach((mid, idx) => {
+    shortNameMap[getModelShortName(mid)] = { modelId: mid, index: idx }
+  })
+  if (Object.keys(shortNameMap).length < 2) { _scheduleRetry(el); return }
+
+  // 逐个 wrapper 查找匹配的 th
+  let injectedCount = 0
+  headersWrappers.forEach(wrapper => {
+    const tables = wrapper.querySelectorAll('table')
+    if (!tables.length) return
+    // 多级表头：row[0]=系列组，row[1]=机型名，row[2]=配置字段
+    tables.forEach(table => {
+      const rows = table.querySelectorAll('thead tr, tr')
+      if (rows.length < 2) return
+      // 尝试 rows[1] 作为机型行
+      const modelRow = rows[1]
+      const ths = modelRow.querySelectorAll('th')
+      ths.forEach(th => {
+        const label = th.querySelector('.cell')?.textContent?.trim() || th.textContent?.trim() || ''
+        const match = shortNameMap[label]
+        if (!match) return
+        _injectDragHandle(th, match.modelId, match.index, label)
+        injectedCount++
+      })
+    })
+  })
+
+  if (injectedCount >= selectedModels.value.length) {
+    // 成功
+    _modelSyncRetries = 0
+    if (_modelSyncTimer) { clearTimeout(_modelSyncTimer); _modelSyncTimer = null }
+  } else if (injectedCount === 0) {
+    // 完全没有匹配到，需要重试
+    _scheduleRetry(el)
+  }
+}
+
+const _injectDragHandle = (th, modelId, index, label) => {
+  th.setAttribute('data-model-id', modelId)
+  th.setAttribute('data-model-index', index)
+  const cell = th.querySelector('.cell')
+  if (!cell) return
+  if (cell.querySelector('.model-drag-handle')) return  // 已注入
+  const handle = document.createElement('span')
+  handle.className = 'model-drag-handle'
+  handle.textContent = '⠿'
+  handle.draggable = true
+  handle.setAttribute('aria-label', `拖拽调整 ${label} 顺序`)
+  cell.insertBefore(handle, cell.firstChild)
+}
+
+const _scheduleRetry = (el) => {
+  if (_modelSyncTimer) return
+  _modelSyncTimer = setTimeout(() => {
+    _modelSyncTimer = null
+    _doSyncModelColumnHeaders(el)
+  }, 300)
+}
+
+// 绑定机型列拖拽事件（事件委托）
+const attachModelDragEvents = () => {
+  const el = tableRef.value?.$el
+  if (!el) return
+  const headerWrapper = el.querySelector('.el-table__header-wrapper')
+  if (!headerWrapper) return
+  // 移除旧监听避免重复绑定（用标记避免多次绑定）
+  if (headerWrapper._modelDragAttached) return
+  headerWrapper._modelDragAttached = true
+
+  headerWrapper.addEventListener('dragstart', (e) => {
+    const handle = e.target.closest('.model-drag-handle')
+    if (!handle) return  // 非拖拽手柄触发则忽略
+    const th = handle.closest('th[data-model-id]')
+    if (!th) return
+    const modelId = parseInt(th.dataset.modelId)
+    const sourceIndex = parseInt(th.dataset.modelIndex)
+    onModelDragStart(e, modelId, sourceIndex)
+  })
+
+  headerWrapper.addEventListener('dragover', onModelDragOver)
+  headerWrapper.addEventListener('drop', onModelDrop)
+  headerWrapper.addEventListener('dragend', onModelDragEnd)
+}
+
+// localStorage 持久化机型列顺序
+const saveModelOrder = () => {
+  try {
+    localStorage.setItem(MODEL_ORDER_KEY, JSON.stringify(selectedModels.value))
+  } catch (e) {
+    console.error('保存机型列顺序失败:', e)
+  }
+}
+
+// 应用保存的机型列顺序
+const applySavedOrder = (models) => {
+  try {
+    const saved = localStorage.getItem(MODEL_ORDER_KEY)
+    if (!saved) return
+    const savedOrder = JSON.parse(saved)
+    if (!Array.isArray(savedOrder) || savedOrder.length === 0) return
+    // 按保存顺序重排，仅保留当前仍选中的，新追加的放在末尾
+    const savedSet = new Set(savedOrder)
+    const ordered = savedOrder.filter(id => savedSet.has(id) && models.includes(id))
+    const remaining = models.filter(id => !savedSet.has(id) || !ordered.includes(id))
+    // 用 set 去重但保持顺序
+    const result = []
+    const seen = new Set()
+    for (const id of [...ordered, ...remaining]) {
+      if (!seen.has(id) && models.includes(id)) {
+        seen.add(id)
+        result.push(id)
+      }
+    }
+    // 只有当顺序实际改变且长度一致时才应用
+    if (result.length === models.length) {
+      selectedModels.value = result
+    }
+  } catch (e) {
+    console.error('恢复机型列顺序失败:', e)
+  }
 }
 
 
@@ -1971,6 +2201,8 @@ const loadModels = async () => {
     // 清除无效的已选型号，自动全选所有型号
     // 只清除已不存在的型号，不再自动全选
     selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
+    // 应用保存的机型列顺序
+    applySavedOrder(selectedModels.value)
     diffFilterMode.value = ''
     tempSelectedModels.value = [...selectedModels.value]  // 同步临时选择
     await loadData()
@@ -2222,11 +2454,6 @@ const initDraft = async () => {
                 })
                 draftStats.create++
                 draftStats.total++
-                // 应用到 tableData
-                const row = tableData.value.find(r => r.ipn === d.ipn)
-                if (row && row.model_values[d.model_id]) {
-                  row.model_values[d.model_id][d.field_name] = d.new_value
-                }
               } else {
                 if (!createModelMap.has(d.item_id)) createModelMap.set(d.item_id, new Set())
                 createModelMap.get(d.item_id).add(d.model_id)
@@ -2264,11 +2491,6 @@ const initDraft = async () => {
                 draftStats.update++
               }
               draftStats.total++
-              // 把草稿中的新值应用到 tableData（用 IPN 匹配）
-              const row = tableData.value.find(r => r.ipn === d.ipn)
-              if (row && row.model_values[d.model_id]) {
-                row.model_values[d.model_id][d.field_name] = d.new_value
-              }
             }
           }
         }
@@ -4054,7 +4276,11 @@ onMounted(() => {
   calculateTableHeight()
   window.addEventListener('resize', calculateTableHeight)
   // Excel-like keyboard events removed
-  nextTick(() => syncHeaderTitles())
+  nextTick(() => {
+    syncHeaderTitles()
+    syncModelColumnHeaders()
+    attachModelDragEvents()
+  })
 })
 
 onUnmounted(() => {
@@ -4064,8 +4290,20 @@ onUnmounted(() => {
 
 // 数据加载完成后同步表头 title
 watch(loading, (val) => {
-  if (!val) nextTick(() => syncHeaderTitles())
+  if (!val) nextTick(() => {
+    syncHeaderTitles()
+    syncModelColumnHeaders()
+    attachModelDragEvents()
+  })
 })
+
+// 机型变化后重新同步
+watch(selectedModels, () => {
+  nextTick(() => {
+    syncModelColumnHeaders()
+    attachModelDragEvents()
+  })
+}, { deep: false })
 
 </script>
 
@@ -4632,5 +4870,47 @@ watch(loading, (val) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* === 机型列拖拽排序 === */
+.model-drag-handle {
+  display: inline-block;
+  margin-right: 6px;
+  opacity: 0.35;
+  cursor: grab;
+  font-size: 15px;
+  color: #606266;
+  user-select: none;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+th:hover .model-drag-handle {
+  opacity: 1;
+  color: #409eff;
+}
+.model-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 拖拽源半透明 + 虚线边框 */
+th.is-dragging-source {
+  opacity: 0.5;
+  outline: 2px dashed #409eff;
+  outline-offset: -2px;
+}
+
+/* 其他机型列半透明 */
+th.is-drag-dimmed {
+  opacity: 0.4;
+}
+
+/* drop 指示线 — before */
+th.is-drag-over-before {
+  box-shadow: inset 3px 0 0 0 #409eff;
+}
+
+/* drop 指示线 — after */
+th.is-drag-over-after {
+  box-shadow: inset -3px 0 0 0 #409eff;
 }
 </style>

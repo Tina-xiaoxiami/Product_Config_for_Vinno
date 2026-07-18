@@ -4,7 +4,7 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from typing import List, Optional
 import json
 import uuid
@@ -257,6 +257,8 @@ async def create_draft(
         existing.new_value = data.new_value
         existing.old_value = data.old_value
         existing.change_type = data.change_type
+        # 同步更新 DB ConfigValue
+        await _sync_config_value(db, data)
         await db.commit()
         return {"message": "草稿已更新", "draft_id": existing.id}
     else:
@@ -282,9 +284,36 @@ async def create_draft(
             batch.delete_count += 1
         batch.total_count += 1
 
+        # 同步更新 DB ConfigValue
+        await _sync_config_value(db, data)
         await db.commit()
         await db.refresh(draft)
         return {"message": "草稿已保存", "draft_id": draft.id}
+
+
+async def _sync_config_value(db, data):
+    """将草稿的 new_value 同步写入 DB ConfigValue"""
+    if not data.field_name or data.field_name not in (
+        "final_config", "current_config", "selection_config", "rd_status"
+    ):
+        return
+    result = await db.execute(
+        select(ConfigValue).where(
+            ConfigValue.item_id == data.item_id,
+            ConfigValue.model_id == data.model_id,
+        )
+    )
+    cv = result.scalar_one_or_none()
+    if cv:
+        setattr(cv, data.field_name, data.new_value)
+    else:
+        # 无现有 ConfigValue → 创建
+        cv = ConfigValue(
+            item_id=data.item_id,
+            model_id=data.model_id,
+        )
+        setattr(cv, data.field_name, data.new_value)
+        db.add(cv)
 
 
 @router.post("/batch/{batch_id}/submit")
@@ -708,17 +737,45 @@ async def batch_discard_drafts(
                     )
                     for val in vals_to_del.scalars().all():
                         await db.delete(val)
-                    await db.flush()  # 确保删除先提交，避免重建时 UNIQUE 约束冲突
+                    await db.flush()
 
+                # 用 IPN 匹配重建 ConfigValue（同 discard_draft_batch）
+                db_items_result = await db.execute(select(ConfigItem))
+                ipn_to_db_item = {}
+                for item in db_items_result.scalars().all():
+                    if item.ipn:
+                        ipn_to_db_item[str(item.ipn).strip()] = item
+
+                snapshot_ipns = set()
                 for item_data in snapshot.get("items", []):
-                    item_id = item_data.get("id")
-                    values_map = item_data.get("values", {})
-                    for model_id_str, value_data in values_map.items():
+                    ipn = str(item_data.get("ipn", "")).strip() if item_data.get("ipn") else None
+                    if not ipn:
+                        continue
+                    snapshot_ipns.add(ipn)
+                    db_item = ipn_to_db_item.get(ipn)
+                    if not db_item:
+                        db_item = ConfigItem(
+                            category=item_data.get("category"),
+                            row_index=item_data.get("row_index"),
+                            rd_name=item_data.get("rd_name"),
+                            v_code=item_data.get("v_code"),
+                            ipn=item_data.get("ipn"),
+                            zh_desc=item_data.get("zh_desc"),
+                            en_desc=item_data.get("en_desc"),
+                        )
+                        db.add(db_item)
+                        await db.flush()
+                        ipn_to_db_item[ipn] = db_item
+                    for field in ("category", "rd_name", "v_code", "zh_desc", "en_desc", "row_index"):
+                        snap_val = item_data.get(field)
+                        if snap_val is not None:
+                            setattr(db_item, field, snap_val)
+                    for model_id_str, value_data in (item_data.get("values") or {}).items():
                         model_id = int(model_id_str)
                         if model_id not in series_model_ids:
                             continue
                         new_value = ConfigValue(
-                            item_id=item_id,
+                            item_id=db_item.id,
                             model_id=model_id,
                             current_config=value_data.get("current_config"),
                             final_config=value_data.get("final_config"),
@@ -727,9 +784,12 @@ async def batch_discard_drafts(
                         )
                         db.add(new_value)
 
-                # 只删除无任何 ConfigValue 引用的孤立 ConfigItem（避免误删其他系列的数据）
+                # 清理快照中没有的 ConfigItem（未被其他系列引用才删）
                 all_items = await db.execute(select(ConfigItem))
                 for item in all_items.scalars().all():
+                    item_ipn = str(item.ipn).strip() if item.ipn else None
+                    if item_ipn and item_ipn in snapshot_ipns:
+                        continue
                     remaining = await db.execute(
                         select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
                     )
@@ -888,19 +948,52 @@ async def discard_draft_batch(
                     await db.delete(val)
                 await db.flush()  # 确保删除先提交，避免重建时 UNIQUE 约束冲突
 
-            # 从快照重建 ConfigValue
-            snapshot_item_ids = set()
+            # 从快照重建 ConfigValue（用 IPN 匹配，不再依赖自增 ID）
+            # 构建：当前 DB 中 IPN → ConfigItem 映射
+            db_items_result = await db.execute(select(ConfigItem))
+            ipn_to_db_item = {}
+            for item in db_items_result.scalars().all():
+                if item.ipn:
+                    ipn_to_db_item[str(item.ipn).strip()] = item
+
+            snapshot_ipns = set()
             for item_data in snapshot.get("items", []):
-                item_id = item_data.get("id")
-                snapshot_item_ids.add(item_id)
+                ipn = str(item_data.get("ipn", "")).strip() if item_data.get("ipn") else None
+                if not ipn:
+                    continue
+                snapshot_ipns.add(ipn)
+                # 用 IPN 查找当前 DB 中对应的 ConfigItem
+                db_item = ipn_to_db_item.get(ipn)
+                if not db_item:
+                    # DB 中不存在 → 从快照创建
+                    db_item = ConfigItem(
+                        category=item_data.get("category"),
+                        row_index=item_data.get("row_index"),
+                        rd_name=item_data.get("rd_name"),
+                        v_code=item_data.get("v_code"),
+                        ipn=item_data.get("ipn"),
+                        zh_desc=item_data.get("zh_desc"),
+                        en_desc=item_data.get("en_desc"),
+                    )
+                    db.add(db_item)
+                    await db.flush()
+                    ipn_to_db_item[ipn] = db_item
+
+                db_item_id = db_item.id
+                # 更新 ConfigItem 字段到快照版本
+                for field in ("category", "rd_name", "v_code", "zh_desc", "en_desc", "row_index"):
+                    snap_val = item_data.get(field)
+                    if snap_val is not None:
+                        setattr(db_item, field, snap_val)
+
+                # 重建 ConfigValues
                 values_map = item_data.get("values", {})
                 for model_id_str, value_data in values_map.items():
                     model_id = int(model_id_str)
-                    # 只重建属于当前系列的机型
                     if model_id not in series_model_ids:
                         continue
                     new_value = ConfigValue(
-                        item_id=item_id,
+                        item_id=db_item_id,
                         model_id=model_id,
                         current_config=value_data.get("current_config"),
                         final_config=value_data.get("final_config"),
@@ -909,15 +1002,18 @@ async def discard_draft_batch(
                     )
                     db.add(new_value)
 
-            # 删除快照中没有的 ConfigItem，但要检查是否被其他系列引用
+            # 清理 DB 中存在但快照中没有的 ConfigItem（未被其他系列引用才删）
             all_items = await db.execute(select(ConfigItem))
             for item in all_items.scalars().all():
-                if item.id not in snapshot_item_ids:
-                    remaining = await db.execute(
-                        select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
-                    )
-                    if not remaining.scalar_one_or_none():
-                        await db.delete(item)
+                item_ipn = str(item.ipn).strip() if item.ipn else None
+                if item_ipn and item_ipn in snapshot_ipns:
+                    continue  # 在快照中，保留
+                # 不在快照中 → 检查是否被其他系列引用
+                remaining = await db.execute(
+                    select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
+                )
+                if not remaining.scalar_one_or_none():
+                    await db.delete(item)
         else:
             # 没有快照（从未提交过版本）：删除该系列所有相关数据
             if series_model_ids:

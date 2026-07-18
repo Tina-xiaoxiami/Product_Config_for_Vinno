@@ -491,22 +491,20 @@ async def import_excel(
                                 (pair_key and pair_key not in snapshot_pairs) or
                                 (pair_key and pair_key in snapshot_all_na_pairs)
                             )
-                            # 从预计算快照值字典O(1)取值（替代原来的get_snapshot_value循环查找）
-                            snap_val = snapshot_values.get((item_ipn, model.name, field_name))
-                            old_val = getattr(val, field_name) if snap_val is None else snap_val
-                            old_val_str = str(old_val).strip() if old_val else None
-                            # 始终更新ConfigValue字段值（为新增/修改配对写入Excel数据）
-                            if old_val_str != new_val:
-                                setattr(val, field_name, new_val)
+                            # Excel 是数据源，始终写入 DB
+                            setattr(val, field_name, new_val)
                             if skip_draft:
                                 continue
-                            if old_val_str != new_val:
+                            # 快照对比仅用于决定是否产生草稿
+                            snap_val = snapshot_values.get((item_ipn, model.name, field_name))
+                            snap_val_str = str(snap_val).strip() if snap_val else None
+                            if snap_val_str != new_val:
                                 draft_changes.append({
                                     "change_type": "update",
                                     "item_id": item.id,
                                     "model_id": model.id,
                                     "field_name": field_name,
-                                    "old_value": old_val_str,
+                                    "old_value": snap_val_str,
                                     "new_value": new_val,
                                     "rd_name": item_data.get('rd_name'),
                                 })
@@ -634,21 +632,14 @@ async def import_excel(
                     if draft_batch.delete_count is None:
                         draft_batch.delete_count = 0
 
-                # 非新增批次：清除旧草稿，重新创建
-                # 旧草稿可能包含之前（修复前）产生的错误数据
+                # 非新增批次：保留旧草稿，导入产生的新变更去重后追加
                 existing_drafts_by_key = set()  # (change_type, item_id, model_id, field_name)
                 if not batch_is_new:
-                    # 清除该批次所有旧草稿，重新基于最新逻辑创建
                     old_drafts = await db.execute(
                         select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
                     )
                     for d in old_drafts.scalars().all():
-                        await db.delete(d)
-                    # 重置计数（将重新计算）
-                    draft_batch.total_count = 0
-                    draft_batch.create_count = 0
-                    draft_batch.update_count = 0
-                    draft_batch.delete_count = 0
+                        existing_drafts_by_key.add((d.change_type, d.item_id, d.model_id, d.field_name))
 
                 # === 先筛选draft_changes：将"Excel全N/A但快照有有效值"的配对转为删除 ===
                 # 必须在创建DB草稿之前完成，避免update草稿和delete草稿同时存在
@@ -694,14 +685,9 @@ async def import_excel(
                         continue
                     filtered_changes.extend(entries)
 
-                # 计算被转换的条目数（用于修正count）
-                converted_entries_count = sum(
-                    len(entries) for key, entries in groups.items() if key in update_to_delete
-                )
                 draft_changes = filtered_changes
 
                 # === 创建更新草稿（已排除应转为删除的配对） ===
-                value_update_count = 0
                 for entry in draft_changes:
                     draft_key = ("update", entry["item_id"], entry["model_id"], entry["field_name"])
                     if draft_key in existing_drafts_by_key:
@@ -717,10 +703,6 @@ async def import_excel(
                         new_value=entry["new_value"]
                     )
                     db.add(draft)
-                    value_update_count += 1
-
-                draft_batch.update_count = value_update_count
-                draft_batch.total_count = len(draft_changes) + len(update_to_delete)
 
                 # 为"全部Excel值为N/A"的配对创建删除草稿
                 for (del_item_id, del_model_id) in update_to_delete:
@@ -738,7 +720,6 @@ async def import_excel(
                         new_value=None
                     )
                     db.add(delete_draft)
-                    draft_batch.delete_count += 1
 
                 # 按机型创建"新增"草稿：每个 (IPN, 型号名) 对在 Excel 中有但快照中没有的
                 # 或被快照标记为"全 N/A"（视为无数据）的配对
@@ -767,10 +748,8 @@ async def import_excel(
                         new_value=pair_item.rd_name
                     )
                     db.add(create_draft)
-                    draft_batch.create_count += 1
-                    draft_batch.total_count += 1
 
-                # 按机型创建"删除"草稿：每个 (IPN, 型号名) 对在快照中有但 Excel 中没有的
+                # 按机型创建"删除"草稿：快照中有但 Excel 中没有的配对
                 # 排除快照中所有字段均为 N/A 的配对（视为无数据，不产生删除）
                 deleted_pairs = (snapshot_pairs - excel_pairs) - snapshot_all_na_pairs - converted_to_delete_pairs
                 if deleted_pairs:
@@ -855,8 +834,22 @@ async def import_excel(
                             new_value=None
                         )
                         db.add(delete_draft)
-                        draft_batch.delete_count += 1
-                        draft_batch.total_count += 1
+
+                # 统一统计该批次所有草稿，更新计数器
+                if need_draft and draft_batch:
+                    all_drafts = await db.execute(
+                        select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
+                    )
+                    total = 0; c = 0; u = 0; d = 0
+                    for dr in all_drafts.scalars().all():
+                        total += 1
+                        if dr.change_type == "create": c += 1
+                        elif dr.change_type == "update": u += 1
+                        elif dr.change_type == "delete": d += 1
+                    draft_batch.total_count = total
+                    draft_batch.create_count = c
+                    draft_batch.update_count = u
+                    draft_batch.delete_count = d
 
         await db.commit()
 
