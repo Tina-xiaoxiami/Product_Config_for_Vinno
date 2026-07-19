@@ -580,6 +580,9 @@ async def import_excel(
                 if item and item.id:
                     all_items_by_id[item.id] = item
 
+            # 保存 Excel 中原有的型号列表（用于删除检测，不包含 DB 补充的）
+            excel_models = list(models)
+
             # 补充该系列所有型号到 models 列表和 excel_pairs
             # 确保后续变更检测覆盖该系列所有型号，而不是仅限于当前文件列范围
             series_models_from_db = await db.execute(
@@ -752,6 +755,9 @@ async def import_excel(
                 # 按机型创建"删除"草稿：快照中有但 Excel 中没有的配对
                 # 排除快照中所有字段均为 N/A 的配对（视为无数据，不产生删除）
                 deleted_pairs = (snapshot_pairs - excel_pairs) - snapshot_all_na_pairs - converted_to_delete_pairs
+                # 过滤：只保留 Excel 中实际存在的型号（DB 补充的型号不产生删除草稿）
+                excel_model_names = {m.name for m in excel_models}
+                deleted_pairs = {(ipn, mn) for (ipn, mn) in deleted_pairs if mn in excel_model_names}
                 if deleted_pairs:
                     # 批量查询所有可能需要的 ConfigItem 和 ProductModel
                     del_ipns = {p[0] for p in deleted_pairs}
