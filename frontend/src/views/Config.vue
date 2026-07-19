@@ -4,7 +4,8 @@
     <el-card class="toolbar-card" shadow="never">
       <div class="toolbar">
         <div class="left">
-          <el-select v-model="selectedSeries" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 280px">
+          <div class="select-all-wrapper" :class="{ 'hide-tags': selectedSeries.length === seriesList.length && seriesList.length > 0 }">
+            <el-select v-model="selectedSeries" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 200px">
             <template #header>
               <div style="display: flex; justify-content: space-between; padding: 4px 12px; gap: 8px;">
                 <el-button size="small" @click="selectAllSeries" :disabled="selectedSeries.length === seriesList.length && seriesList.length > 0">全选</el-button>
@@ -13,14 +14,17 @@
             </template>
             <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
+          <span v-if="selectedSeries.length === seriesList.length && seriesList.length > 0" class="select-all-label">ALL</span>
+          </div>
 
+          <div class="select-all-wrapper" :class="{ 'hide-tags': tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0 }">
           <el-select
             v-model="tempSelectedModels"
             multiple
             collapse-tags
             collapse-tags-tooltip
             placeholder="选择产品型号（可多选）"
-            style="width: 350px"
+            style="width: 170px"
             popper-class="model-select-dropdown"
             @visible-change="onModelDropdownVisibleChange"
           >
@@ -54,14 +58,18 @@
               />
             </el-option-group>
           </el-select>
+          <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
+          </div>
 
+          <div class="select-all-wrapper" :class="{ 'hide-tags': selectedCategories.length === categoryOptions.length && categoryOptions.length > 0 }">
           <el-select
-            v-model="tempCategories"
+            v-model="selectedCategories"
             multiple
             collapse-tags
             collapse-tags-tooltip
             placeholder="选择分类（可多选）"
-            style="width: 250px"
+            style="width: 200px"
+            @change="onFilterChange"
           >
             <el-option label="Optional Features" value="Optional Features" />
             <el-option label="Optional peripherals" value="Optional peripherals" />
@@ -69,23 +77,16 @@
             <el-option label="Probes" value="Probes" />
             <el-option label="Biopsy guide" value="Biopsy guide" />
           </el-select>
-          <el-button size="small" :icon="Search" @click="applyFilters">应用筛选</el-button>
-
-          <el-button
-            v-if="selectedModels.length >= 2"
-            size="small"
-            :type="diffFilterMode ? 'primary' : 'default'"
-            @click="toggleDiffFilter"
-          >
-            {{ diffFilterMode ? '显示全部' : '只看差异' }}
-          </el-button>
+          <span v-if="selectedCategories.length === categoryOptions.length && categoryOptions.length > 0" class="select-all-label">ALL</span>
+          </div>
 
           <el-input
-            v-model="tempSearchText"
+            v-model="searchText"
             placeholder="搜索研发名称/IPN号"
             style="width: 200px"
             clearable
-            @keyup.enter="applyFilters"
+            @keyup.enter="onFilterChange"
+            @clear="onFilterChange"
           />
 
           <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @hide="applyTempColumns">
@@ -169,6 +170,14 @@
           >
             一键完成
           </el-button>
+          <el-button
+            v-if="selectedModels.length >= 2"
+            size="small"
+            :type="diffFilterMode ? 'primary' : 'default'"
+            @click="toggleDiffFilter"
+          >
+            {{ diffFilterMode ? '显示全部' : '只看差异' }}
+          </el-button>
         </div>
       </div>
     </el-card>
@@ -180,7 +189,7 @@
           <el-icon><EditPen /></el-icon>
           <span>当前有 <strong>{{ draftItemSummary.total }}</strong> 项有变更：</span>
           <el-tag
-            :type="draftFilter === 'all' ? 'primary' : 'info'"
+            :type="draftFilterMode ? 'primary' : 'info'"
             size="small"
             class="clickable-tag"
             @click="toggleDraftFilter('all')"
@@ -189,7 +198,7 @@
           </el-tag>
           <el-tag
             v-if="draftItemSummary.create > 0"
-            :type="draftFilter === 'create' ? 'success' : 'info'"
+            :type="draftFilterMode && !draftFilters.has('create') ? 'success' : 'info'"
             size="small"
             class="clickable-tag"
             @click="toggleDraftFilter('create')"
@@ -198,7 +207,7 @@
           </el-tag>
           <el-tag
             v-if="draftItemSummary.update > 0"
-            :type="draftFilter === 'update' ? 'warning' : 'info'"
+            :type="draftFilterMode && !draftFilters.has('update') ? 'warning' : 'info'"
             size="small"
             class="clickable-tag"
             @click="toggleDraftFilter('update')"
@@ -207,7 +216,7 @@
           </el-tag>
           <el-tag
             v-if="draftItemSummary.delete > 0"
-            :type="draftFilter === 'delete' ? 'danger' : 'info'"
+            :type="draftFilterMode && !draftFilters.has('delete') ? 'danger' : 'info'"
             size="small"
             class="clickable-tag"
             @click="toggleDraftFilter('delete')"
@@ -215,7 +224,7 @@
             删除 {{ draftItemSummary.delete }}
           </el-tag>
           <el-button
-            v-if="draftFilter"
+            v-if="draftFilterMode"
             type="primary"
             link
             size="small"
@@ -227,6 +236,9 @@
           <div class="draft-actions">
             <el-button type="primary" size="small" @click="handleSubmitDraft()">提交发布</el-button>
             <el-button size="small" @click="handleDiscardDraft">废弃全部</el-button>
+            <el-button v-if="draftModels.length > 0" size="small" type="info" plain @click="showModelBar = !showModelBar">
+              按机型提交
+            </el-button>
             <el-button size="small" type="info" plain @click="draftExpanded = !draftExpanded">
               <el-icon :class="{ 'is-rotated': draftExpanded }"><ArrowDown /></el-icon>
               {{ draftExpanded ? '收起列表' : '查看列表' }}
@@ -234,8 +246,8 @@
           </div>
         </div>
 
-        <!-- 机型筛选栏（始终可见） -->
-        <div v-if="draftModels.length > 0" class="draft-model-bar">
+        <!-- 机型筛选栏（默认隐藏） -->
+        <div v-if="draftModels.length > 0 && showModelBar" class="draft-model-bar">
           <span class="model-bar-label">按机型提交：</span>
           <el-tag
             v-for="m in draftModels"
@@ -341,6 +353,27 @@
               :label="getModelShortName(modelId)"
             >
           <el-table-column v-if="visibleColumns.final_config" label="最终配置" :width="fieldColWidths.final_config">
+            <template #header>
+              <div class="column-header-with-filter">
+                <span>最终配置</span>
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('final_config', modelId)" @hide="applyFieldFilterPopover('final_config', modelId)">
+                  <template #reference>
+                    <span class="filter-icon" :class="{ active: hasFieldFilter('final_config', modelId) }" @click.stop>
+                      <el-icon><Filter /></el-icon>
+                    </span>
+                  </template>
+                  <div class="filter-body">
+                    <div class="filter-actions">
+                      <el-button size="small" @click="selectAllFieldFilter('final_config', modelId)">全选</el-button>
+                      <el-button size="small" @click="clearFieldFilter('final_config', modelId)">清空</el-button>
+                    </div>
+                    <el-checkbox-group v-model="pendingFieldFilters[getFilterKey('final_config', modelId)]" class="filter-checkboxes">
+                      <el-checkbox v-for="v in (fieldFilterOptions[getFilterKey('final_config', modelId)] || [])" :key="v" :label="v" :value="v" />
+                    </el-checkbox-group>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -393,6 +426,27 @@
             </template>
           </el-table-column>
           <el-table-column v-if="visibleColumns.current_config" label="当前配置" :width="fieldColWidths.current_config">
+            <template #header>
+              <div class="column-header-with-filter">
+                <span>当前配置</span>
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('current_config', modelId)" @hide="applyFieldFilterPopover('current_config', modelId)">
+                  <template #reference>
+                    <span class="filter-icon" :class="{ active: hasFieldFilter('current_config', modelId) }" @click.stop>
+                      <el-icon><Filter /></el-icon>
+                    </span>
+                  </template>
+                  <div class="filter-body">
+                    <div class="filter-actions">
+                      <el-button size="small" @click="selectAllFieldFilter('current_config', modelId)">全选</el-button>
+                      <el-button size="small" @click="clearFieldFilter('current_config', modelId)">清空</el-button>
+                    </div>
+                    <el-checkbox-group v-model="pendingFieldFilters[getFilterKey('current_config', modelId)]" class="filter-checkboxes">
+                      <el-checkbox v-for="v in (fieldFilterOptions[getFilterKey('current_config', modelId)] || [])" :key="v" :label="v" :value="v" />
+                    </el-checkbox-group>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -445,6 +499,27 @@
             </template>
           </el-table-column>
           <el-table-column v-if="visibleColumns.selection_config" label="选型类别" :width="fieldColWidths.selection_config">
+            <template #header>
+              <div class="column-header-with-filter">
+                <span>选型类别</span>
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('selection_config', modelId)" @hide="applyFieldFilterPopover('selection_config', modelId)">
+                  <template #reference>
+                    <span class="filter-icon" :class="{ active: hasFieldFilter('selection_config', modelId) }" @click.stop>
+                      <el-icon><Filter /></el-icon>
+                    </span>
+                  </template>
+                  <div class="filter-body">
+                    <div class="filter-actions">
+                      <el-button size="small" @click="selectAllFieldFilter('selection_config', modelId)">全选</el-button>
+                      <el-button size="small" @click="clearFieldFilter('selection_config', modelId)">清空</el-button>
+                    </div>
+                    <el-checkbox-group v-model="pendingFieldFilters[getFilterKey('selection_config', modelId)]" class="filter-checkboxes">
+                      <el-checkbox v-for="v in (fieldFilterOptions[getFilterKey('selection_config', modelId)] || [])" :key="v" :label="v" :value="v" />
+                    </el-checkbox-group>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -497,6 +572,27 @@
             </template>
           </el-table-column>
           <el-table-column v-if="visibleColumns.rd_status" label="研发状态" :width="fieldColWidths.rd_status">
+            <template #header>
+              <div class="column-header-with-filter">
+                <span>研发状态</span>
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('rd_status', modelId)" @hide="applyFieldFilterPopover('rd_status', modelId)">
+                  <template #reference>
+                    <span class="filter-icon" :class="{ active: hasFieldFilter('rd_status', modelId) }" @click.stop>
+                      <el-icon><Filter /></el-icon>
+                    </span>
+                  </template>
+                  <div class="filter-body">
+                    <div class="filter-actions">
+                      <el-button size="small" @click="selectAllFieldFilter('rd_status', modelId)">全选</el-button>
+                      <el-button size="small" @click="clearFieldFilter('rd_status', modelId)">清空</el-button>
+                    </div>
+                    <el-checkbox-group v-model="pendingFieldFilters[getFilterKey('rd_status', modelId)]" class="filter-checkboxes">
+                      <el-checkbox v-for="v in (fieldFilterOptions[getFilterKey('rd_status', modelId)] || [])" :key="v" :label="v" :value="v" />
+                    </el-checkbox-group>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">
               <div
                 v-if="row.model_values[modelId]"
@@ -896,7 +992,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown } from '@element-plus/icons-vue'
+import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
 import {
   getSeriesList, getModels, getConfigRows,
   getCurrentDraftBatch, createDraftBatch, createDraft,
@@ -952,7 +1048,8 @@ const findSeriesIdByModelId = (modelId) => {
 // key: `${rowId}_${modelId}_${field}`
 // value: { oldValue, newValue, draftId }
 const draftChanges = ref(new Map())
-const draftFilter = ref('')  // 草稿筛选: '', 'create', 'update', 'delete'
+const draftFilterMode = ref(false)    // 全部: 是否开启草稿筛选模式
+const draftFilters = ref(new Set())  // 隐藏的草稿类型: Set<'create'|'update'|'delete'
 const showDiffOnly = ref(false)  // 是否只显示有差异的配置
 const diffFilterMode = ref('')  // 差异筛选模式: '', 'all', 'final_config', 'current_config', 'selection_config', 'rd_status'
 const showRdIncomplete = ref(false)  // 是否高亮并筛选未完成的研发状态
@@ -1245,8 +1342,44 @@ const enumValues = reactive({
 // 筛选条件
 const selectedSeries = ref([])
 const selectedModels = ref([])
+
+// 配置字段列值筛选（按 `field|modelId` 键控，空数组 = 不过滤当前列的该字段）
+const fieldFilters = reactive({})
+const getFilterKey = (field, modelId) => `${field}|${modelId}`
+
+// 选中机型变化时初始化/清理列筛选状态
+watch(selectedModels, () => {
+  const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
+  const validKeys = new Set()
+  for (const modelId of selectedModels.value) {
+    for (const field of fields) {
+      const key = getFilterKey(field, modelId)
+      validKeys.add(key)
+      if (!(key in fieldFilters)) fieldFilters[key] = []
+    }
+  }
+  for (const key of Object.keys(fieldFilters)) {
+    if (!validKeys.has(key)) delete fieldFilters[key]
+  }
+}, { immediate: true })
+
+// 列筛选暂存状态（弹窗关闭时统一应用到 fieldFilters，避免每次勾选立即刷新）
+const pendingFieldFilters = reactive({})
+const openFieldFilterPopover = (field, modelId) => {
+  const key = getFilterKey(field, modelId)
+  pendingFieldFilters[key] = [...(fieldFilters[key] || [])]
+}
+const applyFieldFilterPopover = (field, modelId) => {
+  const key = getFilterKey(field, modelId)
+  if (key in pendingFieldFilters) {
+    fieldFilters[key] = pendingFieldFilters[key]
+    delete pendingFieldFilters[key]
+  }
+}
+
 const tempSelectedModels = ref([])  // 机型下拉临时选择，收起时才同步到 selectedModels
-const selectedCategories = ref([])
+const categoryOptions = ['Optional Features', 'Optional peripherals', '*Optional peripherals(Preassemble in Factory)', 'Probes', 'Biopsy guide']
+const selectedCategories = ref([...categoryOptions])
 const searchText = ref('')
 
 // 临时筛选条件（用于编辑，点击应用后才生效）
@@ -1364,6 +1497,7 @@ const selectedDraftItemIds = ref(new Set())  // 选中的草稿项ID
 const selectedDraftModelIds = ref(new Set())  // 选中的机型ID（按机型过滤提交）
 const draftModelIdSet = ref(new Set())  // 后端返回的实际有变更的机型ID，用于避免从key解析
 const draftExpanded = ref(false)  // 草稿项列表是否展开
+const showModelBar = ref(false)  // 按机型提��栏是否展开
 const draftItemSummary = computed(() => {
   const selectedSet = new Set(selectedModels.value)
   // 没选机型时统计均为0
@@ -1558,6 +1692,20 @@ const draftModels = computed(() => {
   }))
 })
 
+// 配置字段列值筛选辅助函数（按 modelId 隔离，操作 pending 暂存）
+const hasFieldFilter = (field, modelId) => {
+  const arr = fieldFilters[getFilterKey(field, modelId)]
+  return arr && arr.length > 0
+}
+const clearFieldFilter = (field, modelId) => {
+  const key = getFilterKey(field, modelId)
+  pendingFieldFilters[key] = []
+}
+const selectAllFieldFilter = (field, modelId) => {
+  const key = getFilterKey(field, modelId)
+  pendingFieldFilters[key] = [...(fieldFilterOptions.value[key] || [])]
+}
+
 const isEmptyValue = (v) => v == null || v === '' || v === '-' || v === 'N/A' || v === '未定义'
 
 // 根据草稿筛选过滤表格数据
@@ -1576,66 +1724,67 @@ function _computeFilteredData(skipDraftFilter = false) {
   })
 
   // 草稿筛选（统计场景跳过此阶段）
-  if (!skipDraftFilter && draftFilter.value) {
+  if (!skipDraftFilter && draftFilterMode.value) {
     const selectedSet = new Set(selectedModels.value)
-    const changedRowIds = new Set()
+    // 收集要排除的行的 ID
+    const excludedRowIds = new Set()
+    const hiddenTypes = draftFilters.value
 
-    // update 筛选：检查变更机型是否在选中列表中，支持按字段筛选
-    if (draftFilter.value === 'update' || draftFilter.value === 'all') {
+    // 如果隐藏了 update，收集所有 update 行
+    if (hiddenTypes.has('update')) {
       for (const [key, change] of draftChanges.value.entries()) {
         if (change.changeType === 'update') {
-          const parts = key.split('_')
-          const rowId = parseInt(parts[0])
-          const modelId = parseInt(parts[1])
-          const field = parts.slice(2).join('_')
-          if (selectedSet.has(modelId)) {
-            // 仅匹配列筛选可见字段的变更
-            if (!visibleConfigFields.value.includes(field)) continue
-            changedRowIds.add(rowId)
+          const rowId = parseInt(key.split('_')[0])
+          const modelId = parseInt(key.split('_')[1])
+          const field = key.split('_').slice(2).join('_')
+          if (selectedSet.has(modelId) && visibleConfigFields.value.includes(field)) {
+            excludedRowIds.add(rowId)
           }
         }
       }
     }
 
-    // create 筛选：仅当至少有一个新增机型在选中列表中
-    const includeCreate = draftFilter.value === 'create' || draftFilter.value === 'all'
-    if (includeCreate) {
-      // 整行新增（完整的新配置行）
+    // 如果隐藏了 create，收集所有 create 行
+    if (hiddenTypes.has('create')) {
       for (const [itemId, modelSet] of newItemModelMap.value.entries()) {
-        for (const mid of modelSet) {
-          if (selectedSet.has(mid)) {
-            changedRowIds.add(itemId)
-            break
-          }
-        }
+        for (const mid of modelSet) { if (selectedSet.has(mid)) { excludedRowIds.add(itemId); break } }
       }
-      // 单元格级新增（从未定义/空改为有值）
       for (const [key, change] of draftChanges.value.entries()) {
         if (change.changeType === 'create') {
-          const parts = key.split('_')
-          const rowId = parseInt(parts[0])
-          const modelId = parseInt(parts[1])
-          const field = parts.slice(2).join('_')
+          const rowId = parseInt(key.split('_')[0])
+          const modelId = parseInt(key.split('_')[1])
+          const field = key.split('_').slice(2).join('_')
           if (selectedSet.has(modelId) && visibleConfigFields.value.includes(field)) {
-            changedRowIds.add(rowId)
+            excludedRowIds.add(rowId)
           }
         }
       }
     }
 
-    // delete 筛选：仅当至少有一个删除机型在选中列表中
-    if (draftFilter.value === 'delete' || draftFilter.value === 'all') {
+    // 如果隐藏了 delete，收集所有 delete 行
+    if (hiddenTypes.has('delete')) {
       for (const [itemId, modelSet] of deletedItemModelMap.value.entries()) {
-        for (const mid of modelSet) {
-          if (selectedSet.has(mid)) {
-            changedRowIds.add(itemId)
-            break
-          }
-        }
+        for (const mid of modelSet) { if (selectedSet.has(mid)) { excludedRowIds.add(itemId); break } }
       }
     }
 
-    data = data.filter(row => changedRowIds.has(row.id))
+    // 只排除纯属于被隐藏类型的行（如果某行同时是 update 和 create，只要有一种未被隐藏就不排除）
+    data = data.filter(row => {
+      if (!excludedRowIds.has(row.id)) return true
+      // 检查该行是否有未被隐藏的类型
+      const hasCreate = !hiddenTypes.has('create') && (
+        newItemModelMap.value.has(row.id) ||
+        Array.from(draftChanges.value.entries()).some(([k, c]) => parseInt(k.split('_')[0]) === row.id && c.changeType === 'create' && selectedSet.has(parseInt(k.split('_')[1])))
+      )
+      const hasUpdate = !hiddenTypes.has('update') && (
+        Array.from(draftChanges.value.entries()).some(([k, c]) => parseInt(k.split('_')[0]) === row.id && c.changeType === 'update' && selectedSet.has(parseInt(k.split('_')[1])))
+      )
+      const hasDelete = !hiddenTypes.has('delete') && (
+        deletedItemModelMap.value.has(row.id) &&
+        Array.from(deletedItemModelMap.value.get(row.id) || []).some(mid => selectedSet.has(mid))
+      )
+      return hasCreate || hasUpdate || hasDelete
+    })
   }
 
   // 差异筛选 - 只显示不同机型间有差异的配置行
@@ -1728,8 +1877,49 @@ function _computeFilteredData(skipDraftFilter = false) {
     })
   }
 
+  // 配置字段列值筛选：按 `field|modelId` 逐列检查，多列 AND
+  const activeFieldFilters = Object.entries(fieldFilters).filter(([, v]) => v.length > 0)
+  if (activeFieldFilters.length > 0) {
+    data = data.filter(row => {
+      if (!row.model_values) return false
+      return activeFieldFilters.every(([key, filterValues]) => {
+        const [field, modelIdStr] = key.split('|')
+        const modelId = parseInt(modelIdStr)
+        const mv = row.model_values[modelId]
+        if (!mv) return false
+        const val = mv[field]
+        const display = (val && val !== '' && val !== '-' && val !== 'N/A' && val !== '未定义') ? val : '(空)'
+        return filterValues.includes(display)
+      })
+    })
+  }
+
   return data
 }
+
+// 配置字段列值筛选选项：按 `field|modelId` 键控，收集每个机型在各字段上的唯一值
+const fieldFilterOptions = computed(() => {
+  const options = {}
+  const seen = {}
+  for (const row of tableData.value) {
+    if (!row.model_values) continue
+    for (const modelId of selectedModels.value) {
+      for (const field of ['final_config', 'current_config', 'selection_config', 'rd_status']) {
+        const mv = row.model_values[modelId]
+        if (!mv) continue
+        const key = getFilterKey(field, modelId)
+        if (!options[key]) { options[key] = []; seen[key] = new Set() }
+        const v = mv[field]
+        const display = (v && v !== '' && v !== '-' && v !== 'N/A' && v !== '未定义') ? v : '(空)'
+        if (!seen[key].has(display)) {
+          seen[key].add(display)
+          options[key].push(display)
+        }
+      }
+    }
+  }
+  return options
+})
 
 const filteredTableData = computed(() => _computeFilteredData(false))
 
@@ -2397,12 +2587,9 @@ const isValueChanged = (oldVal, newVal) => {
   return String(oldVal || '') !== String(newVal || '')
 }
 
-// 应用筛选
-const applyFilters = async () => {
-  selectedCategories.value = [...tempCategories.value]
-  searchText.value = tempSearchText.value
+// 筛选条件变更时立即刷新
+const onFilterChange = async () => {
   currentPage.value = 1
-  // 不做草稿重载，仅刷新数据
   await loadData()
 }
 
@@ -2835,7 +3022,7 @@ const handleExport = async () => {
     const exportParams = {}
     // 有行级筛选（草稿/差异/研发未完成）时传 item_ids 精确保留结果
     // 无行级筛选时不传 item_ids（避免 URL 超长），改传 categories/search 作为后备
-    const hasRowFilter = draftFilter.value || diffFilterMode.value || showRdIncomplete.value
+    const hasRowFilter = draftFilters.value.size > 0 || diffFilterMode.value || showRdIncomplete.value
     if (hasRowFilter && visibleItemIds.length > 0) {
       exportParams.item_ids = visibleItemIds.join(',')
     } else {
@@ -3051,18 +3238,21 @@ const confirmCreateVersion = async () => {
 
 // 提交草稿
 // 切换草稿筛选
-const toggleDraftFilter = async (type) => {
-  if (draftFilter.value === type) {
-    draftFilter.value = ''
+const toggleDraftFilter = (type) => {
+  if (type === 'all') {
+    // 全部：开关筛选模式
+    draftFilterMode.value = !draftFilterMode.value
+    draftFilters.value = new Set()
   } else {
-    draftFilter.value = type
+    const next = new Set(draftFilters.value)
+    if (next.has(type)) {
+      next.delete(type)
+    } else {
+      next.add(type)
+    }
+    draftFilters.value = next
+    if (!draftFilterMode.value) draftFilterMode.value = true
   }
-  currentPage.value = 1
-}
-
-// 清除草稿筛选
-const clearDraftFilter = () => {
-  draftFilter.value = ''
   currentPage.value = 1
 }
 
@@ -3503,7 +3693,7 @@ const confirmSubmitDraft = async () => {
     draftStats.update = 0
     draftStats.delete = 0
     draftChanges.value.clear()  // 清空变更记录
-    draftFilter.value = ''  // 清空筛选
+    draftFilterMode.value = false; draftFilters.value = new Set()  // 清空筛选
     draftExpanded.value = false
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
@@ -3578,7 +3768,7 @@ const handleDiscardDraft = async () => {
     draftStats.update = 0
     draftStats.delete = 0
     draftChanges.value.clear()  // 清空变更记录
-    draftFilter.value = ''  // 清空筛选
+    draftFilterMode.value = false; draftFilters.value = new Set()  // 清空筛选
     draftExpanded.value = false
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
@@ -3654,7 +3844,7 @@ const handleBatchDiscardDrafts = async () => {
     draftStats.update = 0
     draftStats.delete = 0
     draftChanges.value.clear()
-    draftFilter.value = ''
+    draftFilterMode.value = false; draftFilters.value = new Set()
     draftExpanded.value = false
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
@@ -3758,7 +3948,7 @@ const confirmBatchSubmit = async () => {
     draftStats.update = 0
     draftStats.delete = 0
     draftChanges.value.clear()
-    draftFilter.value = ''
+    draftFilterMode.value = false; draftFilters.value = new Set()
     draftExpanded.value = false
     selectedDraftItemIds.value = new Set()
     selectedDraftModelIds.value = new Set()
@@ -4305,6 +4495,34 @@ watch(selectedModels, () => {
   })
 }, { deep: false })
 
+// 全选时隐藏 el-select 内部标签，显示 ALL
+const updateAllSelectDisplay = () => {
+  document.querySelectorAll('.select-all-wrapper.hide-tags .el-select__selected-item').forEach(el => {
+    el.style.display = 'none'
+  })
+  document.querySelectorAll('.select-all-wrapper:not(.hide-tags) .el-select__selected-item').forEach(el => {
+    el.style.display = ''
+  })
+}
+watch(selectedSeries, updateAllSelectDisplay, { immediate: true })
+watch(selectedCategories, updateAllSelectDisplay, { immediate: true })
+watch(tempSelectedModels, updateAllSelectDisplay, { immediate: true })
+
+onMounted(() => {
+  // 直接注入全局 CSS，绕过 Vue scoped 限制
+  if (!document.getElementById('select-all-style')) {
+    const style = document.createElement('style')
+    style.id = 'select-all-style'
+    style.textContent = `
+      .select-all-wrapper.hide-tags .el-select__selected-item {
+        display: none !important;
+      }
+    `
+    document.head.appendChild(style)
+  }
+  updateAllSelectDisplay()
+})
+
 </script>
 
 <style scoped>
@@ -4318,17 +4536,39 @@ watch(selectedModels, () => {
 
 .toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
+}
+
+.select-all-wrapper {
+  position: relative;
+}
+
+.select-all-label {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 1;
+  white-space: nowrap;
+  font-size: 12px;
+  height: 24px;
+  line-height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--el-color-primary-light-8);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
 }
 
 .toolbar .left {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex: 1 1 100%;
 }
 
 .toolbar .right {
@@ -4912,5 +5152,73 @@ th.is-drag-over-before {
 /* drop 指示线 — after */
 th.is-drag-over-after {
   box-shadow: inset -3px 0 0 0 #409eff;
+}
+
+/* 配置字段列头筛选图标 */
+.column-header-with-filter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  overflow: hidden;
+}
+.column-header-with-filter > span {
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.filter-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity var(--duration-fast, 150ms), color var(--duration-fast, 150ms), background var(--duration-fast, 150ms);
+  flex-shrink: 0;
+  color: #999;
+}
+.filter-icon:hover {
+  opacity: 0.8;
+  color: #409eff;
+  background: #ecf5ff;
+}
+.filter-icon.active {
+  opacity: 1;
+  color: #409eff;
+  background: #d9ecff;
+}
+.filter-icon .el-icon {
+  font-size: 12px;
+}
+
+/* 列值筛选弹窗 */
+.field-filter-popover {
+  padding: 0;
+}
+.field-filter-popover .filter-body {
+  padding: 8px 12px;
+}
+.field-filter-popover .filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+.field-filter-popover .filter-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.field-filter-popover .filter-checkboxes .el-checkbox {
+  height: 28px;
+  margin-right: 0;
 }
 </style>
