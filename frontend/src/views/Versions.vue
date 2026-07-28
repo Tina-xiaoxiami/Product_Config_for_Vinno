@@ -185,6 +185,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, compareVersions, rollbackVersion, updateVersion, getModels } from '../api/data'
+import { formatTime, getFieldLabel } from '../utils/modelHelpers'
 
 // 路由
 const router = useRouter()
@@ -251,18 +252,6 @@ const loadVersions = async () => {
     console.error('加载版本列表失败:', error)
     ElMessage.error('加载版本列表失败')
   }
-}
-
-// 格式化时间
-const formatTime = (time) => {
-  if (!time) return ''
-  return new Date(time).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 // 查看版本详情
@@ -337,17 +326,6 @@ const executeCompare = async () => {
   } finally {
     compareLoading.value = false
   }
-}
-
-// 获取字段标签
-const getFieldLabel = (field) => {
-  const labels = {
-    'final_config': '最终配置',
-    'current_config': '当前配置',
-    'selection_config': '选型类别',
-    'rd_status': '研发状态'
-  }
-  return labels[field] || field
 }
 
 // 回滚版本

@@ -84,6 +84,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import { getSeriesList, getModels, createModel, updateModel, deleteModel } from '../api/data'
+import { formatTime } from '../utils/modelHelpers'
 
 const seriesList = ref([])
 const selectedSeries = ref(null)
@@ -145,17 +146,6 @@ const loadData = async () => {
   } finally {
     loading.value = false
   }
-}
-
-const formatTime = (time) => {
-  if (!time) return ''
-  return new Date(time).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 const getStatusType = (status) => {
