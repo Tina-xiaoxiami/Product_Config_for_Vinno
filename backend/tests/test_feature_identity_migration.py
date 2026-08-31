@@ -135,6 +135,34 @@ def test_migration_preserves_feature_ids_foreign_keys_and_version_rows(tmp_path)
     ).fetchall()
     connection.close()
 
+
+def test_migration_applies_user_confirmed_merge_and_reports_it_separately(tmp_path):
+    database_path = tmp_path / "product_config_copy.db"
+    _create_legacy_database(database_path)
+
+    report = migrate_feature_identity_database(
+        database_path,
+        confirmed_ipn_by_legacy_feature_id={4: "6000034"},
+    )
+
+    assert report.auto_matched_count == 1
+    assert report.confirmed_matched_count == 1
+    assert report.pending_count == 0
+    connection = sqlite3.connect(database_path)
+    assert connection.execute(
+        """
+        SELECT config_item_id, ipn, primary_cn_name, identity_status
+        FROM features WHERE id = 4
+        """
+    ).fetchone() == (59, "6000034", "穿刺增强", "confirmed")
+    assert connection.execute(
+        """
+        SELECT name_type, source FROM feature_names
+        WHERE feature_id = 4 AND name = '穿刺引导&穿刺增强'
+        """
+    ).fetchone() == ("alias", "legacy_features.name")
+    connection.close()
+
     report = migrate_feature_identity_database(database_path)
 
     connection = sqlite3.connect(database_path)

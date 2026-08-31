@@ -84,6 +84,41 @@ def test_composite_feature_without_one_exact_ipn_stays_pending():
     assert preview.pending[0].reason == "no_exact_ipn_match"
 
 
+def test_user_confirmed_mapping_merges_legacy_name_into_target_ipn_as_alias():
+    preview = build_feature_identity_preview(
+        config_items=[
+            ConfigItemIdentity(
+                59,
+                "6000034",
+                "Needle enhancement【启用】",
+                "穿刺增强",
+                "Needle enhancement",
+            ),
+        ],
+        legacy_features=[LegacyFeature(4, "穿刺引导&穿刺增强", "")],
+        confirmed_ipn_by_legacy_feature_id={4: "6000034"},
+    )
+
+    assert preview.pending == []
+    identity = preview.identities[0]
+    assert identity.ipn == "6000034"
+    assert identity.status == "confirmed"
+    assert ("cn", "穿刺引导&穿刺增强", "alias") in [
+        (name.language, name.name, name.name_type) for name in identity.names
+    ]
+
+
+def test_user_confirmed_mapping_rejects_an_unknown_target_ipn():
+    with pytest.raises(IdentityValidationError, match="确认映射指向未知IPN"):
+        build_feature_identity_preview(
+            config_items=[
+                ConfigItemIdentity(59, "6000034", "Needle", "穿刺增强", "Needle")
+            ],
+            legacy_features=[LegacyFeature(4, "穿刺引导&穿刺增强", "")],
+            confirmed_ipn_by_legacy_feature_id={4: "9999999"},
+        )
+
+
 def test_missing_or_duplicate_config_item_ipns_stop_the_preview():
     with pytest.raises(IdentityValidationError, match="缺少IPN"):
         build_feature_identity_preview(
