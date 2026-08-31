@@ -177,6 +177,76 @@ def test_migration_applies_user_confirmed_merge_and_reports_it_separately(tmp_pa
     connection.close()
 
 
+def test_migration_links_related_and_versioned_ipns_without_merging_them(tmp_path):
+    database_path = tmp_path / "product_config_copy.db"
+    _create_legacy_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executemany(
+        "INSERT INTO config_items VALUES (?, ?, ?, ?, ?)",
+        [
+            (75, "6000190", "SWEI", "剪切波弹性成像", "shear wave imaging"),
+            (96, "6000294", "SupportVFetus", "OB测量包", "VMind OB"),
+            (217, "6000415", "SupportVFetus", "VMind+：OB产筛精灵", "VMind+ OB"),
+            (65, "3200476", "STIC", "时间空间相关成像", "STIC"),
+            (145, "6000323", "STIC enabled", "时间空间相关成像", "STIC"),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO features VALUES (?, ?, ?, ?, ?)",
+        [
+            (19, 2, "点式剪切波", "", 3),
+            (31, 2, "Vmind OB", "", 4),
+            (32, 2, "STIC", "", 5),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    relations = {
+        19: ("related", ("6000190",)),
+        31: ("version_variant", ("6000294", "6000415")),
+        32: ("version_variant", ("3200476", "6000323")),
+    }
+    first_report = migrate_feature_identity_database(
+        database_path,
+        confirmed_relations_by_legacy_feature_id=relations,
+    )
+    second_report = migrate_feature_identity_database(
+        database_path,
+        confirmed_relations_by_legacy_feature_id=relations,
+    )
+
+    assert second_report == first_report
+    assert first_report.related_feature_count == 3
+    assert first_report.pending_names == ("穿刺引导&穿刺增强",)
+    connection = sqlite3.connect(database_path)
+    assert connection.execute(
+        "SELECT id, ipn, config_item_id, identity_status FROM features WHERE id >= 19 ORDER BY id"
+    ).fetchall() == [
+        (19, "", None, "related"),
+        (31, "", None, "related"),
+        (32, "", None, "related"),
+    ]
+    assert connection.execute(
+        """
+        SELECT f.name, ci.ipn, link.relation_type
+        FROM feature_config_item_links link
+        JOIN features f ON f.id = link.feature_id
+        JOIN config_items ci ON ci.id = link.config_item_id
+        WHERE f.id IN (19, 31, 32)
+        ORDER BY f.id, ci.id
+        """
+    ).fetchall() == [
+        ("点式剪切波", "6000190", "related"),
+        ("Vmind OB", "6000294", "version_variant"),
+        ("Vmind OB", "6000415", "version_variant"),
+        ("STIC", "3200476", "version_variant"),
+        ("STIC", "6000323", "version_variant"),
+    ]
+    assert _table_count(connection, "feature_config_item_links") == 6
+    connection.close()
+
+
 def test_migration_is_idempotent_and_normalized_ipn_is_unique(tmp_path):
     database_path = tmp_path / "product_config_copy.db"
     _create_legacy_database(database_path)
