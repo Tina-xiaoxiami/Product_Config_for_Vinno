@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -20,6 +21,7 @@ class FeatureIdentityMigrationReport:
     feature_count_before: int
     feature_count_after: int
     auto_matched_count: int
+    confirmed_matched_count: int
     pending_count: int
     pending_names: tuple[str, ...]
     foreign_key_violation_count: int
@@ -117,6 +119,8 @@ def _load_source_data(connection: sqlite3.Connection):
 
 def migrate_feature_identity_database(
     database_path: str | Path,
+    *,
+    confirmed_ipn_by_legacy_feature_id: Mapping[int, str] | None = None,
 ) -> FeatureIdentityMigrationReport:
     """Migrate the explicitly supplied SQLite file in one atomic transaction.
 
@@ -135,6 +139,7 @@ def migrate_feature_identity_database(
         preview = build_feature_identity_preview(
             config_items=config_items,
             legacy_features=legacy_features,
+            confirmed_ipn_by_legacy_feature_id=confirmed_ipn_by_legacy_feature_id,
         )
         feature_count_before = connection.execute(
             "SELECT COUNT(*) FROM features"
@@ -221,7 +226,12 @@ def migrate_feature_identity_database(
         return FeatureIdentityMigrationReport(
             feature_count_before=int(feature_count_before),
             feature_count_after=int(feature_count_after),
-            auto_matched_count=len(preview.identities),
+            auto_matched_count=sum(
+                identity.status == "auto_matched" for identity in preview.identities
+            ),
+            confirmed_matched_count=sum(
+                identity.status == "confirmed" for identity in preview.identities
+            ),
             pending_count=len(preview.pending),
             pending_names=tuple(item.legacy_name for item in preview.pending),
             foreign_key_violation_count=len(foreign_key_violations),

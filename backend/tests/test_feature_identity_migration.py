@@ -135,6 +135,19 @@ def test_migration_preserves_feature_ids_foreign_keys_and_version_rows(tmp_path)
     ).fetchall()
     connection.close()
 
+    report = migrate_feature_identity_database(database_path)
+
+    connection = sqlite3.connect(database_path)
+    assert {
+        table: _table_count(connection, table) for table in baseline
+    } == baseline
+    assert connection.execute(
+        "SELECT id, feature_id FROM product_probe_configs ORDER BY id"
+    ).fetchall() == feature_links
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert report.foreign_key_violation_count == 0
+    connection.close()
+
 
 def test_migration_applies_user_confirmed_merge_and_reports_it_separately(tmp_path):
     database_path = tmp_path / "product_config_copy.db"
@@ -161,19 +174,6 @@ def test_migration_applies_user_confirmed_merge_and_reports_it_separately(tmp_pa
         WHERE feature_id = 4 AND name = '穿刺引导&穿刺增强'
         """
     ).fetchone() == ("alias", "legacy_features.name")
-    connection.close()
-
-    report = migrate_feature_identity_database(database_path)
-
-    connection = sqlite3.connect(database_path)
-    assert {
-        table: _table_count(connection, table) for table in baseline
-    } == baseline
-    assert connection.execute(
-        "SELECT id, feature_id FROM product_probe_configs ORDER BY id"
-    ).fetchall() == feature_links
-    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert report.foreign_key_violation_count == 0
     connection.close()
 
 

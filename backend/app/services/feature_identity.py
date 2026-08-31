@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import re
 import unicodedata
@@ -121,6 +122,8 @@ def _append_name(
 def _build_identity(
     item: ConfigItemIdentity,
     legacy: LegacyFeature,
+    *,
+    status: str = "auto_matched",
 ) -> FeatureIdentity:
     names: list[FeatureName] = []
     seen: set[tuple[str, str]] = set()
@@ -163,6 +166,7 @@ def _build_identity(
         primary_cn_name=str(item.zh_desc or "").strip(),
         primary_en_name=str(item.en_desc or "").strip(),
         names=tuple(names),
+        status=status,
     )
 
 
@@ -170,10 +174,12 @@ def build_feature_identity_preview(
     *,
     config_items: list[ConfigItemIdentity],
     legacy_features: list[LegacyFeature],
+    confirmed_ipn_by_legacy_feature_id: Mapping[int, str] | None = None,
 ) -> FeatureIdentityPreview:
     """Match legacy features to one IPN without changing source data."""
 
     by_ipn = _validate_config_items(config_items)
+    confirmed_mappings = confirmed_ipn_by_legacy_feature_id or {}
     by_name: dict[str, list[ConfigItemIdentity]] = {}
     for item in config_items:
         for source_name in {_normalize_name(name) for name in _source_names(item)}:
@@ -183,6 +189,16 @@ def build_feature_identity_preview(
     identities: list[FeatureIdentity] = []
     pending: list[PendingIdentity] = []
     for legacy in legacy_features:
+        if legacy.id in confirmed_mappings:
+            confirmed_ipn = _normalize_ipn(confirmed_mappings[legacy.id])
+            item = by_ipn.get(confirmed_ipn)
+            if item is None:
+                raise IdentityValidationError(
+                    f"功能 {legacy.id} 的确认映射指向未知IPN：{confirmed_ipn}"
+                )
+            identities.append(_build_identity(item, legacy, status="confirmed"))
+            continue
+
         legacy_ipn = _normalize_ipn(legacy.ipn)
         if legacy_ipn:
             item = by_ipn.get(legacy_ipn)
