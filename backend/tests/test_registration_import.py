@@ -18,17 +18,28 @@ def _create_database(path):
         );
         INSERT INTO knowledge_documents VALUES (1, 'source-sha', '20250729');
 
+        CREATE TABLE product_series (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+        INSERT INTO product_series VALUES
+            (1, 'R&V10 series-China'),
+            (2, 'R&V10 series-Oversea');
+
         CREATE TABLE product_models (
             id INTEGER PRIMARY KEY,
+            series_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            config_group TEXT
+            config_group TEXT,
+            FOREIGN KEY(series_id) REFERENCES product_series(id)
         );
         INSERT INTO product_models VALUES
-            (1, 'VINNO 10', NULL),
-            (2, 'VINNO 10E', NULL),
-            (3, 'VINNO 9', NULL),
-            (4, 'VINNO 9_Private', 'VINNO 9'),
-            (5, 'VINNO 9 综合版', NULL);
+            (1, 1, 'VINNO 10', NULL),
+            (2, 1, 'VINNO 10E', NULL),
+            (3, 1, 'VINNO 9', NULL),
+            (4, 1, 'VINNO 9_Private', 'VINNO 9'),
+            (5, 1, 'VINNO 9 综合版', NULL),
+            (6, 2, 'VINNO 10', NULL);
 
         CREATE TABLE config_items (
             id INTEGER PRIMARY KEY,
@@ -103,6 +114,7 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
     assert first.matrix_count == 9
     assert first.direct_link_count == 3
     assert first.derived_link_count == 2
+    assert first.unmatched_product_model_count == 0
     assert first.new_snapshot is True
     assert repeated.new_snapshot is False
 
@@ -147,4 +159,3 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
         ("VINNO 9 综合版", "VINNO 9", "confirmed_derived"),
     ]
     connection.close()
-
