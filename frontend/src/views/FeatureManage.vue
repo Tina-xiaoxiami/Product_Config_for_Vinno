@@ -129,10 +129,9 @@ import {
   updateFeatureGroup,
   deleteFeatureGroup,
   getFeatures,
-  createFeature,
-  updateFeature,
   deleteFeature,
   getFeatureMasterData,
+  createFeatureMasterData,
   updateFeatureMasterData
 } from '../api/data'
 
@@ -224,6 +223,8 @@ const parseAliases = (value) => value
   .map(name => name.trim())
   .filter(Boolean)
 const masterPayload = () => ({
+  group_id: featureForm.group_id,
+  sort_order: featureForm.sort_order,
   primary_cn_name: featureForm.primary_cn_name,
   primary_en_name: featureForm.primary_en_name,
   alias_cn_names: parseAliases(featureForm.alias_cn_text),
@@ -272,23 +273,9 @@ const saveFeature = async () => {
   try {
     const payload = masterPayload()
     if (editingFeatureId.value) {
-      const primaryIpn = payload.ipns.find(entry => entry.relation_type === 'primary')?.ipn || ''
-      await updateFeature(editingFeatureId.value, {
-        group_id: featureForm.group_id,
-        name: featureForm.primary_cn_name,
-        ipn: primaryIpn,
-        sort_order: featureForm.sort_order
-      })
       await updateFeatureMasterData(editingFeatureId.value, payload)
     } else {
-      const primaryIpn = payload.ipns.find(entry => entry.relation_type === 'primary')?.ipn || ''
-      const created = await createFeature({
-        group_id: featureForm.group_id,
-        name: featureForm.primary_cn_name,
-        ipn: primaryIpn,
-        sort_order: featureForm.sort_order
-      })
-      await updateFeatureMasterData(created.id, payload)
+      await createFeatureMasterData(payload)
     }
     ElMessage.success('保存成功')
     showFeatureForm.value = false

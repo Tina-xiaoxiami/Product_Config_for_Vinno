@@ -141,6 +141,15 @@ async def _resolve_ipns(session: AsyncSession, requested: list[dict]) -> list[di
     return resolved
 
 
+async def _ensure_group_exists(session: AsyncSession, group_id: int) -> None:
+    result = await session.execute(
+        text("SELECT id FROM feature_groups WHERE id = :group_id"),
+        {"group_id": group_id},
+    )
+    if result.one_or_none() is None:
+        raise FeatureMasterDataError("功能组不存在")
+
+
 async def _replace_language_names(
     session: AsyncSession,
     *,
@@ -308,6 +317,8 @@ async def update_feature_master_data(
     session: AsyncSession,
     *,
     feature_id: int,
+    group_id: int | None = None,
+    sort_order: int | None = None,
     primary_cn_name: str,
     primary_en_name: str,
     alias_cn_names: list[str],
@@ -325,6 +336,8 @@ async def update_feature_master_data(
     aliases_cn = _clean_aliases(alias_cn_names, primary_cn)
     aliases_en = _clean_aliases(alias_en_names, primary_en)
     resolved_ipns = await _resolve_ipns(session, ipns)
+    if group_id is not None:
+        await _ensure_group_exists(session, group_id)
 
     await _replace_language_names(
         session,
@@ -350,6 +363,8 @@ async def update_feature_master_data(
             """
             UPDATE features
             SET name = :display_name,
+                group_id = COALESCE(:group_id, group_id),
+                sort_order = COALESCE(:sort_order, sort_order),
                 primary_cn_name = :primary_cn_name,
                 primary_en_name = :primary_en_name,
                 config_item_id = :config_item_id,
@@ -361,6 +376,8 @@ async def update_feature_master_data(
         {
             "feature_id": feature_id,
             "display_name": primary_cn,
+            "group_id": group_id,
+            "sort_order": sort_order,
             "primary_cn_name": primary_cn,
             "primary_en_name": primary_en,
             "config_item_id": primary_link["config_item_id"] if primary_link else None,
@@ -370,6 +387,87 @@ async def update_feature_master_data(
     await session.execute(
         text("DELETE FROM feature_config_item_links WHERE feature_id = :feature_id"),
         {"feature_id": feature_id},
+    )
+    for entry in resolved_ipns:
+        await session.execute(
+            text(
+                """
+                INSERT INTO feature_config_item_links (
+                    feature_id, config_item_id, relation_type, source, review_status
+                ) VALUES (
+                    :feature_id, :config_item_id, :relation_type,
+                    'feature_management', 'approved'
+                )
+                """
+            ),
+            {
+                "feature_id": feature_id,
+                "config_item_id": entry["config_item_id"],
+                "relation_type": entry["relation_type"],
+            },
+        )
+    await session.commit()
+    return await get_feature_master_data(session, feature_id)
+
+
+async def create_feature_master_data(
+    session: AsyncSession,
+    *,
+    group_id: int,
+    sort_order: int,
+    primary_cn_name: str,
+    primary_en_name: str,
+    alias_cn_names: list[str],
+    alias_en_names: list[str],
+    ipns: list[dict],
+) -> dict:
+    primary_cn = clean_feature_name(primary_cn_name)
+    primary_en = clean_feature_name(primary_en_name)
+    if not primary_cn or not primary_en:
+        raise FeatureMasterDataError("中文主名称和英文主名称不能为空")
+    await _ensure_group_exists(session, group_id)
+    resolved_ipns = await _resolve_ipns(session, ipns)
+    primary_link = next(
+        (entry for entry in resolved_ipns if entry["relation_type"] == "primary"),
+        None,
+    )
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO features (
+                group_id, name, ipn, sort_order, config_item_id,
+                primary_cn_name, primary_en_name, identity_status
+            ) VALUES (
+                :group_id, :name, :ipn, :sort_order, :config_item_id,
+                :primary_cn_name, :primary_en_name, 'confirmed'
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "group_id": group_id,
+            "name": primary_cn,
+            "ipn": primary_link["ipn"] if primary_link else None,
+            "sort_order": sort_order,
+            "config_item_id": primary_link["config_item_id"] if primary_link else None,
+            "primary_cn_name": primary_cn,
+            "primary_en_name": primary_en,
+        },
+    )
+    feature_id = int(result.scalar_one())
+    await _replace_language_names(
+        session,
+        feature_id=feature_id,
+        language="cn",
+        primary=primary_cn,
+        aliases=_clean_aliases(alias_cn_names, primary_cn),
+    )
+    await _replace_language_names(
+        session,
+        feature_id=feature_id,
+        language="en",
+        primary=primary_en,
+        aliases=_clean_aliases(alias_en_names, primary_en),
     )
     for entry in resolved_ipns:
         await session.execute(

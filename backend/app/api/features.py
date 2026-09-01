@@ -7,10 +7,11 @@ from app.models.probe import FeatureGroup, Feature
 from app.schemas.probe import (
     FeatureGroupCreate, FeatureGroupUpdate, FeatureGroupResponse, FeatureGroupListResponse,
     FeatureCreate, FeatureUpdate, FeatureResponse, FeatureListResponse,
-    FeatureMasterDataResponse, FeatureMasterDataUpdate,
+    FeatureMasterDataCreate, FeatureMasterDataResponse, FeatureMasterDataUpdate,
 )
 from app.services.feature_master_data import (
     FeatureMasterDataError,
+    create_feature_master_data,
     get_feature_master_data,
     update_feature_master_data,
 )
@@ -55,6 +56,18 @@ async def delete_group(group_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ===== Features =====
+
+@router.post("/master-data", response_model=FeatureMasterDataResponse)
+async def create_master_data(
+    data: FeatureMasterDataCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await create_feature_master_data(db, **data.model_dump())
+    except FeatureMasterDataError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return FeatureMasterDataResponse(**result)
 
 @router.get("/{feature_id}/master-data", response_model=FeatureMasterDataResponse)
 async def feature_master_data(feature_id: int, db: AsyncSession = Depends(get_db)):

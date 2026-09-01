@@ -1,3 +1,5 @@
+import sqlite3
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -200,6 +202,15 @@ async def test_feature_master_data_preserves_old_primary_and_replaces_manual_ali
 async def test_feature_management_creates_master_data_atomically(tmp_path):
     database_path = tmp_path / "knowledge.db"
     _create_knowledge_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO config_items (id, ipn, rd_name, zh_desc, en_desc)
+        VALUES (300, '6000500', 'NewFeature', '新功能', 'New Feature')
+        """
+    )
+    connection.commit()
+    connection.close()
     client, engine = await _client_for(database_path)
     payload = {
         "group_id": 1,
@@ -208,7 +219,7 @@ async def test_feature_management_creates_master_data_atomically(tmp_path):
         "primary_en_name": "New Feature",
         "alias_cn_names": ["新功能曾用名"],
         "alias_en_names": ["Former New Feature"],
-        "ipns": [{"ipn": "6000017", "relation_type": "primary"}],
+        "ipns": [{"ipn": "6000500", "relation_type": "primary"}],
     }
 
     async with client:
@@ -231,6 +242,6 @@ async def test_feature_management_creates_master_data_atomically(tmp_path):
     body = created.json()
     assert body["group_id"] == 1
     assert body["primary_cn_name"] == "新功能"
-    assert body["ipns"][0]["ipn"] == "6000017"
+    assert body["ipns"][0]["ipn"] == "6000500"
     assert searched.json()["total"] == 1
     assert searched.json()["items"][0]["id"] == body["id"]

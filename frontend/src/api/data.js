@@ -109,6 +109,7 @@ export const createFeature = (data) => api.post('/features', data)
 export const updateFeature = (id, data) => api.put(`/features/${id}`, data)
 export const deleteFeature = (id) => api.delete(`/features/${id}`)
 export const getFeatureMasterData = (id) => api.get(`/features/${id}/master-data`)
+export const createFeatureMasterData = (data) => api.post('/features/master-data', data)
 export const updateFeatureMasterData = (id, data) => api.put(`/features/${id}/master-data`, data)
 
 // 模板配置

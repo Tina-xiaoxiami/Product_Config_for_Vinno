@@ -144,11 +144,18 @@ class FeatureMasterIpn(FeatureMasterIpnInput):
 
 
 class FeatureMasterDataUpdate(BaseModel):
+    group_id: Optional[int] = None
+    sort_order: Optional[int] = None
     primary_cn_name: str
     primary_en_name: str
     alias_cn_names: List[str] = Field(default_factory=list)
     alias_en_names: List[str] = Field(default_factory=list)
     ipns: List[FeatureMasterIpnInput] = Field(default_factory=list)
+
+
+class FeatureMasterDataCreate(FeatureMasterDataUpdate):
+    group_id: int
+    sort_order: int = 0
 
 
 class FeatureMasterDataResponse(BaseModel):
