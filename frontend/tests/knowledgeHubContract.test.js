@@ -122,3 +122,22 @@ test('knowledge hub is a read-only aggregate linked to master-data maintenance',
   assert.match(view, /to="\/feature-manage"/)
   assert.match(view, /to="\/registration-manage"/)
 })
+
+
+test('knowledge hub supports the confirmed Q&A feedback loop', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /label="问答查询"/)
+  assert.match(view, /data-testid="knowledge-question-input"/)
+  assert.match(view, /data-testid="ask-knowledge-question"/)
+  assert.match(view, /待确认问题/)
+  assert.match(view, /确认并发布/)
+  assert.match(view, /答案依据/)
+  assert.match(view, /变更说明/)
+  assert.match(view, /系统不会猜测/)
+  assert.match(api, /export const askKnowledgeQuestion/)
+  assert.match(api, /export const getKnowledgeQuestions/)
+  assert.match(api, /export const publishKnowledgeAnswer/)
+  assert.match(api, /export const getKnowledgeAnswerHistory/)
+})
