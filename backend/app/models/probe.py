@@ -82,6 +82,10 @@ class Feature(Base):
     group_id = Column(Integer, ForeignKey("feature_groups.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
     ipn = Column(String(100), nullable=True)  # IPN号，关联ConfigItem
+    config_item_id = Column(Integer, ForeignKey("config_items.id"), nullable=True)
+    primary_cn_name = Column(Text, nullable=True)
+    primary_en_name = Column(Text, nullable=True)
+    identity_status = Column(String(30), nullable=False, default="pending")
     sort_order = Column(Integer, default=0)
     # relationships
     group = relationship("FeatureGroup", back_populates="features")
