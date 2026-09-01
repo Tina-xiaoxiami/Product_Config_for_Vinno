@@ -31,6 +31,14 @@ _QUESTION_FILLERS = (
     "有无",
     "有没有",
 )
+_CONFIRMED_QUERY_EQUIVALENCES = (
+    (
+        "环境光自动调节亮度",
+        "环境光线自动调节亮度",
+        "实时显示屏亮度调节",
+        "显示屏亮度调节",
+    ),
+)
 
 
 class KnowledgeContentError(ValueError):
@@ -343,21 +351,41 @@ def _bigrams(value: str) -> set[str]:
     return {value[index : index + 2] for index in range(max(0, len(value) - 1))}
 
 
-def _candidate_score(question: str, content: str, document_context: str) -> float:
-    query_core = _search_core(question)
-    content_core = normalize_question(content)
-    context_core = normalize_question(document_context)
-    if not query_core or not content_core:
-        return 0.0
+def _query_forms(question: str) -> list[str]:
+    primary = _search_core(question)
+    forms = [primary]
+    normalized_question = normalize_question(question)
+    for group in _CONFIRMED_QUERY_EQUIVALENCES:
+        normalized_group = [normalize_question(item) for item in group]
+        if any(item in normalized_question for item in normalized_group):
+            forms.extend(item for item in normalized_group if item not in forms)
+    return forms
+
+
+def _canonical_identifiers(value: str) -> set[str]:
+    normalized = normalize_question(value)
+    identifiers = set(re.findall(r"(?:vinno|v)\d+[a-z0-9]*|\d{6,}", normalized))
+    return {re.sub(r"^vinno", "v", identifier) for identifier in identifiers}
+
+
+def _pair_coverage(query_core: str, content_core: str) -> float:
     query_pairs = _bigrams(query_core)
     if not query_pairs:
-        return 1.0 if query_core in content_core else 0.0
-    matched_pairs = sum(pair in content_core for pair in query_pairs)
-    coverage = matched_pairs / len(query_pairs)
+        return 1.0 if query_core and query_core in content_core else 0.0
     if query_core in content_core:
-        coverage = 1.0
-    identifiers = set(re.findall(r"(?:vinno|v)\d+[a-z0-9]*|\d{6,}", query_core))
-    combined_context = f"{content_core}{context_core}"
+        return 1.0
+    return sum(pair in content_core for pair in query_pairs) / len(query_pairs)
+
+
+def _candidate_score(question: str, content: str, document_context: str) -> float:
+    query_forms = _query_forms(question)
+    content_core = normalize_question(content)
+    context_core = normalize_question(document_context)
+    if not query_forms[0] or not content_core:
+        return 0.0
+    coverage = max(_pair_coverage(form, content_core) for form in query_forms)
+    identifiers = _canonical_identifiers(question)
+    combined_context = re.sub(r"vinno(?=\d)", "v", f"{content_core}{context_core}")
     if identifiers and not all(identifier in combined_context for identifier in identifiers):
         coverage *= 0.35
     intent_terms = {
@@ -368,6 +396,36 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
         matched_intents = sum(term in content for term in intent_terms)
         coverage = 0.85 * coverage + 0.15 * (matched_intents / len(intent_terms))
     return round(min(1.0, coverage), 4)
+
+
+def _candidate_excerpt(content: str, question: str) -> str:
+    if len(content) <= MAX_CANDIDATE_EXCERPT:
+        return content
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if not lines:
+        return content[:MAX_CANDIDATE_EXCERPT]
+    forms = _query_forms(question)
+    best_index = max(
+        range(len(lines)),
+        key=lambda index: max(
+            _pair_coverage(form, normalize_question(lines[index])) for form in forms
+        ),
+    )
+    selected = lines[best_index]
+    left = best_index - 1
+    right = best_index + 1
+    while len(selected) < MAX_CANDIDATE_EXCERPT and (left >= 0 or right < len(lines)):
+        if left >= 0:
+            candidate = f"{lines[left]}\n{selected}"
+            if len(candidate) <= MAX_CANDIDATE_EXCERPT:
+                selected = candidate
+            left -= 1
+        if right < len(lines):
+            candidate = f"{selected}\n{lines[right]}"
+            if len(candidate) <= MAX_CANDIDATE_EXCERPT:
+                selected = candidate
+            right += 1
+    return selected[-MAX_CANDIDATE_EXCERPT:]
 
 
 async def find_candidate_evidence(
@@ -409,7 +467,7 @@ async def find_candidate_evidence(
                 "document_type": row.document_type,
                 "source_ref": row.source_ref,
                 "page_number": int(row.page_number) if row.page_number else None,
-                "excerpt": row.content[:MAX_CANDIDATE_EXCERPT],
+                "excerpt": _candidate_excerpt(row.content, question),
                 "score": score,
                 "preview_url": f"/api/knowledge/documents/{row.document_id}/preview",
             }
