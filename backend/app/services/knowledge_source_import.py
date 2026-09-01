@@ -97,18 +97,22 @@ def discover_v10_knowledge_sources(document_root: str | Path) -> list[KnowledgeS
         )
 
     release_directory = root / "release note" / "1.14.80"
+    confirmed_release_version = release_directory.name
     for path in release_directory.iterdir() if release_directory.is_dir() else ():
         if not path.is_file() or path.suffix.lower() not in {".pdf", ".docx"}:
             continue
         if "release note" not in path.name.casefold():
             continue
-        version_match = re.search(r"\d+\.\d+\.\d+", path.name)
         sources.append(
             _source(
                 path,
                 document_type="release_note",
-                title=path.stem,
-                version=version_match.group(0) if version_match else "1.14.80",
+                title=re.sub(
+                    r"\d+\.\d+\.\d+",
+                    confirmed_release_version,
+                    path.stem,
+                ),
+                version=confirmed_release_version,
                 product_series="V series",
             )
         )
