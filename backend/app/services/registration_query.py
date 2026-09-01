@@ -1,0 +1,205 @@
+"""注册红线与选型配置的分层查询。"""
+
+from __future__ import annotations
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.registration_rules import evaluate_probe_availability
+
+
+async def list_configured_registration_models(
+    session: AsyncSession,
+    *,
+    country_code: str,
+) -> list[dict]:
+    result = await session.execute(
+        text(
+            """
+            SELECT product.id AS product_model_id,
+                   product.name AS product_model_name,
+                   registration.id AS registration_model_id,
+                   registration.model_name AS registration_model_name,
+                   link.mapping_type,
+                   registration.channel_count
+            FROM product_registration_model_links link
+            JOIN product_models product ON product.id = link.product_model_id
+            JOIN registration_models registration
+              ON registration.id = link.registration_model_id
+            WHERE registration.country_code = :country_code
+              AND registration.source_status = 'active'
+              AND link.review_status = 'approved'
+            ORDER BY product.id
+            """
+        ),
+        {"country_code": country_code},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+async def list_registration_models(
+    session: AsyncSession,
+    *,
+    country_code: str,
+    query: str | None,
+    skip: int,
+    limit: int,
+) -> tuple[list[dict], int]:
+    cleaned_query = str(query or "").strip()
+    params = {
+        "country_code": country_code,
+        "search_pattern": f"%{cleaned_query}%" if cleaned_query else None,
+        "skip": skip,
+        "limit": limit,
+    }
+    filters = """
+        country_code = :country_code
+        AND source_status = 'active'
+        AND (
+            :search_pattern IS NULL
+            OR model_name LIKE :search_pattern
+        )
+    """
+    total_result = await session.execute(
+        text(f"SELECT COUNT(*) FROM registration_models WHERE {filters}"),
+        params,
+    )
+    result = await session.execute(
+        text(
+            f"""
+            SELECT id, country_code, model_name, channel_count,
+                   source_document_id
+            FROM registration_models
+            WHERE {filters}
+            ORDER BY id
+            LIMIT :limit OFFSET :skip
+            """
+        ),
+        params,
+    )
+    return [dict(row._mapping) for row in result], int(total_result.scalar_one())
+
+
+def _probe_summary(items: list[dict]) -> dict[str, int]:
+    return {
+        "registered": sum(item["registration_status"] == "registered" for item in items),
+        "unregistered": sum(item["registration_status"] == "unregistered" for item in items),
+        "standard": sum(item["effective_status"] == "X" for item in items),
+        "optional": sum(item["effective_status"] == "O" for item in items),
+        "tender": sum(item["effective_status"] == "Δ" for item in items),
+        "undefined": sum(item["effective_status"] == "未定义" for item in items),
+        "auxiliary": sum(item["status_source"] == "current_config_aux" for item in items),
+        "conflicts": sum(bool(item["conflict"]) for item in items),
+    }
+
+
+async def list_product_registration_probes(
+    session: AsyncSession,
+    *,
+    product_model_id: int,
+    query: str | None,
+    registration_status: str | None,
+    effective_status: str | None,
+    skip: int,
+    limit: int,
+) -> dict | None:
+    mapping_result = await session.execute(
+        text(
+            """
+            SELECT product.id AS product_model_id,
+                   product.name AS product_model_name,
+                   registration.id AS registration_model_id,
+                   registration.model_name AS registration_model_name,
+                   link.mapping_type
+            FROM product_registration_model_links link
+            JOIN product_models product ON product.id = link.product_model_id
+            JOIN registration_models registration
+              ON registration.id = link.registration_model_id
+            WHERE product.id = :product_model_id
+              AND registration.source_status = 'active'
+              AND link.review_status = 'approved'
+            """
+        ),
+        {"product_model_id": product_model_id},
+    )
+    mapping = mapping_result.one_or_none()
+    if mapping is None:
+        return None
+
+    result = await session.execute(
+        text(
+            """
+            SELECT probe.id AS probe_id, probe.probe_model, probe.ipn,
+                   matrix.registration_status,
+                   value.selection_config, value.current_config,
+                   item.id AS config_item_id, item.zh_desc AS config_name,
+                   matrix.source_document_id
+            FROM registration_model_probes matrix
+            JOIN registration_probes probe
+              ON probe.id = matrix.registration_probe_id
+            LEFT JOIN config_items item
+              ON item.ipn = probe.ipn AND item.category = 'Probes'
+            LEFT JOIN config_values value
+              ON value.item_id = item.id
+             AND value.model_id = :product_model_id
+            WHERE matrix.registration_model_id = :registration_model_id
+              AND probe.source_status = 'active'
+            ORDER BY probe.id
+            """
+        ),
+        {
+            "product_model_id": product_model_id,
+            "registration_model_id": mapping.registration_model_id,
+        },
+    )
+
+    cleaned_query = str(query or "").strip().casefold()
+    items: list[dict] = []
+    for row in result:
+        policy = evaluate_probe_availability(
+            registered=row.registration_status == "registered",
+            selection_config=row.selection_config,
+            current_config=row.current_config,
+        )
+        item = {
+            "probe_id": int(row.probe_id),
+            "probe_model": row.probe_model,
+            "ipn": row.ipn,
+            "registration_status": row.registration_status,
+            "registration_symbol": (
+                "#" if row.registration_status == "unregistered" else "已注册"
+            ),
+            "selection_config": row.selection_config,
+            "current_config": row.current_config,
+            "effective_status": policy.effective_status,
+            "status_source": policy.status_source,
+            "strategy_is_formal": policy.is_formal,
+            "conflict": policy.conflict,
+            "config_item_id": int(row.config_item_id) if row.config_item_id else None,
+            "config_name": row.config_name,
+            "source_document_id": (
+                int(row.source_document_id) if row.source_document_id else None
+            ),
+        }
+        searchable = " ".join(
+            str(value or "")
+            for value in (item["probe_model"], item["ipn"], item["config_name"])
+        ).casefold()
+        if cleaned_query and cleaned_query not in searchable:
+            continue
+        if registration_status and item["registration_status"] != registration_status:
+            continue
+        if effective_status and item["effective_status"] != effective_status:
+            continue
+        items.append(item)
+
+    total = len(items)
+    return {
+        **dict(mapping._mapping),
+        "items": items[skip : skip + limit],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "summary": _probe_summary(items),
+    }
+
