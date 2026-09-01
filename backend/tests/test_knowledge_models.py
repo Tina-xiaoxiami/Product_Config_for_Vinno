@@ -20,5 +20,10 @@ def test_clean_database_schema_contains_feature_identity_and_document_tables():
         "feature_names",
         "feature_config_item_links",
         "knowledge_documents",
+        "registration_import_batches",
+        "registration_models",
+        "registration_probes",
+        "registration_model_probes",
+        "product_registration_model_links",
     } <= set(inspector.get_table_names())
     engine.dispose()
