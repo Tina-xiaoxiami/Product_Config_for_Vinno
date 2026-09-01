@@ -20,6 +20,13 @@ from app.models.knowledge import (
     FeatureConfigItemLink,
     KnowledgeDocument,
 )
+from app.models.registration import (
+    RegistrationImportBatch,
+    RegistrationModel,
+    RegistrationProbe,
+    RegistrationModelProbe,
+    ProductRegistrationModelLink,
+)
 
 __all__ = [
     "ProductSeries",
@@ -50,4 +57,9 @@ __all__ = [
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",
+    "RegistrationImportBatch",
+    "RegistrationModel",
+    "RegistrationProbe",
+    "RegistrationModelProbe",
+    "ProductRegistrationModelLink",
 ]
