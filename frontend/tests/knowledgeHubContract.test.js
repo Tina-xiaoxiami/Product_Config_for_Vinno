@@ -43,3 +43,33 @@ test('frontend API exposes knowledge feature, stats and document endpoints', () 
   assert.match(api, /export const getKnowledgeDocuments/)
   assert.match(api, /export const getKnowledgeDocumentPreviewUrl/)
 })
+
+
+test('knowledge hub separates domestic registration redlines from product strategy', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+
+  assert.match(view, /label="国内注册与策略"/)
+  assert.match(view, /data-testid="registration-model-select"/)
+  assert.match(view, /data-testid="registration-probe-search"/)
+  assert.match(view, /data-testid="registration-status-filter"/)
+  assert.match(view, /data-testid="effective-status-filter"/)
+  assert.match(view, /data-testid="registration-strategy-table"/)
+  assert.match(view, /注册状态/)
+  assert.match(view, /选型类别（正式）/)
+  assert.match(view, /当前配置（辅助）/)
+  assert.match(view, /最终判定/)
+  assert.match(view, /X 标配/)
+  assert.match(view, /O 选配/)
+  assert.match(view, /Δ 招标支持/)
+  assert.match(view, /# 未注册/)
+  assert.match(view, /注册差异表原文/)
+})
+
+
+test('frontend API exposes domestic registration query endpoints', () => {
+  const api = read('../src/api/data.js')
+
+  assert.match(api, /export const getConfiguredRegistrationModels/)
+  assert.match(api, /export const getRegistrationModels/)
+  assert.match(api, /export const getRegistrationProbes/)
+})
