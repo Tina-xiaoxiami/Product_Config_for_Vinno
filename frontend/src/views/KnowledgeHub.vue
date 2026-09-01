@@ -139,6 +139,7 @@
           <el-select
             v-model="selectedProductModelId"
             data-testid="registration-model-select"
+            aria-label="国内产品型号"
             filterable
             placeholder="选择国内产品型号"
             @change="searchRegistrationProbes"
@@ -153,6 +154,7 @@
           <el-input
             v-model="registrationQuery"
             data-testid="registration-probe-search"
+            aria-label="探头搜索"
             clearable
             placeholder="搜索探头型号、IPN 或配置名称"
             :prefix-icon="Search"
@@ -162,6 +164,7 @@
           <el-select
             v-model="registrationStatus"
             data-testid="registration-status-filter"
+            aria-label="注册状态"
             clearable
             placeholder="全部注册状态"
             @change="searchRegistrationProbes"
@@ -172,6 +175,7 @@
           <el-select
             v-model="effectiveStatus"
             data-testid="effective-status-filter"
+            aria-label="最终判定"
             clearable
             placeholder="全部最终判定"
             @change="searchRegistrationProbes"
@@ -614,9 +618,9 @@ onMounted(() => {
 .status-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; color: #475569; font-size: 12px; }
 .status-legend span { display: flex; align-items: center; gap: 5px; }
 .status-legend strong { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; color: #fff; }
-.status-x { background: #16a34a; }
+.status-x { background: #15803d; }
 .status-o { background: #2563eb; }
-.status-tender { background: #d97706; }
+.status-tender { background: #92400e; }
 .status-blocked { background: #dc2626; }
 .registration-toolbar { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(220px, 1.4fr) 150px 150px auto; gap: 9px; margin-bottom: 12px; }
 .registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 12px; color: #64748b; font-size: 12px; }
@@ -627,6 +631,18 @@ onMounted(() => {
 .registration-summary span { color: #64748b; font-size: 11px; }
 .registration-summary .danger strong { color: #dc2626; }
 .registration-table { width: 100%; }
+.registration-intro :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #86efac; }
+.registration-intro :deep(.el-button) { color: #334155; }
+.registration-toolbar :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
+.registration-context :deep(.el-tag--warning.el-tag--plain) { color: #92400e; border-color: #f59e0b; }
+.registration-table :deep(th.el-table__cell .cell) { color: #374151; }
+.registration-table :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #86efac; background: #f0fdf4; }
+.registration-table :deep(.el-tag--danger.el-tag--plain) { color: #b91c1c; border-color: #fca5a5; background: #fef2f2; }
+.registration-table :deep(.el-tag--success.el-tag--dark) { background: #15803d; border-color: #15803d; }
+.registration-table :deep(.el-tag--primary.el-tag--dark) { background: #1d4ed8; border-color: #1d4ed8; }
+.registration-table :deep(.el-tag--warning.el-tag--dark) { background: #92400e; border-color: #92400e; }
+.registration-table :deep(.el-tag--danger.el-tag--dark) { background: #b91c1c; border-color: #b91c1c; }
+.registration-table :deep(.el-tag--info.el-tag--dark) { background: #475569; border-color: #475569; }
 .auxiliary-source { color: #b45309; }
 .conflict-tag { display: block; width: fit-content; margin-top: 4px; }
 .preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
