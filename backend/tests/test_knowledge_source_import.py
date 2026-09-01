@@ -73,11 +73,24 @@ def test_source_import_is_idempotent_and_refreshes_changed_file_digest(tmp_path)
 
     first = import_knowledge_sources(database_path, document_root)
     unchanged = import_knowledge_sources(database_path, document_root)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE knowledge_documents SET title = 'old title', version = '1.4.80'"
+    )
+    connection.commit()
+    connection.close()
+    metadata_refreshed = import_knowledge_sources(database_path, document_root)
     registration.write_bytes(b"version-two")
     updated = import_knowledge_sources(database_path, document_root)
 
     assert first == {"discovered": 1, "inserted": 1, "updated": 0, "unchanged": 0}
     assert unchanged == {"discovered": 1, "inserted": 0, "updated": 0, "unchanged": 1}
+    assert metadata_refreshed == {
+        "discovered": 1,
+        "inserted": 0,
+        "updated": 1,
+        "unchanged": 0,
+    }
     assert updated == {"discovered": 1, "inserted": 0, "updated": 1, "unchanged": 0}
     connection = sqlite3.connect(database_path)
     row = connection.execute(
