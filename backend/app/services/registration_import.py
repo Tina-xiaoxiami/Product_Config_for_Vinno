@@ -307,8 +307,16 @@ def import_domestic_registration_workbook(
                 _normalized_identity(product): _normalized_identity(base)
                 for product, base in confirmed_bases.items()
             }
+            series_marker = "china" if country_code == "CN" else "oversea"
             product_rows = connection.execute(
-                "SELECT id, name, config_group FROM product_models ORDER BY id"
+                """
+                SELECT product.id, product.name, product.config_group
+                FROM product_models product
+                JOIN product_series series ON series.id = product.series_id
+                WHERE LOWER(series.name) LIKE ?
+                ORDER BY product.id
+                """,
+                (f"%{series_marker}%",),
             ).fetchall()
             for product_id, product_name, config_group in product_rows:
                 product_identity = _normalized_identity(product_name)
@@ -370,4 +378,3 @@ def import_domestic_registration_workbook(
         unmatched_product_model_count=unmatched_product_model_count,
         new_snapshot=new_snapshot,
     )
-
