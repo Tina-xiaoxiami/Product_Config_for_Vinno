@@ -24,7 +24,8 @@ def _create_knowledge_database(path):
         );
         CREATE TABLE feature_groups (
             id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL
+            name TEXT NOT NULL,
+            sort_order INTEGER
         );
         CREATE TABLE features (
             id INTEGER PRIMARY KEY,
@@ -38,7 +39,8 @@ def _create_knowledge_database(path):
             (84, '6000273', 'SupportHSF【启用】', '超微细血流成像', 'SMF(Super Micro Flow)'),
             (96, '6000294', 'SupportVFetus【启用】', 'OB测量包', 'VMind OB(standard)'),
             (217, '6000415', 'SupportVFetus【启用】', 'VMind+：OB产筛精灵', 'VMind+：OB');
-        INSERT INTO feature_groups VALUES (1, '基础功能'), (2, '智能血流'), (3, '产科');
+        INSERT INTO feature_groups VALUES
+            (1, '基础功能', 1), (2, '智能血流', 2), (3, '产科', 3);
         INSERT INTO features VALUES
             (1, 1, 'TView', '', 1),
             (7, 2, 'SMF', '', 2),
