@@ -130,6 +130,10 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
             "/api/knowledge/registration/models",
             params={"country_code": "CN", "q": "VINNO 10"},
         )
+        empty_filtered = await client.get(
+            "/api/knowledge/registration/probes",
+            params={"product_model_id": 5, "q": "不存在的探头"},
+        )
         missing = await client.get(
             "/api/knowledge/registration/probes",
             params={"product_model_id": 999},
@@ -148,6 +152,8 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
         "VINNO 10",
         "VINNO 10E",
     ]
+    assert empty_filtered.status_code == 200
+    assert empty_filtered.json()["items"] == []
+    assert empty_filtered.json()["source_document_id"] == 1
     assert missing.status_code == 404
     assert missing.json()["detail"] == "产品型号尚未关联注册基础型号"
-
