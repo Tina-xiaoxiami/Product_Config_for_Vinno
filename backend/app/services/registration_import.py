@@ -86,6 +86,10 @@ def _upsert_batch(
     ).fetchone()
     if existing is not None:
         connection.execute(
+            "UPDATE registration_import_batches SET status = 'superseded' WHERE country_code = ?",
+            (country_code,),
+        )
+        connection.execute(
             "UPDATE registration_import_batches SET status = 'active' WHERE id = ?",
             (existing[0],),
         )
