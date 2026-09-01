@@ -5,7 +5,9 @@
         <h2>产品知识库</h2>
         <p>以 IPN 为功能唯一身份，统一查询主名称、备用名、版本关系和原始资料。</p>
       </div>
-      <el-tag type="success" effect="plain">无待确认功能</el-tag>
+      <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
+        {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
+      </el-tag>
     </header>
 
     <section class="stats-grid" v-loading="statsLoading">
@@ -96,7 +98,7 @@
 
             <div v-if="feature.identity_status === 'related'" class="relation-note">
               <el-icon><Link /></el-icon>
-              <span>版本关系：保留各组 IPN 独立身份，当前名称作为关系入口。</span>
+              <span>{{ relationNote(feature) }}</span>
             </div>
           </article>
           <el-empty v-if="!featureLoading && features.length === 0" description="未找到匹配功能" />
@@ -233,6 +235,9 @@ const documentTypeLabel = (type) => ({
 }[type] || type)
 
 const aliases = (feature) => (feature.names || []).filter(name => name.name_type === 'alias')
+const relationNote = (feature) => (feature.ipns || []).some(entry => entry.relation_type === 'version_variant')
+  ? '版本关系：保留各组 IPN 独立身份，当前名称作为关系入口。'
+  : '关联功能：保留关联 IPN 的独立身份，当前名称作为查询入口。'
 const canInline = (document) => document.mime_type === 'application/pdf' || document.mime_type?.startsWith('image/')
 const formatFileSize = (size) => {
   if (!size) return '0 KB'
@@ -242,7 +247,13 @@ const formatFileSize = (size) => {
 
 const loadStats = async () => {
   statsLoading.value = true
-  try { stats.value = await getKnowledgeStats() } finally { statsLoading.value = false }
+  try {
+    stats.value = await getKnowledgeStats()
+  } catch {
+    ElMessage.error('统计信息加载失败')
+  } finally {
+    statsLoading.value = false
+  }
 }
 
 const loadFeatures = async () => {
