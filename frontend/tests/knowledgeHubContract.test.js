@@ -109,6 +109,7 @@ test('base data management owns feature identity and registration master data', 
   assert.match(registrationView, /基础探头型号/)
   assert.match(registrationView, /getRegistrationModelProbes/)
   assert.match(api, /export const getFeatureMasterData/)
+  assert.match(api, /export const createFeatureMasterData/)
   assert.match(api, /export const updateFeatureMasterData/)
   assert.match(api, /export const getRegistrationModelProbes/)
 })
