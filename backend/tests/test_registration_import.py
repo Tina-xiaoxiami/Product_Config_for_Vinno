@@ -73,14 +73,14 @@ def _create_database(path):
     connection.close()
 
 
-def _write_registration_workbook(path):
+def _write_registration_workbook(path, *, vinno10_unsupported="探头全适用"):
     workbook = Workbook()
     matrix = workbook.active
     matrix.title = "0729"
     matrix["A2"] = "支持探头\n共3把"
     matrix["B2"] = "F2-5C，G1-4P，F4-9E"
     matrix.append(["序号", "型号", "不支持探头", "通道数"])
-    matrix.append([1, "VINNO 10", "探头全适用", 128])
+    matrix.append([1, "VINNO 10", vinno10_unsupported, 128])
     matrix.append([2, "VINNO 10E", "F2-5C", 128])
     matrix.append([3, "VINNO 9", "F4-9E、G1-4P", 128])
     probes = workbook.create_sheet("Sheet1")
@@ -108,6 +108,18 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
         workbook_path,
         source_document_id=1,
     )
+    _write_registration_workbook(workbook_path, vinno10_unsupported="F4-9E")
+    changed = import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    _write_registration_workbook(workbook_path)
+    restored = import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
 
     assert first.model_count == 3
     assert first.probe_count == 3
@@ -117,6 +129,8 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
     assert first.unmatched_product_model_count == 0
     assert first.new_snapshot is True
     assert repeated.new_snapshot is False
+    assert changed.new_snapshot is True
+    assert restored.new_snapshot is False
 
     connection = sqlite3.connect(database_path)
     assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -124,7 +138,10 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
     assert connection.execute("SELECT COUNT(*) FROM registration_models").fetchone()[0] == 3
     assert connection.execute("SELECT COUNT(*) FROM registration_probes").fetchone()[0] == 3
     assert connection.execute("SELECT COUNT(*) FROM registration_model_probes").fetchone()[0] == 9
-    assert connection.execute("SELECT COUNT(*) FROM registration_import_batches").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM registration_import_batches").fetchone()[0] == 2
+    assert connection.execute(
+        "SELECT COUNT(*) FROM registration_import_batches WHERE status = 'active'"
+    ).fetchone()[0] == 1
 
     redlines = connection.execute(
         """
