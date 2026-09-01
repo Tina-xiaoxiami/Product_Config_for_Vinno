@@ -24,6 +24,8 @@ from app.models.knowledge import (
     KnowledgeAnswer,
     KnowledgeAnswerCitation,
     KnowledgeAnswerRevision,
+    KnowledgeDocumentExtraction,
+    KnowledgeDocumentChunk,
 )
 from app.models.registration import (
     RegistrationImportBatch,
@@ -67,6 +69,8 @@ __all__ = [
     "KnowledgeAnswer",
     "KnowledgeAnswerCitation",
     "KnowledgeAnswerRevision",
+    "KnowledgeDocumentExtraction",
+    "KnowledgeDocumentChunk",
     "RegistrationImportBatch",
     "RegistrationModel",
     "RegistrationProbe",

@@ -56,6 +56,9 @@ class KnowledgeDocumentItem(BaseModel):
     file_size: int
     available: bool
     preview_url: str
+    extraction_status: str = "not_extracted"
+    chunk_count: int = 0
+    extracted_at: str | None = None
 
 
 class KnowledgeDocumentList(BaseModel):
@@ -118,6 +121,31 @@ class KnowledgeQuestionList(BaseModel):
     limit: int
 
 
+class KnowledgeDocumentExtractionItem(BaseModel):
+    document_id: int
+    status: str
+    chunk_count: int
+    extracted_at: str | None = None
+    extractor_version: str
+    reused: bool = False
+
+
+class KnowledgeCandidateEvidence(BaseModel):
+    chunk_id: int
+    document_id: int
+    document_title: str
+    document_type: str
+    source_ref: str
+    page_number: int | None = None
+    excerpt: str
+    score: float
+    preview_url: str
+
+
+class KnowledgeCandidateEvidenceList(BaseModel):
+    items: list[KnowledgeCandidateEvidence]
+
+
 class KnowledgeQuestionResult(BaseModel):
     status: str
     question_id: int
@@ -125,6 +153,7 @@ class KnowledgeQuestionResult(BaseModel):
     match_type: str
     similarity: float
     answer: KnowledgeAnswerItem | None = None
+    candidates: list[KnowledgeCandidateEvidence] = Field(default_factory=list)
 
 
 class KnowledgeAnswerRevisionItem(BaseModel):

@@ -210,3 +210,49 @@ class KnowledgeAnswerRevision(Base):
         UniqueConstraint("answer_id", "version", name="uq_knowledge_answer_revision"),
         Index("ix_knowledge_answer_revisions_answer", "answer_id"),
     )
+
+
+class KnowledgeDocumentExtraction(Base):
+    """Extraction status for one controlled source document."""
+
+    __tablename__ = "knowledge_document_extractions"
+
+    document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    extractor_version = Column(String(50), nullable=False)
+    source_sha256 = Column(String(64), nullable=True)
+    status = Column(String(20), nullable=False)
+    chunk_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    extracted_at = Column(Text, nullable=True)
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class KnowledgeDocumentChunk(Base):
+    """A source-located excerpt available for candidate evidence search."""
+
+    __tablename__ = "knowledge_document_chunks"
+
+    id = Column(Integer, primary_key=True)
+    document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chunk_index = Column(Integer, nullable=False)
+    page_number = Column(Integer, nullable=True)
+    section_name = Column(Text, nullable=True)
+    source_ref = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    normalized_content = Column(Text, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_knowledge_document_chunk"),
+        Index("ix_knowledge_document_chunks_document", "document_id"),
+        Index("ix_knowledge_document_chunks_hash", "content_hash"),
+    )

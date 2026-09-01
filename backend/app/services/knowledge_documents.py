@@ -26,29 +26,37 @@ async def list_knowledge_documents(
         "limit": limit,
     }
     filters = """
-        source_status = 'active'
-        AND (:document_type IS NULL OR document_type = :document_type)
-        AND (:market IS NULL OR market = :market)
+        document.source_status = 'active'
+        AND (:document_type IS NULL OR document.document_type = :document_type)
+        AND (:market IS NULL OR document.market = :market)
         AND (
             :search_pattern IS NULL
-            OR title LIKE :search_pattern
-            OR file_name LIKE :search_pattern
-            OR COALESCE(version, '') LIKE :search_pattern
-            OR COALESCE(product_series, '') LIKE :search_pattern
+            OR document.title LIKE :search_pattern
+            OR document.file_name LIKE :search_pattern
+            OR COALESCE(document.version, '') LIKE :search_pattern
+            OR COALESCE(document.product_series, '') LIKE :search_pattern
         )
     """
     total_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM knowledge_documents WHERE {filters}"),
+        text(f"SELECT COUNT(*) FROM knowledge_documents document WHERE {filters}"),
         params,
     )
     result = await session.execute(
         text(
             f"""
-            SELECT id, document_type, title, file_name, file_path, version,
-                   market, country, product_series, mime_type
-            FROM knowledge_documents
+            SELECT document.id, document.document_type, document.title,
+                   document.file_name, document.file_path, document.version,
+                   document.market, document.country, document.product_series,
+                   document.mime_type,
+                   COALESCE(extraction.status, 'not_extracted') AS extraction_status,
+                   COALESCE(extraction.chunk_count, 0) AS chunk_count,
+                   extraction.extracted_at
+            FROM knowledge_documents document
+            LEFT JOIN knowledge_document_extractions extraction
+              ON extraction.document_id = document.id
             WHERE {filters}
-            ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+            ORDER BY COALESCE(document.updated_at, document.created_at) DESC,
+                     document.id DESC
             LIMIT :limit OFFSET :skip
             """
         ),
@@ -72,6 +80,9 @@ async def list_knowledge_documents(
                 "file_size": path.stat().st_size if available else 0,
                 "available": available,
                 "preview_url": f"/api/knowledge/documents/{row.id}/preview",
+                "extraction_status": row.extraction_status,
+                "chunk_count": int(row.chunk_count),
+                "extracted_at": row.extracted_at,
             }
         )
     return items, int(total_result.scalar_one())

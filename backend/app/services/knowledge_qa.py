@@ -273,6 +273,7 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
             "match_type": "exact" if best_exact else "similar",
             "similarity": best_score,
             "answer": item["answer"],
+            "candidates": [],
         }
 
     existing_result = await session.execute(
@@ -314,6 +315,9 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
         question_id = int(result.scalar_one())
     await session.commit()
     item = await get_question(session, question_id)
+    from app.services.knowledge_content import find_candidate_evidence
+
+    candidates = await find_candidate_evidence(session, item["question_text"])
     return {
         "status": item["status"],
         "question_id": question_id,
@@ -321,6 +325,7 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
         "match_type": "none",
         "similarity": best_score,
         "answer": item["answer"],
+        "candidates": candidates,
     }
 
 

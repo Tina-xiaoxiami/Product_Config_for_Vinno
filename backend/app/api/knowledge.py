@@ -13,7 +13,9 @@ from app.schemas.knowledge import (
     FeatureKnowledgeList,
     KnowledgeAnswerHistory,
     KnowledgeAnswerPublish,
+    KnowledgeCandidateEvidenceList,
     KnowledgeDocumentList,
+    KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
     KnowledgeQuestionItem,
     KnowledgeQuestionList,
@@ -36,6 +38,12 @@ from app.services.knowledge_qa import (
     get_question,
     list_questions,
     publish_answer,
+)
+from app.services.knowledge_content import (
+    KnowledgeContentError,
+    KnowledgeDocumentMissingError,
+    extract_registered_document,
+    get_question_candidate_evidence,
 )
 
 
@@ -114,6 +122,21 @@ async def knowledge_answer_history(
     return KnowledgeAnswerHistory(items=items)
 
 
+@router.get(
+    "/questions/{question_id}/candidates",
+    response_model=KnowledgeCandidateEvidenceList,
+)
+async def knowledge_question_candidates(
+    question_id: int,
+    limit: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    items = await get_question_candidate_evidence(db, question_id, limit=limit)
+    if items is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeCandidateEvidenceList(items=items)
+
+
 @router.get("/features", response_model=FeatureKnowledgeList)
 async def list_knowledge_features(
     q: str | None = Query(None, max_length=200),
@@ -169,6 +192,28 @@ async def list_documents(
         limit=limit,
     )
     return KnowledgeDocumentList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.post(
+    "/documents/{document_id}/extract",
+    response_model=KnowledgeDocumentExtractionItem,
+)
+async def extract_document_content(
+    document_id: int,
+    force: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await extract_registered_document(db, document_id, force=force)
+    except KnowledgeDocumentMissingError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    except KnowledgeContentError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return KnowledgeDocumentExtractionItem(**item)
 
 
 @router.get("/documents/{document_id}/preview")

@@ -154,11 +154,14 @@ export const getKnowledgeFeature = (id) => api.get(`/knowledge/features/${id}`)
 export const getKnowledgeStats = () => api.get('/knowledge/stats')
 export const getKnowledgeDocuments = (params) => api.get('/knowledge/documents', { params })
 export const getKnowledgeDocumentPreviewUrl = (id) => `/api/knowledge/documents/${id}/preview`
+export const extractKnowledgeDocument = (id, force = false) =>
+  api.post(`/knowledge/documents/${id}/extract`, null, { params: { force } })
 export const askKnowledgeQuestion = (data) => api.post('/knowledge/questions/ask', data)
 export const getKnowledgeQuestions = (params) => api.get('/knowledge/questions', { params })
 export const getKnowledgeQuestion = (id) => api.get(`/knowledge/questions/${id}`)
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)
+export const getKnowledgeQuestionCandidates = (id) => api.get(`/knowledge/questions/${id}/candidates`)
 
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>

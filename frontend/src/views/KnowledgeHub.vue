@@ -107,6 +107,27 @@
           </template>
           <template v-else>
             <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
+            <div v-if="qaResult.candidates?.length" class="candidate-evidence">
+              <div class="candidate-heading">
+                <div>
+                  <h4>材料候选依据</h4>
+                  <p>以下内容来自已提取的原始资料；候选内容不能直接作为正式结论，需由你确认。</p>
+                </div>
+              </div>
+              <button
+                v-for="candidate in qaResult.candidates"
+                :key="candidate.chunk_id"
+                type="button"
+                class="candidate-card"
+                @click="openCitation(candidate)"
+              >
+                <span>
+                  <strong>{{ candidate.document_title }}</strong>
+                  <small>{{ candidate.source_ref }} · 匹配 {{ Math.round(candidate.score * 100) }}%</small>
+                </span>
+                <p>{{ candidate.excerpt }}</p>
+              </button>
+            </div>
           </template>
         </article>
 
@@ -433,9 +454,26 @@
                 </span>
               </div>
             </div>
-            <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
-              {{ canInline(document) ? '预览' : '打开原文' }}
-            </el-button>
+            <div class="document-actions">
+              <el-tag
+                v-if="document.extraction_status === 'completed'"
+                type="success"
+                size="small"
+                effect="plain"
+              >
+                正文已提取 · {{ document.chunk_count }}片段
+              </el-tag>
+              <el-button
+                :loading="Boolean(extractionLoading[document.id])"
+                :disabled="!document.available"
+                @click="extractDocument(document)"
+              >
+                {{ document.extraction_status === 'completed' ? '重新提取' : '提取正文' }}
+              </el-button>
+              <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
+                {{ canInline(document) ? '预览' : '打开原文' }}
+              </el-button>
+            </div>
           </article>
           <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
         </div>
@@ -473,6 +511,22 @@
             :rows="3"
             placeholder="每行一个问法；材料或同事使用任意一种问法都可以命中"
           />
+        </el-form-item>
+        <el-form-item v-if="answerCandidates.length || candidateLoading" label="材料候选依据">
+          <div class="dialog-candidates" v-loading="candidateLoading">
+            <p class="candidate-warning">候选内容不能直接作为正式结论；选择后仍需核对原文并确认答案。</p>
+            <div v-for="candidate in answerCandidates" :key="candidate.chunk_id" class="dialog-candidate-card">
+              <div>
+                <strong>{{ candidate.document_title }}</strong>
+                <span>{{ candidate.source_ref }} · 匹配 {{ Math.round(candidate.score * 100) }}%</span>
+              </div>
+              <p>{{ candidate.excerpt }}</p>
+              <div>
+                <el-button link @click="openCitation(candidate)">查看原文</el-button>
+                <el-button type="primary" link @click="useCandidate(candidate)">作为答案草稿</el-button>
+              </div>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="答案依据">
           <div class="citation-editor">
@@ -519,12 +573,14 @@ import { ElMessage } from 'element-plus'
 import { Delete, Document, Link, Plus, Search, View } from '@element-plus/icons-vue'
 import {
   askKnowledgeQuestion,
+  extractKnowledgeDocument,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
   getKnowledgeFeatures,
   getKnowledgeStats,
   getKnowledgeQuestions,
+  getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
   getConfiguredRegistrationModels,
   getRegistrationProbes
@@ -546,6 +602,7 @@ const documentQuery = ref('')
 const documentType = ref('')
 const documentLoading = ref(false)
 const documents = ref([])
+const extractionLoading = ref({})
 
 const registrationModels = ref([])
 const selectedProductModelId = ref(null)
@@ -583,6 +640,8 @@ const qaListLoading = ref(false)
 const answerDialogVisible = ref(false)
 const answerSaving = ref(false)
 const answerHistory = ref([])
+const answerCandidates = ref([])
+const candidateLoading = ref(false)
 const historyVisible = ref(false)
 const answerForm = ref({
   question_id: null,
@@ -811,7 +870,7 @@ const loadQaQuestions = async () => {
   }
 }
 
-const openAnswerDialog = (question) => {
+const openAnswerDialog = async (question) => {
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
@@ -826,6 +885,16 @@ const openAnswerDialog = (question) => {
     change_note: ''
   }
   answerDialogVisible.value = true
+  answerCandidates.value = []
+  candidateLoading.value = true
+  try {
+    const result = await getKnowledgeQuestionCandidates(question.id)
+    answerCandidates.value = result.items || []
+  } catch {
+    ElMessage.error('材料候选依据加载失败')
+  } finally {
+    candidateLoading.value = false
+  }
 }
 
 const addCitation = () => answerForm.value.citations.push({ document_id: null, source_ref: '', excerpt: '' })
@@ -888,6 +957,35 @@ const showHistory = async (question) => {
 
 const openCitation = (citation) => window.open(citation.preview_url, '_blank', 'noopener')
 
+const useCandidate = (candidate) => {
+  if (!answerForm.value.answer_text.trim()) answerForm.value.answer_text = candidate.excerpt
+  const exists = answerForm.value.citations.some(citation => (
+    citation.document_id === candidate.document_id
+    && citation.source_ref === candidate.source_ref
+  ))
+  if (!exists) {
+    answerForm.value.citations.push({
+      document_id: candidate.document_id,
+      source_ref: candidate.source_ref,
+      excerpt: candidate.excerpt
+    })
+  }
+  ElMessage.success('已加入答案草稿，请核对并完善表述')
+}
+
+const extractDocument = async (document) => {
+  extractionLoading.value = { ...extractionLoading.value, [document.id]: true }
+  try {
+    const result = await extractKnowledgeDocument(document.id, document.extraction_status === 'completed')
+    ElMessage.success(`正文提取完成：${result.chunk_count} 个片段`)
+    await loadDocuments()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '正文提取失败')
+  } finally {
+    extractionLoading.value = { ...extractionLoading.value, [document.id]: false }
+  }
+}
+
 onMounted(() => {
   loadQaQuestions()
   loadStats()
@@ -930,6 +1028,13 @@ onMounted(() => {
 .qa-question-text { text-align: right; }
 .qa-answer-text { margin: 15px 0 8px; color: #172554; font-size: 15px; line-height: 1.8; white-space: pre-wrap; }
 .qa-pending-text { margin: 14px 0 0; color: #92400e; font-size: 13px; }
+.candidate-evidence { margin-top: 14px; padding-top: 12px; border-top: 1px solid #fde68a; }
+.candidate-heading h4 { margin: 0; color: #78350f; font-size: 14px; }
+.candidate-heading p, .candidate-warning { margin: 4px 0 9px; color: #854d0e; font-size: 11px; }
+.candidate-card { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; border: 1px solid #fde68a; border-radius: 7px; background: #fff; color: #334155; text-align: left; cursor: pointer; }
+.candidate-card > span { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.candidate-card small { color: #92400e; }
+.candidate-card p { margin: 7px 0 0; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .answer-meta { display: flex; gap: 14px; }
 .citation-section { display: flex; align-items: flex-start; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.25); }
 .citation-list { display: flex; flex-direction: column; gap: 7px; flex: 1; }
@@ -943,6 +1048,12 @@ onMounted(() => {
 .dialog-question { width: 100%; padding: 10px 12px; border-radius: 7px; background: #f8fafc; color: #334155; }
 .citation-editor { display: flex; flex-direction: column; gap: 9px; width: 100%; }
 .citation-editor-row { display: grid; grid-template-columns: 1.1fr 0.8fr 1.2fr auto; gap: 8px; }
+.dialog-candidates { width: 100%; min-height: 48px; }
+.dialog-candidate-card { margin-top: 8px; padding: 10px 12px; border: 1px solid #fde68a; border-radius: 7px; background: #fffbeb; }
+.dialog-candidate-card > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dialog-candidate-card span { color: #92400e; font-size: 11px; }
+.dialog-candidate-card p { max-height: 120px; margin: 7px 0; overflow: auto; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.document-actions { display: flex; align-items: center; gap: 8px; }
 .el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
 .toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto; gap: 10px; margin: 10px 0 16px; }
 .feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
