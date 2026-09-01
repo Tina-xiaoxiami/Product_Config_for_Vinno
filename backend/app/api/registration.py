@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
+    RegistrationMasterProbeList,
     RegistrationModelList,
     RegistrationProbeStrategyList,
 )
 from app.services.registration_query import (
     list_configured_registration_models,
     list_product_registration_probes,
+    list_registration_model_probes,
     list_registration_models,
 )
 
@@ -49,6 +51,23 @@ async def registration_models(
     return RegistrationModelList(items=items, total=total, skip=skip, limit=limit)
 
 
+@router.get(
+    "/models/{registration_model_id}/probes",
+    response_model=RegistrationMasterProbeList,
+)
+async def registration_model_probes(
+    registration_model_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await list_registration_model_probes(
+        db,
+        registration_model_id=registration_model_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="注册型号不存在")
+    return RegistrationMasterProbeList(**result)
+
+
 @router.get("/probes", response_model=RegistrationProbeStrategyList)
 async def product_registration_probes(
     product_model_id: int = Query(..., ge=1),
@@ -77,4 +96,3 @@ async def product_registration_probes(
     if result is None:
         raise HTTPException(status_code=404, detail="产品型号尚未关联注册基础型号")
     return RegistrationProbeStrategyList(**result)
-

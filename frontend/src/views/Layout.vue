@@ -37,6 +37,9 @@
             <el-menu-item index="/feature-manage">
               <span>功能管理</span>
             </el-menu-item>
+            <el-menu-item index="/registration-manage">
+              <span>注册管理</span>
+            </el-menu-item>
           </el-sub-menu>
           <el-sub-menu index="/product-config">
             <template #title>

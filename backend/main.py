@@ -47,8 +47,8 @@ app.include_router(probe_import.router, prefix="/api/probes", tags=["探头导�
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["产品知识库"])
 app.include_router(
     registration.router,
-    prefix="/api/knowledge/registration",
-    tags=["注册与产品策略"],
+    prefix="/api/registrations",
+    tags=["注册主数据与产品策略"],
 )
 
 

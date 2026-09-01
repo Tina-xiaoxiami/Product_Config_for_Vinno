@@ -122,11 +122,44 @@ class FeatureUpdate(BaseModel):
 
 class FeatureResponse(FeatureBase):
     id: int
+    primary_cn_name: Optional[str] = None
+    primary_en_name: Optional[str] = None
+    identity_status: str = "pending"
     model_config = {"from_attributes": True}
 
 class FeatureListResponse(BaseModel):
     items: List[FeatureResponse]
     total: int
+
+
+class FeatureMasterIpnInput(BaseModel):
+    ipn: str
+    relation_type: str = Field(pattern="^(primary|related|version_variant)$")
+
+
+class FeatureMasterIpn(FeatureMasterIpnInput):
+    config_item_id: int
+    zh_desc: Optional[str] = None
+    en_desc: Optional[str] = None
+
+
+class FeatureMasterDataUpdate(BaseModel):
+    primary_cn_name: str
+    primary_en_name: str
+    alias_cn_names: List[str] = Field(default_factory=list)
+    alias_en_names: List[str] = Field(default_factory=list)
+    ipns: List[FeatureMasterIpnInput] = Field(default_factory=list)
+
+
+class FeatureMasterDataResponse(BaseModel):
+    id: int
+    group_id: int
+    group_name: str
+    primary_cn_name: str
+    primary_en_name: str
+    alias_cn_names: List[str] = Field(default_factory=list)
+    alias_en_names: List[str] = Field(default_factory=list)
+    ipns: List[FeatureMasterIpn] = Field(default_factory=list)
 
 
 # ========== TemplateFeature ==========

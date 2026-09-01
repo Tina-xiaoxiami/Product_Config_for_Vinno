@@ -7,6 +7,12 @@ from app.models.probe import FeatureGroup, Feature
 from app.schemas.probe import (
     FeatureGroupCreate, FeatureGroupUpdate, FeatureGroupResponse, FeatureGroupListResponse,
     FeatureCreate, FeatureUpdate, FeatureResponse, FeatureListResponse,
+    FeatureMasterDataResponse, FeatureMasterDataUpdate,
+)
+from app.services.feature_master_data import (
+    FeatureMasterDataError,
+    get_feature_master_data,
+    update_feature_master_data,
 )
 
 router = APIRouter()
@@ -49,6 +55,33 @@ async def delete_group(group_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ===== Features =====
+
+@router.get("/{feature_id}/master-data", response_model=FeatureMasterDataResponse)
+async def feature_master_data(feature_id: int, db: AsyncSession = Depends(get_db)):
+    result = await get_feature_master_data(db, feature_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="功能不存在")
+    return FeatureMasterDataResponse(**result)
+
+
+@router.put("/{feature_id}/master-data", response_model=FeatureMasterDataResponse)
+async def save_feature_master_data(
+    feature_id: int,
+    data: FeatureMasterDataUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await update_feature_master_data(
+            db,
+            feature_id=feature_id,
+            **data.model_dump(),
+        )
+    except FeatureMasterDataError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="功能不存在")
+    return FeatureMasterDataResponse(**result)
 
 @router.get("", response_model=FeatureListResponse)
 async def list_features(

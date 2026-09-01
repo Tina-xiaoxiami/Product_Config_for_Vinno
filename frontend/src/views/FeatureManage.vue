@@ -31,7 +31,10 @@
           <div v-if="(group.features || []).length" class="feature-list">
             <div v-for="feature in group.features" :key="feature.id" class="feature-item">
               <div class="feature-main">
-                <span class="feature-name">{{ feature.name }}</span>
+                <div class="feature-names">
+                  <span class="feature-name">{{ feature.primary_cn_name || feature.name }}</span>
+                  <span v-if="feature.primary_en_name" class="feature-en-name">{{ feature.primary_en_name }}</span>
+                </div>
                 <span v-if="feature.ipn" class="feature-ipn">IPN: {{ feature.ipn }}</span>
               </div>
               <div class="feature-meta">
@@ -63,15 +66,49 @@
     </el-dialog>
 
     <!-- 功能对话框 -->
-    <el-dialog v-model="showFeatureForm" :title="editingFeatureId ? '编辑功能' : '新增功能'" width="420px" destroy-on-close>
-      <el-form :model="featureForm" label-width="60px">
+    <el-dialog v-model="showFeatureForm" :title="editingFeatureId ? '编辑功能主数据' : '新增功能主数据'" width="680px" destroy-on-close>
+      <el-form :model="featureForm" label-width="100px">
         <el-form-item label="功能组">
           <el-select v-model="featureForm.group_id" style="width:100%" placeholder="选择功能组">
             <el-option v-for="g in tableData" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="名称"><el-input v-model="featureForm.name" placeholder="如 TView" /></el-form-item>
-        <el-form-item label="IPN"><el-input v-model="featureForm.ipn" placeholder="关联配置管理中的 IPN" /></el-form-item>
+        <el-form-item label="中文主名称">
+          <el-input v-model="featureForm.primary_cn_name" placeholder="以配置项中文描述为准" />
+        </el-form-item>
+        <el-form-item label="英文主名称">
+          <el-input v-model="featureForm.primary_en_name" placeholder="以配置项英文描述为准" />
+        </el-form-item>
+        <el-form-item label="中文曾用名">
+          <el-input
+            v-model="featureForm.alias_cn_text"
+            type="textarea"
+            :rows="2"
+            placeholder="每行一个中文曾用名"
+          />
+        </el-form-item>
+        <el-form-item label="英文曾用名">
+          <el-input
+            v-model="featureForm.alias_en_text"
+            type="textarea"
+            :rows="2"
+            placeholder="每行一个英文曾用名"
+          />
+        </el-form-item>
+        <el-form-item label="IPN关系">
+          <div class="ipn-editor">
+            <div v-for="(entry, index) in featureForm.ipns" :key="index" class="ipn-editor-row">
+              <el-input v-model="entry.ipn" placeholder="配置项IPN" />
+              <el-select v-model="entry.relation_type" aria-label="IPN关系类型">
+                <el-option label="主IPN" value="primary" />
+                <el-option label="相关功能" value="related" />
+                <el-option label="版本IPN" value="version_variant" />
+              </el-select>
+              <el-button type="danger" text @click="removeIpn(index)">移除</el-button>
+            </div>
+            <el-button size="small" @click="addIpn">+ 添加IPN</el-button>
+          </div>
+        </el-form-item>
         <el-form-item label="排序"><el-input-number v-model="featureForm.sort_order" :min="0" /></el-form-item>
       </el-form>
       <template #footer>
@@ -86,7 +123,18 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { getFeatureGroups, createFeatureGroup, updateFeatureGroup, deleteFeatureGroup, getFeatures, createFeature, updateFeature, deleteFeature } from '../api/data'
+import {
+  getFeatureGroups,
+  createFeatureGroup,
+  updateFeatureGroup,
+  deleteFeatureGroup,
+  getFeatures,
+  createFeature,
+  updateFeature,
+  deleteFeature,
+  getFeatureMasterData,
+  updateFeatureMasterData
+} from '../api/data'
 
 const tableData = ref([])
 const loading = ref(false)
@@ -96,7 +144,15 @@ const showFeatureForm = ref(false)
 const editingFeatureId = ref(null)
 const saving = ref(false)
 const groupForm = reactive({ name: '', sort_order: 0 })
-const featureForm = reactive({ group_id: null, name: '', ipn: '', sort_order: 0 })
+const featureForm = reactive({
+  group_id: null,
+  primary_cn_name: '',
+  primary_en_name: '',
+  alias_cn_text: '',
+  alias_en_text: '',
+  ipns: [],
+  sort_order: 0
+})
 
 const totalFeatures = computed(() => {
   return tableData.value.reduce((sum, g) => sum + (g.features || []).length, 0)
@@ -154,38 +210,85 @@ const handleDeleteGroup = async (row) => {
 }
 
 // Features
+const resetFeatureForm = (groupId = null) => {
+  featureForm.group_id = groupId || tableData.value[0]?.id || null
+  featureForm.primary_cn_name = ''
+  featureForm.primary_en_name = ''
+  featureForm.alias_cn_text = ''
+  featureForm.alias_en_text = ''
+  featureForm.ipns = []
+  featureForm.sort_order = 0
+}
+const parseAliases = (value) => value
+  .split(/\r?\n/)
+  .map(name => name.trim())
+  .filter(Boolean)
+const masterPayload = () => ({
+  primary_cn_name: featureForm.primary_cn_name,
+  primary_en_name: featureForm.primary_en_name,
+  alias_cn_names: parseAliases(featureForm.alias_cn_text),
+  alias_en_names: parseAliases(featureForm.alias_en_text),
+  ipns: featureForm.ipns
+    .map(entry => ({ ipn: entry.ipn.trim(), relation_type: entry.relation_type }))
+    .filter(entry => entry.ipn)
+})
+const addIpn = () => featureForm.ipns.push({ ipn: '', relation_type: 'related' })
+const removeIpn = (index) => featureForm.ipns.splice(index, 1)
+
 const handleCreateFeature = () => {
   editingFeatureId.value = null
-  featureForm.group_id = tableData.value[0]?.id || null
-  featureForm.name = ''
-  featureForm.ipn = ''
-  featureForm.sort_order = 0
+  resetFeatureForm()
   showFeatureForm.value = true
 }
 const handleCreateFeatureToGroup = (groupId) => {
   editingFeatureId.value = null
-  featureForm.group_id = groupId
-  featureForm.name = ''
-  featureForm.ipn = ''
-  featureForm.sort_order = 0
+  resetFeatureForm(groupId)
   showFeatureForm.value = true
 }
-const handleEditFeature = (row, groupId) => {
+const handleEditFeature = async (row, groupId) => {
   editingFeatureId.value = row.id
-  featureForm.group_id = groupId
-  featureForm.name = row.name
-  featureForm.ipn = row.ipn || ''
+  resetFeatureForm(groupId)
   featureForm.sort_order = row.sort_order
-  showFeatureForm.value = true
+  try {
+    const master = await getFeatureMasterData(row.id)
+    featureForm.primary_cn_name = master.primary_cn_name || ''
+    featureForm.primary_en_name = master.primary_en_name || ''
+    featureForm.alias_cn_text = (master.alias_cn_names || []).join('\n')
+    featureForm.alias_en_text = (master.alias_en_names || []).join('\n')
+    featureForm.ipns = (master.ipns || []).map(entry => ({
+      ipn: entry.ipn,
+      relation_type: entry.relation_type
+    }))
+    showFeatureForm.value = true
+  } catch {
+    ElMessage.error('功能主数据加载失败')
+  }
 }
 const saveFeature = async () => {
-  if (!featureForm.group_id || !featureForm.name) return ElMessage.warning('功能组和名称不能为空')
+  if (!featureForm.group_id || !featureForm.primary_cn_name || !featureForm.primary_en_name) {
+    return ElMessage.warning('功能组、中英文主名称不能为空')
+  }
   saving.value = true
   try {
+    const payload = masterPayload()
     if (editingFeatureId.value) {
-      await updateFeature(editingFeatureId.value, featureForm)
+      const primaryIpn = payload.ipns.find(entry => entry.relation_type === 'primary')?.ipn || ''
+      await updateFeature(editingFeatureId.value, {
+        group_id: featureForm.group_id,
+        name: featureForm.primary_cn_name,
+        ipn: primaryIpn,
+        sort_order: featureForm.sort_order
+      })
+      await updateFeatureMasterData(editingFeatureId.value, payload)
     } else {
-      await createFeature(featureForm)
+      const primaryIpn = payload.ipns.find(entry => entry.relation_type === 'primary')?.ipn || ''
+      const created = await createFeature({
+        group_id: featureForm.group_id,
+        name: featureForm.primary_cn_name,
+        ipn: primaryIpn,
+        sort_order: featureForm.sort_order
+      })
+      await updateFeatureMasterData(created.id, payload)
     }
     ElMessage.success('保存成功')
     showFeatureForm.value = false
@@ -315,11 +418,13 @@ onMounted(() => loadData())
   gap: 10px;
   min-width: 0;
 }
+.feature-names { display: flex; flex-direction: column; gap: 2px; }
 .feature-name {
   font-size: 13px;
   color: #303133;
   font-weight: 500;
 }
+.feature-en-name { color: #909399; font-size: 11px; }
 .feature-ipn {
   font-size: 11px;
   color: #909399;
@@ -343,4 +448,6 @@ onMounted(() => loadData())
 .group-empty {
   padding: 16px 0;
 }
+.ipn-editor { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.ipn-editor-row { display: grid; grid-template-columns: 1fr 130px auto; gap: 8px; }
 </style>

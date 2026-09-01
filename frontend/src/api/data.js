@@ -108,6 +108,8 @@ export const getFeatures = (params) => api.get('/features', { params })
 export const createFeature = (data) => api.post('/features', data)
 export const updateFeature = (id, data) => api.put(`/features/${id}`, data)
 export const deleteFeature = (id) => api.delete(`/features/${id}`)
+export const getFeatureMasterData = (id) => api.get(`/features/${id}/master-data`)
+export const updateFeatureMasterData = (id, data) => api.put(`/features/${id}/master-data`, data)
 
 // 模板配置
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
@@ -154,8 +156,10 @@ export const getKnowledgeDocumentPreviewUrl = (id) => `/api/knowledge/documents/
 
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>
-  api.get('/knowledge/registration/configured-models', { params })
+  api.get('/registrations/configured-models', { params })
 export const getRegistrationModels = (params) =>
-  api.get('/knowledge/registration/models', { params })
+  api.get('/registrations/models', { params })
 export const getRegistrationProbes = (params) =>
-  api.get('/knowledge/registration/probes', { params })
+  api.get('/registrations/probes', { params })
+export const getRegistrationModelProbes = (registrationModelId) =>
+  api.get(`/registrations/models/${registrationModelId}/probes`)

@@ -58,6 +58,12 @@ const routes = [
         meta: { title: '功能管理' }
       },
       {
+        path: 'registration-manage',
+        name: 'RegistrationManage',
+        component: () => import('../views/RegistrationManage.vue'),
+        meta: { title: '注册管理' }
+      },
+      {
         path: 'template-features',
         name: 'TemplateFeatures',
         component: () => import('../views/TemplateFeatures.vue'),

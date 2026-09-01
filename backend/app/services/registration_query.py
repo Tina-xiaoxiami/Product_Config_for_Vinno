@@ -80,6 +80,73 @@ async def list_registration_models(
     return [dict(row._mapping) for row in result], int(total_result.scalar_one())
 
 
+async def list_registration_model_probes(
+    session: AsyncSession,
+    *,
+    registration_model_id: int,
+) -> dict | None:
+    model_result = await session.execute(
+        text(
+            """
+            SELECT id, country_code, model_name, source_document_id
+            FROM registration_models
+            WHERE id = :registration_model_id AND source_status = 'active'
+            """
+        ),
+        {"registration_model_id": registration_model_id},
+    )
+    model = model_result.one_or_none()
+    if model is None:
+        return None
+
+    result = await session.execute(
+        text(
+            """
+            SELECT matrix.id AS matrix_id,
+                   probe.id AS probe_id,
+                   probe.probe_model,
+                   probe.ipn,
+                   matrix.registration_status,
+                   item.id AS config_item_id,
+                   item.zh_desc AS config_name,
+                   probe_master.id AS probe_master_id,
+                   probe_master.model_number AS probe_master_model,
+                   matrix.source_document_id,
+                   matrix.source_ref
+            FROM registration_model_probes matrix
+            JOIN registration_probes probe
+              ON probe.id = matrix.registration_probe_id
+            LEFT JOIN config_items item
+              ON item.ipn = probe.ipn AND item.category = 'Probes'
+            LEFT JOIN probe_model_variants variant
+              ON variant.id = (
+                  SELECT MIN(candidate.id)
+                  FROM probe_model_variants candidate
+                  WHERE UPPER(TRIM(COALESCE(candidate.ipn, '')))
+                      = UPPER(TRIM(COALESCE(probe.ipn, '')))
+              )
+            LEFT JOIN probe_models probe_master
+              ON probe_master.id = variant.probe_model_id
+            WHERE matrix.registration_model_id = :registration_model_id
+              AND probe.source_status = 'active'
+            ORDER BY probe.id
+            """
+        ),
+        {"registration_model_id": registration_model_id},
+    )
+    items = [dict(row._mapping) for row in result]
+    return {
+        "registration_model_id": int(model.id),
+        "country_code": model.country_code,
+        "model_name": model.model_name,
+        "source_document_id": (
+            int(model.source_document_id) if model.source_document_id else None
+        ),
+        "items": items,
+        "total": len(items),
+    }
+
+
 def _probe_summary(items: list[dict]) -> dict[str, int]:
     return {
         "registered": sum(item["registration_status"] == "registered" for item in items),
@@ -134,12 +201,23 @@ async def list_product_registration_probes(
                    matrix.registration_status,
                    value.selection_config, value.current_config,
                    item.id AS config_item_id, item.zh_desc AS config_name,
+                   probe_master.id AS probe_master_id,
+                   probe_master.model_number AS probe_master_model,
                    matrix.source_document_id
             FROM registration_model_probes matrix
             JOIN registration_probes probe
               ON probe.id = matrix.registration_probe_id
             LEFT JOIN config_items item
               ON item.ipn = probe.ipn AND item.category = 'Probes'
+            LEFT JOIN probe_model_variants variant
+              ON variant.id = (
+                  SELECT MIN(candidate.id)
+                  FROM probe_model_variants candidate
+                  WHERE UPPER(TRIM(COALESCE(candidate.ipn, '')))
+                      = UPPER(TRIM(COALESCE(probe.ipn, '')))
+              )
+            LEFT JOIN probe_models probe_master
+              ON probe_master.id = variant.probe_model_id
             LEFT JOIN config_values value
               ON value.item_id = item.id
              AND value.model_id = :product_model_id
@@ -178,6 +256,10 @@ async def list_product_registration_probes(
             "conflict": policy.conflict,
             "config_item_id": int(row.config_item_id) if row.config_item_id else None,
             "config_name": row.config_name,
+            "probe_master_id": (
+                int(row.probe_master_id) if row.probe_master_id else None
+            ),
+            "probe_master_model": row.probe_master_model,
             "source_document_id": (
                 int(row.source_document_id) if row.source_document_id else None
             ),

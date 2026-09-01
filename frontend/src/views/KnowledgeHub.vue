@@ -4,6 +4,12 @@
       <div>
         <h2>产品知识库</h2>
         <p>以 IPN 为功能唯一身份，统一查询中英文主名称、曾用名、版本关系和原始资料。</p>
+        <p class="master-data-note">
+          主数据由基础数据统一维护：
+          <router-link to="/feature-manage">功能管理</router-link>
+          <span>·</span>
+          <router-link to="/registration-manage">注册管理</router-link>
+        </p>
       </div>
       <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
         {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
@@ -600,6 +606,9 @@ onMounted(() => {
 .knowledge-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
 .knowledge-header h2 { margin: 0 0 6px; font-size: 22px; color: #1f2937; }
 .knowledge-header p { margin: 0; color: #6b7280; font-size: 13px; }
+.knowledge-header .master-data-note { margin-top: 6px; font-size: 12px; }
+.master-data-note a { color: #2563eb; text-decoration: none; }
+.master-data-note span { margin: 0 5px; color: #94a3b8; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
 .stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 15px 18px; display: flex; flex-direction: column; }
 .stat-card.primary { background: linear-gradient(135deg, #ecf5ff, #fff); border-color: #bfdbfe; }

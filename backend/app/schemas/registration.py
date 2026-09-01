@@ -32,6 +32,29 @@ class RegistrationModelList(BaseModel):
     limit: int
 
 
+class RegistrationMasterProbeItem(BaseModel):
+    matrix_id: int
+    probe_id: int
+    probe_model: str
+    ipn: str
+    registration_status: str
+    config_item_id: int | None = None
+    config_name: str | None = None
+    probe_master_id: int | None = None
+    probe_master_model: str | None = None
+    source_document_id: int | None = None
+    source_ref: str | None = None
+
+
+class RegistrationMasterProbeList(BaseModel):
+    registration_model_id: int
+    country_code: str
+    model_name: str
+    source_document_id: int | None = None
+    items: list[RegistrationMasterProbeItem] = Field(default_factory=list)
+    total: int
+
+
 class RegistrationProbeStrategyItem(BaseModel):
     probe_id: int
     probe_model: str
@@ -46,6 +69,8 @@ class RegistrationProbeStrategyItem(BaseModel):
     conflict: bool
     config_item_id: int | None = None
     config_name: str | None = None
+    probe_master_id: int | None = None
+    probe_master_model: str | None = None
     source_document_id: int | None = None
 
 
