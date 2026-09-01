@@ -23,6 +23,8 @@ _STOP_PHRASES = (
     "有无",
     "的吗",
 )
+_NEGATED_INTENTS = ("不支持", "不能", "不可以", "未注册", "没有", "不标配", "非标配")
+_MARKET_SCOPES = ("国内", "海外")
 
 
 class KnowledgeQaError(ValueError):
@@ -57,7 +59,33 @@ def _bigram_dice(left: str, right: str) -> float:
     return 2 * len(left_pairs & right_pairs) / (len(left_pairs) + len(right_pairs))
 
 
+def _critical_identifiers(value: str) -> set[str]:
+    normalized = normalize_question(value)
+    identifiers = set(re.findall(r"(?:vinno|v)\d+[a-z0-9]*", normalized))
+    identifiers.update(re.findall(r"\d{6,}", normalized))
+    return {
+        re.sub(r"^vinno", "v", identifier)
+        for identifier in identifiers
+    }
+
+
+def _has_negated_intent(value: str) -> bool:
+    core = _semantic_core(value)
+    return any(normalize_question(marker) in core for marker in _NEGATED_INTENTS)
+
+
+def _market_scopes(value: str) -> set[str]:
+    normalized = normalize_question(value)
+    return {scope for scope in _MARKET_SCOPES if scope in normalized}
+
+
 def question_similarity(left: str, right: str) -> float:
+    if _critical_identifiers(left) != _critical_identifiers(right):
+        return 0.0
+    if _has_negated_intent(left) != _has_negated_intent(right):
+        return 0.0
+    if _market_scopes(left) != _market_scopes(right):
+        return 0.0
     left_core = _semantic_core(left)
     right_core = _semantic_core(right)
     if not left_core or not right_core:
@@ -455,6 +483,16 @@ async def publish_answer(
         {"question_id": question_id},
     )
     for alias_text, normalized_alias in unique_aliases:
+        await session.execute(
+            text(
+                """
+                DELETE FROM knowledge_question_phrasings
+                WHERE question_id = :question_id
+                  AND normalized_phrasing = :normalized
+                """
+            ),
+            {"question_id": question_id, "normalized": normalized_alias},
+        )
         await session.execute(
             text(
                 """
