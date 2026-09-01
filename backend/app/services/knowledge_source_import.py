@@ -53,7 +53,7 @@ def discover_v10_knowledge_sources(document_root: str | Path) -> list[KnowledgeS
         (
             registration_directory / "注册变更-20260615.pdf",
             "registration_certificate",
-            "V10系列国内注变更",
+            "V10系列国内注册变更",
             "20260615",
         ),
         (
