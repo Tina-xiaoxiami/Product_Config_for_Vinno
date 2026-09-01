@@ -66,6 +66,8 @@ test('knowledge hub separates domestic registration redlines from product strate
   assert.match(view, /Δ 招标支持/)
   assert.match(view, /# 未注册/)
   assert.match(view, /注册差异表原文/)
+  assert.match(view, /:href="registrationSourceUrl"/)
+  assert.match(view, /target="_blank"/)
 })
 
 
