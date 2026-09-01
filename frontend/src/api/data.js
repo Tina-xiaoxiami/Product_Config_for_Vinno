@@ -144,3 +144,10 @@ export const setSeriesProbes = (data) => api.post('/probes/config/series-probes'
 
 // ==================== 机型分组 ====================
 export const getModelGroups = () => api.get('/model-groups')
+
+// ==================== 产品知识库 ====================
+export const getKnowledgeFeatures = (params) => api.get('/knowledge/features', { params })
+export const getKnowledgeFeature = (id) => api.get(`/knowledge/features/${id}`)
+export const getKnowledgeStats = () => api.get('/knowledge/stats')
+export const getKnowledgeDocuments = (params) => api.get('/knowledge/documents', { params })
+export const getKnowledgeDocumentPreviewUrl = (id) => `/api/knowledge/documents/${id}/preview`

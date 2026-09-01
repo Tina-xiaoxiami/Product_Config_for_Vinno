@@ -10,6 +10,10 @@
           text-color="#bfcbd9"
           active-text-color="#409EFF"
         >
+          <el-menu-item index="/knowledge">
+            <el-icon><Collection /></el-icon>
+            <span>产品知识库</span>
+          </el-menu-item>
           <el-sub-menu index="/manage">
             <template #title>
               <el-icon><Setting /></el-icon>
@@ -75,7 +79,7 @@
 </template>
 
 <script setup>
-import { Document, DataAnalysis, Clock, Setting } from '@element-plus/icons-vue'
+import { Document, DataAnalysis, Setting, Collection } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

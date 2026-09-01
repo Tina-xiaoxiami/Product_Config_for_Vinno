@@ -74,6 +74,12 @@ const routes = [
         name: 'ProbeVersions',
         component: () => import('../views/ProbeVersions.vue'),
         meta: { title: '探头版本历史' }
+      },
+      {
+        path: 'knowledge',
+        name: 'KnowledgeHub',
+        component: () => import('../views/KnowledgeHub.vue'),
+        meta: { title: '产品知识库' }
       }
     ]
   }
