@@ -38,7 +38,7 @@ def test_discovery_classifies_provided_v10_materials_without_manual_entry(tmp_pa
     )
     release_docx = _write(
         tmp_path,
-        "release note/1.14.80/V series Release Note_1.14.80.docx",
+        "release note/1.14.80/V series Release Note_1.4.80.docx",
     )
     _write(tmp_path, "release note/1.14.80/.DS_Store")
 
@@ -46,14 +46,18 @@ def test_discovery_classifies_provided_v10_materials_without_manual_entry(tmp_pa
 
     assert [(item.document_type, item.path) for item in sources] == [
         ("whitepaper", whitepaper),
-        ("release_note", release_docx),
         ("release_note", release_pdf),
+        ("release_note", release_docx),
         ("manual", manual),
         ("registration_difference", difference),
         ("registration_certificate", registration),
     ]
     assert next(item for item in sources if item.path == whitepaper).product_series == "VINNO 10"
     assert next(item for item in sources if item.path == manual).version == "R10"
+    release_source = next(item for item in sources if item.path == release_docx)
+    assert release_source.version == "1.14.80"
+    assert release_source.title == "V series Release Note_1.14.80"
+    assert release_source.path.name == "V series Release Note_1.4.80.docx"
 
 
 def test_source_import_is_idempotent_and_refreshes_changed_file_digest(tmp_path):
