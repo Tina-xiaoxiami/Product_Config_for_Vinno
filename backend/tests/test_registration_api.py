@@ -98,6 +98,8 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "conflict": False,
         "config_item_id": 10,
         "config_name": "F2-5C探头",
+        "probe_master_id": 21,
+        "probe_master_model": "F2-5C",
         "source_document_id": 1,
     }
 
@@ -197,6 +199,8 @@ async def test_registration_master_data_lists_source_rows_by_registration_model(
         "registration_status",
         "config_item_id",
         "config_name",
+        "probe_master_id",
+        "probe_master_model",
         "source_document_id",
         "source_ref",
     }

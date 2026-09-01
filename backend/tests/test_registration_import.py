@@ -52,6 +52,24 @@ def _create_database(path):
             (11, '1000744', 'Probes', 'G1-4P探头'),
             (12, '1000784', 'Probes', 'F4-9E探头');
 
+        CREATE TABLE probe_models (
+            id INTEGER PRIMARY KEY,
+            model_number TEXT NOT NULL
+        );
+        CREATE TABLE probe_model_variants (
+            id INTEGER PRIMARY KEY,
+            probe_model_id INTEGER NOT NULL,
+            internal_model TEXT NOT NULL,
+            ipn TEXT,
+            FOREIGN KEY(probe_model_id) REFERENCES probe_models(id)
+        );
+        INSERT INTO probe_models VALUES
+            (21, 'F2-5C'), (22, 'G1-4P'), (23, 'F4-9E');
+        INSERT INTO probe_model_variants VALUES
+            (31, 21, 'F2-5C-Internal', '1000530'),
+            (32, 22, 'G1-4P-Internal', '1000744'),
+            (33, 23, 'F4-9E-Internal', '1000784');
+
         CREATE TABLE config_values (
             id INTEGER PRIMARY KEY,
             item_id INTEGER NOT NULL,
