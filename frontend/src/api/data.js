@@ -151,3 +151,11 @@ export const getKnowledgeFeature = (id) => api.get(`/knowledge/features/${id}`)
 export const getKnowledgeStats = () => api.get('/knowledge/stats')
 export const getKnowledgeDocuments = (params) => api.get('/knowledge/documents', { params })
 export const getKnowledgeDocumentPreviewUrl = (id) => `/api/knowledge/documents/${id}/preview`
+
+// ==================== 注册红线与产品策略 ====================
+export const getConfiguredRegistrationModels = (params) =>
+  api.get('/knowledge/registration/configured-models', { params })
+export const getRegistrationModels = (params) =>
+  api.get('/knowledge/registration/models', { params })
+export const getRegistrationProbes = (params) =>
+  api.get('/knowledge/registration/probes', { params })

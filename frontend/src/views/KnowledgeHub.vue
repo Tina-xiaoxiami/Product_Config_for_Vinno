@@ -114,6 +114,150 @@
         />
       </el-tab-pane>
 
+      <el-tab-pane label="国内注册与策略" name="registration">
+        <section class="registration-intro">
+          <div>
+            <div class="registration-title-row">
+              <h3>国内注册探头判定</h3>
+              <el-tag type="success" effect="plain">国内 / CN</el-tag>
+            </div>
+            <p>先执行注册红线，再读取正式选型；研发当前配置仅在没有正式选型时作为辅助信息。</p>
+          </div>
+          <el-button :icon="View" :disabled="!registrationSourceDocumentId" @click="openRegistrationSource">
+            注册差异表原文
+          </el-button>
+        </section>
+
+        <section class="status-legend" aria-label="配置状态图例">
+          <span><strong class="status-x">X</strong> X 标配</span>
+          <span><strong class="status-o">O</strong> O 选配</span>
+          <span><strong class="status-tender">Δ</strong> Δ 招标支持</span>
+          <span><strong class="status-blocked">#</strong> # 未注册</span>
+        </section>
+
+        <section class="registration-toolbar">
+          <el-select
+            v-model="selectedProductModelId"
+            data-testid="registration-model-select"
+            filterable
+            placeholder="选择国内产品型号"
+            @change="searchRegistrationProbes"
+          >
+            <el-option
+              v-for="model in registrationModels"
+              :key="model.product_model_id"
+              :label="registrationModelLabel(model)"
+              :value="model.product_model_id"
+            />
+          </el-select>
+          <el-input
+            v-model="registrationQuery"
+            data-testid="registration-probe-search"
+            clearable
+            placeholder="搜索探头型号、IPN 或配置名称"
+            :prefix-icon="Search"
+            @keyup.enter="searchRegistrationProbes"
+            @clear="searchRegistrationProbes"
+          />
+          <el-select
+            v-model="registrationStatus"
+            data-testid="registration-status-filter"
+            clearable
+            placeholder="全部注册状态"
+            @change="searchRegistrationProbes"
+          >
+            <el-option label="已注册" value="registered" />
+            <el-option label="# 未注册" value="unregistered" />
+          </el-select>
+          <el-select
+            v-model="effectiveStatus"
+            data-testid="effective-status-filter"
+            clearable
+            placeholder="全部最终判定"
+            @change="searchRegistrationProbes"
+          >
+            <el-option label="X 标配" value="X" />
+            <el-option label="O 选配" value="O" />
+            <el-option label="Δ 招标支持" value="Δ" />
+            <el-option label="# 未注册" value="#" />
+            <el-option label="未定义" value="未定义" />
+          </el-select>
+          <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
+        </section>
+
+        <section v-if="selectedProductModelId" class="registration-context">
+          <span>产品型号：<strong>{{ registrationMeta.product_model_name || '-' }}</strong></span>
+          <span v-if="registrationMeta.registration_model_name">
+            注册基础型号：<strong>{{ registrationMeta.registration_model_name }}</strong>
+          </span>
+          <el-tag v-if="isDerivedRegistrationModel" type="warning" size="small" effect="plain">
+            衍生型号沿用基础型号注册
+          </el-tag>
+        </section>
+
+        <section class="registration-summary" v-loading="registrationLoading">
+          <div><strong>{{ registrationSummary.registered }}</strong><span>已注册</span></div>
+          <div class="danger"><strong>{{ registrationSummary.unregistered }}</strong><span>未注册</span></div>
+          <div><strong>{{ registrationSummary.standard }}</strong><span>标配</span></div>
+          <div><strong>{{ registrationSummary.optional }}</strong><span>选配</span></div>
+          <div><strong>{{ registrationSummary.tender }}</strong><span>招标支持</span></div>
+          <div><strong>{{ registrationSummary.undefined }}</strong><span>策略未定义</span></div>
+        </section>
+
+        <el-table
+          data-testid="registration-strategy-table"
+          :data="registrationItems"
+          v-loading="registrationLoading"
+          border
+          stripe
+          empty-text="请选择型号或调整筛选条件"
+          class="registration-table"
+        >
+          <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
+          <el-table-column prop="ipn" label="IPN" min-width="115" />
+          <el-table-column prop="config_name" label="配置名称" min-width="180">
+            <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
+          </el-table-column>
+          <el-table-column label="注册状态" min-width="105" align="center">
+            <template #default="scope">
+              <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
+                {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="选型类别（正式）" min-width="135" align="center">
+            <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
+          </el-table-column>
+          <el-table-column label="当前配置（辅助）" min-width="135" align="center">
+            <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
+          </el-table-column>
+          <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
+            <template #default="scope">
+              <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
+                {{ displayConfigStatus(scope.row.effective_status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="判定依据" min-width="165">
+            <template #default="scope">
+              <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
+                {{ statusSourceLabel(scope.row.status_source) }}
+              </span>
+              <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-pagination
+          v-if="registrationTotal > registrationLimit"
+          v-model:current-page="registrationPage"
+          :page-size="registrationLimit"
+          :total="registrationTotal"
+          layout="prev, pager, next, total"
+          @current-change="loadRegistrationProbes"
+        />
+      </el-tab-pane>
+
       <el-tab-pane label="原始资料" name="documents">
         <section class="toolbar document-toolbar">
           <el-input
@@ -175,14 +319,16 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Link, Search, View } from '@element-plus/icons-vue'
 import {
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
   getKnowledgeFeatures,
-  getKnowledgeStats
+  getKnowledgeStats,
+  getConfiguredRegistrationModels,
+  getRegistrationProbes
 } from '../api/data'
 
 const activeTab = ref('features')
@@ -202,9 +348,39 @@ const documentType = ref('')
 const documentLoading = ref(false)
 const documents = ref([])
 
+const registrationModels = ref([])
+const selectedProductModelId = ref(null)
+const registrationQuery = ref('')
+const registrationStatus = ref('')
+const effectiveStatus = ref('')
+const registrationLoading = ref(false)
+const registrationItems = ref([])
+const registrationTotal = ref(0)
+const registrationPage = ref(1)
+const registrationLimit = 100
+const registrationMeta = ref({})
+const registrationSummary = ref({
+  registered: 0,
+  unregistered: 0,
+  standard: 0,
+  optional: 0,
+  tender: 0,
+  undefined: 0,
+  auxiliary: 0,
+  conflicts: 0
+})
+
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const previewTitle = ref('')
+
+const isDerivedRegistrationModel = computed(() => (
+  registrationMeta.value.mapping_type
+  && registrationMeta.value.mapping_type !== 'direct'
+))
+const registrationSourceDocumentId = computed(() => (
+  registrationItems.value.find(item => item.source_document_id)?.source_document_id || null
+))
 
 const statusLabel = (status) => ({
   auto_matched: '自动匹配',
@@ -233,6 +409,31 @@ const documentTypeLabel = (type) => ({
   whitepaper: '产品白皮书',
   release_note: 'Release Note'
 }[type] || type)
+
+const registrationModelLabel = (model) => model.product_model_name === model.registration_model_name
+  ? model.product_model_name
+  : `${model.product_model_name} → ${model.registration_model_name}`
+const displayConfigStatus = (status) => ({
+  X: 'X 标配',
+  O: 'O 选配',
+  '∆': 'Δ 招标支持',
+  'Δ': 'Δ 招标支持',
+  '#': '# 未注册',
+  未定义: '未定义'
+}[status] || status || '—')
+const effectiveStatusType = (status) => ({
+  X: 'success',
+  O: 'primary',
+  'Δ': 'warning',
+  '#': 'danger',
+  未定义: 'info'
+}[status] || 'info')
+const statusSourceLabel = (source) => ({
+  registration_redline: '注册红线',
+  selection_config: '正式选型类别',
+  current_config_aux: '研发当前配置（辅助）',
+  missing: '尚无正式策略'
+}[source] || source || '—')
 
 const aliases = (feature) => (feature.names || []).filter(name => name.name_type === 'alias')
 const relationNote = (feature) => (feature.ipns || []).some(entry => entry.relation_type === 'version_variant')
@@ -297,6 +498,61 @@ const loadDocuments = async () => {
 
 const searchDocuments = () => loadDocuments()
 
+const loadRegistrationModels = async () => {
+  try {
+    const result = await getConfiguredRegistrationModels({ country_code: 'CN' })
+    registrationModels.value = result.items || []
+    if (!selectedProductModelId.value && registrationModels.value.length > 0) {
+      const preferred = registrationModels.value.find(model => model.product_model_name === 'VINNO 10')
+      selectedProductModelId.value = (preferred || registrationModels.value[0]).product_model_id
+    }
+    if (selectedProductModelId.value) await loadRegistrationProbes()
+  } catch {
+    ElMessage.error('国内注册型号加载失败')
+  }
+}
+
+const loadRegistrationProbes = async () => {
+  if (!selectedProductModelId.value) return
+  registrationLoading.value = true
+  try {
+    const result = await getRegistrationProbes({
+      product_model_id: selectedProductModelId.value,
+      q: registrationQuery.value || undefined,
+      registration_status: registrationStatus.value || undefined,
+      effective_status: effectiveStatus.value || undefined,
+      skip: (registrationPage.value - 1) * registrationLimit,
+      limit: registrationLimit
+    })
+    registrationItems.value = result.items || []
+    registrationTotal.value = result.total || 0
+    registrationSummary.value = result.summary || {}
+    registrationMeta.value = {
+      product_model_name: result.product_model_name,
+      registration_model_name: result.registration_model_name,
+      mapping_type: result.mapping_type
+    }
+  } catch {
+    ElMessage.error('注册与策略数据加载失败')
+  } finally {
+    registrationLoading.value = false
+  }
+}
+
+const searchRegistrationProbes = () => {
+  registrationPage.value = 1
+  loadRegistrationProbes()
+}
+
+const openRegistrationSource = () => {
+  if (!registrationSourceDocumentId.value) return
+  window.open(
+    getKnowledgeDocumentPreviewUrl(registrationSourceDocumentId.value),
+    '_blank',
+    'noopener'
+  )
+}
+
 const previewDocument = (document) => {
   const url = getKnowledgeDocumentPreviewUrl(document.id)
   if (!canInline(document)) {
@@ -312,6 +568,7 @@ onMounted(() => {
   loadStats()
   loadFeatures()
   loadDocuments()
+  loadRegistrationModels()
 })
 </script>
 
@@ -350,11 +607,35 @@ onMounted(() => {
 .document-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: #6b7280; font-size: 11px; }
 .available { color: #15803d; }
 .unavailable { color: #b91c1c; }
+.registration-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin: 12px 0; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 9px; background: #f8fbff; }
+.registration-title-row { display: flex; align-items: center; gap: 9px; }
+.registration-title-row h3 { margin: 0; color: #1f2937; font-size: 15px; }
+.registration-intro p { margin: 6px 0 0; color: #64748b; font-size: 12px; }
+.status-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; color: #475569; font-size: 12px; }
+.status-legend span { display: flex; align-items: center; gap: 5px; }
+.status-legend strong { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; color: #fff; }
+.status-x { background: #16a34a; }
+.status-o { background: #2563eb; }
+.status-tender { background: #d97706; }
+.status-blocked { background: #dc2626; }
+.registration-toolbar { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(220px, 1.4fr) 150px 150px auto; gap: 9px; margin-bottom: 12px; }
+.registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 12px; color: #64748b; font-size: 12px; }
+.registration-context strong { color: #1f2937; }
+.registration-summary { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.registration-summary div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.registration-summary strong { color: #1f2937; font-size: 19px; }
+.registration-summary span { color: #64748b; font-size: 11px; }
+.registration-summary .danger strong { color: #dc2626; }
+.registration-table { width: 100%; }
+.auxiliary-source { color: #b45309; }
+.conflict-tag { display: block; width: fit-content; margin-top: 4px; }
 .preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 850px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .toolbar { grid-template-columns: 1fr; }
+  .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
+  .registration-summary { grid-template-columns: repeat(2, 1fr); }
+  .registration-intro { flex-direction: column; }
   .knowledge-header { flex-direction: column; gap: 10px; }
 }
 </style>
