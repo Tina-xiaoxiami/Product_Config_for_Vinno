@@ -141,3 +141,17 @@ test('knowledge hub supports the confirmed Q&A feedback loop', () => {
   assert.match(api, /export const publishKnowledgeAnswer/)
   assert.match(api, /export const getKnowledgeAnswerHistory/)
 })
+
+
+test('knowledge hub exposes controlled document extraction and candidate evidence', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /材料候选依据/)
+  assert.match(view, /候选内容不能直接作为正式结论/)
+  assert.match(view, /作为答案草稿/)
+  assert.match(view, /提取正文/)
+  assert.match(view, /正文已提取/)
+  assert.match(api, /export const extractKnowledgeDocument/)
+  assert.match(api, /export const getKnowledgeQuestionCandidates/)
+})

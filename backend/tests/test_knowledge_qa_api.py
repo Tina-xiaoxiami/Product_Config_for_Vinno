@@ -84,6 +84,29 @@ def _create_qa_database(path):
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(answer_id, version)
         );
+        CREATE TABLE knowledge_document_extractions (
+            document_id INTEGER PRIMARY KEY REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            extractor_version TEXT NOT NULL,
+            source_sha256 TEXT,
+            status TEXT NOT NULL,
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT,
+            extracted_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE knowledge_document_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            page_number INTEGER,
+            section_name TEXT,
+            source_ref TEXT NOT NULL,
+            content TEXT NOT NULL,
+            normalized_content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(document_id, chunk_index)
+        );
         """
     )
     connection.commit()
@@ -130,6 +153,7 @@ async def test_unknown_question_enters_pending_queue_and_repeated_ask_is_counted
     assert first.status_code == 200
     assert first.json()["status"] == "pending"
     assert first.json()["answer"] is None
+    assert first.json()["candidates"] == []
     assert repeated.json()["question_id"] == first.json()["question_id"]
     assert pending.json()["total"] == 1
     assert pending.json()["items"][0]["asked_count"] == 2
