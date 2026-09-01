@@ -80,4 +80,43 @@ test('frontend API exposes domestic registration query endpoints', () => {
   assert.match(api, /export const getConfiguredRegistrationModels/)
   assert.match(api, /export const getRegistrationModels/)
   assert.match(api, /export const getRegistrationProbes/)
+  assert.match(api, /api\.get\('\/registrations\/configured-models'/)
+  assert.match(api, /api\.get\('\/registrations\/models'/)
+  assert.match(api, /api\.get\('\/registrations\/probes'/)
+  assert.doesNotMatch(api, /\/knowledge\/registration/)
+})
+
+
+test('base data management owns feature identity and registration master data', () => {
+  const router = read('../src/router/index.js')
+  const layout = read('../src/views/Layout.vue')
+  const featureView = read('../src/views/FeatureManage.vue')
+  const registrationView = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(router, /path:\s*'registration-manage'/)
+  assert.match(router, /name:\s*'RegistrationManage'/)
+  assert.match(layout, /index="\/registration-manage"/)
+  assert.match(layout, />\s*注册管理\s*</)
+  assert.match(featureView, /中文主名称/)
+  assert.match(featureView, /英文主名称/)
+  assert.match(featureView, /中文曾用名/)
+  assert.match(featureView, /英文曾用名/)
+  assert.match(featureView, /IPN关系/)
+  assert.match(featureView, /getFeatureMasterData/)
+  assert.match(featureView, /updateFeatureMasterData/)
+  assert.match(registrationView, /注册数据由基础数据统一管理/)
+  assert.match(registrationView, /getRegistrationModelProbes/)
+  assert.match(api, /export const getFeatureMasterData/)
+  assert.match(api, /export const updateFeatureMasterData/)
+  assert.match(api, /export const getRegistrationModelProbes/)
+})
+
+
+test('knowledge hub is a read-only aggregate linked to master-data maintenance', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+
+  assert.match(view, /基础数据统一维护/)
+  assert.match(view, /to="\/feature-manage"/)
+  assert.match(view, /to="\/registration-manage"/)
 })

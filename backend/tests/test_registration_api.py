@@ -14,7 +14,7 @@ async def _client_for(database_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
-    app.include_router(registration.router, prefix="/api/knowledge/registration")
+    app.include_router(registration.router, prefix="/api/registrations")
 
     async def override_db():
         async with session_factory() as session:
@@ -44,11 +44,11 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
 
     async with client:
         models_response = await client.get(
-            "/api/knowledge/registration/configured-models",
+            "/api/registrations/configured-models",
             params={"country_code": "CN"},
         )
         probes_response = await client.get(
-            "/api/knowledge/registration/probes",
+            "/api/registrations/probes",
             params={"product_model_id": 2},
         )
     await engine.dispose()
@@ -118,7 +118,7 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
 
     async with client:
         filtered = await client.get(
-            "/api/knowledge/registration/probes",
+            "/api/registrations/probes",
             params={
                 "product_model_id": 5,
                 "q": "1000744",
@@ -127,15 +127,15 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
             },
         )
         registration_models = await client.get(
-            "/api/knowledge/registration/models",
+            "/api/registrations/models",
             params={"country_code": "CN", "q": "VINNO 10"},
         )
         empty_filtered = await client.get(
-            "/api/knowledge/registration/probes",
+            "/api/registrations/probes",
             params={"product_model_id": 5, "q": "不存在的探头"},
         )
         missing = await client.get(
-            "/api/knowledge/registration/probes",
+            "/api/registrations/probes",
             params={"product_model_id": 999},
         )
     await engine.dispose()
@@ -157,3 +157,46 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
     assert empty_filtered.json()["source_document_id"] == 1
     assert missing.status_code == 404
     assert missing.json()["detail"] == "产品型号尚未关联注册基础型号"
+
+
+@pytest.mark.asyncio
+async def test_registration_master_data_lists_source_rows_by_registration_model(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        models = await client.get(
+            "/api/registrations/models",
+            params={"country_code": "CN", "q": "VINNO 10"},
+        )
+        model_id = models.json()["items"][0]["id"]
+        probes = await client.get(f"/api/registrations/models/{model_id}/probes")
+    await engine.dispose()
+
+    assert probes.status_code == 200
+    body = probes.json()
+    assert body["registration_model_id"] == model_id
+    assert body["country_code"] == "CN"
+    assert body["model_name"] == "VINNO 10"
+    assert body["total"] == 3
+    first = body["items"][0]
+    assert set(first) == {
+        "matrix_id",
+        "probe_id",
+        "probe_model",
+        "ipn",
+        "registration_status",
+        "config_item_id",
+        "config_name",
+        "source_document_id",
+        "source_ref",
+    }
