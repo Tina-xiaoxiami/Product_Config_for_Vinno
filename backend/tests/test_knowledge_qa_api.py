@@ -277,3 +277,77 @@ async def test_answer_updates_keep_version_history(tmp_path):
     assert [item["version"] for item in history.json()["items"]] == [2, 1]
     assert history.json()["items"][0]["change_note"] == "依据新版本修订"
 
+
+@pytest.mark.asyncio
+async def test_similarity_never_crosses_product_model_or_negated_intent(tmp_path):
+    database_path = tmp_path / "qa.db"
+    _create_qa_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        asked = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "V10是否标配环境光自动调节亮度功能？"},
+        )
+        await client.put(
+            f"/api/knowledge/questions/{asked.json()['question_id']}/answer",
+            json={
+                "answer_text": "是，V10系列均为标配。",
+                "alias_questions": [],
+                "citations": [],
+                "change_note": "产品经理确认",
+            },
+        )
+        other_model = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "V9是否标配环境光自动调节亮度功能？"},
+        )
+        negated = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "V10是不是不支持环境光自动调节亮度功能？"},
+        )
+    await engine.dispose()
+
+    assert other_model.json()["status"] == "pending"
+    assert negated.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_observed_similar_wording_can_be_promoted_to_confirmed_alias(tmp_path):
+    database_path = tmp_path / "qa.db"
+    _create_qa_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        asked = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "环境光自动亮度调节是不是V10系列标配？"},
+        )
+        question_id = asked.json()["question_id"]
+        await client.put(
+            f"/api/knowledge/questions/{question_id}/answer",
+            json={
+                "answer_text": "是，V10系列均为标配。",
+                "alias_questions": [],
+                "citations": [],
+                "change_note": "首次确认",
+            },
+        )
+        wording = "V10是否标配环境光自动调节亮度功能"
+        similar = await client.post(
+            "/api/knowledge/questions/ask", json={"question": wording}
+        )
+        promoted = await client.put(
+            f"/api/knowledge/questions/{question_id}/answer",
+            json={
+                "answer_text": "是，V10系列均为标配。",
+                "alias_questions": [wording],
+                "citations": [],
+                "change_note": "确认常用问法",
+            },
+        )
+    await engine.dispose()
+
+    assert similar.json()["match_type"] == "similar"
+    assert promoted.status_code == 200
+    assert promoted.json()["alias_questions"] == [wording]
