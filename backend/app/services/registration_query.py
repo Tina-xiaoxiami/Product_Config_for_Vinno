@@ -110,6 +110,7 @@ async def list_product_registration_probes(
                    product.name AS product_model_name,
                    registration.id AS registration_model_id,
                    registration.model_name AS registration_model_name,
+                   registration.source_document_id,
                    link.mapping_type
             FROM product_registration_model_links link
             JOIN product_models product ON product.id = link.product_model_id
@@ -202,4 +203,3 @@ async def list_product_registration_probes(
         "limit": limit,
         "summary": _probe_summary(items),
     }
-

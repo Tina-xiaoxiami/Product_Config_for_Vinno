@@ -370,6 +370,7 @@ const registrationTotal = ref(0)
 const registrationPage = ref(1)
 const registrationLimit = 100
 const registrationMeta = ref({})
+const registrationSourceDocumentId = ref(null)
 const registrationSummary = ref({
   registered: 0,
   unregistered: 0,
@@ -388,9 +389,6 @@ const previewTitle = ref('')
 const isDerivedRegistrationModel = computed(() => (
   registrationMeta.value.mapping_type
   && registrationMeta.value.mapping_type !== 'direct'
-))
-const registrationSourceDocumentId = computed(() => (
-  registrationItems.value.find(item => item.source_document_id)?.source_document_id || null
 ))
 const registrationSourceUrl = computed(() => registrationSourceDocumentId.value
   ? getKnowledgeDocumentPreviewUrl(registrationSourceDocumentId.value)
@@ -541,6 +539,7 @@ const loadRegistrationProbes = async () => {
     registrationItems.value = result.items || []
     registrationTotal.value = result.total || 0
     registrationSummary.value = result.summary || {}
+    registrationSourceDocumentId.value = result.source_document_id || null
     registrationMeta.value = {
       product_model_name: result.product_model_name,
       registration_model_name: result.registration_model_name,

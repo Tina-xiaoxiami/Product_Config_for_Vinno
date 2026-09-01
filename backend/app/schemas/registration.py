@@ -69,6 +69,6 @@ class RegistrationProbeStrategyList(BaseModel):
     product_model_name: str
     registration_model_id: int
     registration_model_name: str
+    source_document_id: int | None = None
     mapping_type: str
     summary: RegistrationProbeSummary
-
