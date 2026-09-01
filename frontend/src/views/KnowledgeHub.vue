@@ -3,7 +3,7 @@
     <header class="knowledge-header">
       <div>
         <h2>产品知识库</h2>
-        <p>以 IPN 为功能唯一身份，统一查询主名称、备用名、版本关系和原始资料。</p>
+        <p>以 IPN 为功能唯一身份，统一查询中英文主名称、曾用名、版本关系和原始资料。</p>
       </div>
       <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
         {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
@@ -80,19 +80,36 @@
               </div>
             </div>
 
-            <div class="name-section">
-              <span class="section-label">备用名</span>
-              <div class="alias-list">
-                <el-tag
-                  v-for="name in aliases(feature)"
-                  :key="`${name.language}-${name.name}`"
-                  size="small"
-                  type="info"
-                  effect="plain"
-                >
-                  {{ name.name }}
-                </el-tag>
-                <span v-if="aliases(feature).length === 0" class="empty-text">无</span>
+            <div class="name-section aliases-by-language">
+              <div class="alias-language-group">
+                <span class="section-label">中文曾用名</span>
+                <div class="alias-list">
+                  <el-tag
+                    v-for="name in aliasesByLanguage(feature, 'cn')"
+                    :key="`${name.language}-${name.name}`"
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ name.name }}
+                  </el-tag>
+                  <span v-if="aliasesByLanguage(feature, 'cn').length === 0" class="empty-text">无</span>
+                </div>
+              </div>
+              <div class="alias-language-group">
+                <span class="section-label">英文曾用名</span>
+                <div class="alias-list">
+                  <el-tag
+                    v-for="name in aliasesByLanguage(feature, 'en')"
+                    :key="`${name.language}-${name.name}`"
+                    size="small"
+                    type="info"
+                    effect="plain"
+                  >
+                    {{ name.name }}
+                  </el-tag>
+                  <span v-if="aliasesByLanguage(feature, 'en').length === 0" class="empty-text">无</span>
+                </div>
               </div>
             </div>
 
@@ -447,7 +464,9 @@ const statusSourceLabel = (source) => ({
   missing: '尚无正式策略'
 }[source] || source || '—')
 
-const aliases = (feature) => (feature.names || []).filter(name => name.name_type === 'alias')
+const aliasesByLanguage = (feature, language) => (feature.names || []).filter(
+  name => name.name_type === 'alias' && name.language === language
+)
 const relationNote = (feature) => (feature.ipns || []).some(entry => entry.relation_type === 'version_variant')
   ? '版本关系：保留各组 IPN 独立身份，当前名称作为关系入口。'
   : '关联功能：保留关联 IPN 的独立身份，当前名称作为查询入口。'
@@ -601,7 +620,9 @@ onMounted(() => {
 .ipn-item code { color: #1d4ed8; font-weight: 600; }
 .ipn-description { border-left: 1px solid #dbe3ef; padding-left: 7px; }
 .name-section { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; }
-.section-label { min-width: 48px; padding-top: 3px; color: #6b7280; font-size: 12px; }
+.aliases-by-language { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
+.alias-language-group { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.section-label { min-width: 66px; padding-top: 3px; color: #6b7280; font-size: 12px; }
 .alias-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .empty-text { color: #9ca3af; font-size: 12px; }
 .relation-note { display: flex; align-items: center; gap: 6px; margin-top: 11px; color: #92400e; font-size: 12px; }
@@ -652,6 +673,7 @@ onMounted(() => {
   .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
   .registration-summary { grid-template-columns: repeat(2, 1fr); }
   .registration-intro { flex-direction: column; }
+  .aliases-by-language { grid-template-columns: 1fr; }
   .knowledge-header { flex-direction: column; gap: 10px; }
 }
 </style>
