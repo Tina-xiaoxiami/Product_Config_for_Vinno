@@ -50,9 +50,12 @@ test('knowledge hub separates domestic registration redlines from product strate
 
   assert.match(view, /label="国内注册与策略"/)
   assert.match(view, /data-testid="registration-model-select"/)
+  assert.match(view, /aria-label="国内产品型号"/)
   assert.match(view, /data-testid="registration-probe-search"/)
   assert.match(view, /data-testid="registration-status-filter"/)
+  assert.match(view, /aria-label="注册状态"/)
   assert.match(view, /data-testid="effective-status-filter"/)
+  assert.match(view, /aria-label="最终判定"/)
   assert.match(view, /data-testid="registration-strategy-table"/)
   assert.match(view, /注册状态/)
   assert.match(view, /选型类别（正式）/)
