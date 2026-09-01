@@ -109,3 +109,104 @@ class KnowledgeDocument(Base):
         Index("ix_knowledge_documents_type", "document_type"),
         Index("ix_knowledge_documents_market", "market"),
     )
+
+
+class KnowledgeQuestion(Base):
+    """A downstream question, pending or backed by a confirmed answer."""
+
+    __tablename__ = "knowledge_questions"
+
+    id = Column(Integer, primary_key=True)
+    question_text = Column(Text, nullable=False)
+    normalized_question = Column(Text, nullable=False, unique=True)
+    status = Column(String(20), nullable=False, default="pending")
+    asked_count = Column(Integer, nullable=False, default=1)
+    last_asked_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        Index("ix_knowledge_questions_status", "status"),
+        Index("ix_knowledge_questions_last_asked", "last_asked_at"),
+    )
+
+
+class KnowledgeQuestionPhrasing(Base):
+    """A confirmed alias or observed wording for a canonical question."""
+
+    __tablename__ = "knowledge_question_phrasings"
+
+    id = Column(Integer, primary_key=True)
+    question_id = Column(
+        Integer,
+        ForeignKey("knowledge_questions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    phrasing_text = Column(Text, nullable=False)
+    normalized_phrasing = Column(Text, nullable=False, unique=True)
+    phrasing_type = Column(String(20), nullable=False, default="alias")
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (Index("ix_knowledge_question_phrasings_question", "question_id"),)
+
+
+class KnowledgeAnswer(Base):
+    """The current confirmed answer for one canonical question."""
+
+    __tablename__ = "knowledge_answers"
+
+    id = Column(Integer, primary_key=True)
+    question_id = Column(
+        Integer,
+        ForeignKey("knowledge_questions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    answer_text = Column(Text, nullable=False)
+    review_status = Column(String(20), nullable=False, default="published")
+    version = Column(Integer, nullable=False, default=1)
+    change_note = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class KnowledgeAnswerCitation(Base):
+    """A controlled source reference supporting a confirmed answer."""
+
+    __tablename__ = "knowledge_answer_citations"
+
+    id = Column(Integer, primary_key=True)
+    answer_id = Column(
+        Integer,
+        ForeignKey("knowledge_answers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id = Column(Integer, ForeignKey("knowledge_documents.id"), nullable=False)
+    source_ref = Column(Text, nullable=True)
+    excerpt = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (Index("ix_knowledge_answer_citations_answer", "answer_id"),)
+
+
+class KnowledgeAnswerRevision(Base):
+    """Immutable snapshots of every published answer version."""
+
+    __tablename__ = "knowledge_answer_revisions"
+
+    id = Column(Integer, primary_key=True)
+    answer_id = Column(
+        Integer,
+        ForeignKey("knowledge_answers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version = Column(Integer, nullable=False)
+    answer_text = Column(Text, nullable=False)
+    review_status = Column(String(20), nullable=False)
+    change_note = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint("answer_id", "version", name="uq_knowledge_answer_revision"),
+        Index("ix_knowledge_answer_revisions_answer", "answer_id"),
+    )

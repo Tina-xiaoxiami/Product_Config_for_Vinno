@@ -19,6 +19,11 @@ from app.models.knowledge import (
     FeatureRelation,
     FeatureConfigItemLink,
     KnowledgeDocument,
+    KnowledgeQuestion,
+    KnowledgeQuestionPhrasing,
+    KnowledgeAnswer,
+    KnowledgeAnswerCitation,
+    KnowledgeAnswerRevision,
 )
 from app.models.registration import (
     RegistrationImportBatch,
@@ -57,6 +62,11 @@ __all__ = [
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",
+    "KnowledgeQuestion",
+    "KnowledgeQuestionPhrasing",
+    "KnowledgeAnswer",
+    "KnowledgeAnswerCitation",
+    "KnowledgeAnswerRevision",
     "RegistrationImportBatch",
     "RegistrationModel",
     "RegistrationProbe",

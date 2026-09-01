@@ -11,7 +11,13 @@ from app.database import get_db
 from app.schemas.knowledge import (
     FeatureKnowledgeItem,
     FeatureKnowledgeList,
+    KnowledgeAnswerHistory,
+    KnowledgeAnswerPublish,
     KnowledgeDocumentList,
+    KnowledgeQuestionAsk,
+    KnowledgeQuestionItem,
+    KnowledgeQuestionList,
+    KnowledgeQuestionResult,
     KnowledgeStats,
 )
 from app.services.knowledge_documents import (
@@ -23,9 +29,89 @@ from app.services.knowledge_query import (
     get_knowledge_stats,
     list_feature_knowledge,
 )
+from app.services.knowledge_qa import (
+    KnowledgeQaError,
+    ask_question,
+    get_answer_history,
+    get_question,
+    list_questions,
+    publish_answer,
+)
 
 
 router = APIRouter()
+
+
+@router.post("/questions/ask", response_model=KnowledgeQuestionResult)
+async def ask_knowledge_question(
+    data: KnowledgeQuestionAsk,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return KnowledgeQuestionResult(**(await ask_question(db, data.question)))
+    except KnowledgeQaError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/questions", response_model=KnowledgeQuestionList)
+async def get_knowledge_questions(
+    status: str | None = Query(None, pattern="^(pending|answered)$"),
+    q: str | None = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_questions(
+        db,
+        status=status,
+        query=q,
+        skip=skip,
+        limit=limit,
+    )
+    return KnowledgeQuestionList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/questions/{question_id}", response_model=KnowledgeQuestionItem)
+async def get_knowledge_question(
+    question_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    item = await get_question(db, question_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
+
+
+@router.put("/questions/{question_id}/answer", response_model=KnowledgeQuestionItem)
+async def confirm_knowledge_answer(
+    question_id: int,
+    data: KnowledgeAnswerPublish,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await publish_answer(
+            db,
+            question_id=question_id,
+            **data.model_dump(),
+        )
+    except KnowledgeQaError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
+
+
+@router.get("/questions/{question_id}/history", response_model=KnowledgeAnswerHistory)
+async def knowledge_answer_history(
+    question_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    items = await get_answer_history(db, question_id)
+    if items is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeAnswerHistory(items=items)
 
 
 @router.get("/features", response_model=FeatureKnowledgeList)

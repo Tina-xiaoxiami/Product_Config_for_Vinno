@@ -3,7 +3,7 @@
     <header class="knowledge-header">
       <div>
         <h2>产品知识库</h2>
-        <p>以 IPN 为功能唯一身份，统一查询中英文主名称、曾用名、版本关系和原始资料。</p>
+        <p>查询已确认产品知识；没有可靠答案的问题自动回流，确认后成为可复用知识。</p>
         <p class="master-data-note">
           主数据由基础数据统一维护：
           <router-link to="/feature-manage">功能管理</router-link>
@@ -36,6 +36,109 @@
     </section>
 
     <el-tabs v-model="activeTab" class="knowledge-tabs">
+      <el-tab-pane label="问答查询" name="qa">
+        <section class="qa-ask-panel">
+          <div class="qa-ask-heading">
+            <div>
+              <h3>直接提问</h3>
+              <p>系统只复用已经确认发布的答案；查不到时进入待确认队列，系统不会猜测。</p>
+            </div>
+            <el-tag type="success" effect="plain">受控知识</el-tag>
+          </div>
+          <el-input
+            v-model="qaQuestion"
+            data-testid="knowledge-question-input"
+            type="textarea"
+            :rows="3"
+            maxlength="500"
+            show-word-limit
+            placeholder="例如：针增益调节这个功能是招标功能吗？"
+            @keyup.ctrl.enter="askQuestion"
+          />
+          <div class="qa-ask-actions">
+            <span>Ctrl + Enter 快速提问</span>
+            <el-button
+              data-testid="ask-knowledge-question"
+              type="primary"
+              :icon="Search"
+              :loading="qaAsking"
+              @click="askQuestion"
+            >
+              查询答案
+            </el-button>
+          </div>
+        </section>
+
+        <article v-if="qaResult" class="qa-result" :class="qaResult.status">
+          <div class="qa-result-heading">
+            <div>
+              <el-tag :type="qaResult.status === 'answered' ? 'success' : 'warning'" effect="dark">
+                {{ qaResult.status === 'answered' ? '已有确认答案' : '等待确认' }}
+              </el-tag>
+              <span v-if="qaResult.match_type === 'similar'" class="similarity-note">
+                相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
+              </span>
+            </div>
+            <span class="qa-question-text">{{ qaResult.question }}</span>
+          </div>
+          <template v-if="qaResult.answer">
+            <p class="qa-answer-text">{{ qaResult.answer.answer_text }}</p>
+            <div class="answer-meta">
+              <span>版本 v{{ qaResult.answer.version }}</span>
+              <span v-if="qaResult.answer.change_note">{{ qaResult.answer.change_note }}</span>
+            </div>
+            <div class="citation-section">
+              <span class="section-label">答案依据</span>
+              <div v-if="qaResult.answer.citations.length" class="citation-list">
+                <button
+                  v-for="citation in qaResult.answer.citations"
+                  :key="citation.id"
+                  type="button"
+                  class="citation-link"
+                  @click="openCitation(citation)"
+                >
+                  <strong>{{ citation.document_title }}</strong>
+                  <span v-if="citation.source_ref">{{ citation.source_ref }}</span>
+                  <small v-if="citation.excerpt">{{ citation.excerpt }}</small>
+                </button>
+              </div>
+              <span v-else class="empty-text">本答案由产品负责人确认，暂未绑定原文位置</span>
+            </div>
+          </template>
+          <template v-else>
+            <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
+          </template>
+        </article>
+
+        <section class="qa-queue">
+          <div class="queue-heading">
+            <div>
+              <h3>{{ qaStatus === 'pending' ? '待确认问题' : '已发布问答' }}</h3>
+              <p>{{ qaStatus === 'pending' ? '优先处理被重复询问次数较多的问题。' : '已发布内容可以修订，历史版本不会丢失。' }}</p>
+            </div>
+            <el-radio-group v-model="qaStatus" size="small" @change="loadQaQuestions">
+              <el-radio-button value="pending">待确认</el-radio-button>
+              <el-radio-button value="answered">已发布</el-radio-button>
+            </el-radio-group>
+          </div>
+          <el-table :data="qaQuestions" v-loading="qaListLoading" border stripe empty-text="暂无问题">
+            <el-table-column prop="question_text" label="问题" min-width="360" />
+            <el-table-column prop="asked_count" label="询问次数" width="95" align="center" />
+            <el-table-column label="答案版本" width="95" align="center">
+              <template #default="scope">{{ scope.row.answer ? `v${scope.row.answer.version}` : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" align="center">
+              <template #default="scope">
+                <el-button type="primary" link @click="openAnswerDialog(scope.row)">
+                  {{ scope.row.status === 'pending' ? '回答' : '修订' }}
+                </el-button>
+                <el-button v-if="scope.row.answer" link @click="showHistory(scope.row)">记录</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
+
       <el-tab-pane label="功能主数据" name="features">
         <section class="toolbar">
           <el-input
@@ -349,23 +452,85 @@
     >
       <iframe v-if="previewVisible" :src="previewUrl" class="preview-frame" :title="previewTitle" />
     </el-dialog>
+
+    <el-dialog
+      v-model="answerDialogVisible"
+      :title="answerForm.version ? `修订答案 v${answerForm.version + 1}` : '确认答案'"
+      width="720px"
+      destroy-on-close
+    >
+      <el-form label-position="top">
+        <el-form-item label="问题">
+          <div class="dialog-question">{{ answerForm.question_text }}</div>
+        </el-form-item>
+        <el-form-item label="正式答案" required>
+          <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
+        </el-form-item>
+        <el-form-item label="相似问法 / 曾用问题">
+          <el-input
+            v-model="answerForm.alias_text"
+            type="textarea"
+            :rows="3"
+            placeholder="每行一个问法；材料或同事使用任意一种问法都可以命中"
+          />
+        </el-form-item>
+        <el-form-item label="答案依据">
+          <div class="citation-editor">
+            <div v-for="(citation, index) in answerForm.citations" :key="index" class="citation-editor-row">
+              <el-select v-model="citation.document_id" filterable placeholder="选择原始资料">
+                <el-option v-for="document in documents" :key="document.id" :label="document.title" :value="document.id" />
+              </el-select>
+              <el-input v-model="citation.source_ref" placeholder="页码、章节或表格位置" />
+              <el-input v-model="citation.excerpt" placeholder="相关原文摘录（可选）" />
+              <el-button :icon="Delete" circle plain type="danger" @click="removeCitation(index)" />
+            </div>
+            <el-button :icon="Plus" plain @click="addCitation">增加资料依据</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="变更说明" required>
+          <el-input
+            v-model="answerForm.change_note"
+            placeholder="例如：产品经理首次确认；依据 1.14.80 版本修订"
+            maxlength="1000"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="answerDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="answerSaving" @click="saveAnswer">确认并发布</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="historyVisible" title="答案变更记录" width="650px">
+      <el-timeline v-if="answerHistory.length">
+        <el-timeline-item v-for="revision in answerHistory" :key="revision.version" :timestamp="revision.created_at">
+          <strong>v{{ revision.version }} · {{ revision.change_note || '未填写变更说明' }}</strong>
+          <p>{{ revision.answer_text }}</p>
+        </el-timeline-item>
+      </el-timeline>
+      <el-empty v-else description="暂无变更记录" />
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Link, Search, View } from '@element-plus/icons-vue'
+import { Delete, Document, Link, Plus, Search, View } from '@element-plus/icons-vue'
 import {
+  askKnowledgeQuestion,
+  getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
   getKnowledgeFeatures,
   getKnowledgeStats,
+  getKnowledgeQuestions,
+  publishKnowledgeAnswer,
   getConfiguredRegistrationModels,
   getRegistrationProbes
 } from '../api/data'
 
-const activeTab = ref('features')
+const activeTab = ref('qa')
 const stats = ref({ total_features: 0, auto_matched: 0, confirmed: 0, related: 0, pending: 0 })
 const statsLoading = ref(false)
 
@@ -408,6 +573,26 @@ const registrationSummary = ref({
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const previewTitle = ref('')
+
+const qaQuestion = ref('')
+const qaAsking = ref(false)
+const qaResult = ref(null)
+const qaStatus = ref('pending')
+const qaQuestions = ref([])
+const qaListLoading = ref(false)
+const answerDialogVisible = ref(false)
+const answerSaving = ref(false)
+const answerHistory = ref([])
+const historyVisible = ref(false)
+const answerForm = ref({
+  question_id: null,
+  question_text: '',
+  version: 0,
+  answer_text: '',
+  alias_text: '',
+  citations: [],
+  change_note: ''
+})
 
 const isDerivedRegistrationModel = computed(() => (
   registrationMeta.value.mapping_type
@@ -593,7 +778,118 @@ const previewDocument = (document) => {
   previewVisible.value = true
 }
 
+const askQuestion = async () => {
+  const question = qaQuestion.value.trim()
+  if (!question) {
+    ElMessage.warning('请输入问题')
+    return
+  }
+  qaAsking.value = true
+  try {
+    qaResult.value = await askKnowledgeQuestion({ question })
+    if (qaResult.value.status === 'pending') {
+      qaStatus.value = 'pending'
+      ElMessage.info('尚无确认答案，已加入待确认问题')
+    }
+    await loadQaQuestions()
+  } catch {
+    ElMessage.error('问题查询失败')
+  } finally {
+    qaAsking.value = false
+  }
+}
+
+const loadQaQuestions = async () => {
+  qaListLoading.value = true
+  try {
+    const result = await getKnowledgeQuestions({ status: qaStatus.value, limit: 100 })
+    qaQuestions.value = result.items || []
+  } catch {
+    ElMessage.error('问答队列加载失败')
+  } finally {
+    qaListLoading.value = false
+  }
+}
+
+const openAnswerDialog = (question) => {
+  answerForm.value = {
+    question_id: question.id,
+    question_text: question.question_text,
+    version: question.answer?.version || 0,
+    answer_text: question.answer?.answer_text || '',
+    alias_text: (question.alias_questions || []).join('\n'),
+    citations: (question.answer?.citations || []).map(citation => ({
+      document_id: citation.document_id,
+      source_ref: citation.source_ref || '',
+      excerpt: citation.excerpt || ''
+    })),
+    change_note: ''
+  }
+  answerDialogVisible.value = true
+}
+
+const addCitation = () => answerForm.value.citations.push({ document_id: null, source_ref: '', excerpt: '' })
+const removeCitation = (index) => answerForm.value.citations.splice(index, 1)
+const parseQuestionAliases = (value) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
+
+const saveAnswer = async () => {
+  if (!answerForm.value.answer_text.trim()) {
+    ElMessage.warning('请填写正式答案')
+    return
+  }
+  if (!answerForm.value.change_note.trim()) {
+    ElMessage.warning('请填写变更说明')
+    return
+  }
+  if (answerForm.value.citations.some(citation => !citation.document_id)) {
+    ElMessage.warning('请选择答案依据对应的原始资料')
+    return
+  }
+  answerSaving.value = true
+  try {
+    const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
+      answer_text: answerForm.value.answer_text.trim(),
+      alias_questions: parseQuestionAliases(answerForm.value.alias_text),
+      citations: answerForm.value.citations.map(citation => ({
+        document_id: citation.document_id,
+        source_ref: citation.source_ref.trim() || null,
+        excerpt: citation.excerpt.trim() || null
+      })),
+      change_note: answerForm.value.change_note.trim()
+    })
+    answerDialogVisible.value = false
+    qaStatus.value = 'answered'
+    qaResult.value = {
+      status: 'answered',
+      question_id: saved.id,
+      question: saved.question_text,
+      match_type: 'exact',
+      similarity: 1,
+      answer: saved.answer
+    }
+    ElMessage.success('答案已确认发布')
+    await loadQaQuestions()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '答案发布失败')
+  } finally {
+    answerSaving.value = false
+  }
+}
+
+const showHistory = async (question) => {
+  try {
+    const result = await getKnowledgeAnswerHistory(question.id)
+    answerHistory.value = result.items || []
+    historyVisible.value = true
+  } catch {
+    ElMessage.error('变更记录加载失败')
+  }
+}
+
+const openCitation = (citation) => window.open(citation.preview_url, '_blank', 'noopener')
+
 onMounted(() => {
+  loadQaQuestions()
   loadStats()
   loadFeatures()
   loadDocuments()
@@ -615,6 +911,31 @@ onMounted(() => {
 .stat-value { color: #111827; font-size: 24px; font-weight: 700; }
 .stat-label { margin-top: 3px; color: #6b7280; font-size: 12px; }
 .knowledge-tabs { background: #fff; border-radius: 12px; padding: 0 18px 18px; border: 1px solid #e5e7eb; }
+.qa-ask-panel { margin: 12px 0 14px; padding: 18px; border: 1px solid #bfdbfe; border-radius: 10px; background: linear-gradient(135deg, #eff6ff, #fff); }
+.qa-ask-heading, .queue-heading, .qa-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.qa-ask-heading { margin-bottom: 12px; }
+.qa-ask-heading h3, .queue-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
+.qa-ask-heading p, .queue-heading p { margin: 5px 0 0; color: #64748b; font-size: 12px; }
+.qa-ask-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: #94a3b8; font-size: 11px; }
+.qa-result { margin-bottom: 16px; padding: 17px 18px; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; }
+.qa-result.pending { border-color: #fde68a; background: #fffbeb; }
+.qa-result-heading { align-items: center; }
+.qa-result-heading > div { display: flex; align-items: center; gap: 9px; }
+.similarity-note, .qa-question-text, .answer-meta { color: #64748b; font-size: 12px; }
+.qa-question-text { text-align: right; }
+.qa-answer-text { margin: 15px 0 8px; color: #172554; font-size: 15px; line-height: 1.8; white-space: pre-wrap; }
+.qa-pending-text { margin: 14px 0 0; color: #92400e; font-size: 13px; }
+.answer-meta { display: flex; gap: 14px; }
+.citation-section { display: flex; align-items: flex-start; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.25); }
+.citation-list { display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.citation-link { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 4px 12px; width: 100%; padding: 9px 11px; border: 1px solid #dbeafe; border-radius: 7px; background: #fff; color: #1d4ed8; text-align: left; cursor: pointer; }
+.citation-link small { grid-column: 1 / -1; color: #64748b; }
+.qa-queue { margin-top: 16px; }
+.queue-heading { align-items: center; margin-bottom: 11px; }
+.dialog-question { width: 100%; padding: 10px 12px; border-radius: 7px; background: #f8fafc; color: #334155; }
+.citation-editor { display: flex; flex-direction: column; gap: 9px; width: 100%; }
+.citation-editor-row { display: grid; grid-template-columns: 1.1fr 0.8fr 1.2fr auto; gap: 8px; }
+.el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
 .toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto; gap: 10px; margin: 10px 0 16px; }
 .feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
 .feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; padding: 15px 16px; background: #fff; }
