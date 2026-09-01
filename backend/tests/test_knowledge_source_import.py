@@ -81,7 +81,7 @@ def test_source_import_is_idempotent_and_refreshes_changed_file_digest(tmp_path)
     ).fetchone()
     assert row[:6] == (
         "registration_certificate",
-        "V10系列国内注变更",
+        "V10系列国内注册变更",
         registration.name,
         "20260615",
         "domestic",
