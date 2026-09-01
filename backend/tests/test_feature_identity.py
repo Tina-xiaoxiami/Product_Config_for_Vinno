@@ -30,7 +30,27 @@ def test_ipn_is_the_business_identity_and_config_descriptions_are_primary_names(
     assert [(name.language, name.name, name.name_type) for name in identity.names] == [
         ("cn", "穿刺增强", "primary"),
         ("en", "Needle enhancement", "primary"),
-        ("en", "Needle enhancement【启用】", "alias"),
+    ]
+
+
+def test_rd_name_is_only_an_internal_match_key_not_a_business_alias():
+    preview = build_feature_identity_preview(
+        config_items=[
+            ConfigItemIdentity(
+                id=1,
+                ipn="6000017",
+                rd_name="TView【启用】",
+                zh_desc="梯形成像",
+                en_desc="TView",
+            )
+        ],
+        legacy_features=[LegacyFeature(id=1, name="TView", ipn="")],
+    )
+
+    identity = preview.identities[0]
+    assert [(name.language, name.name, name.name_type, name.source) for name in identity.names] == [
+        ("cn", "梯形成像", "primary", "config_items.zh_desc"),
+        ("en", "TView", "primary", "config_items.en_desc"),
     ]
 
 

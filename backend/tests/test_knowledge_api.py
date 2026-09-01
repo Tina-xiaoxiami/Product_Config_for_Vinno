@@ -106,9 +106,33 @@ async def test_feature_search_matches_alias_and_returns_primary_identity(tmp_pat
     ]
     assert {name["name"] for name in item["names"]} >= {
         "SMF",
-        "SupportHSF【启用】",
         "超微细血流成像",
+        "SMF(Super Micro Flow)",
     }
+    assert all(name["source"] != "config_items.rd_name" for name in item["names"])
+
+
+@pytest.mark.asyncio
+async def test_feature_search_matches_chinese_or_english_name_regardless_of_material_language(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    _create_knowledge_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        chinese = await client.get(
+            "/api/knowledge/features", params={"q": "超微细血流成像"}
+        )
+        english = await client.get(
+            "/api/knowledge/features", params={"q": "SMF(Super Micro Flow)"}
+        )
+        internal = await client.get(
+            "/api/knowledge/features", params={"q": "SupportHSF"}
+        )
+    await engine.dispose()
+
+    assert chinese.json()["items"][0]["id"] == 7
+    assert english.json()["items"][0]["id"] == 7
+    assert internal.json()["items"][0]["id"] == 7
 
 
 @pytest.mark.asyncio

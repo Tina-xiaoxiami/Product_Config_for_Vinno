@@ -111,8 +111,34 @@ def test_migration_backfills_exact_ipn_identity_and_keeps_unmatched_feature_pend
     assert names == [
         ("cn", "组织多普勒成像", "primary", "config_items.zh_desc"),
         ("en", "Tissue Doppler Imaging", "primary", "config_items.en_desc"),
-        ("en", "TView", "alias", "config_items.rd_name"),
     ]
+    connection.close()
+
+
+def test_rerun_removes_previously_generated_rd_name_aliases(tmp_path):
+    database_path = tmp_path / "product_config_copy.db"
+    _create_legacy_database(database_path)
+    migrate_feature_identity_database(database_path)
+
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO feature_names (
+            feature_id, language, name, normalized_name,
+            name_type, source, review_status
+        ) VALUES (1, 'en', 'TView【启用】', 'tview【启用】',
+                  'alias', 'config_items.rd_name', 'approved')
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrate_feature_identity_database(database_path)
+
+    connection = sqlite3.connect(database_path)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM feature_names WHERE source = 'config_items.rd_name'"
+    ).fetchone()[0] == 0
     connection.close()
 
 
