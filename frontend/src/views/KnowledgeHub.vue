@@ -123,7 +123,14 @@
             </div>
             <p>先执行注册红线，再读取正式选型；研发当前配置仅在没有正式选型时作为辅助信息。</p>
           </div>
-          <el-button :icon="View" :disabled="!registrationSourceDocumentId" @click="openRegistrationSource">
+          <el-button
+            tag="a"
+            :icon="View"
+            :href="registrationSourceUrl"
+            target="_blank"
+            rel="noopener"
+            :disabled="!registrationSourceDocumentId"
+          >
             注册差异表原文
           </el-button>
         </section>
@@ -385,6 +392,9 @@ const isDerivedRegistrationModel = computed(() => (
 const registrationSourceDocumentId = computed(() => (
   registrationItems.value.find(item => item.source_document_id)?.source_document_id || null
 ))
+const registrationSourceUrl = computed(() => registrationSourceDocumentId.value
+  ? getKnowledgeDocumentPreviewUrl(registrationSourceDocumentId.value)
+  : '')
 
 const statusLabel = (status) => ({
   auto_matched: '自动匹配',
@@ -546,15 +556,6 @@ const loadRegistrationProbes = async () => {
 const searchRegistrationProbes = () => {
   registrationPage.value = 1
   loadRegistrationProbes()
-}
-
-const openRegistrationSource = () => {
-  if (!registrationSourceDocumentId.value) return
-  window.open(
-    getKnowledgeDocumentPreviewUrl(registrationSourceDocumentId.value),
-    '_blank',
-    'noopener'
-  )
 }
 
 const previewDocument = (document) => {
