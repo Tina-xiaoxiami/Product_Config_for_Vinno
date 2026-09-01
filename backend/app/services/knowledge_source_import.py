@@ -150,7 +150,12 @@ def import_knowledge_sources(
             file_path = str(source.path)
             digest = _sha256(source.path)
             existing = connection.execute(
-                "SELECT id, sha256 FROM knowledge_documents WHERE file_path = ?",
+                """
+                SELECT id, document_type, title, file_name, file_path, version,
+                       market, country, product_series, mime_type, sha256
+                FROM knowledge_documents
+                WHERE file_path = ?
+                """,
                 (file_path,),
             ).fetchone()
             values = (
@@ -176,7 +181,7 @@ def import_knowledge_sources(
                     values,
                 )
                 counters["inserted"] += 1
-            elif existing[1] != digest:
+            elif tuple(existing[1:]) != values:
                 connection.execute(
                     """
                     UPDATE knowledge_documents
