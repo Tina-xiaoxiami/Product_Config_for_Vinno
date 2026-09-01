@@ -101,6 +101,30 @@ def _create_identity_tables(connection: sqlite3.Connection) -> None:
                 CHECK (review_status IN ('pending', 'approved', 'rejected')),
             UNIQUE (feature_id, config_item_id, relation_type)
         );
+
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_path TEXT NOT NULL UNIQUE,
+            version TEXT,
+            market TEXT NOT NULL DEFAULT 'domestic',
+            country TEXT,
+            product_series TEXT,
+            mime_type TEXT,
+            sha256 TEXT,
+            source_status TEXT NOT NULL DEFAULT 'active'
+                CHECK (source_status IN ('active', 'superseded', 'archived')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_knowledge_documents_type
+        ON knowledge_documents(document_type);
+
+        CREATE INDEX IF NOT EXISTS ix_knowledge_documents_market
+        ON knowledge_documents(market);
         """
     )
 

@@ -41,3 +41,25 @@ class KnowledgeStats(BaseModel):
     confirmed: int
     related: int
     pending: int
+
+
+class KnowledgeDocumentItem(BaseModel):
+    id: int
+    document_type: str
+    title: str
+    file_name: str
+    version: str | None = None
+    market: str
+    country: str | None = None
+    product_series: str | None = None
+    mime_type: str | None = None
+    file_size: int
+    available: bool
+    preview_url: str
+
+
+class KnowledgeDocumentList(BaseModel):
+    items: list[KnowledgeDocumentItem]
+    total: int
+    skip: int
+    limit: int
