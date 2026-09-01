@@ -65,12 +65,23 @@ def _normalize_ipn(value: str) -> str:
     return str(value or "").strip().upper()
 
 
+_STATUS_SUFFIX = re.compile(r"\s*(?:【|\[)\s*(?:启用|禁用|停用)\s*(?:】|\])\s*$")
+
+
+def clean_feature_name(value: str) -> str:
+    """Return a business name without an internal trailing status marker."""
+
+    cleaned = unicodedata.normalize("NFKC", str(value or ""))
+    cleaned = _STATUS_SUFFIX.sub("", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _normalize_name(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value or ""))
-    return re.sub(r"\s+", " ", normalized).strip().casefold()
+    return clean_feature_name(value).casefold()
 
 
 def _language_of(name: str) -> str:
+    name = clean_feature_name(name)
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", name))
     latin_count = len(re.findall(r"[A-Za-z]", name))
     return "cn" if cjk_count > latin_count else "en"
@@ -78,9 +89,9 @@ def _language_of(name: str) -> str:
 
 def _source_names(item: ConfigItemIdentity) -> tuple[str, ...]:
     return tuple(
-        value.strip()
+        cleaned
         for value in (item.rd_name, item.zh_desc, item.en_desc)
-        if str(value or "").strip()
+        if (cleaned := clean_feature_name(value))
     )
 
 
@@ -109,7 +120,7 @@ def _append_name(
     name_type: str,
     source: str,
 ) -> None:
-    cleaned = str(name or "").strip()
+    cleaned = clean_feature_name(name)
     if not cleaned:
         return
     identity = (language, _normalize_name(cleaned))
@@ -143,28 +154,21 @@ def _build_identity(
         name_type="primary",
         source="config_items.en_desc",
     )
-    _append_name(
-        names,
-        seen,
-        language=_language_of(item.rd_name),
-        name=item.rd_name,
-        name_type="alias",
-        source="config_items.rd_name",
-    )
-    _append_name(
-        names,
-        seen,
-        language=_language_of(legacy.name),
-        name=legacy.name,
-        name_type="alias",
-        source="legacy_features.name",
-    )
+    if status == "confirmed" or _normalize_name(legacy.name) != _normalize_name(item.rd_name):
+        _append_name(
+            names,
+            seen,
+            language=_language_of(legacy.name),
+            name=legacy.name,
+            name_type="alias",
+            source="legacy_features.name",
+        )
     return FeatureIdentity(
         legacy_feature_id=legacy.id,
         config_item_id=item.id,
         ipn=_normalize_ipn(item.ipn),
-        primary_cn_name=str(item.zh_desc or "").strip(),
-        primary_en_name=str(item.en_desc or "").strip(),
+        primary_cn_name=clean_feature_name(item.zh_desc),
+        primary_en_name=clean_feature_name(item.en_desc),
         names=tuple(names),
         status=status,
     )

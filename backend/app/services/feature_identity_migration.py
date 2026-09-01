@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import sqlite3
-import unicodedata
 
 from app.services.feature_identity import (
     ConfigItemIdentity,
     LegacyFeature,
     build_feature_identity_preview,
+    clean_feature_name,
 )
 
 
@@ -29,8 +29,7 @@ class FeatureIdentityMigrationReport:
 
 
 def _normalize_name(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", str(value or ""))
-    return re.sub(r"\s+", " ", normalized).strip().casefold()
+    return clean_feature_name(value).casefold()
 
 
 def _column_names(connection: sqlite3.Connection, table: str) -> set[str]:
@@ -212,6 +211,9 @@ def migrate_feature_identity_database(
         try:
             _add_feature_identity_columns(connection)
             _create_identity_tables(connection)
+            connection.execute(
+                "DELETE FROM feature_names WHERE source = 'config_items.rd_name'"
+            )
 
             for identity in identities:
                 connection.execute(

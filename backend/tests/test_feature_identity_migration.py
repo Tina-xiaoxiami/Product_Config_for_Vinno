@@ -282,7 +282,7 @@ def test_migration_is_idempotent_and_normalized_ipn_is_unique(tmp_path):
 
     assert second_report == first_report
     connection = sqlite3.connect(database_path)
-    assert _table_count(connection, "feature_names") == 3
+    assert _table_count(connection, "feature_names") == 2
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
             """
