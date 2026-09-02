@@ -594,6 +594,35 @@ def record_registration_package_version(
                 (cleaned_country, cleaned_unit),
             ).fetchone()
             package_id = int(package["id"])
+            if _activate_baseline:
+                conflicting_links = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM product_registration_model_links link
+                    JOIN registration_models registration
+                      ON registration.id = link.registration_model_id
+                    WHERE registration.import_batch_id = ?
+                      AND link.registration_package_id IS NOT NULL
+                      AND link.registration_package_id <> ?
+                    """,
+                    (batch["id"], package_id),
+                ).fetchone()[0]
+                if conflicting_links:
+                    raise RegistrationPackageError(
+                        "产品机型已绑定其他注册证，禁止自动改写映射"
+                    )
+                connection.execute(
+                    """
+                    UPDATE product_registration_model_links
+                    SET registration_package_id = ?
+                    WHERE registration_package_id IS NULL
+                      AND registration_model_id IN (
+                          SELECT id FROM registration_models
+                          WHERE import_batch_id = ?
+                      )
+                    """,
+                    (package_id, batch["id"]),
+                )
             pair_payload = "|".join(
                 (
                     cleaned_country,

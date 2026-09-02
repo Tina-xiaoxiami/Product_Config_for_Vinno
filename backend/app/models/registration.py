@@ -261,6 +261,10 @@ class ProductRegistrationModelLink(Base):
         ForeignKey("registration_models.id", ondelete="CASCADE"),
         nullable=False,
     )
+    registration_package_id = Column(
+        Integer,
+        ForeignKey("registration_packages.id"),
+    )
     mapping_type = Column(Text, nullable=False)
     source = Column(Text, nullable=False)
     review_status = Column(Text, nullable=False, default="approved")
@@ -272,4 +276,5 @@ class ProductRegistrationModelLink(Base):
             name="uq_product_registration_model_link",
         ),
         Index("ix_product_registration_links_product", "product_model_id"),
+        Index("ix_product_registration_links_package", "registration_package_id"),
     )

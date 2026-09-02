@@ -241,6 +241,8 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                         REFERENCES product_models(id) ON DELETE CASCADE,
                     registration_model_id INTEGER NOT NULL
                         REFERENCES registration_models(id) ON DELETE CASCADE,
+                    registration_package_id INTEGER
+                        REFERENCES registration_packages(id),
                     mapping_type TEXT NOT NULL
                         CHECK (mapping_type IN (
                             'direct', 'config_group', 'confirmed_derived', 'manual'
@@ -303,6 +305,24 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     )
             if _import_batch_has_unique_constraint(connection):
                 _rebuild_registration_package_versions(connection)
+            link_columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(product_registration_model_links)"
+                )
+            }
+            if "registration_package_id" not in link_columns:
+                connection.execute(
+                    "ALTER TABLE product_registration_model_links "
+                    "ADD COLUMN registration_package_id INTEGER "
+                    "REFERENCES registration_packages(id)"
+                )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS ix_product_registration_links_package
+                ON product_registration_model_links(registration_package_id)
+                """
+            )
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_package_number

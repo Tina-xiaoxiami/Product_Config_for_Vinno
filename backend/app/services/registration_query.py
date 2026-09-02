@@ -21,11 +21,21 @@ async def list_configured_registration_models(
                    registration.id AS registration_model_id,
                    registration.model_name AS registration_model_name,
                    link.mapping_type,
-                   registration.channel_count
+                   registration.channel_count,
+                   package.id AS registration_package_id,
+                   package.registration_number,
+                   package.display_name AS registration_package_name
             FROM product_registration_model_links link
             JOIN product_models product ON product.id = link.product_model_id
             JOIN registration_models registration
               ON registration.id = link.registration_model_id
+            JOIN registration_packages package
+              ON package.id = link.registration_package_id
+             AND package.country_code = registration.country_code
+            JOIN registration_package_versions package_version
+              ON package_version.package_id = package.id
+             AND package_version.status = 'active'
+             AND package_version.import_batch_id = registration.import_batch_id
             WHERE registration.country_code = :country_code
               AND registration.source_status = 'active'
               AND link.review_status = 'approved'
@@ -178,11 +188,22 @@ async def list_product_registration_probes(
                    registration.id AS registration_model_id,
                    registration.model_name AS registration_model_name,
                    registration.source_document_id,
-                   link.mapping_type
+                   link.mapping_type,
+                   package.id AS registration_package_id,
+                   package.registration_number,
+                   package.display_name AS registration_package_name,
+                   package_version.import_batch_id AS registration_import_batch_id
             FROM product_registration_model_links link
             JOIN product_models product ON product.id = link.product_model_id
             JOIN registration_models registration
               ON registration.id = link.registration_model_id
+            JOIN registration_packages package
+              ON package.id = link.registration_package_id
+             AND package.country_code = registration.country_code
+            JOIN registration_package_versions package_version
+              ON package_version.package_id = package.id
+             AND package_version.status = 'active'
+             AND package_version.import_batch_id = registration.import_batch_id
             WHERE product.id = :product_model_id
               AND registration.source_status = 'active'
               AND link.review_status = 'approved'
@@ -223,12 +244,15 @@ async def list_product_registration_probes(
              AND value.model_id = :product_model_id
             WHERE matrix.registration_model_id = :registration_model_id
               AND probe.source_status = 'active'
+              AND matrix.import_batch_id = :registration_import_batch_id
+              AND probe.import_batch_id = :registration_import_batch_id
             ORDER BY probe.id
             """
         ),
         {
             "product_model_id": product_model_id,
             "registration_model_id": mapping.registration_model_id,
+            "registration_import_batch_id": mapping.registration_import_batch_id,
         },
     )
 

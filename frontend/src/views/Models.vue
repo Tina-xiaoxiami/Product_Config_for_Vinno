@@ -16,6 +16,21 @@
       <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="型号名称" min-width="200" />
+        <el-table-column label="对应注册证" min-width="280">
+          <template #default="{ row }">
+            <div v-if="row.registration_packages?.length" class="registration-mappings">
+              <el-tag
+                v-for="mapping in row.registration_packages"
+                :key="mapping.registration_package_id"
+                type="info"
+                effect="plain"
+              >
+                {{ mapping.registration_number }} · {{ mapping.registration_model_name }}
+              </el-tag>
+            </div>
+            <span v-else class="unmapped-registration">未映射注册证</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" width="200" show-overflow-tooltip />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
@@ -254,6 +269,9 @@ onMounted(() => {
   display: flex;
   gap: 12px;
 }
+
+.registration-mappings { display: flex; flex-wrap: wrap; gap: 6px; }
+.unmapped-registration { color: #94a3b8; font-size: 12px; }
 
 .pagination-wrapper {
   margin-top: 16px;

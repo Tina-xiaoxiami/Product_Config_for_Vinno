@@ -64,6 +64,37 @@ def _source_metadata(
     return row[0], row[1]
 
 
+def _ensure_country_wide_import_allowed(
+    connection: sqlite3.Connection,
+    *,
+    country_code: str,
+) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if "registration_package_versions" not in tables:
+        return
+    active_packages = int(
+        connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM registration_package_versions version
+            JOIN registration_packages package ON package.id = version.package_id
+            WHERE package.country_code = ? AND version.status = 'active'
+            """,
+            (country_code,),
+        ).fetchone()[0]
+    )
+    if active_packages:
+        raise ValueError(
+            "该国家已有生效注册证，禁止使用全国覆盖导入；"
+            "请按产品机型对应的注册证建立资料包草稿"
+        )
+
+
 def _upsert_batch(
     connection: sqlite3.Connection,
     *,
@@ -148,6 +179,10 @@ def import_domestic_registration_workbook(
     connection = sqlite3.connect(Path(database_path), isolation_level=None)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
+        _ensure_country_wide_import_allowed(
+            connection,
+            country_code=country_code,
+        )
         source_sha256, source_version = _source_metadata(connection, source_document_id)
         connection.execute("BEGIN IMMEDIATE")
         try:

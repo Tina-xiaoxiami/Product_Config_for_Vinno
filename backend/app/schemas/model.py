@@ -2,7 +2,7 @@
 产品型号 schemas
 """
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
 
@@ -26,11 +26,24 @@ class ProductModelUpdate(BaseModel):
     sort_order: Optional[int] = None
 
 
+class ProductModelRegistrationPackage(BaseModel):
+    registration_package_id: int
+    country_code: str
+    registration_number: str
+    registration_package_name: str
+    registration_model_id: int
+    registration_model_name: str
+    mapping_type: str
+
+
 class ProductModelResponse(ProductModelBase):
     id: int
     series_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    registration_packages: List[ProductModelRegistrationPackage] = Field(
+        default_factory=list
+    )
 
     class Config:
         from_attributes = True

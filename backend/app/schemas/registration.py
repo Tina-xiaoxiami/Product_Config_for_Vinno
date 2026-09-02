@@ -10,6 +10,9 @@ class ConfiguredRegistrationModel(BaseModel):
     registration_model_name: str
     mapping_type: str
     channel_count: int | None = None
+    registration_package_id: int
+    registration_number: str
+    registration_package_name: str
 
 
 class ConfiguredRegistrationModelList(BaseModel):
@@ -96,6 +99,9 @@ class RegistrationProbeStrategyList(BaseModel):
     registration_model_name: str
     source_document_id: int | None = None
     mapping_type: str
+    registration_package_id: int
+    registration_number: str
+    registration_package_name: str
     summary: RegistrationProbeSummary
 
 

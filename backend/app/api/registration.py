@@ -183,5 +183,8 @@ async def product_registration_probes(
         limit=limit,
     )
     if result is None:
-        raise HTTPException(status_code=404, detail="产品型号尚未关联注册基础型号")
+        raise HTTPException(
+            status_code=404,
+            detail="产品型号尚未关联对应注册证及注册基础型号",
+        )
     return RegistrationProbeStrategyList(**result)
