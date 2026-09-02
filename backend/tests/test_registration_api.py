@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import registration
+from app.api import models, registration
 from app.database import get_db
 from app.services.registration_import import import_domestic_registration_workbook
 from app.services.registration_migration import migrate_registration_schema
@@ -24,6 +24,7 @@ async def _client_for(database_path):
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
     app.include_router(registration.router, prefix="/api/registrations")
+    app.include_router(models.router, prefix="/api/models")
 
     async def override_db():
         async with session_factory() as session:
@@ -104,6 +105,10 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
             "/api/registrations/probes",
             params={"product_model_id": 2},
         )
+        product_models_response = await client.get(
+            "/api/models",
+            params={"series_id": 1, "limit": 100},
+        )
     await engine.dispose()
 
     assert models_response.status_code == 200
@@ -127,6 +132,21 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
     }
 
     assert probes_response.status_code == 200
+    assert product_models_response.status_code == 200
+    vinno10e = next(
+        item for item in product_models_response.json()["items"] if item["id"] == 2
+    )
+    assert vinno10e["registration_packages"] == [
+        {
+            "registration_package_id": 1,
+            "country_code": "CN",
+            "registration_number": "湘械注准20222062053",
+            "registration_package_name": "V10系列国内注册",
+            "registration_model_id": 2,
+            "registration_model_name": "VINNO 10E",
+            "mapping_type": "direct",
+        }
+    ]
     body = probes_response.json()
     assert body["total"] == 3
     assert body["summary"] == {
@@ -215,7 +235,7 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
     assert empty_filtered.json()["items"] == []
     assert empty_filtered.json()["source_document_id"] == 1
     assert missing.status_code == 404
-    assert missing.json()["detail"] == "产品型号尚未关联注册基础型号"
+    assert missing.json()["detail"] == "产品型号尚未关联对应注册证及注册基础型号"
 
 
 @pytest.mark.asyncio
@@ -303,6 +323,27 @@ async def test_product_query_only_uses_registration_certificate_mapped_to_model(
 
     assert unmapped.status_code == 404
     assert unmapped.json()["detail"] == "产品型号尚未关联对应注册证及注册基础型号"
+
+
+def test_legacy_country_wide_import_is_blocked_after_certificate_is_active(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    _activate_imported_package(database_path, workbook_path)
+
+    with pytest.raises(ValueError, match="已有生效注册证"):
+        import_domestic_registration_workbook(
+            database_path,
+            workbook_path,
+            source_document_id=1,
+        )
 
 
 @pytest.mark.asyncio

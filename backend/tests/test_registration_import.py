@@ -45,10 +45,17 @@ def _create_database(path):
             id INTEGER PRIMARY KEY,
             series_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT '生产中',
+            column_start INTEGER,
+            column_end INTEGER,
+            sort_order INTEGER DEFAULT 0,
             config_group TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME,
             FOREIGN KEY(series_id) REFERENCES product_series(id)
         );
-        INSERT INTO product_models VALUES
+        INSERT INTO product_models (id, series_id, name, config_group) VALUES
             (1, 1, 'VINNO 10', NULL),
             (2, 1, 'VINNO 10E', NULL),
             (3, 1, 'VINNO 9', NULL),
