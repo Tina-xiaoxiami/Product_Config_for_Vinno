@@ -132,6 +132,18 @@ test('registration management shows paired certificate and difference history', 
   assert.match(api, /export const getRegistrationPackageVersion/)
 })
 
+test('registration management supports paired upload mapping review and publish', () => {
+  const view = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+  assert.match(view, /新增注册资料包/)
+  assert.match(view, /注册证文件/)
+  assert.match(view, /注册差异表/)
+  assert.match(view, /机型映射确认/)
+  assert.match(view, /发布生效/)
+  assert.match(api, /stageRegistrationPackageDraft/)
+  assert.match(api, /publishRegistrationPackageVersion/)
+})
+
 
 test('product model table shows the registration certificate mapping', () => {
   const modelView = read('../src/views/Models.vue')
