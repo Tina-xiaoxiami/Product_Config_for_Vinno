@@ -16,6 +16,108 @@
       class="source-alert"
     />
 
+    <section
+      data-testid="registration-package-history"
+      class="package-history"
+      v-loading="packageLoading"
+    >
+      <div class="package-heading">
+        <div>
+          <h3>注册资料版本</h3>
+          <p>注册证与注册差异表成对记录；更新会生成新版本，不覆盖历史。</p>
+        </div>
+        <el-tag type="info" effect="plain">成对受控</el-tag>
+      </div>
+      <el-empty
+        v-if="!packageLoading && packageGroups.length === 0"
+        description="暂无注册资料版本"
+        :image-size="52"
+      />
+      <article v-for="group in packageGroups" :key="group.id" class="package-card">
+        <div class="package-title">
+          <strong>{{ group.display_name }}</strong>
+          <span>{{ group.country_code }} · {{ group.unit_code }}</span>
+        </div>
+        <el-collapse>
+          <el-collapse-item
+            v-for="version in group.versions"
+            :key="version.id"
+            :name="version.id"
+          >
+            <template #title>
+              <div class="version-title">
+                <span>第 {{ version.version_no }} 版</span>
+                <el-tag
+                  :type="version.status === 'active' ? 'success' : 'info'"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ version.status === 'active' ? '当前生效' : '历史版本' }}
+                </el-tag>
+                <span class="version-counts">
+                  {{ version.model_count }} 型号 · {{ version.probe_count }} 探头 ·
+                  {{ version.matrix_count }} 关系
+                </span>
+              </div>
+            </template>
+            <div class="version-body">
+              <div class="material-actions">
+                <el-button
+                  tag="a"
+                  :href="version.certificate.preview_url"
+                  target="_blank"
+                  rel="noopener"
+                  :icon="View"
+                >
+                  查看注册证
+                </el-button>
+                <el-button
+                  tag="a"
+                  :href="version.difference.preview_url"
+                  target="_blank"
+                  rel="noopener"
+                  :icon="View"
+                >
+                  查看差异表
+                </el-button>
+              </div>
+              <p class="material-versions">
+                注册证：{{ version.certificate.version || '未标版本' }}；
+                差异表：{{ version.difference.version || '未标版本' }}
+              </p>
+              <div v-if="version.diff.kind === 'baseline'" class="baseline-note">
+                基线版本：{{ version.diff.summary.models }} 个型号、
+                {{ version.diff.summary.probes }} 个探头、
+                {{ version.diff.summary.relations }} 条关系。
+              </div>
+              <div v-else class="change-summary">
+                <strong>变更摘要</strong>
+                <span>新增型号 {{ version.diff.summary.models_added }}</span>
+                <span>删除型号 {{ version.diff.summary.models_removed }}</span>
+                <span>探头 IPN 变化 {{ version.diff.summary.probe_ipn_changed }}</span>
+                <span>注册状态变化 {{ version.diff.summary.registration_status_changed }}</span>
+              </div>
+              <el-table
+                v-if="version.diff.registration_status_changes?.length"
+                :data="version.diff.registration_status_changes"
+                size="small"
+                border
+                class="change-table"
+              >
+                <el-table-column prop="model" label="型号" />
+                <el-table-column prop="probe" label="探头" />
+                <el-table-column prop="from" label="变更前" />
+                <el-table-column prop="to" label="变更后" />
+              </el-table>
+              <p v-if="version.change_note" class="change-note">
+                更新说明：{{ version.change_note }}
+              </p>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </article>
+    </section>
+
     <section class="toolbar">
       <el-select v-model="countryCode" aria-label="注册国家" @change="loadModels">
         <el-option label="中国 / CN" value="CN" />
@@ -122,7 +224,9 @@ import {
   getConfiguredRegistrationModels,
   getKnowledgeDocumentPreviewUrl,
   getRegistrationModelProbes,
-  getRegistrationModels
+  getRegistrationModels,
+  getRegistrationPackages,
+  getRegistrationPackageVersions
 } from '../api/data'
 
 const countryCode = ref('CN')
@@ -133,6 +237,8 @@ const probeRows = ref([])
 const productMappings = ref([])
 const modelLoading = ref(false)
 const probeLoading = ref(false)
+const packageLoading = ref(false)
+const packageGroups = ref([])
 
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value))
 const mappedProductModels = computed(() => productMappings.value
@@ -186,9 +292,25 @@ const selectModel = async (modelId) => {
   await loadProbes()
 }
 
+const loadPackageHistory = async () => {
+  packageLoading.value = true
+  try {
+    const result = await getRegistrationPackages({ country_code: countryCode.value })
+    packageGroups.value = await Promise.all((result.items || []).map(async (item) => {
+      const history = await getRegistrationPackageVersions(item.id)
+      return { ...item, versions: history.items || [] }
+    }))
+  } catch {
+    packageGroups.value = []
+    ElMessage.error('注册资料版本加载失败')
+  } finally {
+    packageLoading.value = false
+  }
+}
+
 onMounted(async () => {
   try {
-    await Promise.all([loadMappings(), loadModels()])
+    await Promise.all([loadMappings(), loadModels(), loadPackageHistory()])
   } catch {
     ElMessage.error('注册主数据加载失败')
   }
@@ -201,6 +323,22 @@ onMounted(async () => {
 .page-header h2 { margin: 0 0 6px; color: #1f2937; font-size: 22px; }
 .page-header p { margin: 0; color: #64748b; font-size: 13px; }
 .source-alert { margin-bottom: 14px; }
+.package-history { margin-bottom: 14px; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
+.package-heading, .package-title, .version-title, .change-summary { display: flex; align-items: center; gap: 10px; }
+.package-heading { justify-content: space-between; margin-bottom: 10px; }
+.package-heading h3 { margin: 0 0 4px; color: #1f2937; font-size: 16px; }
+.package-heading p { margin: 0; color: #64748b; font-size: 12px; }
+.package-card { padding: 11px 13px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.package-card + .package-card { margin-top: 10px; }
+.package-title { justify-content: space-between; margin-bottom: 6px; color: #334155; font-size: 13px; }
+.package-title span, .version-counts, .material-versions, .change-note { color: #64748b; font-size: 12px; }
+.version-title { min-width: 0; }
+.version-counts { margin-left: auto; padding-right: 12px; }
+.version-body { padding: 4px 8px 10px; }
+.material-actions { display: flex; gap: 8px; }
+.baseline-note, .change-summary { margin-top: 10px; padding: 9px 11px; border-radius: 7px; background: #f8fafc; color: #475569; font-size: 12px; }
+.change-summary { flex-wrap: wrap; }
+.change-table { margin-top: 10px; }
 .toolbar { display: grid; grid-template-columns: 180px minmax(280px, 1fr) auto; gap: 10px; margin-bottom: 14px; }
 .content-grid { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 14px; align-items: start; }
 .model-panel, .probe-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }

@@ -8,7 +8,15 @@ from app.schemas.registration import (
     ConfiguredRegistrationModelList,
     RegistrationMasterProbeList,
     RegistrationModelList,
+    RegistrationPackageList,
+    RegistrationPackageVersionItem,
+    RegistrationPackageVersionList,
     RegistrationProbeStrategyList,
+)
+from app.services.registration_package_query import (
+    get_registration_package_version,
+    list_registration_package_versions,
+    list_registration_packages,
 )
 from app.services.registration_query import (
     list_configured_registration_models,
@@ -19,6 +27,43 @@ from app.services.registration_query import (
 
 
 router = APIRouter()
+
+
+@router.get("/packages", response_model=RegistrationPackageList)
+async def registration_packages(
+    country_code: str = Query("CN", pattern="^[A-Z]{2}$"),
+    db: AsyncSession = Depends(get_db),
+):
+    items = await list_registration_packages(db, country_code=country_code)
+    return RegistrationPackageList(items=items, total=len(items))
+
+
+@router.get(
+    "/packages/{package_id}/versions",
+    response_model=RegistrationPackageVersionList,
+)
+async def registration_package_versions(
+    package_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await list_registration_package_versions(db, package_id=package_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="注册资料包不存在")
+    return RegistrationPackageVersionList(**result)
+
+
+@router.get(
+    "/package-versions/{version_id}",
+    response_model=RegistrationPackageVersionItem,
+)
+async def registration_package_version(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await get_registration_package_version(db, version_id=version_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="注册资料包版本不存在")
+    return RegistrationPackageVersionItem(**result)
 
 
 @router.get("/configured-models", response_model=ConfiguredRegistrationModelList)

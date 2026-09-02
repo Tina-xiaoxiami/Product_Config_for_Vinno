@@ -97,3 +97,51 @@ class RegistrationProbeStrategyList(BaseModel):
     source_document_id: int | None = None
     mapping_type: str
     summary: RegistrationProbeSummary
+
+
+class RegistrationMaterialReference(BaseModel):
+    document_id: int
+    title: str
+    version: str | None = None
+    sha256: str
+    preview_url: str
+
+
+class RegistrationPackageVersionItem(BaseModel):
+    id: int
+    package_id: int
+    version_no: int
+    previous_version_id: int | None = None
+    status: str
+    change_note: str | None = None
+    effective_date: str | None = None
+    model_count: int
+    probe_count: int
+    matrix_count: int
+    created_at: str
+    published_at: str | None = None
+    diff: dict
+    certificate: RegistrationMaterialReference
+    difference: RegistrationMaterialReference
+
+
+class RegistrationPackageBase(BaseModel):
+    id: int
+    country_code: str
+    unit_code: str
+    display_name: str
+    product_series: str | None = None
+
+
+class RegistrationPackageItem(RegistrationPackageBase):
+    current_version: RegistrationPackageVersionItem | None = None
+
+
+class RegistrationPackageList(BaseModel):
+    items: list[RegistrationPackageItem] = Field(default_factory=list)
+    total: int
+
+
+class RegistrationPackageVersionList(BaseModel):
+    package: RegistrationPackageBase
+    items: list[RegistrationPackageVersionItem] = Field(default_factory=list)
