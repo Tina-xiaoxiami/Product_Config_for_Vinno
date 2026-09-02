@@ -1,6 +1,15 @@
-"""国家-型号-探头注册主数据模型。"""
+"""国家-型号-探头注册主数据与成对资料版本模型。"""
 
-from sqlalchemy import Column, ForeignKey, Index, Integer, Text, UniqueConstraint, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    text,
+)
 
 from app.database import Base
 
@@ -26,6 +35,100 @@ class RegistrationImportBatch(Base):
             "country_code",
             "snapshot_hash",
             name="uq_registration_import_snapshot",
+        ),
+    )
+
+
+class RegistrationPackage(Base):
+    __tablename__ = "registration_packages"
+
+    id = Column(Integer, primary_key=True)
+    country_code = Column(Text, nullable=False)
+    unit_code = Column(Text, nullable=False)
+    display_name = Column(Text, nullable=False)
+    product_series = Column(Text)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "country_code",
+            "unit_code",
+            name="uq_registration_package_country_unit",
+        ),
+    )
+
+
+class RegistrationPackageVersion(Base):
+    __tablename__ = "registration_package_versions"
+
+    id = Column(Integer, primary_key=True)
+    package_id = Column(
+        Integer,
+        ForeignKey("registration_packages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_no = Column(Integer, nullable=False)
+    previous_version_id = Column(
+        Integer,
+        ForeignKey("registration_package_versions.id"),
+    )
+    certificate_document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id"),
+        nullable=False,
+    )
+    certificate_version = Column(Text)
+    certificate_sha256 = Column(Text, nullable=False)
+    difference_document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id"),
+        nullable=False,
+    )
+    difference_version = Column(Text)
+    difference_sha256 = Column(Text, nullable=False)
+    import_batch_id = Column(
+        Integer,
+        ForeignKey("registration_import_batches.id"),
+        nullable=False,
+        unique=True,
+    )
+    snapshot_hash = Column(Text, nullable=False)
+    pair_hash = Column(Text, nullable=False)
+    diff_json = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="draft")
+    change_note = Column(Text)
+    effective_date = Column(Text)
+    model_count = Column(Integer, nullable=False)
+    probe_count = Column(Integer, nullable=False)
+    matrix_count = Column(Integer, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    published_at = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "package_id",
+            "version_no",
+            name="uq_registration_package_version_no",
+        ),
+        UniqueConstraint(
+            "package_id",
+            "pair_hash",
+            name="uq_registration_package_pair_hash",
+        ),
+        CheckConstraint(
+            "certificate_document_id <> difference_document_id",
+            name="ck_registration_package_distinct_documents",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'active', 'superseded')",
+            name="ck_registration_package_version_status",
+        ),
+        Index(
+            "uq_registration_package_active",
+            "package_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
         ),
     )
 

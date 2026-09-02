@@ -35,6 +35,51 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     UNIQUE (country_code, snapshot_hash)
                 );
 
+                CREATE TABLE IF NOT EXISTS registration_packages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    country_code TEXT NOT NULL,
+                    unit_code TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    product_series TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (country_code, unit_code)
+                );
+
+                CREATE TABLE IF NOT EXISTS registration_package_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    package_id INTEGER NOT NULL
+                        REFERENCES registration_packages(id) ON DELETE CASCADE,
+                    version_no INTEGER NOT NULL,
+                    previous_version_id INTEGER
+                        REFERENCES registration_package_versions(id),
+                    certificate_document_id INTEGER NOT NULL
+                        REFERENCES knowledge_documents(id),
+                    certificate_version TEXT,
+                    certificate_sha256 TEXT NOT NULL,
+                    difference_document_id INTEGER NOT NULL
+                        REFERENCES knowledge_documents(id),
+                    difference_version TEXT,
+                    difference_sha256 TEXT NOT NULL,
+                    import_batch_id INTEGER NOT NULL UNIQUE
+                        REFERENCES registration_import_batches(id),
+                    snapshot_hash TEXT NOT NULL,
+                    pair_hash TEXT NOT NULL,
+                    diff_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft', 'active', 'superseded')),
+                    change_note TEXT,
+                    effective_date TEXT,
+                    model_count INTEGER NOT NULL,
+                    probe_count INTEGER NOT NULL,
+                    matrix_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    published_at TEXT,
+                    CHECK (certificate_document_id <> difference_document_id),
+                    UNIQUE (package_id, version_no),
+                    UNIQUE (package_id, pair_hash)
+                );
+
                 CREATE TABLE IF NOT EXISTS registration_models (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     country_code TEXT NOT NULL,
@@ -106,6 +151,13 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                 ON registration_model_probes(country_code, registration_status);
                 CREATE INDEX IF NOT EXISTS ix_product_registration_links_product
                 ON product_registration_model_links(product_model_id);
+                CREATE INDEX IF NOT EXISTS ix_registration_packages_country
+                ON registration_packages(country_code, unit_code);
+                CREATE INDEX IF NOT EXISTS ix_registration_package_versions_package
+                ON registration_package_versions(package_id, version_no DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_package_active
+                ON registration_package_versions(package_id)
+                WHERE status = 'active';
                 """
             )
             violations = connection.execute("PRAGMA foreign_key_check").fetchall()
