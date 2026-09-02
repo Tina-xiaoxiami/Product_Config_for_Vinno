@@ -133,6 +133,16 @@ test('registration management shows paired certificate and difference history', 
 })
 
 
+test('product model table shows the registration certificate mapping', () => {
+  const modelView = read('../src/views/Models.vue')
+
+  assert.match(modelView, /对应注册证/)
+  assert.match(modelView, /registration_packages/)
+  assert.match(modelView, /registration_number/)
+  assert.match(modelView, /registration_model_name/)
+})
+
+
 test('knowledge hub is a read-only aggregate linked to master-data maintenance', () => {
   const view = read('../src/views/KnowledgeHub.vue')
 
