@@ -152,6 +152,10 @@ test('registration management supports paired upload mapping review and publish'
   assert.match(view, /发布生效/)
   assert.match(api, /stageRegistrationPackageDraft/)
   assert.match(api, /publishRegistrationPackageVersion/)
+  assert.match(api, /setRegistrationPackageEnabled/)
+  assert.match(view, /handleTogglePackageEnabled/)
+  assert.match(view, /已启用/)
+  assert.match(view, /未启用/)
 })
 
 

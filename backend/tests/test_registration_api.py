@@ -480,7 +480,25 @@ async def test_registration_api_stages_pair_reviews_mapping_and_publishes(tmp_pa
             f"/api/registrations/package-versions/{draft['id']}/publish",
             json={"confirmed_by": "product_owner"},
         )
+        disabled = await client.patch(
+            f"/api/registrations/packages/{draft['package_id']}/enabled",
+            json={"is_enabled": False, "updated_by": "product_owner"},
+        )
+        packages = await client.get(
+            "/api/registrations/packages",
+            params={"country_code": "CN"},
+        )
+        configured = await client.get(
+            "/api/registrations/configured-models",
+            params={"country_code": "CN"},
+        )
     await engine.dispose()
 
     assert published.status_code == 200, published.text
     assert published.json()["status"] == "active"
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["is_enabled"] is False
+    assert packages.status_code == 200, packages.text
+    assert packages.json()["items"][0]["is_enabled"] is False
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["items"] == []

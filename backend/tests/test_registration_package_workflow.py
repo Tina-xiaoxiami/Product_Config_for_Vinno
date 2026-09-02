@@ -227,6 +227,32 @@ async def test_product_query_groups_each_mapped_certificate_active_snapshot(tmp_
     assert first_f4["registration_status"] == "registered"
     assert second_f4["registration_status"] == "unregistered"
 
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE registration_packages SET is_enabled = 0 WHERE id = ?",
+        (draft_b["package_id"],),
+    )
+    connection.commit()
+    connection.close()
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        enabled_only = await list_product_registration_probes(
+            session,
+            product_model_id=1,
+            query=None,
+            registration_status=None,
+            effective_status=None,
+            skip=0,
+            limit=100,
+        )
+    await engine.dispose()
+
+    assert enabled_only is not None
+    assert enabled_only["total_registrations"] == 1
+    assert enabled_only["registrations"][0]["registration_number"] == "TEST-CN-001"
+
 
 def test_publish_allows_product_model_to_bind_independent_certificates(tmp_path):
     database_path = tmp_path / "product_config.db"
