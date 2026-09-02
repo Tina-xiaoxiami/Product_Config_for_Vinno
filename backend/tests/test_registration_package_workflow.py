@@ -159,7 +159,7 @@ def test_publish_keeps_registration_certificates_independent_and_scopes_links(tm
 
 
 @pytest.mark.asyncio
-async def test_product_query_reads_only_the_mapped_certificate_active_snapshot(tmp_path):
+async def test_product_query_groups_each_mapped_certificate_active_snapshot(tmp_path):
     database_path = tmp_path / "product_config.db"
     workbook_a = tmp_path / "registration-a.xlsx"
     workbook_b = tmp_path / "registration-b.xlsx"
@@ -185,7 +185,7 @@ async def test_product_query_reads_only_the_mapped_certificate_active_snapshot(t
         certificate_b,
         unit_code="V10-B",
         registration_number="TEST-CN-002",
-        mappings={2: "VINNO 10"},
+        mappings={1: "VINNO 10"},
     )
     publish_registration_package_version(
         database_path, version_id=draft_a["id"], confirmed_by="product_owner"
@@ -199,7 +199,7 @@ async def test_product_query_reads_only_the_mapped_certificate_active_snapshot(t
     async with session_factory() as session:
         result = await list_product_registration_probes(
             session,
-            product_model_id=2,
+            product_model_id=1,
             query=None,
             registration_status=None,
             effective_status=None,
@@ -209,12 +209,26 @@ async def test_product_query_reads_only_the_mapped_certificate_active_snapshot(t
     await engine.dispose()
 
     assert result is not None
-    assert result["registration_number"] == "TEST-CN-002"
-    f4 = next(item for item in result["items"] if item["probe_model"] == "F4-9E")
-    assert f4["registration_status"] == "unregistered"
+    assert result["total_registrations"] == 2
+    assert [item["registration_number"] for item in result["registrations"]] == [
+        "TEST-CN-001",
+        "TEST-CN-002",
+    ]
+    first_f4 = next(
+        item
+        for item in result["registrations"][0]["items"]
+        if item["probe_model"] == "F4-9E"
+    )
+    second_f4 = next(
+        item
+        for item in result["registrations"][1]["items"]
+        if item["probe_model"] == "F4-9E"
+    )
+    assert first_f4["registration_status"] == "registered"
+    assert second_f4["registration_status"] == "unregistered"
 
 
-def test_publish_rejects_product_model_already_bound_to_another_certificate(tmp_path):
+def test_publish_allows_product_model_to_bind_independent_certificates(tmp_path):
     database_path = tmp_path / "product_config.db"
     workbook_path = tmp_path / "registration.xlsx"
     certificate_a = tmp_path / "certificate-a.pdf"
@@ -244,7 +258,14 @@ def test_publish_rejects_product_model_already_bound_to_another_certificate(tmp_
         database_path, version_id=draft_a["id"], confirmed_by="product_owner"
     )
 
-    with pytest.raises(RegistrationPackageError, match="已绑定其他注册证"):
-        publish_registration_package_version(
-            database_path, version_id=draft_b["id"], confirmed_by="product_owner"
-        )
+    publish_registration_package_version(
+        database_path, version_id=draft_b["id"], confirmed_by="product_owner"
+    )
+
+    connection = sqlite3.connect(database_path)
+    links = connection.execute(
+        "SELECT registration_package_id FROM product_registration_model_links "
+        "WHERE product_model_id = 1 ORDER BY registration_package_id"
+    ).fetchall()
+    connection.close()
+    assert links == [(draft_a["package_id"],), (draft_b["package_id"],)]

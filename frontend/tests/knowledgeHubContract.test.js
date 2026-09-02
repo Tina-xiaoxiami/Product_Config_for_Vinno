@@ -73,6 +73,15 @@ test('knowledge hub separates domestic registration redlines from product strate
   assert.match(view, /target="_blank"/)
 })
 
+test('knowledge hub reports multiple domestic certificates separately when unspecified', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+
+  assert.match(view, /按注册证分别展示/)
+  assert.match(view, /registrationGroups/)
+  assert.match(view, /registration_number/)
+  assert.match(view, /registration_package_name/)
+})
+
 
 test('frontend API exposes domestic registration query endpoints', () => {
   const api = read('../src/api/data.js')

@@ -148,8 +148,11 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         }
     ]
     body = probes_response.json()
-    assert body["total"] == 3
-    assert body["summary"] == {
+    assert body["total_registrations"] == 1
+    assert body["product_model_name"] == "VINNO 10E"
+    registration = body["registrations"][0]
+    assert registration["total"] == 3
+    assert registration["summary"] == {
         "registered": 2,
         "unregistered": 1,
         "standard": 0,
@@ -159,7 +162,9 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "auxiliary": 0,
         "conflicts": 0,
     }
-    f2 = next(item for item in body["items"] if item["probe_model"] == "F2-5C")
+    f2 = next(
+        item for item in registration["items"] if item["probe_model"] == "F2-5C"
+    )
     assert f2 == {
         "probe_id": 1,
         "probe_model": "F2-5C",
@@ -220,8 +225,10 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
     await engine.dispose()
 
     assert filtered.status_code == 200
-    assert filtered.json()["total"] == 1
-    item = filtered.json()["items"][0]
+    assert filtered.json()["total_registrations"] == 1
+    filtered_registration = filtered.json()["registrations"][0]
+    assert filtered_registration["total"] == 1
+    item = filtered_registration["items"][0]
     assert item["probe_model"] == "G1-4P"
     assert item["registration_status"] == "unregistered"
     assert item["effective_status"] == "#"
@@ -232,8 +239,8 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
         "VINNO 10E",
     ]
     assert empty_filtered.status_code == 200
-    assert empty_filtered.json()["items"] == []
-    assert empty_filtered.json()["source_document_id"] == 1
+    assert empty_filtered.json()["registrations"][0]["items"] == []
+    assert empty_filtered.json()["registrations"][0]["source_document_id"] == 1
     assert missing.status_code == 404
     assert missing.json()["detail"] == "产品型号尚未关联对应注册证及注册基础型号"
 
