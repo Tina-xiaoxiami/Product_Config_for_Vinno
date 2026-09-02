@@ -13,6 +13,8 @@ DOCUMENT_TYPE_DIRECTORIES = {
     "manual": "说明书",
     "whitepaper": "白皮书",
     "release_note": "发布记录",
+    "registration_certificate": "注册证",
+    "registration_difference": "注册差异表",
 }
 
 
