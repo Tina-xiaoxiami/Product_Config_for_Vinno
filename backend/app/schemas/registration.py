@@ -154,3 +154,11 @@ class RegistrationPackageList(BaseModel):
 class RegistrationPackageVersionList(BaseModel):
     package: RegistrationPackageBase
     items: list[RegistrationPackageVersionItem] = Field(default_factory=list)
+
+
+class RegistrationPackageMappingUpdate(BaseModel):
+    mappings: dict[int, str]
+
+
+class RegistrationPackagePublishRequest(BaseModel):
+    confirmed_by: str = Field(min_length=1, max_length=100)

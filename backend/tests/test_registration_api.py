@@ -422,3 +422,58 @@ async def test_registration_api_lists_paired_material_history_and_both_originals
     assert certificate_preview.status_code == 200
     assert certificate_preview.content == b"certificate-v1"
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_registration_api_stages_pair_reviews_mapping_and_publishes(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        staged = await client.post(
+            "/api/registrations/packages/drafts",
+            data={
+                "country_code": "CN",
+                "unit_code": "V10-API",
+                "display_name": "V10 API 注册",
+                "product_series": "V10",
+                "registration_number": "TEST-CN-API",
+                "certificate_version": "20260902",
+                "difference_version": "20260902",
+                "confirmed_by": "product_owner",
+            },
+            files={
+                "certificate": (
+                    "certificate.pdf",
+                    b"%PDF-1.4 registration certificate",
+                    "application/pdf",
+                ),
+                "difference": (
+                    "difference.xlsx",
+                    workbook_path.read_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            },
+        )
+        assert staged.status_code == 200, staged.text
+        draft = staged.json()
+        assert draft["status"] == "draft"
+        assert draft["mapping_count"] == 5
+        assert draft["mappings"][0]["product_model_name"] == "VINNO 10"
+        resumed = await client.get(
+            f"/api/registrations/package-versions/{draft['id']}/mappings"
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert len(resumed.json()["mappings"]) == 5
+        published = await client.post(
+            f"/api/registrations/package-versions/{draft['id']}/publish",
+            json={"confirmed_by": "product_owner"},
+        )
+    await engine.dispose()
+
+    assert published.status_code == 200, published.text
+    assert published.json()["status"] == "active"

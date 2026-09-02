@@ -278,3 +278,118 @@ class ProductRegistrationModelLink(Base):
         Index("ix_product_registration_links_product", "product_model_id"),
         Index("ix_product_registration_links_package", "registration_package_id"),
     )
+
+
+class RegistrationPackageVersionModel(Base):
+    __tablename__ = "registration_package_version_models"
+
+    id = Column(Integer, primary_key=True)
+    version_id = Column(
+        Integer,
+        ForeignKey("registration_package_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    registration_model_id = Column(
+        Integer,
+        ForeignKey("registration_models.id"),
+        nullable=False,
+    )
+    model_name = Column(Text, nullable=False)
+    normalized_name = Column(Text, nullable=False)
+    channel_count = Column(Integer)
+    source_ref = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "normalized_name", name="uq_registration_version_model"),
+        Index("ix_registration_version_models_version", "version_id"),
+    )
+
+
+class RegistrationPackageVersionProbe(Base):
+    __tablename__ = "registration_package_version_probes"
+
+    id = Column(Integer, primary_key=True)
+    version_id = Column(
+        Integer,
+        ForeignKey("registration_package_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    registration_probe_id = Column(
+        Integer,
+        ForeignKey("registration_probes.id"),
+        nullable=False,
+    )
+    probe_model = Column(Text, nullable=False)
+    normalized_model = Column(Text, nullable=False)
+    ipn = Column(Text, nullable=False)
+    source_ref = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "normalized_model", name="uq_registration_version_probe"),
+        UniqueConstraint("version_id", "ipn", name="uq_registration_version_probe_ipn"),
+        Index("ix_registration_version_probes_version", "version_id"),
+    )
+
+
+class RegistrationPackageVersionModelProbe(Base):
+    __tablename__ = "registration_package_version_model_probes"
+
+    id = Column(Integer, primary_key=True)
+    version_id = Column(
+        Integer,
+        ForeignKey("registration_package_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_model_id = Column(
+        Integer,
+        ForeignKey("registration_package_version_models.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_probe_id = Column(
+        Integer,
+        ForeignKey("registration_package_version_probes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    registration_status = Column(Text, nullable=False)
+    source_ref = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "version_model_id",
+            "version_probe_id",
+            name="uq_registration_version_model_probe",
+        ),
+        Index("ix_registration_version_matrix_version", "version_id"),
+    )
+
+
+class RegistrationPackageVersionProductMapping(Base):
+    __tablename__ = "registration_package_version_product_mappings"
+
+    id = Column(Integer, primary_key=True)
+    version_id = Column(
+        Integer,
+        ForeignKey("registration_package_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_model_id = Column(
+        Integer,
+        ForeignKey("product_models.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_model_id = Column(
+        Integer,
+        ForeignKey("registration_package_version_models.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mapping_type = Column(Text, nullable=False)
+    review_status = Column(Text, nullable=False, default="pending")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "product_model_id",
+            name="uq_registration_version_product_mapping",
+        ),
+        Index("ix_registration_version_mappings_version", "version_id"),
+    )

@@ -253,6 +253,64 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     UNIQUE (product_model_id, registration_model_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS registration_package_version_models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL
+                        REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+                    registration_model_id INTEGER NOT NULL
+                        REFERENCES registration_models(id),
+                    model_name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL,
+                    channel_count INTEGER,
+                    source_ref TEXT,
+                    UNIQUE (version_id, normalized_name)
+                );
+
+                CREATE TABLE IF NOT EXISTS registration_package_version_probes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL
+                        REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+                    registration_probe_id INTEGER NOT NULL
+                        REFERENCES registration_probes(id),
+                    probe_model TEXT NOT NULL,
+                    normalized_model TEXT NOT NULL,
+                    ipn TEXT NOT NULL,
+                    source_ref TEXT,
+                    UNIQUE (version_id, normalized_model),
+                    UNIQUE (version_id, ipn)
+                );
+
+                CREATE TABLE IF NOT EXISTS registration_package_version_model_probes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL
+                        REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+                    version_model_id INTEGER NOT NULL
+                        REFERENCES registration_package_version_models(id) ON DELETE CASCADE,
+                    version_probe_id INTEGER NOT NULL
+                        REFERENCES registration_package_version_probes(id) ON DELETE CASCADE,
+                    registration_status TEXT NOT NULL
+                        CHECK (registration_status IN ('registered', 'unregistered')),
+                    source_ref TEXT,
+                    UNIQUE (version_model_id, version_probe_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS registration_package_version_product_mappings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL
+                        REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+                    product_model_id INTEGER NOT NULL
+                        REFERENCES product_models(id) ON DELETE CASCADE,
+                    version_model_id INTEGER NOT NULL
+                        REFERENCES registration_package_version_models(id) ON DELETE CASCADE,
+                    mapping_type TEXT NOT NULL
+                        CHECK (mapping_type IN (
+                            'direct', 'config_group', 'confirmed_derived', 'manual'
+                        )),
+                    review_status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (review_status IN ('pending', 'approved', 'rejected')),
+                    UNIQUE (version_id, product_model_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS ix_registration_models_country
                 ON registration_models(country_code, source_status);
                 CREATE INDEX IF NOT EXISTS ix_registration_probes_country
@@ -265,6 +323,14 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                 ON registration_packages(country_code, unit_code);
                 CREATE INDEX IF NOT EXISTS ix_registration_package_versions_package
                 ON registration_package_versions(package_id, version_no DESC);
+                CREATE INDEX IF NOT EXISTS ix_registration_version_models_version
+                ON registration_package_version_models(version_id);
+                CREATE INDEX IF NOT EXISTS ix_registration_version_probes_version
+                ON registration_package_version_probes(version_id);
+                CREATE INDEX IF NOT EXISTS ix_registration_version_matrix_version
+                ON registration_package_version_model_probes(version_id);
+                CREATE INDEX IF NOT EXISTS ix_registration_version_mappings_version
+                ON registration_package_version_product_mappings(version_id);
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_package_active
                 ON registration_package_versions(package_id)
                 WHERE status = 'active';

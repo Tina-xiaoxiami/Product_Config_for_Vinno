@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.services.registration_migration import migrate_registration_schema
 from app.services.registration_packages import (
+    get_registration_package_version_mapping_review,
     RegistrationPackageError,
     publish_registration_package_version,
     stage_registration_package_draft,
@@ -87,6 +88,15 @@ def test_pair_upload_stages_version_scoped_snapshot_and_mapping_review(tmp_path)
     ).fetchone()[0] == 3
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
+
+    resumed = get_registration_package_version_mapping_review(
+        database_path, version_id=draft["id"]
+    )
+    assert resumed["status"] == "draft"
+    assert [item["product_model_name"] for item in resumed["mappings"]] == [
+        "VINNO 10",
+        "VINNO 9_Private",
+    ]
 
 
 def test_publish_keeps_registration_certificates_independent_and_scopes_links(tmp_path):

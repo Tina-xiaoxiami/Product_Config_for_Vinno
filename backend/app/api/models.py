@@ -26,22 +26,20 @@ async def _registration_mappings_by_product_model(
                package.country_code,
                package.registration_number,
                package.display_name AS registration_package_name,
-               registration.id AS registration_model_id,
-               registration.model_name AS registration_model_name,
+               version_model.id AS registration_model_id,
+               version_model.model_name AS registration_model_name,
                link.mapping_type
         FROM product_registration_model_links link
         JOIN registration_packages package
           ON package.id = link.registration_package_id
-         AND package.country_code = registration.country_code
-        JOIN registration_models registration
-          ON registration.id = link.registration_model_id
         JOIN registration_package_versions package_version
           ON package_version.package_id = package.id
          AND package_version.status = 'active'
-         AND package_version.import_batch_id = registration.import_batch_id
+        JOIN registration_package_version_models version_model
+          ON version_model.version_id = package_version.id
+         AND version_model.registration_model_id = link.registration_model_id
         WHERE link.product_model_id IN :model_ids
           AND link.review_status = 'approved'
-          AND registration.source_status = 'active'
         ORDER BY package.country_code, package.id
         """
     ).bindparams(bindparam("model_ids", expanding=True))

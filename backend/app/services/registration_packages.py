@@ -11,7 +11,11 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from app.services.registration_rules import normalize_business_name
+from app.services.registration_confirmations import confirmed_derived_model_bases
+from app.services.registration_rules import (
+    normalize_business_name,
+    parse_domestic_registration_workbook,
+)
 from app.services.registration_migration import migrate_registration_schema
 
 
@@ -446,6 +450,179 @@ def _validate_active_projection(
         )
 
 
+def _materialize_version_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    version_id: int,
+) -> None:
+    existing = connection.execute(
+        "SELECT COUNT(*) FROM registration_package_version_models WHERE version_id = ?",
+        (version_id,),
+    ).fetchone()[0]
+    if existing:
+        return
+    version = connection.execute(
+        """
+        SELECT version.id, version.import_batch_id, version.difference_document_id,
+               package.country_code, batch.snapshot_json
+        FROM registration_package_versions version
+        JOIN registration_packages package ON package.id = version.package_id
+        JOIN registration_import_batches batch ON batch.id = version.import_batch_id
+        WHERE version.id = ?
+        """,
+        (version_id,),
+    ).fetchone()
+    if version is None:
+        raise RegistrationPackageError("注册资料包版本不存在")
+    models, probes = _snapshot_maps(version["snapshot_json"])
+    version_model_ids: dict[str, int] = {}
+    version_probe_ids: dict[str, int] = {}
+
+    for normalized, item in models.items():
+        source_ref = str(item.get("source_ref") or "") or None
+        connection.execute(
+            """
+            INSERT INTO registration_models (
+                country_code, model_name, normalized_name, channel_count,
+                import_batch_id, source_document_id, source_ref, source_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+            ON CONFLICT(country_code, normalized_name) DO UPDATE SET
+                model_name = excluded.model_name,
+                channel_count = excluded.channel_count
+            """,
+            (
+                version["country_code"],
+                item["model_name"],
+                normalized,
+                item.get("channel_count"),
+                version["import_batch_id"],
+                version["difference_document_id"],
+                source_ref,
+            ),
+        )
+        master_id = int(
+            connection.execute(
+                "SELECT id FROM registration_models WHERE country_code = ? AND normalized_name = ?",
+                (version["country_code"], normalized),
+            ).fetchone()[0]
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO registration_package_version_models (
+                version_id, registration_model_id, model_name, normalized_name,
+                channel_count, source_ref
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                master_id,
+                item["model_name"],
+                normalized,
+                item.get("channel_count"),
+                source_ref,
+            ),
+        )
+        version_model_ids[normalized] = int(cursor.lastrowid)
+
+    for normalized, item in probes.items():
+        source_ref = str(item.get("source_ref") or "") or None
+        connection.execute(
+            """
+            INSERT INTO registration_probes (
+                country_code, probe_model, normalized_model, ipn,
+                import_batch_id, source_document_id, source_ref, source_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+            ON CONFLICT(country_code, normalized_model) DO UPDATE SET
+                probe_model = excluded.probe_model,
+                ipn = excluded.ipn
+            """,
+            (
+                version["country_code"],
+                item["probe_model"],
+                normalized,
+                str(item.get("ipn") or ""),
+                version["import_batch_id"],
+                version["difference_document_id"],
+                source_ref,
+            ),
+        )
+        master_id = int(
+            connection.execute(
+                "SELECT id FROM registration_probes WHERE country_code = ? AND normalized_model = ?",
+                (version["country_code"], normalized),
+            ).fetchone()[0]
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO registration_package_version_probes (
+                version_id, registration_probe_id, probe_model, normalized_model,
+                ipn, source_ref
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                master_id,
+                item["probe_model"],
+                normalized,
+                str(item.get("ipn") or ""),
+                source_ref,
+            ),
+        )
+        version_probe_ids[normalized] = int(cursor.lastrowid)
+
+    for model_key, model in models.items():
+        unsupported = {_identity(item) for item in model.get("unsupported_probes", [])}
+        for probe_key in probes:
+            connection.execute(
+                """
+                INSERT INTO registration_package_version_model_probes (
+                    version_id, version_model_id, version_probe_id,
+                    registration_status, source_ref
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id,
+                    version_model_ids[model_key],
+                    version_probe_ids[probe_key],
+                    "unregistered" if probe_key in unsupported else "registered",
+                    str(model.get("source_ref") or "") or None,
+                ),
+            )
+
+
+def backfill_registration_package_version_snapshots(
+    database_path: str | Path,
+) -> int:
+    """为既有资料包版本补齐版本内快照；可安全重复执行。"""
+
+    migrate_registration_schema(database_path)
+    connection = sqlite3.connect(Path(database_path), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        before = int(
+            connection.execute(
+                "SELECT COUNT(DISTINCT version_id) FROM registration_package_version_models"
+            ).fetchone()[0]
+        )
+        for row in connection.execute(
+            "SELECT id FROM registration_package_versions ORDER BY id"
+        ).fetchall():
+            _materialize_version_snapshot(connection, version_id=int(row["id"]))
+        after = int(
+            connection.execute(
+                "SELECT COUNT(DISTINCT version_id) FROM registration_package_version_models"
+            ).fetchone()[0]
+        )
+        connection.commit()
+        return after - before
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
 def _version_result(row: sqlite3.Row, *, reused: bool) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
@@ -456,6 +633,9 @@ def _version_result(row: sqlite3.Row, *, reused: bool) -> dict[str, Any]:
         ),
         "status": row["status"],
         "diff": json.loads(row["diff_json"]),
+        "model_count": int(row["model_count"]),
+        "probe_count": int(row["probe_count"]),
+        "matrix_count": int(row["matrix_count"]),
         "reused": reused,
     }
 
@@ -641,6 +821,10 @@ def record_registration_package_version(
                 (package_id, pair_hash),
             ).fetchone()
             if existing is not None:
+                _materialize_version_snapshot(
+                    connection,
+                    version_id=int(existing["id"]),
+                )
                 connection.execute(
                     """
                     UPDATE registration_package_versions SET
@@ -748,6 +932,10 @@ def record_registration_package_version(
                 "SELECT * FROM registration_package_versions WHERE id = ?",
                 (cursor.lastrowid,),
             ).fetchone()
+            _materialize_version_snapshot(
+                connection,
+                version_id=int(row["id"]),
+            )
             connection.commit()
             return _version_result(row, reused=False)
         except Exception:
@@ -790,3 +978,602 @@ def migrate_existing_registration_package(
         change_note=change_note,
         _activate_baseline=True,
     )
+
+
+def _managed_source_copy(
+    database_path: Path,
+    *,
+    registration_number: str,
+    role: str,
+    source_path: Path,
+) -> Path:
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    safe_identity = re.sub(r"[^0-9A-Za-z._-]+", "_", registration_number).strip("_")
+    suffix = source_path.suffix.lower()
+    target_dir = database_path.parent / "registration_sources" / (safe_identity or "unknown")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{role}-{uuid4().hex}{suffix}"
+    shutil.copyfile(source_path, target)
+    return target.resolve()
+
+
+def _draft_snapshot(workbook_path: Path) -> tuple[str, int, int, int]:
+    parsed = parse_domestic_registration_workbook(workbook_path)
+    payload = {
+        "models": [
+            {
+                "model_name": item.model_name,
+                "channel_count": item.channel_count,
+                "unsupported_probes": list(item.unsupported_probes),
+                "source_ref": f"0729!{item.source_row}",
+            }
+            for item in parsed.models
+        ],
+        "probes": [
+            {
+                "probe_model": item.model,
+                "ipn": item.ipn,
+                "source_ref": f"Sheet1!{item.source_row}",
+            }
+            for item in parsed.probes
+        ],
+    }
+    snapshot_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (
+        snapshot_json,
+        len(parsed.models),
+        len(parsed.probes),
+        len(parsed.models) * len(parsed.probes),
+    )
+
+
+def _mapping_type(product_name: str, config_group: str | None, model_name: str) -> str:
+    if _identity(product_name) == _identity(model_name):
+        return "direct"
+    if config_group and _identity(config_group) == _identity(model_name):
+        return "config_group"
+    confirmed = {
+        _identity(product): _identity(base)
+        for product, base in confirmed_derived_model_bases().items()
+    }
+    if confirmed.get(_identity(product_name)) == _identity(model_name):
+        return "confirmed_derived"
+    return "manual"
+
+
+def _replace_version_mappings(
+    connection: sqlite3.Connection,
+    *,
+    version_id: int,
+    product_model_mappings: dict[int, str],
+) -> int:
+    connection.execute(
+        "DELETE FROM registration_package_version_product_mappings WHERE version_id = ?",
+        (version_id,),
+    )
+    version_models = {
+        str(row["normalized_name"]): row
+        for row in connection.execute(
+            "SELECT id, model_name, normalized_name FROM registration_package_version_models WHERE version_id = ?",
+            (version_id,),
+        )
+    }
+    for product_model_id, model_name in product_model_mappings.items():
+        product = connection.execute(
+            "SELECT id, name, config_group FROM product_models WHERE id = ?",
+            (int(product_model_id),),
+        ).fetchone()
+        if product is None:
+            raise RegistrationPackageError(f"产品机型不存在：{product_model_id}")
+        version_model = version_models.get(_identity(model_name))
+        if version_model is None:
+            raise RegistrationPackageError(f"注册资料中不存在型号：{model_name}")
+        connection.execute(
+            """
+            INSERT INTO registration_package_version_product_mappings (
+                version_id, product_model_id, version_model_id,
+                mapping_type, review_status
+            ) VALUES (?, ?, ?, ?, 'pending')
+            """,
+            (
+                version_id,
+                int(product_model_id),
+                int(version_model["id"]),
+                _mapping_type(product["name"], product["config_group"], version_model["model_name"]),
+            ),
+        )
+    return len(product_model_mappings)
+
+
+def _auto_version_mappings(
+    connection: sqlite3.Connection,
+    *,
+    version_id: int,
+    country_code: str,
+) -> dict[int, str]:
+    version_models = {
+        str(row["normalized_name"]): str(row["model_name"])
+        for row in connection.execute(
+            "SELECT model_name, normalized_name FROM registration_package_version_models WHERE version_id = ?",
+            (version_id,),
+        )
+    }
+    marker = "china" if country_code == "CN" else "oversea"
+    confirmed = {
+        _identity(product): _identity(base)
+        for product, base in confirmed_derived_model_bases().items()
+    }
+    mappings: dict[int, str] = {}
+    for row in connection.execute(
+        """
+        SELECT product.id, product.name, product.config_group
+        FROM product_models product
+        JOIN product_series series ON series.id = product.series_id
+        WHERE LOWER(series.name) LIKE ?
+        ORDER BY product.id
+        """,
+        (f"%{marker}%",),
+    ):
+        candidates = (
+            _identity(row["name"]),
+            _identity(row["config_group"]),
+            confirmed.get(_identity(row["name"]), ""),
+        )
+        matched = next((version_models[key] for key in candidates if key in version_models), None)
+        if matched:
+            mappings[int(row["id"])] = matched
+    return mappings
+
+
+def _version_mapping_review(
+    connection: sqlite3.Connection,
+    *,
+    version_id: int,
+) -> dict[str, Any]:
+    models = [
+        {
+            "id": int(row["id"]),
+            "model_name": row["model_name"],
+            "channel_count": row["channel_count"],
+        }
+        for row in connection.execute(
+            "SELECT id, model_name, channel_count FROM registration_package_version_models "
+            "WHERE version_id = ? ORDER BY id",
+            (version_id,),
+        )
+    ]
+    mappings = [
+        {
+            "product_model_id": int(row["product_model_id"]),
+            "product_model_name": row["product_model_name"],
+            "registration_model_name": row["registration_model_name"],
+            "mapping_type": row["mapping_type"],
+            "review_status": row["review_status"],
+        }
+        for row in connection.execute(
+            """
+            SELECT mapping.product_model_id,
+                   product.name AS product_model_name,
+                   version_model.model_name AS registration_model_name,
+                   mapping.mapping_type, mapping.review_status
+            FROM registration_package_version_product_mappings mapping
+            JOIN product_models product ON product.id = mapping.product_model_id
+            JOIN registration_package_version_models version_model
+              ON version_model.id = mapping.version_model_id
+            WHERE mapping.version_id = ?
+            ORDER BY product.id
+            """,
+            (version_id,),
+        )
+    ]
+    return {"registration_models": models, "mappings": mappings}
+
+
+def get_registration_package_version_mapping_review(
+    database_path: str | Path,
+    *,
+    version_id: int,
+) -> dict[str, Any]:
+    """读取可恢复的草稿映射确认信息。"""
+
+    connection = sqlite3.connect(Path(database_path))
+    connection.row_factory = sqlite3.Row
+    try:
+        version = connection.execute(
+            """
+            SELECT id, status, model_count, probe_count, matrix_count
+            FROM registration_package_versions
+            WHERE id = ?
+            """,
+            (version_id,),
+        ).fetchone()
+        if version is None:
+            raise RegistrationPackageError("注册资料包版本不存在")
+        if version["status"] != "draft":
+            raise RegistrationPackageError("只有待确认草稿可以继续编辑机型映射")
+        return {
+            "id": int(version["id"]),
+            "status": version["status"],
+            "model_count": int(version["model_count"]),
+            "probe_count": int(version["probe_count"]),
+            "matrix_count": int(version["matrix_count"]),
+            **_version_mapping_review(connection, version_id=version_id),
+        }
+    finally:
+        connection.close()
+
+
+def _cleanup_unreferenced_staged_ingest(
+    database_path: Path,
+    *,
+    document_ids: list[int],
+    batch_id: int,
+    managed_paths: tuple[Path, Path],
+) -> None:
+    """清理幂等复用或登记失败后没有被版本引用的导入中间数据。"""
+
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        referenced = connection.execute(
+            "SELECT 1 FROM registration_package_versions WHERE import_batch_id = ?",
+            (batch_id,),
+        ).fetchone()
+        if referenced is None:
+            connection.execute(
+                "DELETE FROM registration_import_batches WHERE id = ?", (batch_id,)
+            )
+            placeholders = ",".join("?" for _ in document_ids)
+            connection.execute(
+                f"DELETE FROM knowledge_documents WHERE id IN ({placeholders})",
+                tuple(document_ids),
+            )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        return
+    finally:
+        connection.close()
+    if referenced is None:
+        for path in managed_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def update_registration_package_version_mappings(
+    database_path: str | Path,
+    *,
+    version_id: int,
+    product_model_mappings: dict[int, str],
+) -> dict[str, Any]:
+    connection = sqlite3.connect(Path(database_path), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        version = connection.execute(
+            "SELECT status FROM registration_package_versions WHERE id = ?",
+            (version_id,),
+        ).fetchone()
+        if version is None:
+            raise RegistrationPackageError("注册资料包版本不存在")
+        if version["status"] != "draft":
+            raise RegistrationPackageError("只有待确认草稿可以修改机型映射")
+        _replace_version_mappings(
+            connection,
+            version_id=version_id,
+            product_model_mappings=product_model_mappings,
+        )
+        review = _version_mapping_review(connection, version_id=version_id)
+        connection.commit()
+        return review
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def stage_registration_package_draft(
+    database_path: str | Path,
+    *,
+    country_code: str,
+    unit_code: str,
+    display_name: str,
+    product_series: str | None,
+    registration_number: str,
+    certificate_path: str | Path,
+    difference_path: str | Path,
+    certificate_version: str | None,
+    difference_version: str | None,
+    confirmed_by: str,
+    change_note: str | None = None,
+    effective_date: str | None = None,
+    product_model_mappings: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    """成对登记原件、解析差异表，并生成待确认的独立资料包版本。"""
+
+    database = Path(database_path)
+    certificate_source = Path(certificate_path)
+    difference_source = Path(difference_path)
+    if certificate_source.suffix.lower() != ".pdf":
+        raise RegistrationPackageError("注册证文件必须为 PDF")
+    if difference_source.suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise RegistrationPackageError("注册差异表必须为 Excel 文件")
+    snapshot_json, model_count, probe_count, matrix_count = _draft_snapshot(
+        difference_source
+    )
+    migrate_registration_schema(database)
+    managed_certificate = _managed_source_copy(
+        database,
+        registration_number=registration_number,
+        role="certificate",
+        source_path=certificate_source,
+    )
+    managed_difference = _managed_source_copy(
+        database,
+        registration_number=registration_number,
+        role="difference",
+        source_path=difference_source,
+    )
+    certificate_sha = _file_sha256(managed_certificate)
+    difference_sha = _file_sha256(managed_difference)
+    snapshot_hash = hashlib.sha256(
+        f"{country_code}|{unit_code}|{difference_sha}|{snapshot_json}".encode("utf-8")
+    ).hexdigest()
+    connection = sqlite3.connect(database, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        document_ids = []
+        for document_type, title, source, version, sha, mime_type in (
+            (
+                "registration_certificate",
+                f"{display_name} 注册证",
+                managed_certificate,
+                certificate_version,
+                certificate_sha,
+                "application/pdf",
+            ),
+            (
+                "registration_difference",
+                f"{display_name} 注册差异表",
+                managed_difference,
+                difference_version,
+                difference_sha,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        ):
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_documents (
+                    document_type, title, file_name, file_path, version,
+                    market, country, product_series, mime_type, sha256, source_status
+                ) VALUES (?, ?, ?, ?, ?, 'domestic', ?, ?, ?, ?, 'active')
+                """,
+                (
+                    document_type,
+                    title,
+                    source.name,
+                    str(source),
+                    version,
+                    country_code,
+                    product_series,
+                    mime_type,
+                    sha,
+                ),
+            )
+            document_ids.append(int(cursor.lastrowid))
+        cursor = connection.execute(
+            """
+            INSERT INTO registration_import_batches (
+                country_code, source_document_id, source_version, source_sha256,
+                snapshot_hash, snapshot_json, model_count, probe_count,
+                matrix_count, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """,
+            (
+                country_code,
+                document_ids[1],
+                difference_version,
+                difference_sha,
+                snapshot_hash,
+                snapshot_json,
+                model_count,
+                probe_count,
+                matrix_count,
+            ),
+        )
+        batch_id = int(cursor.lastrowid)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    try:
+        draft = record_registration_package_version(
+            database,
+            country_code=country_code,
+            unit_code=unit_code,
+            display_name=display_name,
+            product_series=product_series,
+            certificate_document_id=document_ids[0],
+            difference_document_id=document_ids[1],
+            import_batch_id=batch_id,
+            registration_number=registration_number,
+            identity_source="paired_upload",
+            confirmed_by=confirmed_by,
+            change_note=change_note,
+            effective_date=effective_date,
+        )
+    except Exception:
+        _cleanup_unreferenced_staged_ingest(
+            database,
+            document_ids=document_ids,
+            batch_id=batch_id,
+            managed_paths=(managed_certificate, managed_difference),
+        )
+        raise
+    if draft["reused"]:
+        _cleanup_unreferenced_staged_ingest(
+            database,
+            document_ids=document_ids,
+            batch_id=batch_id,
+            managed_paths=(managed_certificate, managed_difference),
+        )
+        if draft["status"] != "draft":
+            raise RegistrationPackageError("相同注册资料已发布，无需重复生成草稿")
+    connection = sqlite3.connect(database, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        mappings = product_model_mappings
+        if mappings is None:
+            mappings = _auto_version_mappings(
+                connection,
+                version_id=int(draft["id"]),
+                country_code=country_code,
+            )
+        mapping_count = _replace_version_mappings(
+            connection,
+            version_id=int(draft["id"]),
+            product_model_mappings=mappings,
+        )
+        review = _version_mapping_review(connection, version_id=int(draft["id"]))
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return {**draft, "mapping_count": mapping_count, **review}
+
+
+def publish_registration_package_version(
+    database_path: str | Path,
+    *,
+    version_id: int,
+    confirmed_by: str,
+) -> dict[str, Any]:
+    """原子发布一个资料包草稿，只同步该注册证确认过的产品机型。"""
+
+    connection = sqlite3.connect(Path(database_path), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        version = connection.execute(
+            """
+            SELECT version.*, package.country_code
+            FROM registration_package_versions version
+            JOIN registration_packages package ON package.id = version.package_id
+            WHERE version.id = ?
+            """,
+            (version_id,),
+        ).fetchone()
+        if version is None:
+            raise RegistrationPackageError("注册资料包版本不存在")
+        if version["status"] != "draft":
+            raise RegistrationPackageError("只有待确认草稿可以发布")
+        mappings = connection.execute(
+            """
+            SELECT mapping.product_model_id, mapping.mapping_type,
+                   version_model.registration_model_id
+            FROM registration_package_version_product_mappings mapping
+            JOIN registration_package_version_models version_model
+              ON version_model.id = mapping.version_model_id
+             AND version_model.version_id = mapping.version_id
+            WHERE mapping.version_id = ? AND mapping.review_status <> 'rejected'
+            ORDER BY mapping.product_model_id
+            """,
+            (version_id,),
+        ).fetchall()
+        if not mappings:
+            raise RegistrationPackageError("发布前必须确认至少一个产品机型映射")
+        product_ids = [int(row["product_model_id"]) for row in mappings]
+        placeholders = ",".join("?" for _ in product_ids)
+        conflict = connection.execute(
+            f"""
+            SELECT product.name, package.registration_number
+            FROM product_registration_model_links link
+            JOIN product_models product ON product.id = link.product_model_id
+            JOIN registration_packages package ON package.id = link.registration_package_id
+            WHERE link.product_model_id IN ({placeholders})
+              AND package.country_code = ?
+              AND package.id <> ?
+            LIMIT 1
+            """,
+            (*product_ids, version["country_code"], version["package_id"]),
+        ).fetchone()
+        if conflict is not None:
+            raise RegistrationPackageError(
+                f"产品机型 {conflict['name']} 已绑定其他注册证：{conflict['registration_number']}"
+            )
+        connection.execute(
+            "UPDATE registration_package_versions SET status = 'superseded' "
+            "WHERE package_id = ? AND status = 'active'",
+            (version["package_id"],),
+        )
+        connection.execute(
+            "DELETE FROM product_registration_model_links WHERE registration_package_id = ?",
+            (version["package_id"],),
+        )
+        for mapping in mappings:
+            connection.execute(
+                """
+                INSERT INTO product_registration_model_links (
+                    product_model_id, registration_model_id,
+                    registration_package_id, mapping_type, source, review_status
+                ) VALUES (?, ?, ?, ?, 'registration_package_publish', 'approved')
+                """,
+                (
+                    mapping["product_model_id"],
+                    mapping["registration_model_id"],
+                    version["package_id"],
+                    mapping["mapping_type"],
+                ),
+            )
+        connection.execute(
+            "UPDATE registration_package_version_product_mappings "
+            "SET review_status = 'approved' WHERE version_id = ?",
+            (version_id,),
+        )
+        connection.execute(
+            """
+            UPDATE registration_package_versions
+            SET status = 'active', published_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (version_id,),
+        )
+        connection.execute(
+            "UPDATE registration_packages SET confirmed_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (str(confirmed_by or "").strip(), version["package_id"]),
+        )
+        row = connection.execute(
+            "SELECT * FROM registration_package_versions WHERE id = ?",
+            (version_id,),
+        ).fetchone()
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"注册资料包发布引入外键异常：{violations}")
+        connection.commit()
+        return _version_result(row, reused=False)
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()

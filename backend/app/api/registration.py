@@ -1,10 +1,12 @@
 """国内注册红线与产品策略查询 API。"""
 
 import hashlib
+import json
 import mimetypes
 from pathlib import Path
+import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,9 +16,18 @@ from app.schemas.registration import (
     RegistrationMasterProbeList,
     RegistrationModelList,
     RegistrationPackageList,
+    RegistrationPackageMappingUpdate,
+    RegistrationPackagePublishRequest,
     RegistrationPackageVersionItem,
     RegistrationPackageVersionList,
     RegistrationProbeStrategyList,
+)
+from app.services.registration_packages import (
+    get_registration_package_version_mapping_review,
+    RegistrationPackageError,
+    publish_registration_package_version,
+    stage_registration_package_draft,
+    update_registration_package_version_mappings,
 )
 from app.services.registration_package_query import (
     get_registration_package_artifact,
@@ -35,6 +46,26 @@ from app.services.registration_query import (
 router = APIRouter()
 
 
+def _database_path(db: AsyncSession) -> Path:
+    bind = db.bind
+    database = getattr(getattr(bind, "url", None), "database", None)
+    if not database:
+        raise HTTPException(status_code=500, detail="无法确定注册数据库路径")
+    return Path(str(database)).resolve()
+
+
+async def _save_upload(upload: UploadFile, directory: Path, fallback_name: str) -> Path:
+    content = await upload.read()
+    if not content:
+        raise HTTPException(status_code=400, detail=f"{fallback_name}不能为空")
+    if len(content) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"{fallback_name}不能超过100MB")
+    name = Path(upload.filename or fallback_name).name
+    target = directory / name
+    target.write_bytes(content)
+    return target
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -50,6 +81,101 @@ async def registration_packages(
 ):
     items = await list_registration_packages(db, country_code=country_code)
     return RegistrationPackageList(items=items, total=len(items))
+
+
+@router.post("/packages/drafts")
+async def create_registration_package_draft(
+    certificate: UploadFile = File(...),
+    difference: UploadFile = File(...),
+    country_code: str = Form("CN", pattern="^[A-Z]{2}$"),
+    unit_code: str = Form(...),
+    display_name: str = Form(...),
+    product_series: str | None = Form(None),
+    registration_number: str = Form(...),
+    certificate_version: str | None = Form(None),
+    difference_version: str | None = Form(None),
+    confirmed_by: str = Form(...),
+    change_note: str | None = Form(None),
+    effective_date: str | None = Form(None),
+    mappings_json: str | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        mappings = None
+        if mappings_json:
+            raw_mappings = json.loads(mappings_json)
+            mappings = {int(key): str(value) for key, value in raw_mappings.items()}
+        with tempfile.TemporaryDirectory(prefix="registration-pair-") as temporary:
+            directory = Path(temporary)
+            certificate_path = await _save_upload(
+                certificate, directory, "certificate.pdf"
+            )
+            difference_path = await _save_upload(
+                difference, directory, "difference.xlsx"
+            )
+            return stage_registration_package_draft(
+                _database_path(db),
+                country_code=country_code,
+                unit_code=unit_code,
+                display_name=display_name,
+                product_series=product_series,
+                registration_number=registration_number,
+                certificate_path=certificate_path,
+                difference_path=difference_path,
+                certificate_version=certificate_version,
+                difference_version=difference_version,
+                confirmed_by=confirmed_by,
+                change_note=change_note,
+                effective_date=effective_date,
+                product_model_mappings=mappings,
+            )
+    except (json.JSONDecodeError, TypeError, ValueError, RegistrationPackageError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/package-versions/{version_id}/mappings")
+async def update_registration_package_mappings(
+    version_id: int,
+    payload: RegistrationPackageMappingUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return update_registration_package_version_mappings(
+            _database_path(db),
+            version_id=version_id,
+            product_model_mappings=payload.mappings,
+        )
+    except RegistrationPackageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/package-versions/{version_id}/mappings")
+async def registration_package_mappings(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return get_registration_package_version_mapping_review(
+            _database_path(db), version_id=version_id
+        )
+    except RegistrationPackageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/package-versions/{version_id}/publish")
+async def publish_registration_package(
+    version_id: int,
+    payload: RegistrationPackagePublishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return publish_registration_package_version(
+            _database_path(db),
+            version_id=version_id,
+            confirmed_by=payload.confirmed_by,
+        )
+    except RegistrationPackageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(

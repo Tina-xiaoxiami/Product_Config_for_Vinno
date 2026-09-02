@@ -18,26 +18,24 @@ async def list_configured_registration_models(
             """
             SELECT product.id AS product_model_id,
                    product.name AS product_model_name,
-                   registration.id AS registration_model_id,
-                   registration.model_name AS registration_model_name,
+                   version_model.id AS registration_model_id,
+                   version_model.model_name AS registration_model_name,
                    link.mapping_type,
-                   registration.channel_count,
+                   version_model.channel_count,
                    package.id AS registration_package_id,
                    package.registration_number,
                    package.display_name AS registration_package_name
             FROM product_registration_model_links link
             JOIN product_models product ON product.id = link.product_model_id
-            JOIN registration_models registration
-              ON registration.id = link.registration_model_id
             JOIN registration_packages package
               ON package.id = link.registration_package_id
-             AND package.country_code = registration.country_code
             JOIN registration_package_versions package_version
               ON package_version.package_id = package.id
              AND package_version.status = 'active'
-             AND package_version.import_batch_id = registration.import_batch_id
-            WHERE registration.country_code = :country_code
-              AND registration.source_status = 'active'
+            JOIN registration_package_version_models version_model
+              ON version_model.version_id = package_version.id
+             AND version_model.registration_model_id = link.registration_model_id
+            WHERE package.country_code = :country_code
               AND link.review_status = 'approved'
             ORDER BY product.id
             """
@@ -63,25 +61,40 @@ async def list_registration_models(
         "limit": limit,
     }
     filters = """
-        country_code = :country_code
-        AND source_status = 'active'
+        package.country_code = :country_code
+        AND package_version.status = 'active'
         AND (
             :search_pattern IS NULL
-            OR model_name LIKE :search_pattern
+            OR version_model.model_name LIKE :search_pattern
         )
     """
     total_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM registration_models WHERE {filters}"),
+        text(
+            f"""
+            SELECT COUNT(*)
+            FROM registration_package_version_models version_model
+            JOIN registration_package_versions package_version
+              ON package_version.id = version_model.version_id
+            JOIN registration_packages package ON package.id = package_version.package_id
+            WHERE {filters}
+            """
+        ),
         params,
     )
     result = await session.execute(
         text(
             f"""
-            SELECT id, country_code, model_name, channel_count,
-                   source_document_id
-            FROM registration_models
+            SELECT version_model.id,
+                   package.country_code,
+                   version_model.model_name,
+                   version_model.channel_count,
+                   package_version.difference_document_id AS source_document_id
+            FROM registration_package_version_models version_model
+            JOIN registration_package_versions package_version
+              ON package_version.id = version_model.version_id
+            JOIN registration_packages package ON package.id = package_version.package_id
             WHERE {filters}
-            ORDER BY id
+            ORDER BY package.id, version_model.id
             LIMIT :limit OFFSET :skip
             """
         ),
@@ -98,9 +111,16 @@ async def list_registration_model_probes(
     model_result = await session.execute(
         text(
             """
-            SELECT id, country_code, model_name, source_document_id
-            FROM registration_models
-            WHERE id = :registration_model_id AND source_status = 'active'
+            SELECT version_model.id,
+                   package.country_code,
+                   version_model.model_name,
+                   package_version.difference_document_id AS source_document_id
+            FROM registration_package_version_models version_model
+            JOIN registration_package_versions package_version
+              ON package_version.id = version_model.version_id
+             AND package_version.status = 'active'
+            JOIN registration_packages package ON package.id = package_version.package_id
+            WHERE version_model.id = :registration_model_id
             """
         ),
         {"registration_model_id": registration_model_id},
@@ -113,7 +133,7 @@ async def list_registration_model_probes(
         text(
             """
             SELECT matrix.id AS matrix_id,
-                   probe.id AS probe_id,
+                   probe.registration_probe_id AS probe_id,
                    probe.probe_model,
                    probe.ipn,
                    matrix.registration_status,
@@ -121,11 +141,14 @@ async def list_registration_model_probes(
                    item.zh_desc AS config_name,
                    probe_master.id AS probe_master_id,
                    probe_master.model_number AS probe_master_model,
-                   matrix.source_document_id,
+                   package_version.difference_document_id AS source_document_id,
                    matrix.source_ref
-            FROM registration_model_probes matrix
-            JOIN registration_probes probe
-              ON probe.id = matrix.registration_probe_id
+            FROM registration_package_version_model_probes matrix
+            JOIN registration_package_version_probes probe
+              ON probe.id = matrix.version_probe_id
+            JOIN registration_package_versions package_version
+              ON package_version.id = matrix.version_id
+             AND package_version.status = 'active'
             LEFT JOIN config_items item
               ON item.ipn = probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
@@ -137,8 +160,7 @@ async def list_registration_model_probes(
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id
-            WHERE matrix.registration_model_id = :registration_model_id
-              AND probe.source_status = 'active'
+            WHERE matrix.version_model_id = :registration_model_id
             ORDER BY probe.id
             """
         ),
@@ -185,27 +207,25 @@ async def list_product_registration_probes(
             """
             SELECT product.id AS product_model_id,
                    product.name AS product_model_name,
-                   registration.id AS registration_model_id,
-                   registration.model_name AS registration_model_name,
-                   registration.source_document_id,
+                   version_model.id AS registration_model_id,
+                   version_model.model_name AS registration_model_name,
+                   package_version.difference_document_id AS source_document_id,
                    link.mapping_type,
                    package.id AS registration_package_id,
                    package.registration_number,
                    package.display_name AS registration_package_name,
-                   package_version.import_batch_id AS registration_import_batch_id
+                   package_version.id AS registration_package_version_id
             FROM product_registration_model_links link
             JOIN product_models product ON product.id = link.product_model_id
-            JOIN registration_models registration
-              ON registration.id = link.registration_model_id
             JOIN registration_packages package
               ON package.id = link.registration_package_id
-             AND package.country_code = registration.country_code
             JOIN registration_package_versions package_version
               ON package_version.package_id = package.id
              AND package_version.status = 'active'
-             AND package_version.import_batch_id = registration.import_batch_id
+            JOIN registration_package_version_models version_model
+              ON version_model.version_id = package_version.id
+             AND version_model.registration_model_id = link.registration_model_id
             WHERE product.id = :product_model_id
-              AND registration.source_status = 'active'
               AND link.review_status = 'approved'
             """
         ),
@@ -218,16 +238,19 @@ async def list_product_registration_probes(
     result = await session.execute(
         text(
             """
-            SELECT probe.id AS probe_id, probe.probe_model, probe.ipn,
+            SELECT probe.registration_probe_id AS probe_id,
+                   probe.probe_model, probe.ipn,
                    matrix.registration_status,
                    value.selection_config, value.current_config,
                    item.id AS config_item_id, item.zh_desc AS config_name,
                    probe_master.id AS probe_master_id,
                    probe_master.model_number AS probe_master_model,
-                   matrix.source_document_id
-            FROM registration_model_probes matrix
-            JOIN registration_probes probe
-              ON probe.id = matrix.registration_probe_id
+                   package_version.difference_document_id AS source_document_id
+            FROM registration_package_version_model_probes matrix
+            JOIN registration_package_version_probes probe
+              ON probe.id = matrix.version_probe_id
+            JOIN registration_package_versions package_version
+              ON package_version.id = matrix.version_id
             LEFT JOIN config_items item
               ON item.ipn = probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
@@ -242,17 +265,15 @@ async def list_product_registration_probes(
             LEFT JOIN config_values value
               ON value.item_id = item.id
              AND value.model_id = :product_model_id
-            WHERE matrix.registration_model_id = :registration_model_id
-              AND probe.source_status = 'active'
-              AND matrix.import_batch_id = :registration_import_batch_id
-              AND probe.import_batch_id = :registration_import_batch_id
+            WHERE matrix.version_model_id = :registration_model_id
+              AND matrix.version_id = :registration_package_version_id
             ORDER BY probe.id
             """
         ),
         {
             "product_model_id": product_model_id,
             "registration_model_id": mapping.registration_model_id,
-            "registration_import_batch_id": mapping.registration_import_batch_id,
+            "registration_package_version_id": mapping.registration_package_version_id,
         },
     )
 

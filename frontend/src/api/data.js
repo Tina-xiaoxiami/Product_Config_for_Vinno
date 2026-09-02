@@ -178,3 +178,11 @@ export const getRegistrationPackageVersions = (packageId) =>
   api.get(`/registrations/packages/${packageId}/versions`)
 export const getRegistrationPackageVersion = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}`)
+export const stageRegistrationPackageDraft = (formData) =>
+  api.post('/registrations/packages/drafts', formData)
+export const getRegistrationPackageMappings = (versionId) =>
+  api.get(`/registrations/package-versions/${versionId}/mappings`)
+export const updateRegistrationPackageMappings = (versionId, mappings) =>
+  api.put(`/registrations/package-versions/${versionId}/mappings`, { mappings })
+export const publishRegistrationPackageVersion = (versionId, confirmedBy) =>
+  api.post(`/registrations/package-versions/${versionId}/publish`, { confirmed_by: confirmedBy })
