@@ -12,6 +12,12 @@
       "prompt": "Release Note 里写针增益调节进入 1.14.80。帮我判断是不是招标功能。",
       "expected_output": "区分版本存在性与配置策略，不能仅凭 Release Note 判断招标支持，应检查正式选型。",
       "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我在 iCloud 里放了一份新的 V10 白皮书，请登记到知识库并提取内容。",
+      "expected_output": "先把原文件收纳到 Obsidian 受控材料/白皮书目录，校验受控副本与来源 SHA-256 一致后再登记受控路径；不得直接登记 iCloud 路径。",
+      "files": []
     }
   ]
 }
