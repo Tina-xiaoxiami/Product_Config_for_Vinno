@@ -1,0 +1,17 @@
+{
+  "skill_name": "vinno-registration-ingest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我给你一张新的国内注册证 PDF 和一份型号差异 Excel。请导入 V5 系列，先让我看机型映射和未注册探头，不要直接发布。",
+      "expected_output": "成对校验原件，生成草稿、映射建议、红线摘要和集中待确认项，不正式发布。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "这张苏证是有效正式版，但暂时不启用。VINNO 9 综合版沿用 VINNO 9，帮我更新系统。",
+      "expected_output": "分开版本和启用状态，保留衍生映射，默认查询排除苏证，并执行完整性核验。",
+      "files": []
+    }
+  ]
+}

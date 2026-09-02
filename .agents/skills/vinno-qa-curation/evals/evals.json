@@ -1,0 +1,17 @@
+{
+  "skill_name": "vinno-qa-curation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "下游问 VINNO 10E 支持 I4-11T 吗？没有说注册证。请给可以直接转发的答案。",
+      "expected_output": "采用默认已启用证给当前结论，说明范围；存在正式未启用证时提示但不混入当前支持结论。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "有人问针增益调节是不是招标功能。Release Note 只证明 1.14.80 有这个功能，系统里暂时找不到选型类别。",
+      "expected_output": "不能把版本存在性推断为招标支持，应创建待确认答案并附 Release Note 候选依据。",
+      "files": []
+    }
+  ]
+}

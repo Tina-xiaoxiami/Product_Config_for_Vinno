@@ -1,0 +1,17 @@
+{
+  "skill_name": "vinno-product-material-ingest",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这是 V10 的 1.14.80 白皮书目录。请提取功能事实并关联已有功能，原文件要能预览，不明确的地方集中问我。",
+      "expected_output": "登记原件和版本，提取带来源位置的候选事实，按主名或曾用名关联功能，集中报告歧义。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Release Note 里写针增益调节进入 1.14.80。帮我判断是不是招标功能。",
+      "expected_output": "区分版本存在性与配置策略，不能仅凭 Release Note 判断招标支持，应检查正式选型。",
+      "files": []
+    }
+  ]
+}

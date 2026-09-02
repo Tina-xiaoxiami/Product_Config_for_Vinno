@@ -1,0 +1,17 @@
+{
+  "skill_name": "vinno-feature-identity-curation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "6000017 的中文描述是梯形成像，英文描述是 TView，研发名称写成 TView【启用】。请整理主名和曾用名。",
+      "expected_output": "以中英文描述作为对应语言主名，移除状态标记，不让研发名称覆盖中文主名。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "6000294 和 6000415 功能一样但属于不同版本，材料里两个名字都可能出现。请合并查询能力。",
+      "expected_output": "保留两个 IPN 身份并建立版本关系，使两个名称都能命中，不删除 IPN。",
+      "files": []
+    }
+  ]
+}
