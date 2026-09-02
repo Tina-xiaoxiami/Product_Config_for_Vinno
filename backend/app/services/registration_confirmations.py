@@ -11,4 +11,3 @@ CONFIRMED_DERIVED_MODEL_BASES: dict[str, str] = {
 
 def confirmed_derived_model_bases() -> dict[str, str]:
     return dict(CONFIRMED_DERIVED_MODEL_BASES)
-

@@ -153,4 +153,3 @@ class ProductRegistrationModelLink(Base):
         ),
         Index("ix_product_registration_links_product", "product_model_id"),
     )
-

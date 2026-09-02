@@ -117,4 +117,3 @@ def migrate_registration_schema(database_path: str | Path) -> None:
             raise
     finally:
         connection.close()
-

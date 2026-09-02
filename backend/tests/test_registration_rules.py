@@ -99,4 +99,3 @@ def test_registration_redline_precedes_formal_and_auxiliary_product_strategy(
     assert result.effective_status == effective_status
     assert result.status_source == status_source
     assert result.is_formal is is_formal
-

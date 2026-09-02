@@ -197,4 +197,3 @@ def evaluate_probe_availability(
         is_formal=False,
         conflict=selection == "#",
     )
-
