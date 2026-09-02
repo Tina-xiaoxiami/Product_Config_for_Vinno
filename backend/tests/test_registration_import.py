@@ -1,9 +1,12 @@
 import sqlite3
 
+import openpyxl
 from openpyxl import Workbook
 
+from app.services import registration_rules
 from app.services.registration_import import import_domestic_registration_workbook
 from app.services.registration_migration import migrate_registration_schema
+from app.services.registration_rules import parse_domestic_registration_workbook
 
 
 def _create_database(path):
@@ -129,6 +132,54 @@ def _write_registration_workbook(path, *, vinno10_unsupported="探头全适用")
     probes.append(["G1-4P", 1000744, 1000744])
     probes.append(["F4-9E", 1000784, 1000784])
     workbook.save(path)
+
+
+class _UnsizedWorksheet:
+    def __init__(self, worksheet):
+        self._worksheet = worksheet
+        self._sized = False
+
+    @property
+    def max_row(self):
+        return self._worksheet.max_row if self._sized else None
+
+    @property
+    def max_column(self):
+        return self._worksheet.max_column if self._sized else None
+
+    def calculate_dimension(self, *, force=False):
+        if force:
+            self._sized = True
+        return self._worksheet.calculate_dimension()
+
+    def cell(self, *args, **kwargs):
+        return self._worksheet.cell(*args, **kwargs)
+
+
+class _UnsizedWorkbook:
+    def __init__(self, workbook):
+        self._workbook = workbook
+        self.worksheets = [_UnsizedWorksheet(sheet) for sheet in workbook.worksheets]
+        self.sheetnames = [sheet.title for sheet in workbook.worksheets]
+
+    def __getitem__(self, name):
+        return self.worksheets[self.sheetnames.index(name)]
+
+    def close(self):
+        self._workbook.close()
+
+
+def test_parser_supports_valid_workbooks_without_dimension_metadata(tmp_path, monkeypatch):
+    workbook_path = tmp_path / "registration.xlsx"
+    _write_registration_workbook(workbook_path)
+    actual = openpyxl.load_workbook(workbook_path, read_only=False, data_only=True)
+    unsized = _UnsizedWorkbook(actual)
+    monkeypatch.setattr(registration_rules, "load_workbook", lambda *args, **kwargs: unsized)
+
+    parsed = parse_domestic_registration_workbook(workbook_path)
+
+    assert len(parsed.models) == 3
+    assert len(parsed.probes) == 3
 
 
 def test_registration_schema_and_import_materialize_country_model_probe_redlines(tmp_path):
