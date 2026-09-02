@@ -70,6 +70,13 @@ def _find_model_header_row(sheet) -> int:
     raise ValueError("注册差异表缺少‘型号/不支持探头’表头")
 
 
+def _ensure_sheet_dimensions(sheet) -> None:
+    """让未携带 worksheet dimension 元数据的合法工作簿可被流式解析。"""
+
+    if sheet.max_row is None or sheet.max_column is None:
+        sheet.calculate_dimension(force=True)
+
+
 def parse_domestic_registration_workbook(
     workbook_path: str | Path,
 ) -> DomesticRegistrationWorkbook:
@@ -83,6 +90,8 @@ def parse_domestic_registration_workbook(
     try:
         matrix_sheet = workbook["0729"] if "0729" in workbook.sheetnames else workbook.worksheets[0]
         probe_sheet = workbook["Sheet1"] if "Sheet1" in workbook.sheetnames else workbook.worksheets[1]
+        _ensure_sheet_dimensions(matrix_sheet)
+        _ensure_sheet_dimensions(probe_sheet)
 
         probes: list[RegistrationProbeSource] = []
         seen_probe_models: set[str] = set()
