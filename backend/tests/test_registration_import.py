@@ -13,10 +13,25 @@ def _create_database(path):
         PRAGMA foreign_keys = ON;
         CREATE TABLE knowledge_documents (
             id INTEGER PRIMARY KEY,
+            document_type TEXT,
+            title TEXT,
+            file_name TEXT,
+            file_path TEXT,
             sha256 TEXT,
-            version TEXT
+            version TEXT,
+            market TEXT,
+            country TEXT,
+            product_series TEXT,
+            mime_type TEXT,
+            source_status TEXT DEFAULT 'active'
         );
-        INSERT INTO knowledge_documents VALUES (1, 'source-sha', '20250729');
+        INSERT INTO knowledge_documents VALUES (
+            1, 'registration_difference', 'V10差异表', 'registration.xlsx',
+            '/tmp/registration.xlsx', 'source-sha', '20250729',
+            'domestic', 'CN', 'V10',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'active'
+        );
 
         CREATE TABLE product_series (
             id INTEGER PRIMARY KEY,

@@ -1,3 +1,7 @@
+import hashlib
+from pathlib import Path
+import sqlite3
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -33,6 +37,49 @@ async def _client_for(database_path):
     return client, engine
 
 
+def _activate_imported_package(database_path, workbook_path):
+    workbook_path = Path(workbook_path)
+    certificate_path = workbook_path.parent / "certificate.pdf"
+    certificate_path.write_bytes(b"registration-certificate")
+    workbook_sha = hashlib.sha256(workbook_path.read_bytes()).hexdigest()
+    certificate_sha = hashlib.sha256(certificate_path.read_bytes()).hexdigest()
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        UPDATE knowledge_documents
+        SET file_path = ?, sha256 = ? WHERE id = 1
+        """,
+        (str(workbook_path), workbook_sha),
+    )
+    connection.execute(
+        """
+        INSERT INTO knowledge_documents (
+            id, document_type, title, file_name, file_path, sha256, version,
+            market, country, product_series, mime_type, source_status
+        ) VALUES (
+            2, 'registration_certificate', 'V10注册证', 'certificate.pdf', ?, ?,
+            '20260615', 'domestic', 'CN', 'V10', 'application/pdf', 'active'
+        )
+        """,
+        (str(certificate_path), certificate_sha),
+    )
+    connection.commit()
+    connection.close()
+    return migrate_existing_registration_package(
+        database_path,
+        certificate_document_id=2,
+        difference_document_id=1,
+        import_batch_id=1,
+        country_code="CN",
+        unit_code="V10",
+        display_name="V10系列国内注册",
+        product_series="V10",
+        registration_number="湘械注准20222062053",
+        identity_source="registration_certificate",
+        confirmed_by="baseline_migration",
+    )
+
+
 @pytest.mark.asyncio
 async def test_registration_api_combines_redline_formal_strategy_and_current_auxiliary(tmp_path):
     database_path = tmp_path / "product_config.db"
@@ -45,6 +92,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         workbook_path,
         source_document_id=1,
     )
+    _activate_imported_package(database_path, workbook_path)
     client, engine = await _client_for(database_path)
 
     async with client:
@@ -73,6 +121,9 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "registration_model_name": "VINNO 9",
         "mapping_type": "confirmed_derived",
         "channel_count": 128,
+        "registration_package_id": 1,
+        "registration_number": "湘械注准20222062053",
+        "registration_package_name": "V10系列国内注册",
     }
 
     assert probes_response.status_code == 200
@@ -121,6 +172,7 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
         workbook_path,
         source_document_id=1,
     )
+    _activate_imported_package(database_path, workbook_path)
     client, engine = await _client_for(database_path)
 
     async with client:
@@ -178,6 +230,7 @@ async def test_registration_master_data_lists_source_rows_by_registration_model(
         workbook_path,
         source_document_id=1,
     )
+    _activate_imported_package(database_path, workbook_path)
     client, engine = await _client_for(database_path)
 
     async with client:
@@ -209,6 +262,47 @@ async def test_registration_master_data_lists_source_rows_by_registration_model(
         "source_document_id",
         "source_ref",
     }
+
+
+@pytest.mark.asyncio
+async def test_product_query_only_uses_registration_certificate_mapped_to_model(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    package = _activate_imported_package(database_path, workbook_path)
+    client, engine = await _client_for(database_path)
+
+    connection = sqlite3.connect(database_path)
+    mapped_package_id = connection.execute(
+        """
+        SELECT registration_package_id
+        FROM product_registration_model_links WHERE product_model_id = 2
+        """
+    ).fetchone()[0]
+    assert mapped_package_id == package["package_id"]
+    connection.execute(
+        "UPDATE product_registration_model_links SET registration_package_id = NULL "
+        "WHERE product_model_id = 2"
+    )
+    connection.commit()
+    connection.close()
+
+    async with client:
+        unmapped = await client.get(
+            "/api/registrations/probes",
+            params={"product_model_id": 2},
+        )
+    await engine.dispose()
+
+    assert unmapped.status_code == 404
+    assert unmapped.json()["detail"] == "产品型号尚未关联对应注册证及注册基础型号"
 
 
 @pytest.mark.asyncio
