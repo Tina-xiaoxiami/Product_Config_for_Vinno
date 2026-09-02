@@ -12,6 +12,12 @@
       "prompt": "这张苏证是有效正式版，但暂时不启用。VINNO 9 综合版沿用 VINNO 9，帮我更新系统。",
       "expected_output": "分开版本和启用状态，保留衍生映射，默认查询排除苏证，并执行完整性核验。",
       "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "新的注册证和差异表还在 iCloud 原始目录，请登记并生成资料包草稿。",
+      "expected_output": "先把两份原件分别收纳到 Obsidian 受控材料的注册证和注册差异表目录，校验 SHA-256 后登记受控路径；不得直链 iCloud，资料包内部快照可继续保存在 registration_sources。",
+      "files": []
     }
   ]
 }

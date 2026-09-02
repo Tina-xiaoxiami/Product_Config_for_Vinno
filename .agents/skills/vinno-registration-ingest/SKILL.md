@@ -33,9 +33,11 @@ compatibility: Requires local access to the Product_Config_for_Vinno project and
 
 ### 2. 保存与校验原件
 
-- 保留文件名、MIME 类型、SHA-256 和可预览原件。
+- 先把注册证和注册差异表收纳到本地 Obsidian 受控材料目录的 `注册证`、`注册差异表` 子目录，不得直接登记 iCloud 来源路径。
+- 保留原文件名、MIME 类型、SHA-256 和可预览的受控原件；只有受控副本存在且哈希与来源一致时才可登记。
 - 校验两份材料属于同一注册单元。
 - 优先调用应用 API 或 `registration_packages` 服务；不要用零散 SQL 绕过版本和外键校验。
+- `backend/registration_sources` 可保留系统生成的资料包快照，但 `knowledge_documents.file_path` 中的原件登记应指向 Obsidian 受控副本。
 
 ### 3. 提取快照
 
