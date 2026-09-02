@@ -9,6 +9,7 @@ import sqlite3
 from typing import Any
 
 from app.services.registration_rules import normalize_business_name
+from app.services.registration_migration import migrate_registration_schema
 
 
 class RegistrationPackageError(ValueError):
@@ -365,3 +366,31 @@ def record_registration_package_version(
             raise
     finally:
         connection.close()
+
+
+def migrate_existing_registration_package(
+    database_path: str | Path,
+    *,
+    certificate_document_id: int,
+    difference_document_id: int,
+    import_batch_id: int,
+    country_code: str,
+    unit_code: str,
+    display_name: str,
+    product_series: str | None,
+    change_note: str = "现有注册数据基线迁移",
+) -> dict[str, Any]:
+    """幂等建立资料包结构并绑定既有投影，不重写注册主数据。"""
+
+    migrate_registration_schema(database_path)
+    return record_registration_package_version(
+        database_path,
+        country_code=country_code,
+        unit_code=unit_code,
+        display_name=display_name,
+        product_series=product_series,
+        certificate_document_id=certificate_document_id,
+        difference_document_id=difference_document_id,
+        import_batch_id=import_batch_id,
+        change_note=change_note,
+    )
