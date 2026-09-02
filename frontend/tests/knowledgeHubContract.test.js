@@ -115,6 +115,24 @@ test('base data management owns feature identity and registration master data', 
 })
 
 
+test('registration management shows paired certificate and difference history', () => {
+  const registrationView = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(registrationView, /注册资料版本/)
+  assert.match(registrationView, /data-testid="registration-package-history"/)
+  assert.match(registrationView, /查看注册证/)
+  assert.match(registrationView, /查看差异表/)
+  assert.match(registrationView, /基线版本/)
+  assert.match(registrationView, /注册状态变化/)
+  assert.match(registrationView, /getRegistrationPackages/)
+  assert.match(registrationView, /getRegistrationPackageVersions/)
+  assert.match(api, /export const getRegistrationPackages/)
+  assert.match(api, /export const getRegistrationPackageVersions/)
+  assert.match(api, /export const getRegistrationPackageVersion/)
+})
+
+
 test('knowledge hub is a read-only aggregate linked to master-data maintenance', () => {
   const view = read('../src/views/KnowledgeHub.vue')
 

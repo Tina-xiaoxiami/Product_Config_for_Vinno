@@ -7,7 +7,9 @@ from app.api import registration
 from app.database import get_db
 from app.services.registration_import import import_domestic_registration_workbook
 from app.services.registration_migration import migrate_registration_schema
+from app.services.registration_packages import record_registration_package_version
 from test_registration_import import _create_database, _write_registration_workbook
+from test_registration_packages import _create_database as _create_package_database
 
 
 async def _client_for(database_path):
@@ -204,3 +206,65 @@ async def test_registration_master_data_lists_source_rows_by_registration_model(
         "source_document_id",
         "source_ref",
     }
+
+
+@pytest.mark.asyncio
+async def test_registration_api_lists_paired_material_history_and_both_originals(tmp_path):
+    database_path = tmp_path / "packages.db"
+    _create_package_database(database_path)
+    recorded = record_registration_package_version(
+        database_path,
+        country_code="CN",
+        unit_code="V10",
+        display_name="V10系列国内注册",
+        product_series="V10",
+        certificate_document_id=25,
+        difference_document_id=24,
+        import_batch_id=1,
+        change_note="现有数据基线",
+    )
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        packages = await client.get(
+            "/api/registrations/packages",
+            params={"country_code": "CN"},
+        )
+        versions = await client.get(
+            f"/api/registrations/packages/{recorded['package_id']}/versions"
+        )
+        detail = await client.get(
+            f"/api/registrations/package-versions/{recorded['id']}"
+        )
+        missing = await client.get("/api/registrations/package-versions/999")
+    await engine.dispose()
+
+    assert packages.status_code == 200
+    assert packages.json()["total"] == 1
+    package = packages.json()["items"][0]
+    assert package["unit_code"] == "V10"
+    assert package["current_version"]["version_no"] == 1
+    assert package["current_version"]["status"] == "active"
+
+    assert versions.status_code == 200
+    assert versions.json()["package"]["display_name"] == "V10系列国内注册"
+    assert len(versions.json()["items"]) == 1
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["diff"]["kind"] == "baseline"
+    assert body["change_note"] == "现有数据基线"
+    assert body["certificate"] == {
+        "document_id": 25,
+        "title": "V10注册变更",
+        "version": "20260615",
+        "sha256": "certificate-sha-v1",
+        "preview_url": "/api/knowledge/documents/25/preview",
+    }
+    assert body["difference"] == {
+        "document_id": 24,
+        "title": "V10差异表",
+        "version": "20250729",
+        "sha256": "difference-sha-v1",
+        "preview_url": "/api/knowledge/documents/24/preview",
+    }
+    assert missing.status_code == 404
