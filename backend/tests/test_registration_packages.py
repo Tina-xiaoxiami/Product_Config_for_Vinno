@@ -7,6 +7,7 @@ from app.services.registration_migration import migrate_registration_schema
 from app.services.registration_packages import (
     RegistrationPackageError,
     compute_registration_snapshot_diff,
+    migrate_existing_registration_package,
     record_registration_package_version,
 )
 
@@ -261,5 +262,82 @@ def test_pair_version_record_is_atomic_idempotent_and_keeps_history(tmp_path):
     ).fetchall()
     assert versions == [(1, "superseded"), (2, "active")]
     assert connection.execute("SELECT COUNT(*) FROM registration_packages").fetchone()[0] == 1
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_existing_pair_migration_preserves_projection_and_is_idempotent(tmp_path):
+    database_path = tmp_path / "packages.db"
+    _create_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        INSERT INTO product_models (id) VALUES (1);
+        INSERT INTO registration_models (
+            id, country_code, model_name, normalized_name, channel_count,
+            import_batch_id, source_document_id, source_ref, source_status
+        ) VALUES (1, 'CN', 'VINNO 10', 'vinno10', 128, 1, 24, '0729!4', 'active');
+        INSERT INTO registration_probes (
+            id, country_code, probe_model, normalized_model, ipn,
+            import_batch_id, source_document_id, source_ref, source_status
+        ) VALUES (1, 'CN', 'F4-9E', 'f4-9e', '1000784', 1, 24, 'Sheet1!2', 'active');
+        INSERT INTO registration_model_probes (
+            id, country_code, registration_model_id, registration_probe_id,
+            registration_status, import_batch_id, source_document_id, source_ref
+        ) VALUES (1, 'CN', 1, 1, 'registered', 1, 24, '0729!4');
+        INSERT INTO product_registration_model_links (
+            id, product_model_id, registration_model_id, mapping_type,
+            source, review_status
+        ) VALUES (1, 1, 1, 'direct', 'registration_import', 'approved');
+        """
+    )
+    before = tuple(
+        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in (
+            "registration_models",
+            "registration_probes",
+            "registration_model_probes",
+            "product_registration_model_links",
+        )
+    )
+    connection.commit()
+    connection.close()
+
+    first = migrate_existing_registration_package(
+        database_path,
+        certificate_document_id=25,
+        difference_document_id=24,
+        import_batch_id=1,
+        country_code="CN",
+        unit_code="V10",
+        display_name="V10系列国内注册",
+        product_series="V10",
+    )
+    repeated = migrate_existing_registration_package(
+        database_path,
+        certificate_document_id=25,
+        difference_document_id=24,
+        import_batch_id=1,
+        country_code="CN",
+        unit_code="V10",
+        display_name="V10系列国内注册",
+        product_series="V10",
+    )
+
+    connection = sqlite3.connect(database_path)
+    after = tuple(
+        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in (
+            "registration_models",
+            "registration_probes",
+            "registration_model_probes",
+            "product_registration_model_links",
+        )
+    )
+    assert before == after == (1, 1, 1, 1)
+    assert first["id"] == repeated["id"]
+    assert repeated["reused"] is True
+    assert connection.execute("SELECT COUNT(*) FROM registration_packages").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM registration_package_versions").fetchone()[0] == 1
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
