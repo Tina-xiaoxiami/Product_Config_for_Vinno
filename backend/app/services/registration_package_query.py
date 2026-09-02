@@ -16,8 +16,10 @@ _VERSION_SELECT = """
            version.diff_json,
            version.certificate_document_id, version.certificate_version,
            version.certificate_sha256, certificate.title AS certificate_title,
+           version.certificate_file_name, version.certificate_mime_type,
            version.difference_document_id, version.difference_version,
-           version.difference_sha256, difference.title AS difference_title
+           version.difference_sha256, difference.title AS difference_title,
+           version.difference_file_name, version.difference_mime_type
     FROM registration_package_versions version
     JOIN knowledge_documents certificate
       ON certificate.id = version.certificate_document_id
@@ -49,7 +51,7 @@ def _version_item(row) -> dict:
             "version": row.certificate_version,
             "sha256": row.certificate_sha256,
             "preview_url": (
-                f"/api/knowledge/documents/{row.certificate_document_id}/preview"
+                f"/api/registrations/package-versions/{row.id}/artifacts/certificate"
             ),
         },
         "difference": {
@@ -58,7 +60,7 @@ def _version_item(row) -> dict:
             "version": row.difference_version,
             "sha256": row.difference_sha256,
             "preview_url": (
-                f"/api/knowledge/documents/{row.difference_document_id}/preview"
+                f"/api/registrations/package-versions/{row.id}/artifacts/difference"
             ),
         },
     }
@@ -71,6 +73,9 @@ def _package_item(row) -> dict:
         "unit_code": row.unit_code,
         "display_name": row.display_name,
         "product_series": row.product_series,
+        "registration_number": row.registration_number,
+        "identity_source": row.identity_source,
+        "confirmed_by": row.confirmed_by,
     }
 
 
@@ -82,7 +87,8 @@ async def list_registration_packages(
     package_rows = await session.execute(
         text(
             """
-            SELECT id, country_code, unit_code, display_name, product_series
+            SELECT id, country_code, unit_code, display_name, product_series,
+                   registration_number, identity_source, confirmed_by
             FROM registration_packages
             WHERE country_code = :country_code
             ORDER BY display_name, id
@@ -122,7 +128,8 @@ async def list_registration_package_versions(
     package_result = await session.execute(
         text(
             """
-            SELECT id, country_code, unit_code, display_name, product_series
+            SELECT id, country_code, unit_code, display_name, product_series,
+                   registration_number, identity_source, confirmed_by
             FROM registration_packages WHERE id = :package_id
             """
         ),
@@ -163,3 +170,35 @@ async def get_registration_package_version(
     )
     row = result.one_or_none()
     return _version_item(row) if row is not None else None
+
+
+async def get_registration_package_artifact(
+    session: AsyncSession,
+    *,
+    version_id: int,
+    artifact_type: str,
+) -> dict | None:
+    if artifact_type not in {"certificate", "difference"}:
+        return None
+    result = await session.execute(
+        text(
+            f"""
+            SELECT {artifact_type}_artifact_path AS file_path,
+                   {artifact_type}_file_name AS file_name,
+                   {artifact_type}_mime_type AS mime_type,
+                   {artifact_type}_sha256 AS sha256
+            FROM registration_package_versions
+            WHERE id = :version_id
+            """
+        ),
+        {"version_id": version_id},
+    )
+    row = result.one_or_none()
+    if row is None:
+        return None
+    return {
+        "file_path": row.file_path,
+        "file_name": row.file_name,
+        "mime_type": row.mime_type,
+        "sha256": row.sha256,
+    }

@@ -131,6 +131,9 @@ class RegistrationPackageBase(BaseModel):
     unit_code: str
     display_name: str
     product_series: str | None = None
+    registration_number: str | None = None
+    identity_source: str | None = None
+    confirmed_by: str | None = None
 
 
 class RegistrationPackageItem(RegistrationPackageBase):

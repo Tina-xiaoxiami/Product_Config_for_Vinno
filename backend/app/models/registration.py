@@ -47,6 +47,9 @@ class RegistrationPackage(Base):
     unit_code = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     product_series = Column(Text)
+    registration_number = Column(Text)
+    identity_source = Column(Text)
+    confirmed_by = Column(Text)
     created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
@@ -55,6 +58,15 @@ class RegistrationPackage(Base):
             "country_code",
             "unit_code",
             name="uq_registration_package_country_unit",
+        ),
+        Index(
+            "uq_registration_package_number",
+            "country_code",
+            "registration_number",
+            unique=True,
+            sqlite_where=text(
+                "registration_number IS NOT NULL AND registration_number <> ''"
+            ),
         ),
     )
 
@@ -87,11 +99,16 @@ class RegistrationPackageVersion(Base):
     )
     difference_version = Column(Text)
     difference_sha256 = Column(Text, nullable=False)
+    certificate_artifact_path = Column(Text)
+    certificate_file_name = Column(Text)
+    certificate_mime_type = Column(Text)
+    difference_artifact_path = Column(Text)
+    difference_file_name = Column(Text)
+    difference_mime_type = Column(Text)
     import_batch_id = Column(
         Integer,
         ForeignKey("registration_import_batches.id"),
         nullable=False,
-        unique=True,
     )
     snapshot_hash = Column(Text, nullable=False)
     pair_hash = Column(Text, nullable=False)

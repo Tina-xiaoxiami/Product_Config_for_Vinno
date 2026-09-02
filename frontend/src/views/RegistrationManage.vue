@@ -36,7 +36,10 @@
       <article v-for="group in packageGroups" :key="group.id" class="package-card">
         <div class="package-title">
           <strong>{{ group.display_name }}</strong>
-          <span>{{ group.country_code }} · {{ group.unit_code }}</span>
+          <span>
+            {{ group.country_code }} · {{ group.unit_code }} ·
+            {{ group.registration_number || '未登记注册证号' }}
+          </span>
         </div>
         <el-collapse>
           <el-collapse-item
@@ -48,11 +51,11 @@
               <div class="version-title">
                 <span>第 {{ version.version_no }} 版</span>
                 <el-tag
-                  :type="version.status === 'active' ? 'success' : 'info'"
+                  :type="version.status === 'active' ? 'success' : version.status === 'draft' ? 'warning' : 'info'"
                   size="small"
                   effect="plain"
                 >
-                  {{ version.status === 'active' ? '当前生效' : '历史版本' }}
+                  {{ version.status === 'active' ? '当前生效' : version.status === 'draft' ? '待确认草稿' : '历史版本' }}
                 </el-tag>
                 <span class="version-counts">
                   {{ version.model_count }} 型号 · {{ version.probe_count }} 探头 ·
@@ -95,7 +98,10 @@
                 <span>新增型号 {{ version.diff.summary.models_added }}</span>
                 <span>删除型号 {{ version.diff.summary.models_removed }}</span>
                 <span>探头 IPN 变化 {{ version.diff.summary.probe_ipn_changed }}</span>
+                <span>型号通道数变化 {{ version.diff.summary.model_channel_count_changed || 0 }}</span>
                 <span>注册状态变化 {{ version.diff.summary.registration_status_changed }}</span>
+                <span v-if="version.diff.documents?.certificate_changed">注册证文件已变化</span>
+                <span v-if="version.diff.documents?.difference_changed">注册差异表文件已变化</span>
               </div>
               <el-table
                 v-if="version.diff.registration_status_changes?.length"

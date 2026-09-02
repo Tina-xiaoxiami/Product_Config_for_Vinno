@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
+import shutil
 import sqlite3
 from typing import Any
+from uuid import uuid4
 
 from app.services.registration_rules import normalize_business_name
 from app.services.registration_migration import migrate_registration_schema
@@ -45,6 +48,9 @@ def _display_names(items: dict[str, dict], field: str, identities: set[str]) -> 
 def compute_registration_snapshot_diff(
     previous_snapshot_json: str | None,
     current_snapshot_json: str,
+    *,
+    previous_documents: dict[str, str] | None = None,
+    current_documents: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     current_models, current_probes = _snapshot_maps(current_snapshot_json)
     if previous_snapshot_json is None:
@@ -57,6 +63,10 @@ def compute_registration_snapshot_diff(
             },
             "models": {"added": [], "removed": []},
             "probes": {"added": [], "removed": [], "ipn_changed": []},
+            "documents": {
+                "certificate_changed": False,
+                "difference_changed": False,
+            },
             "registration_status_changes": [],
         }
 
@@ -72,6 +82,18 @@ def compute_registration_snapshot_diff(
     models_removed = previous_model_keys - current_model_keys
     probes_added = current_probe_keys - previous_probe_keys
     probes_removed = previous_probe_keys - current_probe_keys
+    channel_count_changed = []
+    for model_key in sorted(common_models):
+        old_count = previous_models[model_key].get("channel_count")
+        new_count = current_models[model_key].get("channel_count")
+        if old_count != new_count:
+            channel_count_changed.append(
+                {
+                    "model": str(current_models[model_key]["model_name"]),
+                    "from": old_count,
+                    "to": new_count,
+                }
+            )
     ipn_changed = []
     for probe_key in sorted(common_probes):
         old_ipn = str(previous_probes[probe_key].get("ipn") or "")
@@ -116,16 +138,32 @@ def compute_registration_snapshot_diff(
             "probes_added": len(probes_added),
             "probes_removed": len(probes_removed),
             "probe_ipn_changed": len(ipn_changed),
+            "model_channel_count_changed": len(channel_count_changed),
             "registration_status_changed": len(status_changes),
         },
         "models": {
             "added": _display_names(current_models, "model_name", models_added),
             "removed": _display_names(previous_models, "model_name", models_removed),
+            "channel_count_changed": channel_count_changed,
         },
         "probes": {
             "added": _display_names(current_probes, "probe_model", probes_added),
             "removed": _display_names(previous_probes, "probe_model", probes_removed),
             "ipn_changed": ipn_changed,
+        },
+        "documents": {
+            "certificate_changed": bool(
+                previous_documents
+                and current_documents
+                and previous_documents.get("certificate_sha256")
+                != current_documents.get("certificate_sha256")
+            ),
+            "difference_changed": bool(
+                previous_documents
+                and current_documents
+                and previous_documents.get("difference_sha256")
+                != current_documents.get("difference_sha256")
+            ),
         },
         "registration_status_changes": status_changes,
     }
@@ -134,7 +172,8 @@ def compute_registration_snapshot_diff(
 def _document(connection: sqlite3.Connection, document_id: int) -> sqlite3.Row:
     row = connection.execute(
         """
-        SELECT id, document_type, version, country, product_series, sha256, source_status
+        SELECT id, document_type, version, country, product_series, sha256,
+               source_status, file_name, file_path, mime_type
         FROM knowledge_documents WHERE id = ?
         """,
         (document_id,),
@@ -178,7 +217,7 @@ def _validate_pair(
     batch = connection.execute(
         """
         SELECT id, country_code, source_document_id, snapshot_hash, snapshot_json,
-               model_count, probe_count, matrix_count
+               model_count, probe_count, matrix_count, status
         FROM registration_import_batches WHERE id = ?
         """,
         (import_batch_id,),
@@ -192,6 +231,219 @@ def _validate_pair(
     if not batch["snapshot_hash"]:
         raise RegistrationPackageError("注册导入批次缺少快照哈希")
     return certificate, difference, batch
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_directory(
+    database_path: Path,
+    *,
+    country_code: str,
+    registration_number: str,
+) -> Path:
+    safe_number = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "_", registration_number)
+    return database_path.parent / "registration_artifacts" / country_code / safe_number
+
+
+def _archive_document(
+    database_path: Path,
+    *,
+    country_code: str,
+    registration_number: str,
+    role: str,
+    document: sqlite3.Row,
+) -> tuple[str, str, str | None]:
+    source = Path(str(document["file_path"]))
+    if not source.is_absolute() or not source.is_file():
+        raise RegistrationPackageError(
+            f"{role}原文件不存在或尚未同步，不能建立不可变历史"
+        )
+    expected_sha = str(document["sha256"])
+    if _file_sha256(source) != expected_sha:
+        raise RegistrationPackageError(f"{role}原文件内容与登记哈希不一致")
+
+    target_directory = _artifact_directory(
+        database_path,
+        country_code=country_code,
+        registration_number=registration_number,
+    )
+    target_directory.mkdir(parents=True, exist_ok=True)
+    suffix = Path(str(document["file_name"])).suffix.lower()
+    target = target_directory / f"{role}-{expected_sha}{suffix}"
+    if target.exists():
+        if _file_sha256(target) != expected_sha:
+            raise RegistrationPackageError(f"{role}归档副本哈希不一致")
+    else:
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            shutil.copyfile(source, temporary)
+            if _file_sha256(temporary) != expected_sha:
+                raise RegistrationPackageError(f"{role}归档复制校验失败")
+            temporary.replace(target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    return str(target.resolve()), str(document["file_name"]), document["mime_type"]
+
+
+def _validate_active_projection(
+    connection: sqlite3.Connection,
+    *,
+    country_code: str,
+    batch: sqlite3.Row,
+) -> None:
+    if batch["status"] != "active":
+        raise RegistrationPackageError("所选导入批次不是当前生效批次")
+    expected = (
+        int(batch["model_count"]),
+        int(batch["probe_count"]),
+        int(batch["matrix_count"]),
+    )
+    snapshot_models, snapshot_probes = _snapshot_maps(batch["snapshot_json"])
+    if expected != (
+        len(snapshot_models),
+        len(snapshot_probes),
+        len(snapshot_models) * len(snapshot_probes),
+    ):
+        raise RegistrationPackageError("导入批次数量与注册快照内容不一致")
+    actual = (
+        int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM registration_models
+                WHERE country_code = ? AND source_status = 'active'
+                  AND import_batch_id = ?
+                """,
+                (country_code, batch["id"]),
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM registration_probes
+                WHERE country_code = ? AND source_status = 'active'
+                  AND import_batch_id = ?
+                """,
+                (country_code, batch["id"]),
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM registration_model_probes
+                WHERE country_code = ? AND import_batch_id = ?
+                """,
+                (country_code, batch["id"]),
+            ).fetchone()[0]
+        ),
+    )
+    country_totals = (
+        int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM registration_models
+                WHERE country_code = ? AND source_status = 'active'
+                """,
+                (country_code,),
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM registration_probes
+                WHERE country_code = ? AND source_status = 'active'
+                """,
+                (country_code,),
+            ).fetchone()[0]
+        ),
+        int(
+            connection.execute(
+                "SELECT COUNT(*) FROM registration_model_probes WHERE country_code = ?",
+                (country_code,),
+            ).fetchone()[0]
+        ),
+    )
+    if actual != expected or country_totals != expected:
+        raise RegistrationPackageError(
+            "导入批次与当前注册结构化投影不一致，禁止建立生效基线"
+        )
+
+    projected_models = {
+        str(row["normalized_name"]): {
+            "model_name": row["model_name"],
+            "channel_count": row["channel_count"],
+        }
+        for row in connection.execute(
+            """
+            SELECT normalized_name, model_name, channel_count
+            FROM registration_models
+            WHERE country_code = ? AND source_status = 'active'
+            """,
+            (country_code,),
+        )
+    }
+    projected_probes = {
+        str(row["normalized_model"]): {
+            "probe_model": row["probe_model"],
+            "ipn": row["ipn"],
+        }
+        for row in connection.execute(
+            """
+            SELECT normalized_model, probe_model, ipn
+            FROM registration_probes
+            WHERE country_code = ? AND source_status = 'active'
+            """,
+            (country_code,),
+        )
+    }
+    expected_models = {
+        key: {
+            "model_name": item["model_name"],
+            "channel_count": item.get("channel_count"),
+        }
+        for key, item in snapshot_models.items()
+    }
+    expected_probes = {
+        key: {"probe_model": item["probe_model"], "ipn": str(item.get("ipn") or "")}
+        for key, item in snapshot_probes.items()
+    }
+    if projected_models != expected_models or projected_probes != expected_probes:
+        raise RegistrationPackageError(
+            "导入批次与当前注册结构化投影不一致，禁止建立生效基线"
+        )
+
+    projected_statuses = {
+        (str(row["model_key"]), str(row["probe_key"])): row["registration_status"]
+        for row in connection.execute(
+            """
+            SELECT model.normalized_name AS model_key,
+                   probe.normalized_model AS probe_key,
+                   matrix.registration_status
+            FROM registration_model_probes matrix
+            JOIN registration_models model ON model.id = matrix.registration_model_id
+            JOIN registration_probes probe ON probe.id = matrix.registration_probe_id
+            WHERE matrix.country_code = ?
+            """,
+            (country_code,),
+        )
+    }
+    expected_statuses = {}
+    for model_key, model in snapshot_models.items():
+        unsupported = {_identity(item) for item in model.get("unsupported_probes", [])}
+        for probe_key in snapshot_probes:
+            expected_statuses[(model_key, probe_key)] = (
+                "unregistered" if probe_key in unsupported else "registered"
+            )
+    if projected_statuses != expected_statuses:
+        raise RegistrationPackageError(
+            "导入批次与当前注册结构化投影不一致，禁止建立生效基线"
+        )
 
 
 def _version_result(row: sqlite3.Row, *, reused: bool) -> dict[str, Any]:
@@ -218,10 +470,14 @@ def record_registration_package_version(
     certificate_document_id: int,
     difference_document_id: int,
     import_batch_id: int,
+    registration_number: str | None = None,
+    identity_source: str | None = None,
+    confirmed_by: str | None = None,
     change_note: str | None = None,
     effective_date: str | None = None,
+    _activate_baseline: bool = False,
 ) -> dict[str, Any]:
-    """校验、记录并激活一对注册资料；重复资料包幂等复用。"""
+    """校验并记录一对注册资料；普通新增保持草稿，重复资料幂等复用。"""
 
     path = Path(database_path)
     if not path.is_file():
@@ -229,6 +485,9 @@ def record_registration_package_version(
     cleaned_country = str(country_code or "").strip().upper()
     cleaned_unit = str(unit_code or "").strip()
     cleaned_name = str(display_name or "").strip()
+    cleaned_registration_number = str(registration_number or "").strip()
+    cleaned_identity_source = str(identity_source or "").strip()
+    cleaned_confirmed_by = str(confirmed_by or "").strip()
     if len(cleaned_country) != 2 or not cleaned_unit or not cleaned_name:
         raise RegistrationPackageError("注册包国家、单元标识和名称不能为空")
 
@@ -246,17 +505,86 @@ def record_registration_package_version(
                 difference_document_id=difference_document_id,
                 import_batch_id=import_batch_id,
             )
+            if (
+                not cleaned_registration_number
+                or not cleaned_identity_source
+                or not cleaned_confirmed_by
+            ):
+                raise RegistrationPackageError(
+                    "注册证号、身份来源和确认人不能为空"
+                )
+            if _activate_baseline:
+                _validate_active_projection(
+                    connection,
+                    country_code=cleaned_country,
+                    batch=batch,
+                )
+
+            certificate_artifact = _archive_document(
+                path,
+                country_code=cleaned_country,
+                registration_number=cleaned_registration_number,
+                role="certificate",
+                document=certificate,
+            )
+            difference_artifact = _archive_document(
+                path,
+                country_code=cleaned_country,
+                registration_number=cleaned_registration_number,
+                role="difference",
+                document=difference,
+            )
+
+            conflicting_identity = connection.execute(
+                """
+                SELECT id, unit_code FROM registration_packages
+                WHERE country_code = ? AND registration_number = ?
+                  AND unit_code <> ?
+                """,
+                (cleaned_country, cleaned_registration_number, cleaned_unit),
+            ).fetchone()
+            if conflicting_identity is not None:
+                raise RegistrationPackageError(
+                    "该注册证号已绑定其他注册单元："
+                    f"{conflicting_identity['unit_code']}"
+                )
+            existing_package = connection.execute(
+                """
+                SELECT id, registration_number FROM registration_packages
+                WHERE country_code = ? AND unit_code = ?
+                """,
+                (cleaned_country, cleaned_unit),
+            ).fetchone()
+            if (
+                existing_package is not None
+                and existing_package["registration_number"]
+                and existing_package["registration_number"]
+                != cleaned_registration_number
+            ):
+                raise RegistrationPackageError("注册单元与既有注册证号不一致")
             connection.execute(
                 """
                 INSERT INTO registration_packages (
-                    country_code, unit_code, display_name, product_series
-                ) VALUES (?, ?, ?, ?)
+                    country_code, unit_code, display_name, product_series,
+                    registration_number, identity_source, confirmed_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(country_code, unit_code) DO UPDATE SET
                     display_name = excluded.display_name,
                     product_series = excluded.product_series,
+                    registration_number = excluded.registration_number,
+                    identity_source = excluded.identity_source,
+                    confirmed_by = excluded.confirmed_by,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (cleaned_country, cleaned_unit, cleaned_name, product_series),
+                (
+                    cleaned_country,
+                    cleaned_unit,
+                    cleaned_name,
+                    product_series,
+                    cleaned_registration_number,
+                    cleaned_identity_source,
+                    cleaned_confirmed_by,
+                ),
             )
             package = connection.execute(
                 """
@@ -284,6 +612,23 @@ def record_registration_package_version(
                 (package_id, pair_hash),
             ).fetchone()
             if existing is not None:
+                connection.execute(
+                    """
+                    UPDATE registration_package_versions SET
+                        certificate_artifact_path = ?,
+                        certificate_file_name = ?,
+                        certificate_mime_type = ?,
+                        difference_artifact_path = ?,
+                        difference_file_name = ?,
+                        difference_mime_type = ?
+                    WHERE id = ?
+                    """,
+                    (*certificate_artifact, *difference_artifact, existing["id"]),
+                )
+                existing = connection.execute(
+                    "SELECT * FROM registration_package_versions WHERE id = ?",
+                    (existing["id"],),
+                ).fetchone()
                 connection.commit()
                 return _version_result(existing, reused=True)
 
@@ -297,9 +642,20 @@ def record_registration_package_version(
                 """,
                 (package_id,),
             ).fetchone()
+            previous_documents = None
+            if previous is not None:
+                previous_documents = {
+                    "certificate_sha256": previous["certificate_sha256"],
+                    "difference_sha256": previous["difference_sha256"],
+                }
             diff = compute_registration_snapshot_diff(
                 previous["snapshot_json"] if previous else None,
                 batch["snapshot_json"],
+                previous_documents=previous_documents,
+                current_documents={
+                    "certificate_sha256": certificate["sha256"],
+                    "difference_sha256": difference["sha256"],
+                },
             )
             version_no = int(
                 connection.execute(
@@ -310,26 +666,26 @@ def record_registration_package_version(
                     (package_id,),
                 ).fetchone()[0]
             )
-            if previous is not None:
-                connection.execute(
-                    """
-                    UPDATE registration_package_versions
-                    SET status = 'superseded'
-                    WHERE id = ?
-                    """,
-                    (previous["id"],),
+            if _activate_baseline and previous is not None:
+                raise RegistrationPackageError(
+                    "生效基线已存在；后续版本必须经合并校验后发布"
                 )
+            status = "active" if _activate_baseline else "draft"
             cursor = connection.execute(
                 """
                 INSERT INTO registration_package_versions (
                     package_id, version_no, previous_version_id,
                     certificate_document_id, certificate_version, certificate_sha256,
                     difference_document_id, difference_version, difference_sha256,
+                    certificate_artifact_path, certificate_file_name,
+                    certificate_mime_type, difference_artifact_path,
+                    difference_file_name, difference_mime_type,
                     import_batch_id, snapshot_hash, pair_hash, diff_json, status,
                     change_note, effective_date, model_count, probe_count, matrix_count,
                     published_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active',
-                          ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?,
+                          CASE WHEN ? = 'active' THEN CURRENT_TIMESTAMP ELSE NULL END)
                 """,
                 (
                     package_id,
@@ -341,15 +697,19 @@ def record_registration_package_version(
                     difference_document_id,
                     difference["version"],
                     difference["sha256"],
+                    *certificate_artifact,
+                    *difference_artifact,
                     import_batch_id,
                     batch["snapshot_hash"],
                     pair_hash,
                     json.dumps(diff, ensure_ascii=False, sort_keys=True),
+                    status,
                     str(change_note or "").strip() or None,
                     effective_date,
                     batch["model_count"],
                     batch["probe_count"],
                     batch["matrix_count"],
+                    status,
                 ),
             )
             violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -378,6 +738,9 @@ def migrate_existing_registration_package(
     unit_code: str,
     display_name: str,
     product_series: str | None,
+    registration_number: str,
+    identity_source: str,
+    confirmed_by: str,
     change_note: str = "现有注册数据基线迁移",
 ) -> dict[str, Any]:
     """幂等建立资料包结构并绑定既有投影，不重写注册主数据。"""
@@ -392,5 +755,9 @@ def migrate_existing_registration_package(
         certificate_document_id=certificate_document_id,
         difference_document_id=difference_document_id,
         import_batch_id=import_batch_id,
+        registration_number=registration_number,
+        identity_source=identity_source,
+        confirmed_by=confirmed_by,
         change_note=change_note,
+        _activate_baseline=True,
     )

@@ -28,6 +28,7 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+registration_artifacts/
 
 # Logs
 *.log

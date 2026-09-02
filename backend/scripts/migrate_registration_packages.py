@@ -27,6 +27,9 @@ def main() -> int:
     parser.add_argument("--unit-code", required=True)
     parser.add_argument("--display-name", required=True)
     parser.add_argument("--product-series")
+    parser.add_argument("--registration-number", required=True)
+    parser.add_argument("--identity-source", default="registration_certificate")
+    parser.add_argument("--confirmed-by", default="baseline_migration")
     parser.add_argument("--change-note", default="现有注册数据基线迁移")
     args = parser.parse_args()
 
@@ -39,6 +42,9 @@ def main() -> int:
         unit_code=args.unit_code,
         display_name=args.display_name,
         product_series=args.product_series,
+        registration_number=args.registration_number,
+        identity_source=args.identity_source,
+        confirmed_by=args.confirmed_by,
         change_note=args.change_note,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
