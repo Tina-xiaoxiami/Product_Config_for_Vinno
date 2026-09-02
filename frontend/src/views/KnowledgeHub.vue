@@ -269,17 +269,8 @@
               <el-tag type="success" effect="plain">国内 / CN</el-tag>
             </div>
             <p>先执行注册红线，再读取正式选型；研发当前配置仅在没有正式选型时作为辅助信息。</p>
+            <p>同一产品存在多张国内注册证时，查询结果按注册证分别展示，不合并不同注册证的红线。</p>
           </div>
-          <el-button
-            tag="a"
-            :icon="View"
-            :href="registrationSourceUrl"
-            target="_blank"
-            rel="noopener"
-            :disabled="!registrationSourceDocumentId"
-          >
-            注册差异表原文
-          </el-button>
         </section>
 
         <section class="status-legend" aria-label="配置状态图例">
@@ -343,77 +334,95 @@
           <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
         </section>
 
-        <section v-if="selectedProductModelId" class="registration-context">
-          <span>产品型号：<strong>{{ registrationMeta.product_model_name || '-' }}</strong></span>
-          <span v-if="registrationMeta.registration_model_name">
-            注册基础型号：<strong>{{ registrationMeta.registration_model_name }}</strong>
-          </span>
-          <el-tag v-if="isDerivedRegistrationModel" type="warning" size="small" effect="plain">
-            衍生型号沿用基础型号注册
-          </el-tag>
-        </section>
+        <div v-loading="registrationLoading" class="registration-groups">
+          <article
+            v-for="group in registrationGroups"
+            :key="group.registration_package_id"
+            class="registration-group-card"
+          >
+            <header class="registration-group-header">
+              <div>
+                <div class="registration-group-title">
+                  <h4>{{ group.registration_package_name }}</h4>
+                  <el-tag type="primary" effect="plain">{{ group.registration_number }}</el-tag>
+                </div>
+                <div class="registration-context">
+                  <span>产品型号：<strong>{{ registrationProductModelName }}</strong></span>
+                  <span>注册基础型号：<strong>{{ group.registration_model_name }}</strong></span>
+                  <el-tag v-if="group.mapping_type !== 'direct'" type="warning" size="small" effect="plain">
+                    衍生型号沿用基础型号注册
+                  </el-tag>
+                </div>
+              </div>
+              <el-button
+                tag="a"
+                :icon="View"
+                :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
+                target="_blank"
+                rel="noopener"
+                :disabled="!group.source_document_id"
+              >
+                本证注册差异表原文
+              </el-button>
+            </header>
 
-        <section class="registration-summary" v-loading="registrationLoading">
-          <div><strong>{{ registrationSummary.registered }}</strong><span>已注册</span></div>
-          <div class="danger"><strong>{{ registrationSummary.unregistered }}</strong><span>未注册</span></div>
-          <div><strong>{{ registrationSummary.standard }}</strong><span>标配</span></div>
-          <div><strong>{{ registrationSummary.optional }}</strong><span>选配</span></div>
-          <div><strong>{{ registrationSummary.tender }}</strong><span>招标支持</span></div>
-          <div><strong>{{ registrationSummary.undefined }}</strong><span>策略未定义</span></div>
-        </section>
+            <section class="registration-summary">
+              <div><strong>{{ group.summary.registered }}</strong><span>已注册</span></div>
+              <div class="danger"><strong>{{ group.summary.unregistered }}</strong><span>未注册</span></div>
+              <div><strong>{{ group.summary.standard }}</strong><span>标配</span></div>
+              <div><strong>{{ group.summary.optional }}</strong><span>选配</span></div>
+              <div><strong>{{ group.summary.tender }}</strong><span>招标支持</span></div>
+              <div><strong>{{ group.summary.undefined }}</strong><span>策略未定义</span></div>
+            </section>
 
-        <el-table
-          data-testid="registration-strategy-table"
-          :data="registrationItems"
-          v-loading="registrationLoading"
-          border
-          stripe
-          empty-text="请选择型号或调整筛选条件"
-          class="registration-table"
-        >
-          <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
-          <el-table-column prop="ipn" label="IPN" min-width="115" />
-          <el-table-column prop="config_name" label="配置名称" min-width="180">
-            <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
-          </el-table-column>
-          <el-table-column label="注册状态" min-width="105" align="center">
-            <template #default="scope">
-              <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
-                {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="选型类别（正式）" min-width="135" align="center">
-            <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
-          </el-table-column>
-          <el-table-column label="当前配置（辅助）" min-width="135" align="center">
-            <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
-          </el-table-column>
-          <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
-            <template #default="scope">
-              <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
-                {{ displayConfigStatus(scope.row.effective_status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="判定依据" min-width="165">
-            <template #default="scope">
-              <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
-                {{ statusSourceLabel(scope.row.status_source) }}
-              </span>
-              <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <el-pagination
-          v-if="registrationTotal > registrationLimit"
-          v-model:current-page="registrationPage"
-          :page-size="registrationLimit"
-          :total="registrationTotal"
-          layout="prev, pager, next, total"
-          @current-change="loadRegistrationProbes"
-        />
+            <el-table
+              data-testid="registration-strategy-table"
+              :data="group.items"
+              border
+              stripe
+              empty-text="本注册证下没有符合筛选条件的探头"
+              class="registration-table"
+            >
+              <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
+              <el-table-column prop="ipn" label="IPN" min-width="115" />
+              <el-table-column prop="config_name" label="配置名称" min-width="180">
+                <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
+              </el-table-column>
+              <el-table-column label="注册状态" min-width="105" align="center">
+                <template #default="scope">
+                  <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
+                    {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="选型类别（正式）" min-width="135" align="center">
+                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
+              </el-table-column>
+              <el-table-column label="当前配置（辅助）" min-width="135" align="center">
+                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
+              </el-table-column>
+              <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
+                <template #default="scope">
+                  <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
+                    {{ displayConfigStatus(scope.row.effective_status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="判定依据" min-width="165">
+                <template #default="scope">
+                  <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
+                    {{ statusSourceLabel(scope.row.status_source) }}
+                  </span>
+                  <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </article>
+          <el-empty
+            v-if="!registrationLoading && selectedProductModelId && registrationGroups.length === 0"
+            description="没有符合筛选条件的注册证数据"
+          />
+        </div>
       </el-tab-pane>
 
       <el-tab-pane label="原始资料" name="documents">
@@ -568,7 +577,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Document, Link, Plus, Search, View } from '@element-plus/icons-vue'
 import {
@@ -610,22 +619,9 @@ const registrationQuery = ref('')
 const registrationStatus = ref('')
 const effectiveStatus = ref('')
 const registrationLoading = ref(false)
-const registrationItems = ref([])
-const registrationTotal = ref(0)
-const registrationPage = ref(1)
-const registrationLimit = 100
-const registrationMeta = ref({})
-const registrationSourceDocumentId = ref(null)
-const registrationSummary = ref({
-  registered: 0,
-  unregistered: 0,
-  standard: 0,
-  optional: 0,
-  tender: 0,
-  undefined: 0,
-  auxiliary: 0,
-  conflicts: 0
-})
+const registrationGroups = ref([])
+const registrationProductModelName = ref('')
+const registrationLimit = 200
 
 const previewVisible = ref(false)
 const previewUrl = ref('')
@@ -652,14 +648,6 @@ const answerForm = ref({
   citations: [],
   change_note: ''
 })
-
-const isDerivedRegistrationModel = computed(() => (
-  registrationMeta.value.mapping_type
-  && registrationMeta.value.mapping_type !== 'direct'
-))
-const registrationSourceUrl = computed(() => registrationSourceDocumentId.value
-  ? getKnowledgeDocumentPreviewUrl(registrationSourceDocumentId.value)
-  : '')
 
 const statusLabel = (status) => ({
   auto_matched: '自动匹配',
@@ -689,9 +677,14 @@ const documentTypeLabel = (type) => ({
   release_note: 'Release Note'
 }[type] || type)
 
-const registrationModelLabel = (model) => model.product_model_name === model.registration_model_name
-  ? model.product_model_name
-  : `${model.product_model_name} → ${model.registration_model_name}`
+const registrationModelLabel = (model) => {
+  if (model.registration_count > 1) {
+    return `${model.product_model_name}（${model.registration_count}张注册证）`
+  }
+  return model.product_model_name === model.registration_model_name
+    ? model.product_model_name
+    : `${model.product_model_name} → ${model.registration_model_name}`
+}
 const displayConfigStatus = (status) => ({
   X: 'X 标配',
   O: 'O 选配',
@@ -782,7 +775,16 @@ const searchDocuments = () => loadDocuments()
 const loadRegistrationModels = async () => {
   try {
     const result = await getConfiguredRegistrationModels({ country_code: 'CN' })
-    registrationModels.value = result.items || []
+    const uniqueModels = new Map()
+    for (const model of result.items || []) {
+      const existing = uniqueModels.get(model.product_model_id)
+      if (existing) {
+        existing.registration_count += 1
+      } else {
+        uniqueModels.set(model.product_model_id, { ...model, registration_count: 1 })
+      }
+    }
+    registrationModels.value = [...uniqueModels.values()]
     if (!selectedProductModelId.value && registrationModels.value.length > 0) {
       const preferred = registrationModels.value.find(model => model.product_model_name === 'VINNO 10')
       selectedProductModelId.value = (preferred || registrationModels.value[0]).product_model_id
@@ -802,18 +804,11 @@ const loadRegistrationProbes = async () => {
       q: registrationQuery.value || undefined,
       registration_status: registrationStatus.value || undefined,
       effective_status: effectiveStatus.value || undefined,
-      skip: (registrationPage.value - 1) * registrationLimit,
+      skip: 0,
       limit: registrationLimit
     })
-    registrationItems.value = result.items || []
-    registrationTotal.value = result.total || 0
-    registrationSummary.value = result.summary || {}
-    registrationSourceDocumentId.value = result.source_document_id || null
-    registrationMeta.value = {
-      product_model_name: result.product_model_name,
-      registration_model_name: result.registration_model_name,
-      mapping_type: result.mapping_type
-    }
+    registrationGroups.value = result.registrations || []
+    registrationProductModelName.value = result.product_model_name || ''
   } catch {
     ElMessage.error('注册与策略数据加载失败')
   } finally {
@@ -822,7 +817,6 @@ const loadRegistrationProbes = async () => {
 }
 
 const searchRegistrationProbes = () => {
-  registrationPage.value = 1
   loadRegistrationProbes()
 }
 
@@ -1093,7 +1087,12 @@ onMounted(() => {
 .status-tender { background: #92400e; }
 .status-blocked { background: #dc2626; }
 .registration-toolbar { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(220px, 1.4fr) 150px 150px auto; gap: 9px; margin-bottom: 12px; }
-.registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-bottom: 12px; color: #64748b; font-size: 12px; }
+.registration-groups { display: grid; gap: 18px; min-height: 80px; }
+.registration-group-card { padding: 15px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
+.registration-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.registration-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.registration-group-title h4 { margin: 0; color: #1f2937; font-size: 15px; }
+.registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 8px; color: #64748b; font-size: 12px; }
 .registration-context strong { color: #1f2937; }
 .registration-summary { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .registration-summary div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
@@ -1121,7 +1120,7 @@ onMounted(() => {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
   .registration-summary { grid-template-columns: repeat(2, 1fr); }
-  .registration-intro { flex-direction: column; }
+  .registration-intro, .registration-group-header { flex-direction: column; }
   .aliases-by-language { grid-template-columns: 1fr; }
   .knowledge-header { flex-direction: column; gap: 10px; }
 }

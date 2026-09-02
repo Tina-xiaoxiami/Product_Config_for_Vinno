@@ -286,6 +286,7 @@ async def registration_model_probes(
 @router.get("/probes", response_model=RegistrationProbeStrategyList)
 async def product_registration_probes(
     product_model_id: int = Query(..., ge=1),
+    registration_package_id: int | None = Query(None, ge=1),
     q: str | None = Query(None, max_length=200),
     registration_status: str | None = Query(
         None,
@@ -307,6 +308,7 @@ async def product_registration_probes(
         effective_status=effective_status,
         skip=skip,
         limit=limit,
+        registration_package_id=registration_package_id,
     )
     if result is None:
         raise HTTPException(

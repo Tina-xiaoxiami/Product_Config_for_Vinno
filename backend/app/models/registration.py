@@ -272,7 +272,7 @@ class ProductRegistrationModelLink(Base):
     __table_args__ = (
         UniqueConstraint(
             "product_model_id",
-            "registration_model_id",
+            "registration_package_id",
             name="uq_product_registration_model_link",
         ),
         Index("ix_product_registration_links_product", "product_model_id"),

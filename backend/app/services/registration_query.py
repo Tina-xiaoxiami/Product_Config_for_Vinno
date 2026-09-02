@@ -201,7 +201,12 @@ async def list_product_registration_probes(
     effective_status: str | None,
     skip: int,
     limit: int,
+    registration_package_id: int | None = None,
 ) -> dict | None:
+    params = {
+        "product_model_id": product_model_id,
+        "registration_package_id": registration_package_id,
+    }
     mapping_result = await session.execute(
         text(
             """
@@ -227,18 +232,24 @@ async def list_product_registration_probes(
              AND version_model.registration_model_id = link.registration_model_id
             WHERE product.id = :product_model_id
               AND link.review_status = 'approved'
+              AND (
+                  :registration_package_id IS NULL
+                  OR package.id = :registration_package_id
+              )
+            ORDER BY package.id
             """
         ),
-        {"product_model_id": product_model_id},
+        params,
     )
-    mapping = mapping_result.one_or_none()
-    if mapping is None:
+    mappings = mapping_result.all()
+    if not mappings:
         return None
 
     result = await session.execute(
         text(
             """
-            SELECT probe.registration_probe_id AS probe_id,
+            SELECT package.id AS registration_package_id,
+                   probe.registration_probe_id AS probe_id,
                    probe.probe_model, probe.ipn,
                    matrix.registration_status,
                    value.selection_config, value.current_config,
@@ -246,11 +257,20 @@ async def list_product_registration_probes(
                    probe_master.id AS probe_master_id,
                    probe_master.model_number AS probe_master_model,
                    package_version.difference_document_id AS source_document_id
-            FROM registration_package_version_model_probes matrix
+            FROM product_registration_model_links link
+            JOIN registration_packages package
+              ON package.id = link.registration_package_id
+            JOIN registration_package_versions package_version
+              ON package_version.package_id = package.id
+             AND package_version.status = 'active'
+            JOIN registration_package_version_models version_model
+              ON version_model.version_id = package_version.id
+             AND version_model.registration_model_id = link.registration_model_id
+            JOIN registration_package_version_model_probes matrix
+              ON matrix.version_model_id = version_model.id
+             AND matrix.version_id = package_version.id
             JOIN registration_package_version_probes probe
               ON probe.id = matrix.version_probe_id
-            JOIN registration_package_versions package_version
-              ON package_version.id = matrix.version_id
             LEFT JOIN config_items item
               ON item.ipn = probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
@@ -265,20 +285,22 @@ async def list_product_registration_probes(
             LEFT JOIN config_values value
               ON value.item_id = item.id
              AND value.model_id = :product_model_id
-            WHERE matrix.version_model_id = :registration_model_id
-              AND matrix.version_id = :registration_package_version_id
-            ORDER BY probe.id
+            WHERE link.product_model_id = :product_model_id
+              AND link.review_status = 'approved'
+              AND (
+                  :registration_package_id IS NULL
+                  OR package.id = :registration_package_id
+              )
+            ORDER BY package.id, probe.id
             """
         ),
-        {
-            "product_model_id": product_model_id,
-            "registration_model_id": mapping.registration_model_id,
-            "registration_package_version_id": mapping.registration_package_version_id,
-        },
+        params,
     )
 
     cleaned_query = str(query or "").strip().casefold()
-    items: list[dict] = []
+    items_by_package: dict[int, list[dict]] = {
+        int(mapping.registration_package_id): [] for mapping in mappings
+    }
     for row in result:
         policy = evaluate_probe_availability(
             registered=row.registration_status == "registered",
@@ -319,14 +341,35 @@ async def list_product_registration_probes(
             continue
         if effective_status and item["effective_status"] != effective_status:
             continue
-        items.append(item)
+        items_by_package[int(row.registration_package_id)].append(item)
 
-    total = len(items)
+    registrations: list[dict] = []
+    for mapping in mappings:
+        items = items_by_package[int(mapping.registration_package_id)]
+        registrations.append(
+            {
+                "registration_model_id": int(mapping.registration_model_id),
+                "registration_model_name": mapping.registration_model_name,
+                "source_document_id": (
+                    int(mapping.source_document_id)
+                    if mapping.source_document_id
+                    else None
+                ),
+                "mapping_type": mapping.mapping_type,
+                "registration_package_id": int(mapping.registration_package_id),
+                "registration_number": mapping.registration_number,
+                "registration_package_name": mapping.registration_package_name,
+                "items": items[skip : skip + limit],
+                "total": len(items),
+                "skip": skip,
+                "limit": limit,
+                "summary": _probe_summary(items),
+            }
+        )
+
     return {
-        **dict(mapping._mapping),
-        "items": items[skip : skip + limit],
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "summary": _probe_summary(items),
+        "product_model_id": int(mappings[0].product_model_id),
+        "product_model_name": mappings[0].product_model_name,
+        "registrations": registrations,
+        "total_registrations": len(registrations),
     }

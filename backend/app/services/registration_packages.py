@@ -1503,25 +1503,6 @@ def publish_registration_package_version(
         ).fetchall()
         if not mappings:
             raise RegistrationPackageError("发布前必须确认至少一个产品机型映射")
-        product_ids = [int(row["product_model_id"]) for row in mappings]
-        placeholders = ",".join("?" for _ in product_ids)
-        conflict = connection.execute(
-            f"""
-            SELECT product.name, package.registration_number
-            FROM product_registration_model_links link
-            JOIN product_models product ON product.id = link.product_model_id
-            JOIN registration_packages package ON package.id = link.registration_package_id
-            WHERE link.product_model_id IN ({placeholders})
-              AND package.country_code = ?
-              AND package.id <> ?
-            LIMIT 1
-            """,
-            (*product_ids, version["country_code"], version["package_id"]),
-        ).fetchone()
-        if conflict is not None:
-            raise RegistrationPackageError(
-                f"产品机型 {conflict['name']} 已绑定其他注册证：{conflict['registration_number']}"
-            )
         connection.execute(
             "UPDATE registration_package_versions SET status = 'superseded' "
             "WHERE package_id = ? AND status = 'active'",

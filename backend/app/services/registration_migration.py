@@ -22,6 +22,79 @@ def _import_batch_has_unique_constraint(connection: sqlite3.Connection) -> bool:
     return False
 
 
+def _product_link_uses_legacy_unique_constraint(
+    connection: sqlite3.Connection,
+) -> bool:
+    """Detect the old constraint that allowed only one certificate per model."""
+
+    for index in connection.execute("PRAGMA index_list(product_registration_model_links)"):
+        if not index[2]:
+            continue
+        index_name = str(index[1]).replace("'", "''")
+        columns = [
+            row[2]
+            for row in connection.execute(f"PRAGMA index_info('{index_name}')")
+        ]
+        if columns == ["product_model_id", "registration_model_id"]:
+            return True
+    return False
+
+
+def _rebuild_product_registration_model_links(
+    connection: sqlite3.Connection,
+) -> None:
+    """Scope a model mapping to its certificate instead of the shared base model."""
+
+    connection.execute("DROP INDEX IF EXISTS ix_product_registration_links_product")
+    connection.execute("DROP INDEX IF EXISTS ix_product_registration_links_package")
+    connection.execute("DROP TABLE IF EXISTS product_registration_model_links_new")
+    connection.execute(
+        """
+        CREATE TABLE product_registration_model_links_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_model_id INTEGER NOT NULL
+                REFERENCES product_models(id) ON DELETE CASCADE,
+            registration_model_id INTEGER NOT NULL
+                REFERENCES registration_models(id) ON DELETE CASCADE,
+            registration_package_id INTEGER
+                REFERENCES registration_packages(id),
+            mapping_type TEXT NOT NULL
+                CHECK (mapping_type IN (
+                    'direct', 'config_group', 'confirmed_derived', 'manual'
+                )),
+            source TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'approved'
+                CHECK (review_status IN ('pending', 'approved', 'rejected')),
+            UNIQUE (product_model_id, registration_package_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO product_registration_model_links_new (
+            id, product_model_id, registration_model_id, registration_package_id,
+            mapping_type, source, review_status
+        )
+        SELECT id, product_model_id, registration_model_id, registration_package_id,
+               mapping_type, source, review_status
+        FROM product_registration_model_links
+        """
+    )
+    connection.execute("DROP TABLE product_registration_model_links")
+    connection.execute(
+        "ALTER TABLE product_registration_model_links_new "
+        "RENAME TO product_registration_model_links"
+    )
+    connection.execute(
+        "CREATE INDEX ix_product_registration_links_product "
+        "ON product_registration_model_links(product_model_id)"
+    )
+    connection.execute(
+        "CREATE INDEX ix_product_registration_links_package "
+        "ON product_registration_model_links(registration_package_id)"
+    )
+
+
 def _rebuild_registration_package_versions(connection: sqlite3.Connection) -> None:
     connection.execute("DROP INDEX IF EXISTS uq_registration_package_active")
     connection.execute("DROP INDEX IF EXISTS ix_registration_package_versions_package")
@@ -250,7 +323,7 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     source TEXT NOT NULL,
                     review_status TEXT NOT NULL DEFAULT 'approved'
                         CHECK (review_status IN ('pending', 'approved', 'rejected')),
-                    UNIQUE (product_model_id, registration_model_id)
+                    UNIQUE (product_model_id, registration_package_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS registration_package_version_models (
@@ -383,6 +456,8 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     "ADD COLUMN registration_package_id INTEGER "
                     "REFERENCES registration_packages(id)"
                 )
+            if _product_link_uses_legacy_unique_constraint(connection):
+                _rebuild_product_registration_model_links(connection)
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS ix_product_registration_links_package
