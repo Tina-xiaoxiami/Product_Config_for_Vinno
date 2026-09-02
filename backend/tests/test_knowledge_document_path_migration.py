@@ -134,6 +134,9 @@ def test_dry_run_classifies_documents_without_updating_database(tmp_path: Path) 
     )
 
     registration_source = source_root / "registration" / "certificate.pdf"
+    registration_target = target_root / "注册证" / registration_source.name
+    registration_target.parent.mkdir(parents=True)
+    registration_target.write_bytes(b"certificate")
     _insert_document(
         database,
         document_id=6,
@@ -153,6 +156,29 @@ def test_dry_run_classifies_documents_without_updating_database(tmp_path: Path) 
         sha256=None,
     )
 
+    difference_source = source_root / "registration" / "difference.xlsx"
+    difference_target = target_root / "注册差异表" / difference_source.name
+    difference_target.parent.mkdir(parents=True)
+    difference_target.write_bytes(b"difference")
+    _insert_document(
+        database,
+        document_id=8,
+        document_type="registration_difference",
+        file_name=difference_source.name,
+        file_path=difference_source,
+        sha256=_sha256(b"difference"),
+    )
+
+    unsupported_source = source_root / "other" / "unsupported.bin"
+    _insert_document(
+        database,
+        document_id=9,
+        document_type="other",
+        file_name=unsupported_source.name,
+        file_path=unsupported_source,
+        sha256=_sha256(b"unsupported"),
+    )
+
     result = migrate_knowledge_document_paths(
         database,
         source_root=source_root,
@@ -161,8 +187,8 @@ def test_dry_run_classifies_documents_without_updating_database(tmp_path: Path) 
     )
 
     assert result.counts == {
-        "scanned": 7,
-        "ready": 1,
+        "scanned": 9,
+        "ready": 3,
         "updated": 0,
         "already_migrated": 1,
         "outside_source_root": 1,
@@ -173,6 +199,10 @@ def test_dry_run_classifies_documents_without_updating_database(tmp_path: Path) 
     }
     assert result.items[0].status == "ready"
     assert result.items[0].target_path == verified_target
+    assert result.items[5].status == "ready"
+    assert result.items[5].target_path == registration_target
+    assert result.items[7].status == "ready"
+    assert result.items[7].target_path == difference_target
     assert _registered_path(database, 1) == str(verified_source)
 
 
