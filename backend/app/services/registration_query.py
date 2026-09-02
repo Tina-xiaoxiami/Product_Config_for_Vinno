@@ -12,6 +12,7 @@ async def list_configured_registration_models(
     session: AsyncSession,
     *,
     country_code: str,
+    include_disabled: bool = False,
 ) -> list[dict]:
     result = await session.execute(
         text(
@@ -37,10 +38,14 @@ async def list_configured_registration_models(
              AND version_model.registration_model_id = link.registration_model_id
             WHERE package.country_code = :country_code
               AND link.review_status = 'approved'
+              AND (:include_disabled = 1 OR package.is_enabled = 1)
             ORDER BY product.id
             """
         ),
-        {"country_code": country_code},
+        {
+            "country_code": country_code,
+            "include_disabled": int(include_disabled),
+        },
     )
     return [dict(row._mapping) for row in result]
 
@@ -232,6 +237,7 @@ async def list_product_registration_probes(
              AND version_model.registration_model_id = link.registration_model_id
             WHERE product.id = :product_model_id
               AND link.review_status = 'approved'
+              AND package.is_enabled = 1
               AND (
                   :registration_package_id IS NULL
                   OR package.id = :registration_package_id
@@ -287,6 +293,7 @@ async def list_product_registration_probes(
              AND value.model_id = :product_model_id
             WHERE link.product_model_id = :product_model_id
               AND link.review_status = 'approved'
+              AND package.is_enabled = 1
               AND (
                   :registration_package_id IS NULL
                   OR package.id = :registration_package_id

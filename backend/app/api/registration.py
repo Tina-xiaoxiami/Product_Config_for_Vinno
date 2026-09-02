@@ -15,6 +15,8 @@ from app.schemas.registration import (
     ConfiguredRegistrationModelList,
     RegistrationMasterProbeList,
     RegistrationModelList,
+    RegistrationPackageBase,
+    RegistrationPackageEnableUpdate,
     RegistrationPackageList,
     RegistrationPackageMappingUpdate,
     RegistrationPackagePublishRequest,
@@ -26,6 +28,7 @@ from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
     RegistrationPackageError,
     publish_registration_package_version,
+    set_registration_package_enabled,
     stage_registration_package_draft,
     update_registration_package_version_mappings,
 )
@@ -81,6 +84,26 @@ async def registration_packages(
 ):
     items = await list_registration_packages(db, country_code=country_code)
     return RegistrationPackageList(items=items, total=len(items))
+
+
+@router.patch(
+    "/packages/{package_id}/enabled",
+    response_model=RegistrationPackageBase,
+)
+async def update_registration_package_enabled(
+    package_id: int,
+    payload: RegistrationPackageEnableUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return set_registration_package_enabled(
+            _database_path(db),
+            package_id=package_id,
+            is_enabled=payload.is_enabled,
+            updated_by=payload.updated_by,
+        )
+    except RegistrationPackageError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/packages/drafts")
@@ -239,11 +262,13 @@ async def registration_package_artifact(
 @router.get("/configured-models", response_model=ConfiguredRegistrationModelList)
 async def configured_registration_models(
     country_code: str = Query("CN", pattern="^[A-Z]{2}$"),
+    include_disabled: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     items = await list_configured_registration_models(
         db,
         country_code=country_code,
+        include_disabled=include_disabled,
     )
     return ConfiguredRegistrationModelList(items=items, total=len(items))
 

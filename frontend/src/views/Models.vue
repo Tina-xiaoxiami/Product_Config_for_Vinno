@@ -22,10 +22,11 @@
               <el-tag
                 v-for="mapping in row.registration_packages"
                 :key="mapping.registration_package_id"
-                type="info"
+                :type="mapping.is_enabled ? 'success' : 'info'"
                 effect="plain"
               >
-                {{ mapping.registration_number }} · {{ mapping.registration_model_name }}
+                {{ mapping.registration_number }} · {{ mapping.registration_model_name }} ·
+                {{ mapping.is_enabled ? '已启用' : '未启用' }}
               </el-tag>
             </div>
             <span v-else class="unmapped-registration">未映射注册证</span>

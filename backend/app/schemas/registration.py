@@ -145,6 +145,9 @@ class RegistrationPackageBase(BaseModel):
     registration_number: str | None = None
     identity_source: str | None = None
     confirmed_by: str | None = None
+    is_enabled: bool = True
+    enable_status_changed_at: str | None = None
+    enable_status_changed_by: str | None = None
 
 
 class RegistrationPackageItem(RegistrationPackageBase):
@@ -167,3 +170,8 @@ class RegistrationPackageMappingUpdate(BaseModel):
 
 class RegistrationPackagePublishRequest(BaseModel):
     confirmed_by: str = Field(min_length=1, max_length=100)
+
+
+class RegistrationPackageEnableUpdate(BaseModel):
+    is_enabled: bool
+    updated_by: str = Field(min_length=1, max_length=100)

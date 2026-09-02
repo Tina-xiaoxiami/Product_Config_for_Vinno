@@ -50,6 +50,9 @@ class RegistrationPackage(Base):
     registration_number = Column(Text)
     identity_source = Column(Text)
     confirmed_by = Column(Text)
+    is_enabled = Column(Integer, nullable=False, server_default=text("1"))
+    enable_status_changed_at = Column(Text)
+    enable_status_changed_by = Column(Text)
     created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 

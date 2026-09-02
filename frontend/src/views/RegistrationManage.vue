@@ -40,11 +40,21 @@
       />
       <article v-for="group in packageGroups" :key="group.id" class="package-card">
         <div class="package-title">
-          <strong>{{ group.display_name }}</strong>
-          <span>
-            {{ group.country_code }} · {{ group.unit_code }} ·
-            {{ group.registration_number || '未登记注册证号' }}
-          </span>
+          <div class="package-identity">
+            <strong>{{ group.display_name }}</strong>
+            <span>
+              {{ group.country_code }} · {{ group.unit_code }} ·
+              {{ group.registration_number || '未登记注册证号' }}
+            </span>
+          </div>
+          <div class="package-state">
+            <el-tag :type="group.is_enabled ? 'success' : 'info'" effect="plain">
+              {{ group.is_enabled ? '已启用' : '未启用' }}
+            </el-tag>
+            <el-button size="small" @click="handleTogglePackageEnabled(group)">
+              {{ group.is_enabled ? '停用' : '启用' }}
+            </el-button>
+          </div>
         </div>
         <el-collapse>
           <el-collapse-item
@@ -60,7 +70,7 @@
                   size="small"
                   effect="plain"
                 >
-                  {{ version.status === 'active' ? '当前生效' : version.status === 'draft' ? '待确认草稿' : '历史版本' }}
+                  {{ version.status === 'active' ? '正式版本' : version.status === 'draft' ? '待确认草稿' : '历史版本' }}
                 </el-tag>
                 <span class="version-counts">
                   {{ version.model_count }} 型号 · {{ version.probe_count }} 探头 ·
@@ -357,7 +367,7 @@
           :disabled="!draftReview.mappings?.length"
           @click="handlePublishPackage"
         >
-          发布生效
+          发布正式版本
         </el-button>
       </template>
     </el-dialog>
@@ -377,6 +387,7 @@ import {
   getRegistrationPackages,
   getRegistrationPackageVersions,
   publishRegistrationPackageVersion,
+  setRegistrationPackageEnabled,
   stageRegistrationPackageDraft,
   updateRegistrationPackageMappings
 } from '../api/data'
@@ -419,7 +430,10 @@ const unregisteredCount = computed(() => probeRows.value.filter(row => row.regis
 const linkedConfigCount = computed(() => probeRows.value.filter(row => row.config_item_id).length)
 
 const loadMappings = async () => {
-  const result = await getConfiguredRegistrationModels({ country_code: countryCode.value })
+  const result = await getConfiguredRegistrationModels({
+    country_code: countryCode.value,
+    include_disabled: true
+  })
   productMappings.value = result.items || []
 }
 
@@ -475,6 +489,27 @@ const loadPackageHistory = async () => {
     ElMessage.error('注册资料版本加载失败')
   } finally {
     packageLoading.value = false
+  }
+}
+
+const handleTogglePackageEnabled = async (group) => {
+  const nextEnabled = !group.is_enabled
+  const action = nextEnabled ? '启用' : '停用'
+  try {
+    await ElMessageBox.confirm(
+      `${action}后，${group.display_name}将${nextEnabled ? '参与' : '不参与'}默认产品注册查询。正式版本和历史资料不会改变。`,
+      `${action}注册证`,
+      { type: 'warning', confirmButtonText: `确认${action}`, cancelButtonText: '取消' }
+    )
+    await setRegistrationPackageEnabled(group.id, {
+      is_enabled: nextEnabled,
+      updated_by: group.confirmed_by || 'product_owner'
+    })
+    ElMessage.success(`注册证已${action}`)
+    await Promise.all([loadPackageHistory(), loadMappings()])
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error.response?.data?.detail || `${action}失败`)
   }
 }
 
@@ -559,7 +594,7 @@ const handlePublishPackage = async () => {
       draftReview.value.id,
       packageForm.value.confirmed_by
     )
-    ElMessage.success('注册资料包已发布生效')
+    ElMessage.success('注册资料包已发布为正式版本')
     packageDialogVisible.value = false
     draftReview.value = null
     await Promise.all([loadPackageHistory(), loadMappings(), loadModels()])
@@ -594,6 +629,8 @@ onMounted(async () => {
 .package-card { padding: 11px 13px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
 .package-card + .package-card { margin-top: 10px; }
 .package-title { justify-content: space-between; margin-bottom: 6px; color: #334155; font-size: 13px; }
+.package-identity { display: grid; gap: 3px; }
+.package-state { display: flex; align-items: center; gap: 8px; }
 .package-title span, .version-counts, .material-versions, .change-note { color: #64748b; font-size: 12px; }
 .version-title { min-width: 0; }
 .version-counts { margin-left: auto; padding-right: 12px; }

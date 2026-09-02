@@ -149,7 +149,7 @@ test('registration management supports paired upload mapping review and publish'
   assert.match(view, /注册证文件/)
   assert.match(view, /注册差异表/)
   assert.match(view, /机型映射确认/)
-  assert.match(view, /发布生效/)
+  assert.match(view, /发布正式版本/)
   assert.match(api, /stageRegistrationPackageDraft/)
   assert.match(api, /publishRegistrationPackageVersion/)
   assert.match(api, /setRegistrationPackageEnabled/)
@@ -166,6 +166,7 @@ test('product model table shows the registration certificate mapping', () => {
   assert.match(modelView, /registration_packages/)
   assert.match(modelView, /registration_number/)
   assert.match(modelView, /registration_model_name/)
+  assert.match(modelView, /mapping\.is_enabled/)
 })
 
 

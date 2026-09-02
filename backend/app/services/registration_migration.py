@@ -216,6 +216,10 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     registration_number TEXT,
                     identity_source TEXT,
                     confirmed_by TEXT,
+                    is_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK (is_enabled IN (0, 1)),
+                    enable_status_changed_at TEXT,
+                    enable_status_changed_by TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE (country_code, unit_code)
@@ -417,11 +421,18 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                 "registration_number",
                 "identity_source",
                 "confirmed_by",
+                "enable_status_changed_at",
+                "enable_status_changed_by",
             ):
                 if column_name not in package_columns:
                     connection.execute(
                         f"ALTER TABLE registration_packages ADD COLUMN {column_name} TEXT"
                     )
+            if "is_enabled" not in package_columns:
+                connection.execute(
+                    "ALTER TABLE registration_packages ADD COLUMN is_enabled "
+                    "INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1))"
+                )
 
             version_columns = {
                 row[1]

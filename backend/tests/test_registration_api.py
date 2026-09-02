@@ -145,6 +145,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
             "registration_model_id": 2,
             "registration_model_name": "VINNO 10E",
             "mapping_type": "direct",
+            "is_enabled": True,
         }
     ]
     body = probes_response.json()

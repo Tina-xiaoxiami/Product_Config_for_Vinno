@@ -34,6 +34,7 @@ class ProductModelRegistrationPackage(BaseModel):
     registration_model_id: int
     registration_model_name: str
     mapping_type: str
+    is_enabled: bool
 
 
 class ProductModelResponse(ProductModelBase):

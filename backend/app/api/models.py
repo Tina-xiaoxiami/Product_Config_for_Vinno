@@ -26,6 +26,7 @@ async def _registration_mappings_by_product_model(
                package.country_code,
                package.registration_number,
                package.display_name AS registration_package_name,
+               package.is_enabled,
                version_model.id AS registration_model_id,
                version_model.model_name AS registration_model_name,
                link.mapping_type

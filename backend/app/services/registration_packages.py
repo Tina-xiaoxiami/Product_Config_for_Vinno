@@ -1283,6 +1283,61 @@ def update_registration_package_version_mappings(
         connection.close()
 
 
+def set_registration_package_enabled(
+    database_path: str | Path,
+    *,
+    package_id: int,
+    is_enabled: bool,
+    updated_by: str,
+) -> dict[str, Any]:
+    """Enable or disable a valid registration package without changing its version."""
+
+    actor = str(updated_by or "").strip()
+    if not actor:
+        raise RegistrationPackageError("启用状态变更人不能为空")
+    connection = sqlite3.connect(Path(database_path), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        package = connection.execute(
+            "SELECT id FROM registration_packages WHERE id = ?",
+            (package_id,),
+        ).fetchone()
+        if package is None:
+            raise RegistrationPackageError("注册资料包不存在")
+        connection.execute(
+            """
+            UPDATE registration_packages
+            SET is_enabled = ?,
+                enable_status_changed_at = CURRENT_TIMESTAMP,
+                enable_status_changed_by = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (int(is_enabled), actor, package_id),
+        )
+        updated = connection.execute(
+            """
+            SELECT id, country_code, unit_code, display_name, product_series,
+                   registration_number, identity_source, confirmed_by,
+                   is_enabled, enable_status_changed_at, enable_status_changed_by
+            FROM registration_packages WHERE id = ?
+            """,
+            (package_id,),
+        ).fetchone()
+        connection.commit()
+        return {
+            **dict(updated),
+            "is_enabled": bool(updated["is_enabled"]),
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def stage_registration_package_draft(
     database_path: str | Path,
     *,

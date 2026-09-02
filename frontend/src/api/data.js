@@ -174,6 +174,8 @@ export const getRegistrationModelProbes = (registrationModelId) =>
   api.get(`/registrations/models/${registrationModelId}/probes`)
 export const getRegistrationPackages = (params) =>
   api.get('/registrations/packages', { params })
+export const setRegistrationPackageEnabled = (packageId, data) =>
+  api.patch(`/registrations/packages/${packageId}/enabled`, data)
 export const getRegistrationPackageVersions = (packageId) =>
   api.get(`/registrations/packages/${packageId}/versions`)
 export const getRegistrationPackageVersion = (versionId) =>

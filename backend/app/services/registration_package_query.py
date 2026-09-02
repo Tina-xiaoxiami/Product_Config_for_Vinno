@@ -76,6 +76,9 @@ def _package_item(row) -> dict:
         "registration_number": row.registration_number,
         "identity_source": row.identity_source,
         "confirmed_by": row.confirmed_by,
+        "is_enabled": bool(row.is_enabled),
+        "enable_status_changed_at": row.enable_status_changed_at,
+        "enable_status_changed_by": row.enable_status_changed_by,
     }
 
 
@@ -88,7 +91,8 @@ async def list_registration_packages(
         text(
             """
             SELECT id, country_code, unit_code, display_name, product_series,
-                   registration_number, identity_source, confirmed_by
+                   registration_number, identity_source, confirmed_by,
+                   is_enabled, enable_status_changed_at, enable_status_changed_by
             FROM registration_packages
             WHERE country_code = :country_code
             ORDER BY display_name, id
@@ -129,7 +133,8 @@ async def list_registration_package_versions(
         text(
             """
             SELECT id, country_code, unit_code, display_name, product_series,
-                   registration_number, identity_source, confirmed_by
+                   registration_number, identity_source, confirmed_by,
+                   is_enabled, enable_status_changed_at, enable_status_changed_by
             FROM registration_packages WHERE id = :package_id
             """
         ),
