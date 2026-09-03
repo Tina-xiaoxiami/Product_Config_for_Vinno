@@ -234,10 +234,10 @@ async def test_candidate_ranking_prefers_the_requested_software_version(tmp_path
             document_id, chunk_index, source_ref, content,
             normalized_content, content_hash
         ) VALUES
-            (2, 0, '第2页', 'V10系列1.14.21版本发布了以下功能和变更。',
-             'v10系列11421版本发布了以下功能和变更', 'version-21'),
-            (3, 0, '第2页', 'V10系列1.14.80版本发布了以下功能和变更。',
-             'v10系列11480版本发布了以下功能和变更', 'version-80');
+            (2, 0, '第2页', 'V10系列本版本发布了以下功能和变更。',
+             'v10系列本版本发布了以下功能和变更', 'version-21'),
+            (3, 0, '第2页', 'V10系列本版本发布了以下功能和变更。',
+             'v10系列本版本发布了以下功能和变更', 'version-80');
         """
     )
     connection.commit()
@@ -267,8 +267,8 @@ async def test_candidate_ranking_prefers_registration_sources_for_registration_i
             id, document_type, title, file_name, file_path,
             version, market, product_series, mime_type
         ) VALUES
-            (2, 'release_note', 'V10 Release Note', 'release.pdf',
-             '/tmp/release.pdf', '1.14.80', 'domestic', 'V10', 'application/pdf'),
+            (2, 'registration_certificate', 'V10湘证注册证', 'certificate.pdf',
+             '/tmp/certificate.pdf', '20260615', 'domestic', 'V10', 'application/pdf'),
             (3, 'registration_difference', 'V10湘证注册差异表', 'difference.xlsx',
              '/tmp/difference.xlsx', '20250729', 'domestic', 'V10',
              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -281,8 +281,8 @@ async def test_candidate_ranking_prefers_registration_sources_for_registration_i
             document_id, chunk_index, source_ref, content,
             normalized_content, content_hash
         ) VALUES
-            (2, 0, '第2页', 'VINNO 10E湘证注册支持I4-11T探头相关功能升级。',
-             'vinno10e湘证注册支持i411t探头相关功能升级', 'release'),
+            (2, 0, '第2页', 'VINNO 10E湘证注册支持I4-11T探头。',
+             'vinno10e湘证注册支持i411t探头', 'certificate'),
             (3, 0, '型号差异!第3行', 'VINNO 10E | I4-11T不适用',
              'vinno10ei411t不适用', 'difference');
         """
