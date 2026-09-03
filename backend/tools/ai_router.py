@@ -1,13 +1,12 @@
-"""
-AI角色路由器
-- 默认对话理解：使用系统默认模型(glm-5)
-- 任务执行：自动切换专用模型
+"""VINNO工作流的模型建议路由器。
+
+实际模型切换由调用此模块的执行器负责；本模块只返回推荐模型。
 
 使用方式：
     from tools.ai_router import identify_role, get_execution_model
 
     role, model = identify_role("请帮我实现版本对比功能的代码")
-    # → role: PROGRAMMER, model: deepseek-coder
+    # → role: PROGRAMMER, model: gpt-5.6-terra
 """
 
 import re
@@ -23,10 +22,18 @@ class TaskRole(Enum):
     ARCHITECT = "architect"   # 架构设计师
     PROGRAMMER = "programmer" # 程序员
     TESTER = "tester"         # 测试工程师
+    BATCH = "batch"           # 批量确定性处理
+    HIGH_RISK = "high_risk"   # 注册红线和高风险审核
 
 
 # 任务关键词映射（正则表达式模式）
 ROLE_PATTERNS = {
+    TaskRole.HIGH_RISK: [
+        r"(注册红线|注册冲突|红线冲突|正式发布|发布审核|正式库迁移|批量覆盖正式数据)",
+    ],
+    TaskRole.BATCH: [
+        r"(批量盘点|文件盘点|哈希核对|sha-?256|确定性提取|表格规范化)",
+    ],
     TaskRole.PM: [
         r"(需求|文档|功能描述|用户故事|prd|需求文档|specification|产品|功能说明)",
     ],
@@ -41,13 +48,15 @@ ROLE_PATTERNS = {
     ],
 }
 
-# 角色对应的专用模型（可通过环境变量覆盖）
+# 角色对应的推荐模型（可通过环境变量覆盖）
 ROLE_MODEL_MAP = {
-    TaskRole.DEFAULT: os.getenv("AI_MODEL_DEFAULT", "glm-5"),
-    TaskRole.PM: os.getenv("AI_MODEL_PM", "kimi-k2.5"),
-    TaskRole.ARCHITECT: os.getenv("AI_MODEL_ARCHITECT", "deepseek-v3"),
-    TaskRole.PROGRAMMER: os.getenv("AI_MODEL_PROGRAMMER", "deepseek-coder"),
-    TaskRole.TESTER: os.getenv("AI_MODEL_TESTER", "qwen-plus"),
+    TaskRole.DEFAULT: os.getenv("AI_MODEL_DEFAULT", "gpt-5.6-terra"),
+    TaskRole.PM: os.getenv("AI_MODEL_PM", "gpt-5.6-terra"),
+    TaskRole.ARCHITECT: os.getenv("AI_MODEL_ARCHITECT", "gpt-5.6-sol"),
+    TaskRole.PROGRAMMER: os.getenv("AI_MODEL_PROGRAMMER", "gpt-5.6-terra"),
+    TaskRole.TESTER: os.getenv("AI_MODEL_TESTER", "gpt-5.6-terra"),
+    TaskRole.BATCH: os.getenv("AI_MODEL_BATCH", "gpt-5.6-luna"),
+    TaskRole.HIGH_RISK: os.getenv("AI_MODEL_HIGH_RISK", "gpt-5.6-sol"),
 }
 
 # 角色描述（用于日志和展示）
@@ -57,6 +66,8 @@ ROLE_DESCRIPTIONS = {
     TaskRole.ARCHITECT: "架构设计师 - 技术方案、架构设计",
     TaskRole.PROGRAMMER: "程序员 - 代码实现、功能开发",
     TaskRole.TESTER: "测试工程师 - 测试用例、代码审查",
+    TaskRole.BATCH: "批量处理 - 文件盘点、哈希和确定性提取",
+    TaskRole.HIGH_RISK: "高风险审核 - 注册红线、迁移和正式发布",
 }
 
 
@@ -116,6 +127,8 @@ def get_role_info(user_input: str) -> dict:
         TaskRole.ARCHITECT: "架构设计师",
         TaskRole.PROGRAMMER: "程序员",
         TaskRole.TESTER: "测试工程师",
+        TaskRole.BATCH: "批量处理",
+        TaskRole.HIGH_RISK: "高风险审核",
     }
 
     return {
@@ -144,6 +157,8 @@ def print_role_mapping():
             TaskRole.ARCHITECT: "架构设计师",
             TaskRole.PROGRAMMER: "程序员",
             TaskRole.TESTER: "测试工程师",
+            TaskRole.BATCH: "批量处理",
+            TaskRole.HIGH_RISK: "高风险审核",
         }[role]
         print(f"{role_name:<15} {model:<20} {desc}")
 
