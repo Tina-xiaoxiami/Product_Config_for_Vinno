@@ -383,7 +383,7 @@ def _validate_active_projection(
         for key, item in snapshot_models.items()
     }
     expected_probes = {
-        key: {"probe_model": item["probe_model"], "ipn": str(item.get("ipn") or "")}
+        key: {"probe_model": item["probe_model"], "ipn": item.get("ipn") or None}
         for key, item in snapshot_probes.items()
     }
     if projected_models != expected_models or projected_probes != expected_probes:
@@ -509,7 +509,7 @@ def _materialize_version_snapshot(
                 version["country_code"],
                 item["probe_model"],
                 normalized,
-                str(item.get("ipn") or ""),
+                item.get("ipn") or None,
                 version["import_batch_id"],
                 version["difference_document_id"],
                 source_ref,
@@ -533,7 +533,7 @@ def _materialize_version_snapshot(
                 master_id,
                 item["probe_model"],
                 normalized,
-                str(item.get("ipn") or ""),
+                item.get("ipn") or None,
                 source_ref,
             ),
         )

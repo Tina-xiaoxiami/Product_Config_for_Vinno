@@ -6,6 +6,7 @@ from openpyxl import Workbook
 from app.services import registration_rules
 from app.services.registration_import import import_domestic_registration_workbook
 from app.services.registration_migration import migrate_registration_schema
+from app.services.registration_packages import stage_registration_package_draft
 from app.services.registration_rules import parse_domestic_registration_workbook
 
 
@@ -131,6 +132,22 @@ def _write_registration_workbook(path, *, vinno10_unsupported="探头全适用")
     probes.append(["F2-5C", 1000530, 1000530])
     probes.append(["G1-4P", 1000744, 1000744])
     probes.append(["F4-9E", 1000784, 1000784])
+    workbook.save(path)
+
+
+def _write_registration_workbook_with_missing_ipns(path):
+    workbook = Workbook()
+    matrix = workbook.active
+    matrix.title = "0729"
+    matrix["A2"] = "支持探头\n共3把"
+    matrix["B2"] = "S1-8CM，S1-8CX，SR1-10C"
+    matrix.append(["序号", "型号", "不支持探头", "通道数"])
+    matrix.append([1, "VINNO 10", "探头全适用", 128])
+    probes = workbook.create_sheet("Sheet1")
+    probes.append([None, None])
+    probes.append(["S1-8CM", "1001335"])
+    probes.append(["S1-8CX", None])
+    probes.append(["SR1-10C", None])
     workbook.save(path)
 
 
@@ -266,4 +283,172 @@ def test_registration_schema_and_import_materialize_country_model_probe_redlines
         ("VINNO 9_Private", "VINNO 9", "config_group"),
         ("VINNO 9 综合版", "VINNO 9", "confirmed_derived"),
     ]
+    connection.close()
+
+
+def test_registration_import_persists_multiple_probes_without_ipn(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration-without-ipns.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook_with_missing_ipns(workbook_path)
+
+    migrate_registration_schema(database_path)
+    report = import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+        confirmed_base_by_product_model_name={},
+    )
+
+    assert report.probe_count == 3
+    connection = sqlite3.connect(database_path)
+    assert connection.execute(
+        "SELECT ipn FROM registration_probes WHERE probe_model = 'S1-8CX'"
+    ).fetchone()[0] is None
+    assert connection.execute(
+        "SELECT ipn FROM registration_probes WHERE probe_model = 'SR1-10C'"
+    ).fetchone()[0] is None
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_registration_migration_preserves_legacy_probe_rows_when_ipn_becomes_optional(
+    tmp_path,
+):
+    database_path = tmp_path / "legacy-product-config.db"
+    _create_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        CREATE TABLE registration_import_batches (
+            id INTEGER PRIMARY KEY,
+            country_code TEXT NOT NULL,
+            source_document_id INTEGER,
+            source_version TEXT,
+            source_sha256 TEXT,
+            snapshot_hash TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            model_count INTEGER NOT NULL,
+            probe_count INTEGER NOT NULL,
+            matrix_count INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (country_code, snapshot_hash)
+        );
+        INSERT INTO registration_import_batches (
+            id, country_code, snapshot_hash, snapshot_json,
+            model_count, probe_count, matrix_count
+        ) VALUES (1, 'CN', 'legacy', '{}', 0, 1, 0);
+        CREATE TABLE registration_probes (
+            id INTEGER PRIMARY KEY,
+            country_code TEXT NOT NULL,
+            probe_model TEXT NOT NULL,
+            normalized_model TEXT NOT NULL,
+            ipn TEXT NOT NULL,
+            import_batch_id INTEGER NOT NULL REFERENCES registration_import_batches(id),
+            source_document_id INTEGER,
+            source_ref TEXT,
+            source_status TEXT NOT NULL DEFAULT 'active',
+            UNIQUE (country_code, normalized_model),
+            UNIQUE (country_code, ipn)
+        );
+        INSERT INTO registration_probes (
+            id, country_code, probe_model, normalized_model, ipn,
+            import_batch_id, source_status
+        ) VALUES (1, 'CN', 'F2-5C', 'f2-5c', '1000530', 1, 'active');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrate_registration_schema(database_path)
+
+    connection = sqlite3.connect(database_path)
+    ipn_column = next(
+        row for row in connection.execute("PRAGMA table_info(registration_probes)")
+        if row[1] == "ipn"
+    )
+    assert ipn_column[3] == 0
+    assert connection.execute(
+        "SELECT probe_model, ipn FROM registration_probes"
+    ).fetchall() == [("F2-5C", "1000530")]
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_registration_migration_preserves_legacy_version_probe_rows(tmp_path):
+    database_path = tmp_path / "legacy-version-probes.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    certificate_path = tmp_path / "certificate.pdf"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    certificate_path.write_bytes(b"%PDF-1.4 legacy version probe schema")
+    migrate_registration_schema(database_path)
+    draft = stage_registration_package_draft(
+        database_path,
+        country_code="CN",
+        unit_code="LEGACY-VERSION-PROBES",
+        display_name="旧版注册探头快照",
+        product_series="V10",
+        registration_number="TEST-LEGACY-VERSION-PROBES",
+        certificate_path=certificate_path,
+        difference_path=workbook_path,
+        certificate_version="20260903",
+        difference_version="20260903",
+        confirmed_by="test",
+        product_model_mappings={1: "VINNO 10"},
+    )
+
+    connection = sqlite3.connect(database_path)
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP INDEX IF EXISTS ix_registration_version_probes_version")
+    connection.execute("DROP INDEX IF EXISTS uq_registration_version_probe_ipn")
+    connection.executescript(
+        """
+        CREATE TABLE registration_package_version_probes_legacy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_id INTEGER NOT NULL
+                REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+            registration_probe_id INTEGER NOT NULL
+                REFERENCES registration_probes(id),
+            probe_model TEXT NOT NULL,
+            normalized_model TEXT NOT NULL,
+            ipn TEXT NOT NULL,
+            source_ref TEXT,
+            UNIQUE (version_id, normalized_model),
+            UNIQUE (version_id, ipn)
+        );
+        INSERT INTO registration_package_version_probes_legacy (
+            id, version_id, registration_probe_id, probe_model,
+            normalized_model, ipn, source_ref
+        )
+        SELECT id, version_id, registration_probe_id, probe_model,
+               normalized_model, ipn, source_ref
+        FROM registration_package_version_probes;
+        DROP TABLE registration_package_version_probes;
+        ALTER TABLE registration_package_version_probes_legacy
+            RENAME TO registration_package_version_probes;
+        CREATE INDEX ix_registration_version_probes_version
+            ON registration_package_version_probes(version_id);
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrate_registration_schema(database_path)
+
+    connection = sqlite3.connect(database_path)
+    ipn_column = next(
+        row
+        for row in connection.execute(
+            "PRAGMA table_info(registration_package_version_probes)"
+        )
+        if row[1] == "ipn"
+    )
+    assert ipn_column[3] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM registration_package_version_probes WHERE version_id = ?",
+        (draft["id"],),
+    ).fetchone()[0] == 3
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()

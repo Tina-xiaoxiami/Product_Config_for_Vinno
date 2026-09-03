@@ -187,7 +187,7 @@ class RegistrationProbe(Base):
     country_code = Column(Text, nullable=False)
     probe_model = Column(Text, nullable=False)
     normalized_model = Column(Text, nullable=False)
-    ipn = Column(Text, nullable=False)
+    ipn = Column(Text)
     import_batch_id = Column(
         Integer,
         ForeignKey("registration_import_batches.id"),
@@ -203,10 +203,12 @@ class RegistrationProbe(Base):
             "normalized_model",
             name="uq_registration_probe_country_model",
         ),
-        UniqueConstraint(
+        Index(
+            "uq_registration_probe_country_ipn",
             "country_code",
             "ipn",
-            name="uq_registration_probe_country_ipn",
+            unique=True,
+            sqlite_where=text("ipn IS NOT NULL AND TRIM(ipn) <> ''"),
         ),
         Index("ix_registration_probes_country", "country_code", "source_status"),
     )
@@ -324,12 +326,18 @@ class RegistrationPackageVersionProbe(Base):
     )
     probe_model = Column(Text, nullable=False)
     normalized_model = Column(Text, nullable=False)
-    ipn = Column(Text, nullable=False)
+    ipn = Column(Text)
     source_ref = Column(Text)
 
     __table_args__ = (
         UniqueConstraint("version_id", "normalized_model", name="uq_registration_version_probe"),
-        UniqueConstraint("version_id", "ipn", name="uq_registration_version_probe_ipn"),
+        Index(
+            "uq_registration_version_probe_ipn",
+            "version_id",
+            "ipn",
+            unique=True,
+            sqlite_where=text("ipn IS NOT NULL AND TRIM(ipn) <> ''"),
+        ),
         Index("ix_registration_version_probes_version", "version_id"),
     )
 

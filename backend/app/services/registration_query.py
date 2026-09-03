@@ -155,13 +155,15 @@ async def list_registration_model_probes(
               ON package_version.id = matrix.version_id
              AND package_version.status = 'active'
             LEFT JOIN config_items item
-              ON item.ipn = probe.ipn AND item.category = 'Probes'
+              ON probe.ipn IS NOT NULL
+             AND item.ipn = probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
               ON variant.id = (
                   SELECT MIN(candidate.id)
                   FROM probe_model_variants candidate
-                  WHERE UPPER(TRIM(COALESCE(candidate.ipn, '')))
-                      = UPPER(TRIM(COALESCE(probe.ipn, '')))
+                  WHERE probe.ipn IS NOT NULL
+                    AND candidate.ipn IS NOT NULL
+                    AND UPPER(TRIM(candidate.ipn)) = UPPER(TRIM(probe.ipn))
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id
@@ -284,13 +286,16 @@ async def list_product_registration_probes(
              AND matrix.version_id = package_version.id
              AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON item.ipn = country_probe.ipn AND item.category = 'Probes'
+              ON country_probe.ipn IS NOT NULL
+             AND item.ipn = country_probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
               ON variant.id = (
                   SELECT MIN(candidate.id)
                   FROM probe_model_variants candidate
-                  WHERE UPPER(TRIM(COALESCE(candidate.ipn, '')))
-                      = UPPER(TRIM(COALESCE(country_probe.ipn, '')))
+                  WHERE country_probe.ipn IS NOT NULL
+                    AND candidate.ipn IS NOT NULL
+                    AND UPPER(TRIM(candidate.ipn))
+                      = UPPER(TRIM(country_probe.ipn))
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id

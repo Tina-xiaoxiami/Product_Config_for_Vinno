@@ -17,7 +17,7 @@ _FORMAL_STRATEGY_VALUES = {"X", "O", "Δ"}
 @dataclass(frozen=True)
 class RegistrationProbeSource:
     model: str
-    ipn: str
+    ipn: str | None
     source_row: int
 
 
@@ -98,17 +98,21 @@ def parse_domestic_registration_workbook(
         seen_probe_ipns: set[str] = set()
         for row in range(1, probe_sheet.max_row + 1):
             model = normalize_business_name(probe_sheet.cell(row=row, column=1).value)
-            ipn = normalize_business_name(probe_sheet.cell(row=row, column=2).value)
-            if not model and not ipn:
+            normalized_ipn = normalize_business_name(
+                probe_sheet.cell(row=row, column=2).value
+            )
+            ipn = normalized_ipn or None
+            if not model and ipn is None:
                 continue
-            if not model or not ipn:
-                raise ValueError(f"探头IPN表第 {row} 行不完整")
+            if not model:
+                raise ValueError(f"探头IPN表第 {row} 行缺少探头型号")
             if model in seen_probe_models:
                 raise ValueError(f"探头型号重复：{model}")
-            if ipn in seen_probe_ipns:
+            if ipn is not None and ipn in seen_probe_ipns:
                 raise ValueError(f"探头IPN重复：{ipn}")
             seen_probe_models.add(model)
-            seen_probe_ipns.add(ipn)
+            if ipn is not None:
+                seen_probe_ipns.add(ipn)
             probes.append(RegistrationProbeSource(model=model, ipn=ipn, source_row=row))
 
         declared_probes = set(_split_probe_names(matrix_sheet.cell(row=2, column=2).value))

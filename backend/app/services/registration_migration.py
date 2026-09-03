@@ -177,6 +177,121 @@ def _rebuild_registration_package_versions(connection: sqlite3.Connection) -> No
     )
 
 
+def _column_is_not_null(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+) -> bool:
+    return any(
+        row[1] == column_name and bool(row[3])
+        for row in connection.execute(f"PRAGMA table_info({table_name})")
+    )
+
+
+def _rebuild_registration_probes_with_optional_ipn(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.execute("DROP INDEX IF EXISTS ix_registration_probes_country")
+    connection.execute("DROP INDEX IF EXISTS uq_registration_probe_country_ipn")
+    connection.execute("DROP TABLE IF EXISTS registration_probes_new")
+    connection.execute(
+        """
+        CREATE TABLE registration_probes_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            country_code TEXT NOT NULL,
+            probe_model TEXT NOT NULL,
+            normalized_model TEXT NOT NULL,
+            ipn TEXT,
+            import_batch_id INTEGER NOT NULL
+                REFERENCES registration_import_batches(id),
+            source_document_id INTEGER REFERENCES knowledge_documents(id),
+            source_ref TEXT,
+            source_status TEXT NOT NULL DEFAULT 'active'
+                CHECK (source_status IN ('active', 'archived')),
+            UNIQUE (country_code, normalized_model)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO registration_probes_new (
+            id, country_code, probe_model, normalized_model, ipn,
+            import_batch_id, source_document_id, source_ref, source_status
+        )
+        SELECT id, country_code, probe_model, normalized_model,
+               NULLIF(TRIM(ipn), ''), import_batch_id, source_document_id,
+               source_ref, source_status
+        FROM registration_probes
+        """
+    )
+    connection.execute("DROP TABLE registration_probes")
+    connection.execute(
+        "ALTER TABLE registration_probes_new RENAME TO registration_probes"
+    )
+    connection.execute(
+        "CREATE INDEX ix_registration_probes_country "
+        "ON registration_probes(country_code, source_status)"
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX uq_registration_probe_country_ipn
+        ON registration_probes(country_code, ipn)
+        WHERE ipn IS NOT NULL AND TRIM(ipn) <> ''
+        """
+    )
+
+
+def _rebuild_registration_version_probes_with_optional_ipn(
+    connection: sqlite3.Connection,
+) -> None:
+    connection.execute("DROP INDEX IF EXISTS ix_registration_version_probes_version")
+    connection.execute("DROP INDEX IF EXISTS uq_registration_version_probe_ipn")
+    connection.execute("DROP TABLE IF EXISTS registration_package_version_probes_new")
+    connection.execute(
+        """
+        CREATE TABLE registration_package_version_probes_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version_id INTEGER NOT NULL
+                REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+            registration_probe_id INTEGER NOT NULL
+                REFERENCES registration_probes(id),
+            probe_model TEXT NOT NULL,
+            normalized_model TEXT NOT NULL,
+            ipn TEXT,
+            source_ref TEXT,
+            UNIQUE (version_id, normalized_model)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO registration_package_version_probes_new (
+            id, version_id, registration_probe_id, probe_model,
+            normalized_model, ipn, source_ref
+        )
+        SELECT id, version_id, registration_probe_id, probe_model,
+               normalized_model, NULLIF(TRIM(ipn), ''), source_ref
+        FROM registration_package_version_probes
+        """
+    )
+    connection.execute("DROP TABLE registration_package_version_probes")
+    connection.execute(
+        "ALTER TABLE registration_package_version_probes_new "
+        "RENAME TO registration_package_version_probes"
+    )
+    connection.execute(
+        "CREATE INDEX ix_registration_version_probes_version "
+        "ON registration_package_version_probes(version_id)"
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX uq_registration_version_probe_ipn
+        ON registration_package_version_probes(version_id, ipn)
+        WHERE ipn IS NOT NULL AND TRIM(ipn) <> ''
+        """
+    )
+
+
 def migrate_registration_schema(database_path: str | Path) -> None:
     path = Path(database_path)
     if not path.is_file():
@@ -298,15 +413,14 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     country_code TEXT NOT NULL,
                     probe_model TEXT NOT NULL,
                     normalized_model TEXT NOT NULL,
-                    ipn TEXT NOT NULL,
+                    ipn TEXT,
                     import_batch_id INTEGER NOT NULL
                         REFERENCES registration_import_batches(id),
                     source_document_id INTEGER REFERENCES knowledge_documents(id),
                     source_ref TEXT,
                     source_status TEXT NOT NULL DEFAULT 'active'
                         CHECK (source_status IN ('active', 'archived')),
-                    UNIQUE (country_code, normalized_model),
-                    UNIQUE (country_code, ipn)
+                    UNIQUE (country_code, normalized_model)
                 );
 
                 CREATE TABLE IF NOT EXISTS registration_model_probes (
@@ -364,10 +478,9 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                         REFERENCES registration_probes(id),
                     probe_model TEXT NOT NULL,
                     normalized_model TEXT NOT NULL,
-                    ipn TEXT NOT NULL,
+                    ipn TEXT,
                     source_ref TEXT,
-                    UNIQUE (version_id, normalized_model),
-                    UNIQUE (version_id, ipn)
+                    UNIQUE (version_id, normalized_model)
                 );
 
                 CREATE TABLE IF NOT EXISTS registration_package_version_model_probes (
@@ -423,6 +536,12 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                 ON registration_package_version_product_mappings(version_id);
                 CREATE INDEX IF NOT EXISTS ix_registration_version_documents_version
                 ON registration_package_version_documents(version_id, sort_order, id);
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_probe_country_ipn
+                ON registration_probes(country_code, ipn)
+                WHERE ipn IS NOT NULL AND TRIM(ipn) <> '';
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_version_probe_ipn
+                ON registration_package_version_probes(version_id, ipn)
+                WHERE ipn IS NOT NULL AND TRIM(ipn) <> '';
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_package_active
                 ON registration_package_versions(package_id)
                 WHERE status = 'active';
@@ -470,6 +589,14 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     )
             if _import_batch_has_unique_constraint(connection):
                 _rebuild_registration_package_versions(connection)
+            if _column_is_not_null(connection, "registration_probes", "ipn"):
+                _rebuild_registration_probes_with_optional_ipn(connection)
+            if _column_is_not_null(
+                connection,
+                "registration_package_version_probes",
+                "ipn",
+            ):
+                _rebuild_registration_version_probes_with_optional_ipn(connection)
             link_columns = {
                 row[1]
                 for row in connection.execute(

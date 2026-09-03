@@ -39,7 +39,7 @@ class RegistrationMasterProbeItem(BaseModel):
     matrix_id: int
     probe_id: int
     probe_model: str
-    ipn: str
+    ipn: str | None = None
     registration_status: str
     config_item_id: int | None = None
     config_name: str | None = None
@@ -61,7 +61,7 @@ class RegistrationMasterProbeList(BaseModel):
 class RegistrationProbeStrategyItem(BaseModel):
     probe_id: int
     probe_model: str
-    ipn: str
+    ipn: str | None = None
     registration_status: str
     registration_symbol: str
     selection_config: str | None = None

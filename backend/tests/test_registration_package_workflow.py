@@ -13,7 +13,11 @@ from app.services.registration_packages import (
     stage_registration_package_draft,
 )
 from app.services.registration_query import list_product_registration_probes
-from test_registration_import import _create_database, _write_registration_workbook
+from test_registration_import import (
+    _create_database,
+    _write_registration_workbook,
+    _write_registration_workbook_with_missing_ipns,
+)
 
 
 def _stage(
@@ -253,6 +257,54 @@ def test_publish_keeps_registration_certificates_independent_and_scopes_links(tm
     ]
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
+
+
+@pytest.mark.asyncio
+async def test_package_publish_and_query_preserve_registered_probe_without_ipn(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration-without-ipns.xlsx"
+    certificate_path = tmp_path / "certificate.pdf"
+    _create_database(database_path)
+    _write_registration_workbook_with_missing_ipns(workbook_path)
+    certificate_path.write_bytes(b"%PDF-1.4 certificate without probe IPNs")
+    migrate_registration_schema(database_path)
+
+    draft = _stage(
+        database_path,
+        workbook_path,
+        certificate_path,
+        unit_code="ULTIMUS-G2",
+        registration_number="TEST-CN-G2",
+        mappings={1: "VINNO 10"},
+    )
+    publish_registration_package_version(
+        database_path,
+        version_id=draft["id"],
+        confirmed_by="product_owner",
+    )
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        result = await list_product_registration_probes(
+            session,
+            product_model_id=1,
+            query=None,
+            registration_status=None,
+            effective_status=None,
+            skip=0,
+            limit=100,
+        )
+    await engine.dispose()
+
+    assert result is not None
+    items = result["registrations"][0]["items"]
+    s1_8cx = next(item for item in items if item["probe_model"] == "S1-8CX")
+    sr1_10c = next(item for item in items if item["probe_model"] == "SR1-10C")
+    assert s1_8cx["ipn"] is None
+    assert s1_8cx["config_item_id"] is None
+    assert sr1_10c["ipn"] is None
+    assert sr1_10c["config_item_id"] is None
 
 
 @pytest.mark.asyncio
