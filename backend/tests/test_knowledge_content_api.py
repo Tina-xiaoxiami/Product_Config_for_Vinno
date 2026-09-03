@@ -299,3 +299,70 @@ async def test_candidate_ranking_prefers_registration_sources_for_registration_i
     await engine.dispose()
 
     assert asked.json()["candidates"][0]["document_id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_keeps_registration_evidence_in_requested_province(
+    tmp_path,
+):
+    database_path = tmp_path / "knowledge.db"
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        INSERT INTO knowledge_documents (
+            id, document_type, title, file_name, file_path,
+            version, market, product_series, mime_type
+        ) VALUES
+            (2, 'registration_difference', 'V10系列国内注册差异表', 'xiang.xlsx',
+             '/tmp/xiang.xlsx', '20250729', 'domestic', 'V10',
+             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (3, 'registration_difference', 'V10系列国内注册差异表', 'su.xlsx',
+             '/tmp/su.xlsx', '20250729', 'domestic', 'V10',
+             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (4, 'registration_certificate', '湘证', 'xiang.pdf', '/tmp/xiang.pdf',
+             '20260615', 'domestic', 'V10', 'application/pdf'),
+            (5, 'registration_certificate', '苏证', 'su.pdf', '/tmp/su.pdf',
+             '20230915', 'domestic', 'V10', 'application/pdf');
+        INSERT INTO knowledge_document_extractions (
+            document_id, extractor_version, status, chunk_count, extracted_at
+        ) VALUES
+            (2, '2', 'completed', 1, CURRENT_TIMESTAMP),
+            (3, '2', 'completed', 1, CURRENT_TIMESTAMP);
+        INSERT INTO knowledge_document_chunks (
+            document_id, chunk_index, source_ref, content,
+            normalized_content, content_hash
+        ) VALUES
+            (2, 0, '支持探头', '支持探头共38把 | B2-6C、X10-23L。',
+             '支持探头共38把b26cx1023l', 'xiang-difference'),
+            (3, 0, '型号差异!第4行', 'VINNO 9 | B2-6C不适用',
+             'vinno9b26c不适用', 'su-difference');
+        INSERT INTO registration_packages (
+            id, registration_number, display_name, unit_code, is_enabled
+        ) VALUES
+            (1, '湘械注准20222062053', 'V10系列湖南注册', 'V10-XIANG', 1),
+            (2, '苏械注准20232061322', 'V10系列苏州注册', 'V10-SU', 0);
+        INSERT INTO registration_package_versions (
+            id, package_id, certificate_document_id, difference_document_id, status
+        ) VALUES
+            (1, 1, 4, 2, 'active'),
+            (2, 2, 5, 3, 'active');
+        """
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        xiang = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "VINNO 9在湘证下是否支持B2-6C探头？"},
+        )
+        su = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "VINNO 9在苏证下是否支持B2-6C探头？"},
+        )
+    await engine.dispose()
+
+    assert xiang.json()["candidates"][0]["document_id"] == 2
+    assert su.json()["candidates"][0]["document_id"] == 3

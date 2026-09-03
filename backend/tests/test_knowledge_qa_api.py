@@ -107,6 +107,21 @@ def _create_qa_database(path):
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(document_id, chunk_index)
         );
+        CREATE TABLE registration_packages (
+            id INTEGER PRIMARY KEY,
+            registration_number TEXT,
+            display_name TEXT NOT NULL,
+            country_code TEXT NOT NULL DEFAULT 'CN',
+            unit_code TEXT NOT NULL,
+            is_enabled INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE registration_package_versions (
+            id INTEGER PRIMARY KEY,
+            package_id INTEGER NOT NULL REFERENCES registration_packages(id),
+            certificate_document_id INTEGER NOT NULL REFERENCES knowledge_documents(id),
+            difference_document_id INTEGER NOT NULL REFERENCES knowledge_documents(id),
+            status TEXT NOT NULL DEFAULT 'active'
+        );
         """
     )
     connection.commit()
