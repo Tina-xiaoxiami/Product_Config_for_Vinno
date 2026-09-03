@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -26,6 +27,7 @@ def test_pdf_docx_and_xlsx_extractors_preserve_source_locations(tmp_path):
 
     docx_path = tmp_path / "release-note.docx"
     document = Document()
+    document.add_paragraph(" ")
     document.add_heading("Release Note", level=1)
     document.add_paragraph("Needle gain adjustment is available.")
     table = document.add_table(rows=1, cols=2)
@@ -111,3 +113,113 @@ def test_image_only_pdf_falls_back_to_ocr(tmp_path, monkeypatch):
     )
 
     assert extract_document_blocks(pdf_path, "application/pdf") == expected
+
+
+def test_pdf_ocr_renders_pages_and_preserves_page_references(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "registration.pdf"
+    pdf_path.write_bytes(b"image-only-pdf")
+
+    monkeypatch.setattr(
+        knowledge_content.shutil,
+        "which",
+        lambda command: f"/usr/bin/{command}",
+    )
+
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+        if command[0].endswith("pdftoppm"):
+            prefix = Path(command[-1])
+            prefix.with_name("page-1.png").write_bytes(b"page-one")
+            prefix.with_name("page-2.png").write_bytes(b"page-two")
+            return subprocess.CompletedProcess(command, 0)
+        page_name = Path(command[1]).name
+        stdout = " 注册证编号：苏械注准20232061322 \n" if page_name == "page-1.png" else " 有效期至：2028年09月14日 "
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+
+    monkeypatch.setattr(knowledge_content.subprocess, "run", fake_run)
+
+    blocks = knowledge_content._ocr_pdf_blocks(pdf_path)
+
+    assert [block.source_ref for block in blocks] == ["第1页（OCR）", "第2页（OCR）"]
+    assert [block.page_number for block in blocks] == [1, 2]
+    assert blocks[0].text == "注册证编号:苏械注准20232061322"
+    assert commands[0][0][1:4] == ["-png", "-r", "250"]
+    assert commands[1][0][-4:] == ["-l", "chi_sim+eng", "--psm", "3"]
+
+
+def test_pdf_ocr_returns_empty_when_local_tools_are_unavailable(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "registration.pdf"
+    pdf_path.write_bytes(b"image-only-pdf")
+    monkeypatch.setattr(knowledge_content.shutil, "which", lambda command: None)
+
+    assert knowledge_content._ocr_pdf_blocks(pdf_path) == []
+
+
+def test_pdf_ocr_reports_render_failures(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "registration.pdf"
+    pdf_path.write_bytes(b"image-only-pdf")
+    monkeypatch.setattr(
+        knowledge_content.shutil,
+        "which",
+        lambda command: f"/usr/bin/{command}",
+    )
+
+    def fail_render(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(knowledge_content.subprocess, "run", fail_render)
+
+    with pytest.raises(KnowledgeContentError, match="页面渲染失败"):
+        knowledge_content._ocr_pdf_blocks(pdf_path)
+
+
+def test_pdf_ocr_reports_page_recognition_failures(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "registration.pdf"
+    pdf_path.write_bytes(b"image-only-pdf")
+    monkeypatch.setattr(
+        knowledge_content.shutil,
+        "which",
+        lambda command: f"/usr/bin/{command}",
+    )
+
+    def fail_ocr(command, **kwargs):
+        if command[0].endswith("pdftoppm"):
+            prefix = Path(command[-1])
+            prefix.with_name("page-1.png").write_bytes(b"page-one")
+            return subprocess.CompletedProcess(command, 0)
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(knowledge_content.subprocess, "run", fail_ocr)
+
+    with pytest.raises(KnowledgeContentError, match="第1页 OCR 失败"):
+        knowledge_content._ocr_pdf_blocks(pdf_path)
+
+
+def test_long_chunking_flushes_text_around_an_oversized_paragraph():
+    chunks = knowledge_content._split_long_text(
+        f"开头段落\n{'A' * (MAX_CHUNK_CHARACTERS + 10)}\n结尾段落"
+    )
+
+    assert chunks[0] == "开头段落"
+    assert chunks[-1] == "结尾段落"
+    assert all(len(chunk) <= MAX_CHUNK_CHARACTERS for chunk in chunks)
+
+
+def test_long_chunking_flushes_adjacent_paragraphs_at_the_limit():
+    chunks = knowledge_content._split_long_text(
+        f"{'A' * (MAX_CHUNK_CHARACTERS - 10)}\n{'B' * 20}"
+    )
+
+    assert chunks == ["A" * (MAX_CHUNK_CHARACTERS - 10), "B" * 20]
+
+
+def test_long_chunking_handles_content_without_nonblank_paragraphs():
+    content = "\n" * (MAX_CHUNK_CHARACTERS + 1)
+
+    chunks = knowledge_content._split_long_text(content)
+
+    assert len(chunks) == 2
+    assert len(chunks[0]) == MAX_CHUNK_CHARACTERS
+    assert chunks[0][-120:] == chunks[1][:120]

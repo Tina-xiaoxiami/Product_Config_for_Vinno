@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import unicodedata
 
 from sqlalchemy import text
@@ -15,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.knowledge_qa import normalize_question
 
 
-EXTRACTOR_VERSION = "1"
+EXTRACTOR_VERSION = "2"
 MAX_CHUNK_CHARACTERS = 1200
 CHUNK_OVERLAP_CHARACTERS = 120
 MAX_CANDIDATE_EXCERPT = 800
@@ -86,7 +89,63 @@ def _pdf_blocks(path: Path) -> list[ExtractedBlock]:
                     page_number=page_index,
                 )
             )
-    return blocks
+    return blocks or _ocr_pdf_blocks(path)
+
+
+def _ocr_pdf_blocks(path: Path) -> list[ExtractedBlock]:
+    pdftoppm = shutil.which("pdftoppm")
+    tesseract = shutil.which("tesseract")
+    if not pdftoppm or not tesseract:
+        return []
+
+    with tempfile.TemporaryDirectory(prefix="vinno-pdf-ocr-") as directory:
+        page_prefix = Path(directory) / "page"
+        try:
+            subprocess.run(
+                [pdftoppm, "-png", "-r", "250", str(path), str(page_prefix)],
+                check=True,
+                capture_output=True,
+                timeout=120,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise KnowledgeContentError("图片型 PDF 页面渲染失败") from exc
+
+        page_paths = sorted(
+            Path(directory).glob("page-*.png"),
+            key=lambda item: int(item.stem.rsplit("-", 1)[-1]),
+        )
+        blocks: list[ExtractedBlock] = []
+        for page_number, page_path in enumerate(page_paths, start=1):
+            try:
+                result = subprocess.run(
+                    [
+                        tesseract,
+                        str(page_path),
+                        "stdout",
+                        "-l",
+                        "chi_sim+eng",
+                        "--psm",
+                        "3",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                raise KnowledgeContentError(
+                    f"图片型 PDF 第{page_number}页 OCR 失败"
+                ) from exc
+            page_text = _clean_text(result.stdout)
+            if page_text:
+                blocks.append(
+                    ExtractedBlock(
+                        text=page_text,
+                        source_ref=f"第{page_number}页（OCR）",
+                        page_number=page_number,
+                    )
+                )
+        return blocks
 
 
 def _docx_blocks(path: Path) -> list[ExtractedBlock]:
