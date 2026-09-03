@@ -9,6 +9,7 @@ from app.services.knowledge_content import (
     build_document_chunks,
     extract_document_blocks,
 )
+from app.services import knowledge_content
 
 
 def test_pdf_docx_and_xlsx_extractors_preserve_source_locations(tmp_path):
@@ -84,3 +85,29 @@ def test_empty_text_produces_no_blocks_or_chunks(tmp_path):
 
     assert extract_document_blocks(empty_path, "text/plain") == []
     assert build_document_chunks([ExtractedBlock(text="", source_ref="全文")]) == []
+
+
+def test_image_only_pdf_falls_back_to_ocr(tmp_path, monkeypatch):
+    from pypdf import PdfWriter
+
+    pdf_path = tmp_path / "scanned-registration.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    with pdf_path.open("wb") as stream:
+        writer.write(stream)
+
+    expected = [
+        ExtractedBlock(
+            text="注册证编号：苏械注准20232061322",
+            source_ref="第1页（OCR）",
+            page_number=1,
+        )
+    ]
+    monkeypatch.setattr(
+        knowledge_content,
+        "_ocr_pdf_blocks",
+        lambda path: expected,
+        raising=False,
+    )
+
+    assert extract_document_blocks(pdf_path, "application/pdf") == expected
