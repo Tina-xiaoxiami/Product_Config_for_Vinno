@@ -437,6 +437,10 @@ def _canonical_identifiers(value: str) -> set[str]:
     return {re.sub(r"^vinno", "v", identifier) for identifier in identifiers}
 
 
+def _software_versions(value: str) -> set[str]:
+    return set(re.findall(r"(?<!\d)\d+\.\d+\.\d+(?!\d)", value))
+
+
 def _pair_coverage(query_core: str, content_core: str) -> float:
     query_pairs = _bigrams(query_core)
     if not query_pairs:
@@ -464,17 +468,34 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
     if intent_terms:
         matched_intents = sum(term in content for term in intent_terms)
         coverage = 0.85 * coverage + 0.15 * (matched_intents / len(intent_terms))
-    registration_intent = any(term in question for term in ("注册", "湘证", "苏证"))
-    registration_source = any(
-        marker in context_core
-        for marker in ("registrationcertificate", "registrationdifference")
-    )
-    if registration_intent:
+    requested_versions = _software_versions(question)
+    if requested_versions:
+        source_versions = _software_versions(f"{content} {document_context}")
         coverage = (
             min(1.0, coverage + 0.25)
-            if registration_source
-            else coverage * 0.65
+            if requested_versions.issubset(source_versions)
+            else coverage * 0.55
         )
+    registration_intent = any(term in question for term in ("注册", "湘证", "苏证"))
+    registration_certificate = "registrationcertificate" in context_core
+    registration_difference = "registrationdifference" in context_core
+    if registration_intent:
+        probe_scope_intent = "探头" in question and any(
+            term in question for term in ("支持", "适用", "注册", "不支持", "不适用")
+        )
+        if probe_scope_intent:
+            if registration_difference:
+                coverage = min(1.0, coverage + 0.35)
+            elif registration_certificate:
+                coverage *= 0.75
+            else:
+                coverage *= 0.55
+        elif registration_certificate:
+            coverage = min(1.0, coverage + 0.25)
+        elif registration_difference:
+            coverage = min(1.0, coverage + 0.15)
+        else:
+            coverage *= 0.65
     return round(min(1.0, coverage), 4)
 
 
