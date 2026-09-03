@@ -38,6 +38,13 @@ REQUIRED_RULES = {
         "regression_case",
         "SKILL_FEEDBACK",
     ),
+    "vinno-model-routing": (
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "Sol审核通过不等于获得发布授权",
+        "SKILL_FEEDBACK",
+    ),
 }
 
 
