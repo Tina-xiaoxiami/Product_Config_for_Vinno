@@ -561,6 +561,154 @@ async def publish_answer(
     return await get_question(session, question_id)
 
 
+async def merge_question(
+    session: AsyncSession,
+    *,
+    source_question_id: int,
+    target_question_id: int,
+) -> dict | None:
+    """Merge a pending duplicate into a published canonical question."""
+    if source_question_id == target_question_id:
+        raise KnowledgeQaError("不能将问题合并到自身")
+
+    result = await session.execute(
+        text(
+            """
+            SELECT id, question_text, normalized_question, status,
+                   asked_count, last_asked_at
+            FROM knowledge_questions
+            WHERE id IN (:source_question_id, :target_question_id)
+            """
+        ),
+        {
+            "source_question_id": source_question_id,
+            "target_question_id": target_question_id,
+        },
+    )
+    questions = {int(row.id): row for row in result}
+    if source_question_id not in questions or target_question_id not in questions:
+        return None
+
+    source = questions[source_question_id]
+    target = questions[target_question_id]
+    if source.status != "pending":
+        raise KnowledgeQaError("只能合并尚未发布答案的待确认问题")
+    if target.status != "answered":
+        raise KnowledgeQaError("目标问题必须已有正式发布答案")
+
+    published_result = await session.execute(
+        text(
+            """
+            SELECT 1 FROM knowledge_answers
+            WHERE question_id = :question_id AND review_status = 'published'
+            """
+        ),
+        {"question_id": target_question_id},
+    )
+    if published_result.one_or_none() is None:
+        raise KnowledgeQaError("目标问题必须已有正式发布答案")
+
+    aliases_result = await session.execute(
+        text(
+            """
+            SELECT phrasing_text, normalized_phrasing
+            FROM knowledge_question_phrasings
+            WHERE question_id = :question_id
+            ORDER BY id
+            """
+        ),
+        {"question_id": source_question_id},
+    )
+    variants = [(source.question_text, source.normalized_question)] + [
+        (row.phrasing_text, row.normalized_phrasing) for row in aliases_result
+    ]
+    unique_variants: list[tuple[str, str]] = []
+    seen = {target.normalized_question}
+    for text_value, normalized_value in variants:
+        if normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        collision_result = await session.execute(
+            text(
+                """
+                SELECT id FROM knowledge_questions
+                WHERE normalized_question = :normalized
+                  AND id NOT IN (:source_question_id, :target_question_id)
+                UNION ALL
+                SELECT question_id AS id FROM knowledge_question_phrasings
+                WHERE normalized_phrasing = :normalized
+                  AND question_id NOT IN (:source_question_id, :target_question_id)
+                LIMIT 1
+                """
+            ),
+            {
+                "normalized": normalized_value,
+                "source_question_id": source_question_id,
+                "target_question_id": target_question_id,
+            },
+        )
+        if collision_result.one_or_none() is not None:
+            raise KnowledgeQaError("待合并问法已归属于其他问题")
+        unique_variants.append((text_value, normalized_value))
+
+    await session.execute(
+        text(
+            """
+            UPDATE knowledge_questions
+            SET asked_count = asked_count + :source_asked_count,
+                last_asked_at = CASE
+                    WHEN last_asked_at >= :source_last_asked_at THEN last_asked_at
+                    ELSE :source_last_asked_at
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :target_question_id
+            """
+        ),
+        {
+            "source_asked_count": int(source.asked_count),
+            "source_last_asked_at": source.last_asked_at,
+            "target_question_id": target_question_id,
+        },
+    )
+    await session.execute(
+        text("DELETE FROM knowledge_questions WHERE id = :source_question_id"),
+        {"source_question_id": source_question_id},
+    )
+    for phrasing_text, normalized_phrasing in unique_variants:
+        existing_result = await session.execute(
+            text(
+                """
+                SELECT 1 FROM knowledge_question_phrasings
+                WHERE question_id = :question_id
+                  AND normalized_phrasing = :normalized
+                """
+            ),
+            {
+                "question_id": target_question_id,
+                "normalized": normalized_phrasing,
+            },
+        )
+        if existing_result.one_or_none() is not None:
+            continue
+        await session.execute(
+            text(
+                """
+                INSERT INTO knowledge_question_phrasings (
+                    question_id, phrasing_text, normalized_phrasing, phrasing_type
+                ) VALUES (:question_id, :text, :normalized, 'alias')
+                """
+            ),
+            {
+                "question_id": target_question_id,
+                "text": phrasing_text,
+                "normalized": normalized_phrasing,
+            },
+        )
+
+    await session.commit()
+    return await get_question(session, target_question_id)
+
+
 async def get_answer_history(session: AsyncSession, question_id: int) -> list[dict] | None:
     question_result = await session.execute(
         text("SELECT id FROM knowledge_questions WHERE id = :question_id"),

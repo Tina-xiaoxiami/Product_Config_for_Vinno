@@ -349,6 +349,7 @@ async def test_pending_question_can_merge_into_published_question_without_losing
             "/api/knowledge/questions/ask",
             json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
         )
+        assert source.json()["status"] == "pending"
         source_id = source.json()["question_id"]
         await client.post(
             "/api/knowledge/questions/ask",

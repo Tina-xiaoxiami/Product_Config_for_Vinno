@@ -37,6 +37,7 @@ from app.services.knowledge_qa import (
     get_answer_history,
     get_question,
     list_questions,
+    merge_question,
     publish_answer,
 )
 from app.services.knowledge_content import (
@@ -102,6 +103,29 @@ async def confirm_knowledge_answer(
             db,
             question_id=question_id,
             **data.model_dump(),
+        )
+    except KnowledgeQaError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
+
+
+@router.post(
+    "/questions/{source_question_id}/merge/{target_question_id}",
+    response_model=KnowledgeQuestionItem,
+)
+async def merge_knowledge_question(
+    source_question_id: int,
+    target_question_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await merge_question(
+            db,
+            source_question_id=source_question_id,
+            target_question_id=target_question_id,
         )
     except KnowledgeQaError as exc:
         await db.rollback()
