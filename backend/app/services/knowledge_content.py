@@ -480,13 +480,19 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
     content_models = {
         item for item in _canonical_identifiers(content) if item.startswith("v")
     }
+    context_models = {
+        item for item in _canonical_identifiers(document_context) if item.startswith("v")
+    }
     source_identifiers = _canonical_identifiers(f"{content} {document_context}")
     requested_numbers = identifiers - requested_models
-    model_scope_match = (
-        not requested_models
-        or not content_models
-        or bool(requested_models & content_models)
-    )
+    if not requested_models:
+        model_scope_match = True
+    elif content_models:
+        model_scope_match = bool(requested_models & content_models)
+    elif "registrationpackagescope" in context_core:
+        model_scope_match = bool(requested_models & context_models)
+    else:
+        model_scope_match = True
     identifier_scope_match = (
         model_scope_match and requested_numbers.issubset(source_identifiers)
     )
@@ -598,7 +604,12 @@ async def find_candidate_evidence(
                        SELECT GROUP_CONCAT(
                            package.registration_number || ' ' ||
                            package.display_name || ' ' ||
-                           CASE package.is_enabled WHEN 1 THEN '已启用' ELSE '未启用' END,
+                           CASE package.is_enabled WHEN 1 THEN '已启用' ELSE '未启用' END || ' ' ||
+                           COALESCE((
+                               SELECT GROUP_CONCAT(version_model.model_name, ' ')
+                               FROM registration_package_version_models version_model
+                               WHERE version_model.version_id = package_version.id
+                           ), ''),
                            ' '
                        )
                        FROM registration_package_versions package_version
@@ -624,12 +635,15 @@ async def find_candidate_evidence(
     )
     candidates: list[dict] = []
     for row in result:
+        registration_context = row.registration_context or ""
+        product_series_context = "" if registration_context else (row.product_series or "")
         score = _candidate_score(
             question,
             row.content,
             (
-                f"{row.document_type} {row.title} {row.product_series or ''} "
-                f"{row.registration_context or ''}"
+                f"{row.document_type} {row.title} {product_series_context} "
+                f"{'registration_package_scope ' if registration_context else ''}"
+                f"{registration_context}"
             ),
         )
         if score < 0.3:

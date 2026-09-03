@@ -347,6 +347,10 @@ async def test_candidate_ranking_keeps_registration_evidence_in_requested_provin
         ) VALUES
             (1, 1, 4, 2, 'active'),
             (2, 2, 5, 3, 'active');
+        INSERT INTO registration_package_version_models (id, version_id, model_name)
+        VALUES
+            (1, 1, 'VINNO 9'),
+            (2, 2, 'VINNO 9');
         """
     )
     connection.commit()
