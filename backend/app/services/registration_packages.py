@@ -1021,7 +1021,9 @@ def _replace_version_mappings(
     *,
     version_id: int,
     product_model_mappings: dict[int, str],
+    approved_product_model_ids: set[int] | None = None,
 ) -> int:
+    approved_ids = approved_product_model_ids or set()
     connection.execute(
         "DELETE FROM registration_package_version_product_mappings WHERE version_id = ?",
         (version_id,),
@@ -1048,13 +1050,14 @@ def _replace_version_mappings(
             INSERT INTO registration_package_version_product_mappings (
                 version_id, product_model_id, version_model_id,
                 mapping_type, review_status
-            ) VALUES (?, ?, ?, ?, 'pending')
+            ) VALUES (?, ?, ?, ?, ?)
             """,
             (
                 version_id,
                 int(product_model_id),
                 int(version_model["id"]),
                 _mapping_type(product["name"], product["config_group"], version_model["model_name"]),
+                "approved" if int(product_model_id) in approved_ids else "pending",
             ),
         )
     return len(product_model_mappings)
@@ -1065,7 +1068,7 @@ def _auto_version_mappings(
     *,
     version_id: int,
     country_code: str,
-) -> dict[int, str]:
+) -> tuple[dict[int, str], set[int]]:
     version_models = {
         str(row["normalized_name"]): str(row["model_name"])
         for row in connection.execute(
@@ -1073,12 +1076,33 @@ def _auto_version_mappings(
             (version_id,),
         )
     }
+    version = connection.execute(
+        "SELECT package_id FROM registration_package_versions WHERE id = ?",
+        (version_id,),
+    ).fetchone()
+    if version is None:
+        raise RegistrationPackageError("注册资料包版本不存在")
+    mappings = {
+        int(row["product_model_id"]): version_models[str(row["normalized_name"])]
+        for row in connection.execute(
+            """
+            SELECT link.product_model_id, model.normalized_name
+            FROM product_registration_model_links link
+            JOIN registration_models model ON model.id = link.registration_model_id
+            WHERE link.registration_package_id = ?
+              AND link.review_status = 'approved'
+            ORDER BY link.product_model_id
+            """,
+            (int(version["package_id"]),),
+        )
+        if str(row["normalized_name"]) in version_models
+    }
+    reused_product_model_ids = set(mappings)
     marker = "china" if country_code == "CN" else "oversea"
     confirmed = {
         _identity(product): _identity(base)
         for product, base in confirmed_derived_model_bases().items()
     }
-    mappings: dict[int, str] = {}
     for row in connection.execute(
         """
         SELECT product.id, product.name, product.config_group
@@ -1095,9 +1119,9 @@ def _auto_version_mappings(
             confirmed.get(_identity(row["name"]), ""),
         )
         matched = next((version_models[key] for key in candidates if key in version_models), None)
-        if matched:
+        if matched and int(row["id"]) not in mappings:
             mappings[int(row["id"])] = matched
-    return mappings
+    return mappings, reused_product_model_ids
 
 
 def _version_mapping_review(
@@ -1594,8 +1618,9 @@ def stage_registration_package_draft(
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
         mappings = product_model_mappings
+        approved_product_model_ids: set[int] = set()
         if mappings is None:
-            mappings = _auto_version_mappings(
+            mappings, approved_product_model_ids = _auto_version_mappings(
                 connection,
                 version_id=int(draft["id"]),
                 country_code=country_code,
@@ -1604,6 +1629,7 @@ def stage_registration_package_draft(
             connection,
             version_id=int(draft["id"]),
             product_model_mappings=mappings,
+            approved_product_model_ids=approved_product_model_ids,
         )
         review = _version_mapping_review(connection, version_id=int(draft["id"]))
         connection.commit()
