@@ -55,6 +55,29 @@ def test_registration_workbook_parser_preserves_models_probes_and_exclusions(tmp
     assert parsed.models[1].channel_count == 128
 
 
+def test_registration_workbook_parser_allows_registered_probe_without_ipn(tmp_path):
+    workbook_path = tmp_path / "registration-without-ipn.xlsx"
+    workbook = Workbook()
+    matrix = workbook.active
+    matrix.title = "0729"
+    matrix["A2"] = "支持探头\n共2把"
+    matrix["B2"] = "S1-8CM，S1-8CX"
+    matrix.append(["序号", "型号", "不支持探头", "通道数"])
+    matrix.append([1, "ULTIMUS 10E", "探头全适用", 128])
+    probes = workbook.create_sheet("Sheet1")
+    probes.append([None, None])
+    probes.append(["S1-8CM", "1001335"])
+    probes.append(["S1-8CX", None])
+    workbook.save(workbook_path)
+
+    parsed = parse_domestic_registration_workbook(workbook_path)
+
+    assert [(probe.model, probe.ipn) for probe in parsed.probes] == [
+        ("S1-8CM", "1001335"),
+        ("S1-8CX", None),
+    ]
+
+
 def test_registration_workbook_rejects_an_unknown_excluded_probe(tmp_path):
     workbook_path = tmp_path / "registration.xlsx"
     _write_registration_workbook(
