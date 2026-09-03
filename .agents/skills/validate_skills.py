@@ -39,6 +39,7 @@ REQUIRED_RULES = {
         "SKILL_FEEDBACK",
     ),
     "vinno-model-routing": (
+        "默认自主路由",
         "gpt-5.6-luna",
         "gpt-5.6-terra",
         "gpt-5.6-sol",

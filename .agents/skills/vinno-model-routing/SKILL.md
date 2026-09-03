@@ -1,18 +1,18 @@
 ---
 name: vinno-model-routing
-description: Route VINNO product knowledge work between GPT-5.6 Luna, Terra, and Sol according to workload volume, semantic ambiguity, business risk, and release impact. Use when a request spans material ingestion, registration processing, feature identity, Q&A, implementation, audit, or publishing and should select or recommend a model for each stage. Do not use for a single straightforward request that already has an explicitly selected model.
+description: Automatically route VINNO product knowledge work between GPT-5.6 Luna, Terra, and Sol according to workload volume, semantic ambiguity, business risk, and release impact. Use by default for VINNO material ingestion, registration processing, feature identity, Q&A, implementation, audit, or publishing without requiring the user to name this skill or a model. An explicit user model choice overrides the route for that request.
 ---
 
 # VINNO 知识库模型路由
 
-用一个入口判断任务阶段、选择业务技能和模型，并在证据歧义或风险上升时逐级升级。模型能力不能替代业务授权；正式发布、启停和高影响正式库写入仍遵循用户确认边界。
+默认自主路由：用一个入口判断任务阶段、选择业务技能和模型，并在证据歧义或风险上升时逐级升级。用户不需要重复指定本技能或模型；只有用户明确锁定模型时才覆盖默认选择。模型能力不能替代业务授权；正式发布、启停和高影响正式库写入仍遵循用户确认边界。
 
 ## 路由顺序
 
 1. 判断任务属于注册资料、普通产品材料、功能身份、问答整理、系统开发还是质量审计。
 2. 只加载对应业务技能：`vinno-registration-ingest`、`vinno-product-material-ingest`、`vinno-feature-identity-curation`、`vinno-qa-curation` 或 `vinno-knowledge-audit`。
 3. 根据下表选择当前步骤的最低充分模型和推理强度。
-4. 每个阶段结束时输出结构化交接摘要；有升级条件时把摘要交给更强模型，不重复传入全部材料。
+4. 环境支持按任务或阶段选模型时自动分派；每个阶段结束时生成结构化交接摘要，有升级条件时把摘要交给更强模型，不重复传入全部材料，也不要求用户发送继续路由的口令。
 5. 写入正式库或发布前执行适当核验；需要用户授权的动作必须停在可审查状态。
 
 ## 模型选择
