@@ -531,5 +531,12 @@ def test_next_package_version_reuses_approved_registration_model_mappings(tmp_pa
         "product_model_name": "VINNO 10 特别版",
         "registration_model_name": "VINNO 10",
         "mapping_type": "manual",
-        "review_status": "pending",
+        "review_status": "approved",
     }
+    newly_inferred = next(
+        item
+        for item in second["mappings"]
+        if item["product_model_id"] == 1
+    )
+    assert newly_inferred["registration_model_name"] == "VINNO 10"
+    assert newly_inferred["review_status"] == "pending"
