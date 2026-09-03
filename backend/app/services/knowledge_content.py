@@ -432,9 +432,17 @@ def _candidate_prefilter_pairs(question: str) -> tuple[str, ...]:
 
 
 def _canonical_identifiers(value: str) -> set[str]:
-    normalized = normalize_question(value)
-    identifiers = set(re.findall(r"(?:vinno|v)\d+[a-z0-9]*|\d{6,}", normalized))
-    return {re.sub(r"^vinno", "v", identifier) for identifier in identifiers}
+    folded = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    model_pattern = re.compile(
+        r"(?:vinno\s*|(?<![a-z])v\s*)(\d{1,2})(?!\d)"
+        r"(?:[\s_-]*(private|super|elite|expert|plus|max|pro|exp|e|p|l|g|t|s))?"
+    )
+    identifiers = {
+        f"v{match.group(1)}{match.group(2) or ''}"
+        for match in model_pattern.finditer(folded)
+    }
+    identifiers.update(re.findall(r"\d{6,}", normalize_question(value)))
+    return identifiers
 
 
 def _software_versions(value: str) -> set[str]:
@@ -468,9 +476,20 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
         return 0.0
     coverage = max(_pair_coverage(form, content_core) for form in query_forms)
     identifiers = _canonical_identifiers(question)
-    combined_context = re.sub(r"vinno(?=\d)", "v", f"{content_core}{context_core}")
-    if identifiers and not all(identifier in combined_context for identifier in identifiers):
-        coverage *= 0.35
+    requested_models = {item for item in identifiers if item.startswith("v")}
+    content_models = {
+        item for item in _canonical_identifiers(content) if item.startswith("v")
+    }
+    source_identifiers = _canonical_identifiers(f"{content} {document_context}")
+    requested_numbers = identifiers - requested_models
+    model_scope_match = (
+        not requested_models
+        or not content_models
+        or bool(requested_models & content_models)
+    )
+    identifier_scope_match = (
+        model_scope_match and requested_numbers.issubset(source_identifiers)
+    )
     intent_terms = {
         term for term in ("标配", "选配", "招标", "未注册", "注册", "支持", "参数")
         if term in question
@@ -489,6 +508,7 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
     registration_intent = any(term in question for term in ("注册", "湘证", "苏证"))
     registration_certificate = "registrationcertificate" in context_core
     registration_difference = "registrationdifference" in context_core
+    authority_scope_match = True
     if registration_intent:
         requested_authorities = _registration_authorities(question)
         source_authorities = _registration_authorities(document_context)
@@ -496,7 +516,7 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
             if requested_authorities & source_authorities:
                 coverage = min(1.0, coverage + 0.3)
             elif source_authorities:
-                coverage *= 0.12
+                authority_scope_match = False
             else:
                 coverage *= 0.55
         probe_scope_intent = "探头" in question and any(
@@ -515,6 +535,10 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
             coverage = min(1.0, coverage + 0.15)
         else:
             coverage *= 0.65
+    if not authority_scope_match:
+        coverage *= 0.05
+    if not identifier_scope_match:
+        coverage *= 0.2
     return round(min(1.0, coverage), 4)
 
 
