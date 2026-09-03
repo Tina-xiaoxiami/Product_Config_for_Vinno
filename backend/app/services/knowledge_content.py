@@ -441,6 +441,16 @@ def _software_versions(value: str) -> set[str]:
     return set(re.findall(r"(?<!\d)\d+\.\d+\.\d+(?!\d)", value))
 
 
+def _registration_authorities(value: str) -> set[str]:
+    normalized = normalize_question(value)
+    authorities: set[str] = set()
+    if any(marker in normalized for marker in ("湘证", "湘械", "湖南注册")):
+        authorities.add("xiang")
+    if any(marker in normalized for marker in ("苏证", "苏械", "苏州注册", "江苏注册")):
+        authorities.add("su")
+    return authorities
+
+
 def _pair_coverage(query_core: str, content_core: str) -> float:
     query_pairs = _bigrams(query_core)
     if not query_pairs:
@@ -480,6 +490,15 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
     registration_certificate = "registrationcertificate" in context_core
     registration_difference = "registrationdifference" in context_core
     if registration_intent:
+        requested_authorities = _registration_authorities(question)
+        source_authorities = _registration_authorities(document_context)
+        if requested_authorities:
+            if requested_authorities & source_authorities:
+                coverage = min(1.0, coverage + 0.3)
+            elif source_authorities:
+                coverage *= 0.12
+            else:
+                coverage *= 0.55
         probe_scope_intent = "探头" in question and any(
             term in question for term in ("支持", "适用", "注册", "不支持", "不适用")
         )
@@ -550,7 +569,23 @@ async def find_candidate_evidence(
             f"""
             SELECT chunk.id AS chunk_id, chunk.document_id, document.title,
                    document.document_type, document.product_series,
-                   chunk.source_ref, chunk.page_number, chunk.content
+                   chunk.source_ref, chunk.page_number, chunk.content,
+                   COALESCE((
+                       SELECT GROUP_CONCAT(
+                           package.registration_number || ' ' ||
+                           package.display_name || ' ' ||
+                           CASE package.is_enabled WHEN 1 THEN '已启用' ELSE '未启用' END,
+                           ' '
+                       )
+                       FROM registration_package_versions package_version
+                       JOIN registration_packages package
+                         ON package.id = package_version.package_id
+                       WHERE package_version.status = 'active'
+                         AND (
+                             package_version.certificate_document_id = document.id
+                             OR package_version.difference_document_id = document.id
+                         )
+                   ), '') AS registration_context
             FROM knowledge_document_chunks chunk
             JOIN knowledge_documents document ON document.id = chunk.document_id
             JOIN knowledge_document_extractions extraction
@@ -568,7 +603,10 @@ async def find_candidate_evidence(
         score = _candidate_score(
             question,
             row.content,
-            f"{row.document_type} {row.title} {row.product_series or ''}",
+            (
+                f"{row.document_type} {row.title} {row.product_series or ''} "
+                f"{row.registration_context or ''}"
+            ),
         )
         if score < 0.3:
             continue
