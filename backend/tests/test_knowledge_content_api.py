@@ -408,3 +408,70 @@ async def test_candidate_ranking_does_not_confuse_10e_with_10_expert(tmp_path):
     await engine.dispose()
 
     assert response.json()["candidates"][0]["source_ref"] == "VINNO 10E行"
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_excludes_other_registration_product_unit(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        INSERT INTO knowledge_documents (
+            id, document_type, title, file_name, file_path,
+            version, market, product_series, mime_type
+        ) VALUES
+            (2, 'registration_difference', '国内注册差异表', 'v10.xlsx',
+             '/tmp/v10.xlsx', '20250729', 'domestic', 'R&V10 series-China',
+             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (3, 'registration_difference', '国内注册差异表', 'ultimus.xlsx',
+             '/tmp/ultimus.xlsx', '20250729', 'domestic', 'R&V10 series-China',
+             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (4, 'registration_certificate', 'V10湘证', 'v10.pdf', '/tmp/v10.pdf',
+             '20260615', 'domestic', 'R&V10 series-China', 'application/pdf'),
+            (5, 'registration_certificate', 'ULTIMUS湘证', 'ultimus.pdf',
+             '/tmp/ultimus.pdf', '20250729', 'domestic', 'R&V10 series-China',
+             'application/pdf');
+        INSERT INTO knowledge_document_extractions (
+            document_id, extractor_version, status, chunk_count, extracted_at
+        ) VALUES
+            (2, '2', 'completed', 1, CURRENT_TIMESTAMP),
+            (3, '2', 'completed', 1, CURRENT_TIMESTAMP);
+        INSERT INTO knowledge_document_chunks (
+            document_id, chunk_index, source_ref, content,
+            normalized_content, content_hash
+        ) VALUES
+            (2, 0, '支持探头', '支持探头 | B2-6C、X10-23L。',
+             '支持探头b26cx1023l', 'v10-list'),
+            (3, 0, '支持探头', '支持探头 | B2-6C、X10-23L。',
+             '支持探头b26cx1023l', 'ultimus-list');
+        INSERT INTO registration_packages (
+            id, registration_number, display_name, unit_code, is_enabled
+        ) VALUES
+            (1, '湘械注准20222062053', 'V10系列湖南注册', 'V10-XIANG', 1),
+            (2, '湘械注准20242061214', 'ULTIMUS G2国内注册', 'ULTIMUS-G2', 1);
+        INSERT INTO registration_package_versions (
+            id, package_id, certificate_document_id, difference_document_id, status
+        ) VALUES
+            (1, 1, 4, 2, 'active'),
+            (2, 2, 5, 3, 'active');
+        INSERT INTO registration_package_version_models (id, version_id, model_name)
+        VALUES
+            (1, 1, 'VINNO 9'),
+            (2, 2, 'ULTIMUS 9E');
+        """
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        response = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "VINNO 9在湘证下是否支持B2-6C探头？"},
+        )
+    await engine.dispose()
+
+    document_ids = [item["document_id"] for item in response.json()["candidates"]]
+    assert document_ids[0] == 2
+    assert 3 not in document_ids

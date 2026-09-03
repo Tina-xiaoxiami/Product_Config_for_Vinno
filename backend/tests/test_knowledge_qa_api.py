@@ -122,6 +122,11 @@ def _create_qa_database(path):
             difference_document_id INTEGER NOT NULL REFERENCES knowledge_documents(id),
             status TEXT NOT NULL DEFAULT 'active'
         );
+        CREATE TABLE registration_package_version_models (
+            id INTEGER PRIMARY KEY,
+            version_id INTEGER NOT NULL REFERENCES registration_package_versions(id),
+            model_name TEXT NOT NULL
+        );
         """
     )
     connection.commit()
