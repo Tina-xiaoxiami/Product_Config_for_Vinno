@@ -93,6 +93,25 @@ cd backend
 python3 scripts/extract_knowledge_documents.py
 ```
 
+批量登记知识库问题时使用受控 JSON 清单。默认只预览去重、已发布答案覆盖情况、候选依据和执行耗时；加 `--apply` 才写入待确认队列。系统生成的问题 `asked_count` 为 0，不会冒充真实下游询问次数，也不会自动发布答案：
+
+```bash
+cd backend
+python3 scripts/seed_knowledge_questions.py --input "/完整路径/问题批次.json"
+python3 scripts/seed_knowledge_questions.py --input "/完整路径/问题批次.json" --apply
+```
+
+问题批次格式：
+
+```json
+{
+  "batch": "v10-first-qa-20260903",
+  "questions": [
+    {"category": "配置策略", "question": "某功能是标配、选配还是招标支持？"}
+  ]
+}
+```
+
 将旧数据库中已经导入的注册批次绑定为首个成对资料包时，必须显式指定两份资料和批次 ID：
 
 ```bash
