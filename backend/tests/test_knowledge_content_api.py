@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from app.services import knowledge_content
 from test_knowledge_qa_api import _client_for, _create_qa_database
 
 
@@ -140,3 +141,70 @@ async def test_candidate_ranking_uses_confirmed_wording_and_centers_the_excerpt(
     assert candidate["source_ref"] == "第2页"
     assert "实时显示屏亮度调节" in candidate["excerpt"]
     assert len(candidate["excerpt"]) <= 800
+
+
+@pytest.mark.asyncio
+async def test_candidate_prefilter_skips_irrelevant_chunks_before_python_scoring(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "knowledge.db"
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO knowledge_document_extractions (
+            document_id, extractor_version, status, chunk_count, extracted_at
+        ) VALUES (1, '1', 'completed', 201, CURRENT_TIMESTAMP)
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO knowledge_document_chunks (
+            document_id, chunk_index, source_ref,
+            content, normalized_content, content_hash
+        ) VALUES (1, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                index,
+                f"无关段落{index}",
+                f"这是与查询无关的材料内容编号{index}",
+                f"这是与查询无关的材料内容编号{index}",
+                f"irrelevant-{index}",
+            )
+            for index in range(200)
+        ]
+        + [
+            (
+                200,
+                "相关段落",
+                "V10系列支持环境光自动亮度调节。",
+                "v10系列支持环境光自动亮度调节",
+                "relevant",
+            )
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    original_score = knowledge_content._candidate_score
+    scored_chunks = 0
+
+    def counting_score(question, content, document_context):
+        nonlocal scored_chunks
+        scored_chunks += 1
+        return original_score(question, content, document_context)
+
+    monkeypatch.setattr(knowledge_content, "_candidate_score", counting_score)
+    client, engine = await _client_for(database_path)
+    async with client:
+        asked = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "V10环境光自动亮度调节是标配吗？"},
+        )
+    await engine.dispose()
+
+    assert asked.status_code == 200
+    assert asked.json()["candidates"][0]["source_ref"] == "相关段落"
+    assert scored_chunks < 10
