@@ -366,3 +366,45 @@ async def test_candidate_ranking_keeps_registration_evidence_in_requested_provin
 
     assert xiang.json()["candidates"][0]["document_id"] == 2
     assert su.json()["candidates"][0]["document_id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_candidate_ranking_does_not_confuse_10e_with_10_expert(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        INSERT INTO knowledge_documents (
+            id, document_type, title, file_name, file_path,
+            version, market, product_series, mime_type
+        ) VALUES (
+            2, 'registration_difference', 'V10湘证注册差异表', 'difference.xlsx',
+            '/tmp/difference.xlsx', '20250729', 'domestic', 'V10',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        INSERT INTO knowledge_document_extractions (
+            document_id, extractor_version, status, chunk_count, extracted_at
+        ) VALUES (2, '2', 'completed', 2, CURRENT_TIMESTAMP);
+        INSERT INTO knowledge_document_chunks (
+            document_id, chunk_index, source_ref, content,
+            normalized_content, content_hash
+        ) VALUES
+            (2, 0, 'VINNO 10E行', 'VINNO 10E | F4-12L、G1-4P不适用',
+             'vinno10ef412lg14p不适用', '10e-row'),
+            (2, 1, 'VINNO 10 Expert行', 'VINNO 10 Expert | X10-23L不适用',
+             'vinno10expertx1023l不适用', '10-expert-row');
+        """
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        response = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "VINNO 10E在湘证下是否支持X10-23L探头？"},
+        )
+    await engine.dispose()
+
+    assert response.json()["candidates"][0]["source_ref"] == "VINNO 10E行"
