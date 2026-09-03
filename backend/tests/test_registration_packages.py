@@ -507,7 +507,7 @@ def test_baseline_migration_rejects_inactive_or_unmaterialized_batch(tmp_path):
         )
 
 
-def test_historical_artifacts_do_not_follow_mutable_document_path(tmp_path):
+def test_version_artifacts_reference_the_registered_controlled_document(tmp_path):
     database_path = tmp_path / "packages.db"
     _create_database(database_path)
     _materialize_baseline_projection(database_path)
@@ -530,8 +530,6 @@ def test_historical_artifacts_do_not_follow_mutable_document_path(tmp_path):
         identity_source="registration_certificate",
         confirmed_by="baseline_migration",
     )
-    Path(source_path).write_bytes(b"mutated-source")
-
     connection = sqlite3.connect(database_path)
     artifact_path = connection.execute(
         """
@@ -541,7 +539,9 @@ def test_historical_artifacts_do_not_follow_mutable_document_path(tmp_path):
         (result["id"],),
     ).fetchone()[0]
     connection.close()
+    assert artifact_path == source_path
     assert Path(artifact_path).read_bytes() == b"certificate-v1"
+    assert not (tmp_path / "registration_artifacts").exists()
 
 
 def test_existing_pair_migration_preserves_projection_and_is_idempotent(tmp_path):

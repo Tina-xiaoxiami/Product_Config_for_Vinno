@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 
 import pytest
@@ -97,6 +98,72 @@ def test_pair_upload_stages_version_scoped_snapshot_and_mapping_review(tmp_path)
         "VINNO 10",
         "VINNO 9_Private",
     ]
+
+
+def test_controlled_pair_stages_direct_paths_without_managed_source_copies(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "controlled" / "registration.xlsx"
+    certificate_path = tmp_path / "controlled" / "certificate.pdf"
+    workbook_path.parent.mkdir()
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    certificate_path.write_bytes(b"%PDF-1.4 controlled certificate")
+    migrate_registration_schema(database_path)
+
+    draft = stage_registration_package_draft(
+        database_path,
+        country_code="CN",
+        unit_code="V10-CONTROLLED",
+        display_name="V10 受控注册",
+        product_series="V10",
+        registration_number="TEST-CN-CONTROLLED",
+        certificate_path=certificate_path,
+        difference_path=workbook_path,
+        certificate_version="20260903",
+        difference_version="20260903",
+        confirmed_by="product_owner",
+        store_sources=False,
+    )
+
+    connection = sqlite3.connect(database_path)
+    paths = connection.execute(
+        """
+        SELECT certificate_artifact_path, difference_artifact_path
+        FROM registration_package_versions WHERE id = ?
+        """,
+        (draft["id"],),
+    ).fetchone()
+    identity_source = connection.execute(
+        "SELECT identity_source FROM registration_packages WHERE id = ?",
+        (draft["package_id"],),
+    ).fetchone()[0]
+    documents = connection.execute(
+        """
+        SELECT document_type, file_path, sha256
+        FROM knowledge_documents
+        WHERE file_path IN (?, ?)
+        ORDER BY document_type
+        """,
+        (str(certificate_path.resolve()), str(workbook_path.resolve())),
+    ).fetchall()
+    connection.close()
+
+    assert paths == (str(certificate_path.resolve()), str(workbook_path.resolve()))
+    assert identity_source == "controlled_material"
+    assert documents == [
+        (
+            "registration_certificate",
+            str(certificate_path.resolve()),
+            hashlib.sha256(certificate_path.read_bytes()).hexdigest(),
+        ),
+        (
+            "registration_difference",
+            str(workbook_path.resolve()),
+            hashlib.sha256(workbook_path.read_bytes()).hexdigest(),
+        ),
+    ]
+    assert not (tmp_path / "registration_sources").exists()
+    assert not (tmp_path / "registration_artifacts").exists()
 
 
 def test_publish_keeps_registration_certificates_independent_and_scopes_links(tmp_path):

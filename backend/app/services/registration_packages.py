@@ -245,17 +245,7 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _artifact_directory(
-    database_path: Path,
-    *,
-    country_code: str,
-    registration_number: str,
-) -> Path:
-    safe_number = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "_", registration_number)
-    return database_path.parent / "registration_artifacts" / country_code / safe_number
-
-
-def _archive_document(
+def _reference_controlled_document(
     database_path: Path,
     *,
     country_code: str,
@@ -263,6 +253,7 @@ def _archive_document(
     role: str,
     document: sqlite3.Row,
 ) -> tuple[str, str, str | None]:
+    del database_path, country_code, registration_number
     source = Path(str(document["file_path"]))
     if not source.is_absolute() or not source.is_file():
         raise RegistrationPackageError(
@@ -271,29 +262,7 @@ def _archive_document(
     expected_sha = str(document["sha256"])
     if _file_sha256(source) != expected_sha:
         raise RegistrationPackageError(f"{role}原文件内容与登记哈希不一致")
-
-    target_directory = _artifact_directory(
-        database_path,
-        country_code=country_code,
-        registration_number=registration_number,
-    )
-    target_directory.mkdir(parents=True, exist_ok=True)
-    suffix = Path(str(document["file_name"])).suffix.lower()
-    target = target_directory / f"{role}-{expected_sha}{suffix}"
-    if target.exists():
-        if _file_sha256(target) != expected_sha:
-            raise RegistrationPackageError(f"{role}归档副本哈希不一致")
-    else:
-        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-        try:
-            shutil.copyfile(source, temporary)
-            if _file_sha256(temporary) != expected_sha:
-                raise RegistrationPackageError(f"{role}归档复制校验失败")
-            temporary.replace(target)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-    return str(target.resolve()), str(document["file_name"]), document["mime_type"]
+    return str(source.resolve()), str(document["file_name"]), document["mime_type"]
 
 
 def _validate_active_projection(
@@ -700,14 +669,14 @@ def record_registration_package_version(
                     batch=batch,
                 )
 
-            certificate_artifact = _archive_document(
+            certificate_artifact = _reference_controlled_document(
                 path,
                 country_code=cleaned_country,
                 registration_number=cleaned_registration_number,
                 role="certificate",
                 document=certificate,
             )
-            difference_artifact = _archive_document(
+            difference_artifact = _reference_controlled_document(
                 path,
                 country_code=cleaned_country,
                 registration_number=cleaned_registration_number,
@@ -1214,7 +1183,7 @@ def _cleanup_unreferenced_staged_ingest(
     *,
     document_ids: list[int],
     batch_id: int,
-    managed_paths: tuple[Path, Path],
+    managed_paths: tuple[Path, ...],
 ) -> None:
     """清理幂等复用或登记失败后没有被版本引用的导入中间数据。"""
 
@@ -1354,8 +1323,13 @@ def stage_registration_package_draft(
     change_note: str | None = None,
     effective_date: str | None = None,
     product_model_mappings: dict[int, str] | None = None,
+    store_sources: bool = True,
 ) -> dict[str, Any]:
-    """成对登记原件、解析差异表，并生成待确认的独立资料包版本。"""
+    """成对登记原件、解析差异表，并生成待确认的独立资料包版本。
+
+    ``store_sources=False`` 用于已位于受控目录的原件：数据库直接登记并
+    引用其绝对路径，不再创建应用内来源副本或版本归档副本。
+    """
 
     database = Path(database_path)
     certificate_source = Path(certificate_path)
@@ -1368,18 +1342,24 @@ def stage_registration_package_draft(
         difference_source
     )
     migrate_registration_schema(database)
-    managed_certificate = _managed_source_copy(
-        database,
-        registration_number=registration_number,
-        role="certificate",
-        source_path=certificate_source,
-    )
-    managed_difference = _managed_source_copy(
-        database,
-        registration_number=registration_number,
-        role="difference",
-        source_path=difference_source,
-    )
+    if store_sources:
+        managed_certificate = _managed_source_copy(
+            database,
+            registration_number=registration_number,
+            role="certificate",
+            source_path=certificate_source,
+        )
+        managed_difference = _managed_source_copy(
+            database,
+            registration_number=registration_number,
+            role="difference",
+            source_path=difference_source,
+        )
+        managed_paths = (managed_certificate, managed_difference)
+    else:
+        managed_certificate = certificate_source.resolve()
+        managed_difference = difference_source.resolve()
+        managed_paths = ()
     certificate_sha = _file_sha256(managed_certificate)
     difference_sha = _file_sha256(managed_difference)
     snapshot_hash = hashlib.sha256(
@@ -1391,6 +1371,7 @@ def stage_registration_package_draft(
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
         document_ids = []
+        inserted_document_ids = []
         for document_type, title, source, version, sha, mime_type in (
             (
                 "registration_certificate",
@@ -1409,6 +1390,30 @@ def stage_registration_package_draft(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         ):
+            existing = connection.execute(
+                """
+                SELECT id, document_type, sha256, country, product_series, source_status
+                FROM knowledge_documents WHERE file_path = ?
+                """,
+                (str(source),),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["document_type"] != document_type
+                    or existing["sha256"] != sha
+                    or existing["country"] != country_code
+                    or existing["source_status"] != "active"
+                    or (
+                        product_series
+                        and existing["product_series"]
+                        and existing["product_series"] != product_series
+                    )
+                ):
+                    raise RegistrationPackageError(
+                        f"受控原件登记信息不一致：{source.name}"
+                    )
+                document_ids.append(int(existing["id"]))
+                continue
             cursor = connection.execute(
                 """
                 INSERT INTO knowledge_documents (
@@ -1428,7 +1433,9 @@ def stage_registration_package_draft(
                     sha,
                 ),
             )
-            document_ids.append(int(cursor.lastrowid))
+            document_id = int(cursor.lastrowid)
+            document_ids.append(document_id)
+            inserted_document_ids.append(document_id)
         cursor = connection.execute(
             """
             INSERT INTO registration_import_batches (
@@ -1468,7 +1475,9 @@ def stage_registration_package_draft(
             difference_document_id=document_ids[1],
             import_batch_id=batch_id,
             registration_number=registration_number,
-            identity_source="paired_upload",
+            identity_source=(
+                "paired_upload" if store_sources else "controlled_material"
+            ),
             confirmed_by=confirmed_by,
             change_note=change_note,
             effective_date=effective_date,
@@ -1476,17 +1485,17 @@ def stage_registration_package_draft(
     except Exception:
         _cleanup_unreferenced_staged_ingest(
             database,
-            document_ids=document_ids,
+            document_ids=inserted_document_ids,
             batch_id=batch_id,
-            managed_paths=(managed_certificate, managed_difference),
+            managed_paths=managed_paths,
         )
         raise
     if draft["reused"]:
         _cleanup_unreferenced_staged_ingest(
             database,
-            document_ids=document_ids,
+            document_ids=inserted_document_ids,
             batch_id=batch_id,
-            managed_paths=(managed_certificate, managed_difference),
+            managed_paths=managed_paths,
         )
         if draft["status"] != "draft":
             raise RegistrationPackageError("相同注册资料已发布，无需重复生成草稿")
