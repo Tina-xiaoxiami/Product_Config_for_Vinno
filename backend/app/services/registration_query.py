@@ -255,9 +255,10 @@ async def list_product_registration_probes(
         text(
             """
             SELECT package.id AS registration_package_id,
-                   probe.registration_probe_id AS probe_id,
-                   probe.probe_model, probe.ipn,
-                   matrix.registration_status,
+                   country_probe.id AS probe_id,
+                   country_probe.probe_model, country_probe.ipn,
+                   COALESCE(matrix.registration_status, 'unregistered')
+                       AS registration_status,
                    value.selection_config, value.current_config,
                    item.id AS config_item_id, item.zh_desc AS config_name,
                    probe_master.id AS probe_master_id,
@@ -272,19 +273,24 @@ async def list_product_registration_probes(
             JOIN registration_package_version_models version_model
               ON version_model.version_id = package_version.id
              AND version_model.registration_model_id = link.registration_model_id
-            JOIN registration_package_version_model_probes matrix
+            JOIN registration_probes country_probe
+              ON country_probe.country_code = package.country_code
+             AND country_probe.source_status = 'active'
+            LEFT JOIN registration_package_version_probes probe
+              ON probe.version_id = package_version.id
+             AND probe.normalized_model = country_probe.normalized_model
+            LEFT JOIN registration_package_version_model_probes matrix
               ON matrix.version_model_id = version_model.id
              AND matrix.version_id = package_version.id
-            JOIN registration_package_version_probes probe
-              ON probe.id = matrix.version_probe_id
+             AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON item.ipn = probe.ipn AND item.category = 'Probes'
+              ON item.ipn = country_probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
               ON variant.id = (
                   SELECT MIN(candidate.id)
                   FROM probe_model_variants candidate
                   WHERE UPPER(TRIM(COALESCE(candidate.ipn, '')))
-                      = UPPER(TRIM(COALESCE(probe.ipn, '')))
+                      = UPPER(TRIM(COALESCE(country_probe.ipn, '')))
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id
@@ -298,7 +304,7 @@ async def list_product_registration_probes(
                   :registration_package_id IS NULL
                   OR package.id = :registration_package_id
               )
-            ORDER BY package.id, probe.id
+            ORDER BY package.id, country_probe.id
             """
         ),
         params,

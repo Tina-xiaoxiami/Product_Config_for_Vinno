@@ -290,6 +290,23 @@ async def test_product_query_groups_each_mapped_certificate_active_snapshot(tmp_
     publish_registration_package_version(
         database_path, version_id=draft_b["id"], confirmed_by="product_owner"
     )
+    connection = sqlite3.connect(database_path)
+    import_batch_id = connection.execute(
+        "SELECT import_batch_id FROM registration_package_versions WHERE id = ?",
+        (draft_a["id"],),
+    ).fetchone()[0]
+    connection.execute(
+        """
+        INSERT INTO registration_probes (
+            country_code, probe_model, normalized_model, ipn,
+            import_batch_id, source_ref, source_status
+        ) VALUES ('CN', 'REMOVED-PROBE', 'removed-probe', 'REMOVED-IPN', ?,
+                  '变更证移除', 'active')
+        """,
+        (import_batch_id,),
+    )
+    connection.commit()
+    connection.close()
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -323,6 +340,14 @@ async def test_product_query_groups_each_mapped_certificate_active_snapshot(tmp_
     )
     assert first_f4["registration_status"] == "registered"
     assert second_f4["registration_status"] == "unregistered"
+    for registration in result["registrations"]:
+        removed = next(
+            item
+            for item in registration["items"]
+            if item["probe_model"] == "REMOVED-PROBE"
+        )
+        assert removed["registration_status"] == "unregistered"
+        assert removed["effective_status"] == "#"
 
     connection = sqlite3.connect(database_path)
     connection.execute(
