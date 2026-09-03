@@ -94,7 +94,18 @@
                   rel="noopener"
                   :icon="View"
                 >
-                  查看注册证
+                  {{ primaryCertificateLabel(version.certificate.title) }}
+                </el-button>
+                <el-button
+                  v-for="document in version.supporting_documents"
+                  :key="`${version.id}-${document.document_id}`"
+                  tag="a"
+                  :href="document.preview_url"
+                  target="_blank"
+                  rel="noopener"
+                  :icon="View"
+                >
+                  {{ supportingDocumentLabel(document.role) }}
                 </el-button>
                 <el-button
                   tag="a"
@@ -109,6 +120,9 @@
               <p class="material-versions">
                 注册证：{{ version.certificate.version || '未标版本' }}；
                 差异表：{{ version.difference.version || '未标版本' }}
+              </p>
+              <p v-if="version.supporting_documents?.length" class="material-versions">
+                共同使用：{{ version.supporting_documents.map(document => document.title).join('、') }}
               </p>
               <div v-if="version.diff.kind === 'baseline'" class="baseline-note">
                 基线版本：{{ version.diff.summary.models }} 个型号、
@@ -428,6 +442,9 @@ const mappedProductModels = computed(() => productMappings.value
 const registeredCount = computed(() => probeRows.value.filter(row => row.registration_status === 'registered').length)
 const unregisteredCount = computed(() => probeRows.value.filter(row => row.registration_status === 'unregistered').length)
 const linkedConfigCount = computed(() => probeRows.value.filter(row => row.config_item_id).length)
+
+const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
+const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
 
 const loadMappings = async () => {
   const result = await getConfiguredRegistrationModels({

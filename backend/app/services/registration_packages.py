@@ -1252,6 +1252,95 @@ def update_registration_package_version_mappings(
         connection.close()
 
 
+def set_registration_package_version_supporting_documents(
+    database_path: str | Path,
+    *,
+    version_id: int,
+    documents: list[tuple[int, str]],
+) -> dict[str, Any]:
+    """Replace the supporting registration documents attached to a draft version."""
+
+    allowed_roles = {"original_certificate", "change_certificate"}
+    migrate_registration_schema(database_path)
+    connection = sqlite3.connect(Path(database_path), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        version = connection.execute(
+            """
+            SELECT version.id, version.status, version.certificate_document_id,
+                   version.difference_document_id, package.country_code,
+                   package.product_series
+            FROM registration_package_versions version
+            JOIN registration_packages package ON package.id = version.package_id
+            WHERE version.id = ?
+            """,
+            (version_id,),
+        ).fetchone()
+        if version is None:
+            raise RegistrationPackageError("注册资料包版本不存在")
+        if version["status"] != "draft":
+            raise RegistrationPackageError("只有待确认草稿可以修改关联注册文件")
+
+        normalized: list[tuple[int, str]] = []
+        seen_documents: set[int] = set()
+        for document_id, role in documents:
+            cleaned_role = str(role or "").strip()
+            if cleaned_role not in allowed_roles:
+                raise RegistrationPackageError(f"不支持的注册文件角色：{role}")
+            if int(document_id) in seen_documents:
+                raise RegistrationPackageError("关联注册文件不能重复")
+            if int(document_id) in {
+                int(version["certificate_document_id"]),
+                int(version["difference_document_id"]),
+            }:
+                raise RegistrationPackageError("主注册文件无需重复关联")
+            document = _document(connection, int(document_id))
+            if (
+                document["document_type"] != "registration_certificate"
+                or document["source_status"] != "active"
+                or document["country"] != version["country_code"]
+            ):
+                raise RegistrationPackageError("关联注册文件类型、国家或状态不正确")
+            if (
+                version["product_series"]
+                and document["product_series"]
+                and version["product_series"] != document["product_series"]
+            ):
+                raise RegistrationPackageError("关联注册文件产品系列不一致")
+            _reference_controlled_document(
+                Path(database_path),
+                country_code=version["country_code"],
+                registration_number="supporting",
+                role=cleaned_role,
+                document=document,
+            )
+            seen_documents.add(int(document_id))
+            normalized.append((int(document_id), cleaned_role))
+
+        connection.execute(
+            "DELETE FROM registration_package_version_documents WHERE version_id = ?",
+            (version_id,),
+        )
+        for sort_order, (document_id, role) in enumerate(normalized):
+            connection.execute(
+                """
+                INSERT INTO registration_package_version_documents (
+                    version_id, document_id, role, sort_order
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (version_id, document_id, role, sort_order),
+            )
+        connection.commit()
+        return {"version_id": version_id, "document_count": len(normalized)}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def set_registration_package_enabled(
     database_path: str | Path,
     *,

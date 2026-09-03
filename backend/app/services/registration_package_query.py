@@ -63,7 +63,36 @@ def _version_item(row) -> dict:
                 f"/api/registrations/package-versions/{row.id}/artifacts/difference"
             ),
         },
+        "supporting_documents": [],
     }
+
+
+async def _add_supporting_documents(session: AsyncSession, item: dict) -> dict:
+    result = await session.execute(
+        text(
+            """
+            SELECT link.role, document.id, document.title, document.version,
+                   document.sha256
+            FROM registration_package_version_documents link
+            JOIN knowledge_documents document ON document.id = link.document_id
+            WHERE link.version_id = :version_id
+            ORDER BY link.sort_order, link.id
+            """
+        ),
+        {"version_id": item["id"]},
+    )
+    item["supporting_documents"] = [
+        {
+            "document_id": int(row.id),
+            "title": row.title,
+            "version": row.version,
+            "sha256": row.sha256,
+            "preview_url": f"/api/knowledge/documents/{row.id}/preview",
+            "role": row.role,
+        }
+        for row in result
+    ]
+    return item
 
 
 def _package_item(row) -> dict:
@@ -116,9 +145,10 @@ async def list_registration_packages(
         ),
         {"country_code": country_code},
     )
-    current_by_package = {
-        int(row.package_id): _version_item(row) for row in version_rows
-    }
+    current_by_package = {}
+    for row in version_rows:
+        item = await _add_supporting_documents(session, _version_item(row))
+        current_by_package[int(row.package_id)] = item
     for package in packages:
         package["current_version"] = current_by_package.get(package["id"])
     return packages
@@ -153,9 +183,13 @@ async def list_registration_package_versions(
         ),
         {"package_id": package_id},
     )
+    items = [
+        await _add_supporting_documents(session, _version_item(row))
+        for row in version_rows
+    ]
     return {
         "package": _package_item(package),
-        "items": [_version_item(row) for row in version_rows],
+        "items": items,
     }
 
 
@@ -174,7 +208,9 @@ async def get_registration_package_version(
         {"version_id": version_id},
     )
     row = result.one_or_none()
-    return _version_item(row) if row is not None else None
+    if row is None:
+        return None
+    return await _add_supporting_documents(session, _version_item(row))
 
 
 async def get_registration_package_artifact(

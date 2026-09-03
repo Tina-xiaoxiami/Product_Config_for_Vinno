@@ -118,6 +118,10 @@ class RegistrationMaterialReference(BaseModel):
     preview_url: str
 
 
+class RegistrationSupportingMaterialReference(RegistrationMaterialReference):
+    role: str
+
+
 class RegistrationPackageVersionItem(BaseModel):
     id: int
     package_id: int
@@ -134,6 +138,9 @@ class RegistrationPackageVersionItem(BaseModel):
     diff: dict
     certificate: RegistrationMaterialReference
     difference: RegistrationMaterialReference
+    supporting_documents: list[RegistrationSupportingMaterialReference] = Field(
+        default_factory=list
+    )
 
 
 class RegistrationPackageBase(BaseModel):

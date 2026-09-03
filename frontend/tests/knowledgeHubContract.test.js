@@ -132,6 +132,8 @@ test('registration management shows paired certificate and difference history', 
   assert.match(registrationView, /注册资料版本/)
   assert.match(registrationView, /data-testid="registration-package-history"/)
   assert.match(registrationView, /查看注册证/)
+  assert.match(registrationView, /查看原注册证/)
+  assert.match(registrationView, /supporting_documents/)
   assert.match(registrationView, /查看差异表/)
   assert.match(registrationView, /基线版本/)
   assert.match(registrationView, /注册状态变化/)

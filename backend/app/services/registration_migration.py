@@ -280,6 +280,19 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                     UNIQUE (country_code, normalized_name)
                 );
 
+                CREATE TABLE IF NOT EXISTS registration_package_version_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL
+                        REFERENCES registration_package_versions(id) ON DELETE CASCADE,
+                    document_id INTEGER NOT NULL
+                        REFERENCES knowledge_documents(id),
+                    role TEXT NOT NULL
+                        CHECK (role IN ('original_certificate', 'change_certificate')),
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (version_id, document_id),
+                    UNIQUE (version_id, role, sort_order)
+                );
+
                 CREATE TABLE IF NOT EXISTS registration_probes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     country_code TEXT NOT NULL,
@@ -408,6 +421,8 @@ def migrate_registration_schema(database_path: str | Path) -> None:
                 ON registration_package_version_model_probes(version_id);
                 CREATE INDEX IF NOT EXISTS ix_registration_version_mappings_version
                 ON registration_package_version_product_mappings(version_id);
+                CREATE INDEX IF NOT EXISTS ix_registration_version_documents_version
+                ON registration_package_version_documents(version_id, sort_order, id);
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_package_active
                 ON registration_package_versions(package_id)
                 WHERE status = 'active';

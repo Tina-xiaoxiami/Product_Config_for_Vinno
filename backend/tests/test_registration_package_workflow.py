@@ -9,6 +9,7 @@ from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
     RegistrationPackageError,
     publish_registration_package_version,
+    set_registration_package_version_supporting_documents,
     stage_registration_package_draft,
 )
 from app.services.registration_query import list_product_registration_probes
@@ -164,6 +165,35 @@ def test_controlled_pair_stages_direct_paths_without_managed_source_copies(tmp_p
     ]
     assert not (tmp_path / "registration_sources").exists()
     assert not (tmp_path / "registration_artifacts").exists()
+
+    original_path = workbook_path.parent / "original-certificate.pdf"
+    original_path.write_bytes(b"%PDF-1.4 original certificate")
+    connection = sqlite3.connect(database_path)
+    cursor = connection.execute(
+        """
+        INSERT INTO knowledge_documents (
+            document_type, title, file_name, file_path, version, market,
+            country, product_series, mime_type, sha256, source_status
+        ) VALUES (
+            'registration_certificate', '原注册证', 'original-certificate.pdf', ?,
+            '20200101', 'domestic', 'CN', 'V10', 'application/pdf', ?, 'active'
+        )
+        """,
+        (
+            str(original_path.resolve()),
+            hashlib.sha256(original_path.read_bytes()).hexdigest(),
+        ),
+    )
+    original_document_id = int(cursor.lastrowid)
+    connection.commit()
+    connection.close()
+
+    supporting = set_registration_package_version_supporting_documents(
+        database_path,
+        version_id=draft["id"],
+        documents=[(original_document_id, "original_certificate")],
+    )
+    assert supporting == {"version_id": draft["id"], "document_count": 1}
 
 
 def test_publish_keeps_registration_certificates_independent_and_scopes_links(tmp_path):

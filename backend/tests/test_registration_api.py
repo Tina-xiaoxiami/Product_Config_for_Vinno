@@ -373,6 +373,17 @@ async def test_registration_api_lists_paired_material_history_and_both_originals
         confirmed_by="baseline_migration",
         change_note="现有数据基线",
     )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO registration_package_version_documents (
+            version_id, document_id, role, sort_order
+        ) VALUES (?, 27, 'original_certificate', 0)
+        """,
+        (recorded["id"],),
+    )
+    connection.commit()
+    connection.close()
     client, engine = await _client_for(database_path)
 
     async with client:
@@ -427,6 +438,16 @@ async def test_registration_api_lists_paired_material_history_and_both_originals
             "/artifacts/difference"
         ),
     }
+    assert body["supporting_documents"] == [
+        {
+            "document_id": 27,
+            "title": "V10注册变更第二版",
+            "version": "20260801",
+            "sha256": body["supporting_documents"][0]["sha256"],
+            "preview_url": "/api/knowledge/documents/27/preview",
+            "role": "original_certificate",
+        }
+    ]
     assert certificate_preview.status_code == 200
     assert certificate_preview.content == b"certificate-v1"
     assert missing.status_code == 404
