@@ -464,6 +464,17 @@ def _candidate_score(question: str, content: str, document_context: str) -> floa
     if intent_terms:
         matched_intents = sum(term in content for term in intent_terms)
         coverage = 0.85 * coverage + 0.15 * (matched_intents / len(intent_terms))
+    registration_intent = any(term in question for term in ("注册", "湘证", "苏证"))
+    registration_source = any(
+        marker in context_core
+        for marker in ("registrationcertificate", "registrationdifference")
+    )
+    if registration_intent:
+        coverage = (
+            min(1.0, coverage + 0.25)
+            if registration_source
+            else coverage * 0.65
+        )
     return round(min(1.0, coverage), 4)
 
 
@@ -536,7 +547,7 @@ async def find_candidate_evidence(
         score = _candidate_score(
             question,
             row.content,
-            f"{row.title} {row.product_series or ''}",
+            f"{row.document_type} {row.title} {row.product_series or ''}",
         )
         if score < 0.3:
             continue
