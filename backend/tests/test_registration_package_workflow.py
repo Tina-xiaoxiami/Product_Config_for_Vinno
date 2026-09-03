@@ -469,3 +469,67 @@ def test_publish_allows_product_model_to_bind_independent_certificates(tmp_path)
     ).fetchall()
     connection.close()
     assert links == [(draft_a["package_id"],), (draft_b["package_id"],)]
+
+
+def test_next_package_version_reuses_approved_registration_model_mappings(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_v1 = tmp_path / "registration-v1.xlsx"
+    workbook_v2 = tmp_path / "registration-v2.xlsx"
+    certificate_path = tmp_path / "certificate.pdf"
+    _create_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO product_models (id, series_id, name, config_group)
+        VALUES (7, 1, 'VINNO 10 特别版', NULL)
+        """
+    )
+    connection.commit()
+    connection.close()
+    _write_registration_workbook(workbook_v1)
+    _write_registration_workbook(workbook_v2, vinno10_unsupported="F4-9E")
+    certificate_path.write_bytes(b"%PDF-1.4 reusable certificate")
+    migrate_registration_schema(database_path)
+
+    first = _stage(
+        database_path,
+        workbook_v1,
+        certificate_path,
+        unit_code="V10-REUSE",
+        registration_number="TEST-CN-REUSE",
+        mappings={7: "VINNO 10"},
+    )
+    publish_registration_package_version(
+        database_path,
+        version_id=first["id"],
+        confirmed_by="product_owner",
+    )
+
+    second = stage_registration_package_draft(
+        database_path,
+        country_code="CN",
+        unit_code="V10-REUSE",
+        display_name="V10-REUSE 国内注册",
+        product_series="V10-REUSE",
+        registration_number="TEST-CN-REUSE",
+        certificate_path=certificate_path,
+        difference_path=workbook_v2,
+        certificate_version="20260902",
+        difference_version="20260903",
+        confirmed_by="product_owner",
+        change_note="注册差异更新",
+        product_model_mappings=None,
+    )
+
+    reused = next(
+        item
+        for item in second["mappings"]
+        if item["product_model_id"] == 7
+    )
+    assert reused == {
+        "product_model_id": 7,
+        "product_model_name": "VINNO 10 特别版",
+        "registration_model_name": "VINNO 10",
+        "mapping_type": "manual",
+        "review_status": "pending",
+    }
