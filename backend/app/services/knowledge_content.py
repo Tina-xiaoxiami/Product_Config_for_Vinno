@@ -421,6 +421,16 @@ def _query_forms(question: str) -> list[str]:
     return forms
 
 
+def _candidate_prefilter_pairs(question: str) -> tuple[str, ...]:
+    pairs = {
+        pair
+        for form in _query_forms(question)
+        for pair in _bigrams(form)
+    }
+    non_numeric_pairs = {pair for pair in pairs if not pair.isdigit()}
+    return tuple(sorted(non_numeric_pairs or pairs))
+
+
 def _canonical_identifiers(value: str) -> set[str]:
     normalized = normalize_question(value)
     identifiers = set(re.findall(r"(?:vinno|v)\d+[a-z0-9]*|\d{6,}", normalized))
@@ -493,9 +503,19 @@ async def find_candidate_evidence(
     *,
     limit: int = 5,
 ) -> list[dict]:
+    prefilter_pairs = _candidate_prefilter_pairs(question)
+    params = {
+        f"prefilter_{index}": f"%{pair}%"
+        for index, pair in enumerate(prefilter_pairs)
+    }
+    prefilter_sql = ""
+    if params:
+        prefilter_sql = "AND (" + " OR ".join(
+            f"chunk.normalized_content LIKE :{name}" for name in params
+        ) + ")"
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT chunk.id AS chunk_id, chunk.document_id, document.title,
                    document.document_type, document.product_series,
                    chunk.source_ref, chunk.page_number, chunk.content
@@ -505,9 +525,11 @@ async def find_candidate_evidence(
               ON extraction.document_id = document.id
              AND extraction.status = 'completed'
             WHERE document.source_status = 'active'
+              {prefilter_sql}
             ORDER BY chunk.document_id, chunk.chunk_index
             """
-        )
+        ),
+        params,
     )
     candidates: list[dict] = []
     for row in result:
