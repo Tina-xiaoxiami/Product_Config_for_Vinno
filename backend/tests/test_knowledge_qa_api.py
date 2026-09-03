@@ -323,6 +323,95 @@ async def test_answer_updates_keep_version_history(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_pending_question_can_merge_into_published_question_without_losing_usage(
+    tmp_path,
+):
+    database_path = tmp_path / "qa.db"
+    _create_qa_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        target = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "V10湘证和苏证如何区分？"},
+        )
+        target_id = target.json()["question_id"]
+        await client.put(
+            f"/api/knowledge/questions/{target_id}/answer",
+            json={
+                "answer_text": "两张证分别展示，不合并注册结论。",
+                "alias_questions": [],
+                "citations": [],
+                "change_note": "首次确认",
+            },
+        )
+        source = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+        )
+        source_id = source.json()["question_id"]
+        await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+        )
+        merged = await client.post(
+            f"/api/knowledge/questions/{source_id}/merge/{target_id}"
+        )
+        removed = await client.get(f"/api/knowledge/questions/{source_id}")
+        reused = await client.post(
+            "/api/knowledge/questions/ask",
+            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+        )
+    await engine.dispose()
+
+    assert merged.status_code == 200
+    assert merged.json()["id"] == target_id
+    assert merged.json()["asked_count"] == 3
+    assert removed.status_code == 404
+    assert reused.json()["question_id"] == target_id
+    assert reused.json()["match_type"] == "exact"
+
+
+@pytest.mark.asyncio
+async def test_merge_rejects_answered_source_and_keeps_both_questions(tmp_path):
+    database_path = tmp_path / "qa.db"
+    _create_qa_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        first = await client.post(
+            "/api/knowledge/questions/ask", json={"question": "第一个问题"}
+        )
+        second = await client.post(
+            "/api/knowledge/questions/ask", json={"question": "第二个问题"}
+        )
+        await client.put(
+            f"/api/knowledge/questions/{first.json()['question_id']}/answer",
+            json={
+                "answer_text": "已发布答案",
+                "alias_questions": [],
+                "citations": [],
+                "change_note": "首次确认",
+            },
+        )
+        rejected = await client.post(
+            f"/api/knowledge/questions/{first.json()['question_id']}/merge/"
+            f"{second.json()['question_id']}"
+        )
+        first_after = await client.get(
+            f"/api/knowledge/questions/{first.json()['question_id']}"
+        )
+        second_after = await client.get(
+            f"/api/knowledge/questions/{second.json()['question_id']}"
+        )
+    await engine.dispose()
+
+    assert rejected.status_code == 422
+    assert first_after.status_code == 200
+    assert second_after.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_similarity_never_crosses_product_model_or_negated_intent(tmp_path):
     database_path = tmp_path / "qa.db"
     _create_qa_database(database_path)
