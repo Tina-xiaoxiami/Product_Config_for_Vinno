@@ -1,0 +1,1866 @@
+{
+  "schema_version": 1,
+  "questions": [
+    {
+      "question_text": "CBI微泡造影成像在V10系列各型号中的配置有何差异？",
+      "normalized_question": "cbi微泡造影成像在v10系列各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:38",
+      "created_at": "2026-09-03 09:09:38",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000019各型号配置差异",
+          "normalized_phrasing": "6000019各型号配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "CBI在VINNO 9和10怎么配置",
+          "normalized_phrasing": "cbi在vinno9和10怎么配置",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：CBI微泡造影成像以主IPN 6000019查询：VINNO 10、10E、10P为X标配；VINNO 9、9E、9P、9_Private、9 综合版为O选配。相关版本IPN不另拆为独立功能答案。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：CBI微泡造影成像以主IPN 6000019查询：VINNO 10、10E、10P为X标配；VINNO 9、9E、9P、9_Private、9 综合版为O选配。相关版本IPN不另拆为独立功能答案。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "DICOM3.0基础功能在V10系列各型号中的配置有何差异？",
+      "normalized_question": "dicom30基础功能在v10系列各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:41",
+      "created_at": "2026-09-03 09:09:41",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "3201201和3201203是同一个功能吗",
+          "normalized_phrasing": "3201201和3201203是同一个功能吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "DICOM基础功能各型号怎么配置",
+          "normalized_phrasing": "dicom基础功能各型号怎么配置",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：DICOM3.0基础功能（IPN 3201201）在VINNO 10P、VINNO 9P为O选配；其余6个完整型号为X标配。该功能不等同于DICOM接口包（IPN 3201203）。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：DICOM3.0基础功能（IPN 3201201）在VINNO 10P、VINNO 9P为O选配；其余6个完整型号为X标配。该功能不等同于DICOM接口包（IPN 3201203）。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "LV Study自动测量在V10系列各型号中是标配还是选配？",
+      "normalized_question": "lvstudy自动测量在v10系列各型号中是标配还是选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:40",
+      "created_at": "2026-09-03 09:09:40",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000393各型号配置差异",
+          "normalized_phrasing": "6000393各型号配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "LV Study在哪些型号标配",
+          "normalized_phrasing": "lvstudy在哪些型号标配",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：LV Study自动测量(2D)（IPN 6000393）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：LV Study自动测量(2D)（IPN 6000393）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.20版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11420版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:41",
+      "created_at": "2026-09-03 09:09:41",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.20新增了哪些功能和探头",
+          "normalized_phrasing": "11420新增了哪些功能和探头",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.20更新了什么",
+          "normalized_phrasing": "v1011420更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.20新增/开放VAid IVC、VAid VTI和多门多普勒，三项配置为招标支持；新增G3-10PX、G4-12P探头支持，并完成即时会诊、Auto EF、线阵穿刺增强、造影剂入口、POC流程和图像优化及问题修复。多门多普勒当时仍有组合模式未达到发布状态，不能将试用开放理解为完整正式能力。\n\n适用范围：中国国内版V10系列，软件版本1.14.20。\n\n依据：受控Release Note。配置类别应以当前正式选型数据为准。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "7ca363658b8a8b6660f2986cd1c324bd221b348b47620b21b2e74060794082d0",
+            "document_title": "V10系列Release Note_1.14.20",
+            "source_ref": "第2—12页",
+            "excerpt": "1.14.20功能、探头、图像优化和问题修复记录。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.20新增/开放VAid IVC、VAid VTI和多门多普勒，三项配置为招标支持；新增G3-10PX、G4-12P探头支持，并完成即时会诊、Auto EF、线阵穿刺增强、造影剂入口、POC流程和图像优化及问题修复。多门多普勒当时仍有组合模式未达到发布状态，不能将试用开放理解为完整正式能力。\n\n适用范围：中国国内版V10系列，软件版本1.14.20。\n\n依据：受控Release Note。配置类别应以当前正式选型数据为准。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.21版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11421版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:41",
+      "created_at": "2026-09-03 09:09:41",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.21为什么建议升级",
+          "normalized_phrasing": "11421为什么建议升级",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.21更新了什么",
+          "normalized_phrasing": "v1011421更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.21是面向1.14.20的补丁，主要降低S1-6P极端条件下的发射电压和探头损坏风险；修复/优化Auto EF、电池信息显示、多门多普勒、VAid IVC、VAid VTI的Demo默认开放，并为FLOW VOL增加Max方法结果显示配置。可能配置S1-6P的机器建议升级。\n\n适用范围：中国国内版V10系列，软件版本1.14.21。\n\n依据：受控Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "20f8c8d5c054d5d33e0cbd53fe72503f4a924b2030111cb51e010e2d8555f676",
+            "document_title": "V10系列Release Note_1.14.21",
+            "source_ref": "第2—3页",
+            "excerpt": "1.14.21补丁内容和S1-6P风险调整。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.21是面向1.14.20的补丁，主要降低S1-6P极端条件下的发射电压和探头损坏风险；修复/优化Auto EF、电池信息显示、多门多普勒、VAid IVC、VAid VTI的Demo默认开放，并为FLOW VOL增加Max方法结果显示配置。可能配置S1-6P的机器建议升级。\n\n适用范围：中国国内版V10系列，软件版本1.14.21。\n\n依据：受控Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.30版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11430版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:41",
+      "created_at": "2026-09-03 09:09:41",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.30新增了哪些探头",
+          "normalized_phrasing": "11430新增了哪些探头",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.30更新了什么",
+          "normalized_phrasing": "v1011430更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.30要求配合最新FPGA固件；更新MSK、VAid VTI、VAid IVC配置，新增X3-10L、D2-6C，招标支持G4-9M，并替换部分X4-9E代码。功能侧包括远程会诊、剪切波、VAid VTI/IVC优化及问题修复；图像侧覆盖多个新增或优化探头。\n\n适用范围：中国国内版V10系列，软件版本1.14.30。\n\n依据：受控Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "8d5c7e793b810de986ddb072e48891333eaacc414e14b4dcc69129d841482e4c",
+            "document_title": "V10系列Release Note_1.14.30",
+            "source_ref": "第2—21页",
+            "excerpt": "1.14.30固件、功能、配置和探头更新记录。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.30要求配合最新FPGA固件；更新MSK、VAid VTI、VAid IVC配置，新增X3-10L、D2-6C，招标支持G4-9M，并替换部分X4-9E代码。功能侧包括远程会诊、剪切波、VAid VTI/IVC优化及问题修复；图像侧覆盖多个新增或优化探头。\n\n适用范围：中国国内版V10系列，软件版本1.14.30。\n\n依据：受控Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.40版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11440版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:41",
+      "created_at": "2026-09-03 09:09:41",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.40增加了针增益调节吗",
+          "normalized_phrasing": "11440增加了针增益调节吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.40更新了什么",
+          "normalized_phrasing": "v1011440更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.40新增带新版摄像头硬件的环境光自动亮度调节，默认关闭，已出厂旧硬件不能仅靠软件升级获得；多门多普勒转为标配并完善组合模式，新增Auto B-Line，优化Auto EF、Auto VTI、POC评估和临床超声界面。穿刺增强扩大凸阵角度范围、调整步进、优化线阵自动穿刺增强，并新增0/1/2三档针增益调节。\n\n适用范围：中国国内版V10系列，软件版本1.14.40；环境光功能还受摄像头硬件版本限制。\n\n依据：受控Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "18607a33d3cf167e5d7df75753d5cdcd63b4f284875f323c700923282b70c709",
+            "document_title": "V10系列Release Note_1.14.40",
+            "source_ref": "第3—11页",
+            "excerpt": "1.14.40环境光、多门多普勒、Auto B-Line和穿刺增强更新。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.40新增带新版摄像头硬件的环境光自动亮度调节，默认关闭，已出厂旧硬件不能仅靠软件升级获得；多门多普勒转为标配并完善组合模式，新增Auto B-Line，优化Auto EF、Auto VTI、POC评估和临床超声界面。穿刺增强扩大凸阵角度范围、调整步进、优化线阵自动穿刺增强，并新增0/1/2三档针增益调节。\n\n适用范围：中国国内版V10系列，软件版本1.14.40；环境光功能还受摄像头硬件版本限制。\n\n依据：受控Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.70版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11470版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:42",
+      "created_at": "2026-09-03 09:09:42",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.70新增了哪些功能",
+          "normalized_phrasing": "11470新增了哪些功能",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.70更新了什么",
+          "normalized_phrasing": "v1011470更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.70新增G3-9M，更新/替换G4-9E等探头配置，并将B2-6C从招标支持调整为正常支持；新增VAid Carotid Plaque、Live Track、Live EF、Auto LV Study(2D)，同时完成多探头基础图像、穿刺增强、Auto Tools、心肌应变、负荷成像、剪切波、CBI、Free 3D、Worklist、教学助手、VReport、病人管理和工作流优化。\n\n适用范围：中国国内版V10系列，受控版本字段为1.14.70；材料标题写作1.4.70。\n\n依据：受控Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "3e03d1a5da8227736856e6295480c17c17bd01663d21864f37982a4016b9116c",
+            "document_title": "V10系列 Release Note_1.4.70",
+            "source_ref": "第2页及后续章节",
+            "excerpt": "1.14.70功能、探头、配置和工作流更新。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.70新增G3-9M，更新/替换G4-9E等探头配置，并将B2-6C从招标支持调整为正常支持；新增VAid Carotid Plaque、Live Track、Live EF、Auto LV Study(2D)，同时完成多探头基础图像、穿刺增强、Auto Tools、心肌应变、负荷成像、剪切波、CBI、Free 3D、Worklist、教学助手、VReport、病人管理和工作流优化。\n\n适用范围：中国国内版V10系列，受控版本字段为1.14.70；材料标题写作1.4.70。\n\n依据：受控Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.80版本发布了哪些功能和变更？",
+      "normalized_question": "v10系列11480版本发布了哪些功能和变更",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:42",
+      "created_at": "2026-09-03 09:09:42",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.80新增了哪些功能和探头",
+          "normalized_phrasing": "11480新增了哪些功能和探头",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "V10 1.14.80更新了什么",
+          "normalized_phrasing": "v1011480更新了什么",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：1.14.80是支持VLucid+平台V5/V6/V10的合并版本，V10支持OS升级。配置新增VATT、VAid Kidney/HRI/GB/Carotid Plaque/Nerve、Auto DFR/AV/DE/DTF、Auto MAPSE/TAPSE、SMF、LVO等功能；新增或升级多把探头，并调整X10-23L、F2-5C支持策略，同时包含剪切波、CBI、穿刺、3D/4D、病人管理、报告和软件响应速度等更新。\n\n适用范围：中国国内版V10系列，软件版本1.14.80，正式发布日期/生效日期为2026-08-05。\n\n依据：受控Release Note；具体功能是标配、选配还是招标支持仍查询当前正式选型类别，不能只看Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "68eb5a831631c4acb94f015d48e08cc3221b8b6094b4505056e89e806e8ed15a",
+            "document_title": "V系列 Release Note_1.14.80",
+            "source_ref": "第4—23页",
+            "excerpt": "1.14.80平台、功能、探头和性能更新记录。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：1.14.80是支持VLucid+平台V5/V6/V10的合并版本，V10支持OS升级。配置新增VATT、VAid Kidney/HRI/GB/Carotid Plaque/Nerve、Auto DFR/AV/DE/DTF、Auto MAPSE/TAPSE、SMF、LVO等功能；新增或升级多把探头，并调整X10-23L、F2-5C支持策略，同时包含剪切波、CBI、穿刺、3D/4D、病人管理、报告和软件响应速度等更新。\n\n适用范围：中国国内版V10系列，软件版本1.14.80，正式发布日期/生效日期为2026-08-05。\n\n依据：受控Release Note；具体功能是标配、选配还是招标支持仍查询当前正式选型类别，不能只看Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列1.14.80版本的发布日期是什么时候？",
+      "normalized_question": "v10系列11480版本的发布日期是什么时候",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:33",
+      "created_at": "2026-09-03 09:09:33",
+      "updated_at": "2026-09-03 09:22:55",
+      "phrasings": [
+        {
+          "phrasing_text": "1.14.80正式生效日期是什么时候？",
+          "normalized_phrasing": "11480正式生效日期是什么时候",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "V10当前版本发布日期是哪天？",
+          "normalized_phrasing": "v10当前版本发布日期是哪天",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "V10的1.14.80什么时候发布？",
+          "normalized_phrasing": "v10的11480什么时候发布",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：V10 系列中国国内版 1.14.80 的正式发布日期/生效日期为 2026-08-05。\n\n该日期及当前正式版本状态由产品负责人确认；受控 Release Note 用于核对 1.14.80 版本资料。海外版发布日期需单独查询。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "迁移产品负责人已确认结论：1.14.80正式发布日期/生效日期为2026-08-05。",
+        "created_at": "2026-09-03 09:22:55",
+        "updated_at": "2026-09-03 09:22:55",
+        "citations": [
+          {
+            "document_sha256": "68eb5a831631c4acb94f015d48e08cc3221b8b6094b4505056e89e806e8ed15a",
+            "document_title": "V系列 Release Note_1.14.80",
+            "source_ref": "第1页",
+            "excerpt": "1.14.80（VINNO 系列）Release Note",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：V10 系列中国国内版 1.14.80 的正式发布日期/生效日期为 2026-08-05。\n\n该日期及当前正式版本状态由产品负责人确认；受控 Release Note 用于核对 1.14.80 版本资料。海外版发布日期需单独查询。",
+            "review_status": "published",
+            "change_note": "迁移产品负责人已确认结论：1.14.80正式发布日期/生效日期为2026-08-05。",
+            "created_at": "2026-09-03 09:22:55"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列可根据环境光线自动调节亮度吗？",
+      "normalized_question": "v10系列可根据环境光线自动调节亮度吗",
+      "status": "answered",
+      "asked_count": 1,
+      "last_asked_at": "2026-09-02 22:49:16",
+      "created_at": "2026-09-02 22:49:16",
+      "updated_at": "2026-09-02 22:49:16",
+      "phrasings": [
+        {
+          "phrasing_text": "V10系列自动亮度调节是不是标配？",
+          "normalized_phrasing": "v10系列自动亮度调节是不是标配",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-02 22:49:16"
+        },
+        {
+          "phrasing_text": "自动环境光亮度调节是V10系列标配吗？",
+          "normalized_phrasing": "自动环境光亮度调节是v10系列标配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-02 22:49:16"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：该能力按 V10 系列产品层面标配管理，但默认不开启；仅支持带新版摄像头硬件的机器，已出厂旧硬件机器不能通过软件升级获得。\n\n适用范围：国内 V10 系列，软件 1.14.40 及以上；当前受控版本 1.14.80。\n\n依据：产品负责人已确认 V10 系列按标配管理；Release Note 1.14.40 说明新增自动根据环境光调整亮度，默认不开启，且涉及摄像头硬件变更。\n\n状态提示：这里的“标配”是产品型号策略，不代表所有历史出厂机器都具备对应硬件。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "根据产品负责人确认及 V10 Release Note 1.14.40 建立首版正式答案。",
+        "created_at": "2026-09-02 22:49:16",
+        "updated_at": "2026-09-02 22:49:16",
+        "citations": [
+          {
+            "document_sha256": "18607a33d3cf167e5d7df75753d5cdcd63b4f284875f323c700923282b70c709",
+            "document_title": "V10系列Release Note_1.14.40",
+            "source_ref": "第3页",
+            "excerpt": "摄像头进行了硬件升级，增加自动根据环境光调整亮度功能，默认不开启，可进入设置界面开启。由于涉及硬件变更，已出厂机器不支持升级，无法支持该功能。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：该能力按 V10 系列产品层面标配管理，但默认不开启；仅支持带新版摄像头硬件的机器，已出厂旧硬件机器不能通过软件升级获得。\n\n适用范围：国内 V10 系列，软件 1.14.40 及以上；当前受控版本 1.14.80。\n\n依据：产品负责人已确认 V10 系列按标配管理；Release Note 1.14.40 说明新增自动根据环境光调整亮度，默认不开启，且涉及摄像头硬件变更。\n\n状态提示：这里的“标配”是产品型号策略，不代表所有历史出厂机器都具备对应硬件。",
+            "review_status": "published",
+            "change_note": "根据产品负责人确认及 V10 Release Note 1.14.40 建立首版正式答案。",
+            "created_at": "2026-09-02 22:49:16"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列当前正式软件版本是什么？",
+      "normalized_question": "v10系列当前正式软件版本是什么",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:33",
+      "created_at": "2026-09-03 09:09:33",
+      "updated_at": "2026-09-03 09:22:55",
+      "phrasings": [
+        {
+          "phrasing_text": "V10国内系列当前用哪个软件版本？",
+          "normalized_phrasing": "v10国内系列当前用哪个软件版本",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "VINNO 9和VINNO 10当前软件版本一样吗？",
+          "normalized_phrasing": "vinno9和vinno10当前软件版本一样吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "VINNO 9综合版当前是什么软件版本？",
+          "normalized_phrasing": "vinno9综合版当前是什么软件版本",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：当前知识库已纳管的中国国内版 V10 系列机型，正式软件版本均为 1.14.80，正式发布日期/生效日期为 2026-08-05。\n\n适用机型包括 VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P 和 VINNO 9 综合版。VINNO 9_Private 与 VINNO 9 综合版按同一衍生型号管理。\n\n限制：本结论不适用于海外版；“软件已发布”不代表任意探头均已注册，也不代表所有功能均为标配。版本号与日期由产品负责人确认，Release Note 用于核对 1.14.80 版本资料。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "迁移历史已发布结论；产品负责人于2026-08-31确认版本与发布状态，并确认正式发布日期/生效日期为2026-08-05。",
+        "created_at": "2026-09-03 09:22:55",
+        "updated_at": "2026-09-03 09:22:55",
+        "citations": [
+          {
+            "document_sha256": "68eb5a831631c4acb94f015d48e08cc3221b8b6094b4505056e89e806e8ed15a",
+            "document_title": "V系列 Release Note_1.14.80",
+            "source_ref": "第1页",
+            "excerpt": "1.14.80（VINNO 系列）Release Note",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：当前知识库已纳管的中国国内版 V10 系列机型，正式软件版本均为 1.14.80，正式发布日期/生效日期为 2026-08-05。\n\n适用机型包括 VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P 和 VINNO 9 综合版。VINNO 9_Private 与 VINNO 9 综合版按同一衍生型号管理。\n\n限制：本结论不适用于海外版；“软件已发布”不代表任意探头均已注册，也不代表所有功能均为标配。版本号与日期由产品负责人确认，Release Note 用于核对 1.14.80 版本资料。",
+            "review_status": "published",
+            "change_note": "迁移历史已发布结论；产品负责人于2026-08-31确认版本与发布状态，并确认正式发布日期/生效日期为2026-08-05。",
+            "created_at": "2026-09-03 09:22:55"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列湘证和苏证分别是什么状态，当前查询默认使用哪张证？",
+      "normalized_question": "v10系列湘证和苏证分别是什么状态当前查询默认使用哪张证",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:37",
+      "created_at": "2026-09-03 09:09:34",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "V10查询注册默认看湘证还是苏证？",
+          "normalized_phrasing": "v10查询注册默认看湘证还是苏证",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "V10湘证和苏证哪个启用了？",
+          "normalized_phrasing": "v10湘证和苏证哪个启用了",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "同一个V10产品型号同时映射湘证和苏证时，查询结果如何区分？",
+          "normalized_phrasing": "同一个v10产品型号同时映射湘证和苏证时查询结果如何区分",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "苏械注准20232061322现在启用了吗？",
+          "normalized_phrasing": "苏械注准20232061322现在启用了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：V10 系列当前同时保留两张正式注册证，但启用状态不同。\n\n- 湘证：湘械注准20222062053，正式且已启用。\n- 苏证：苏械注准20232061322，正式但当前未启用。\n\n查询未明确指定注册证时，系统应分别说明湘证与苏证的结果，不能把两张证的数据合并成一个注册结论；需要给出当前有效判断时，以已启用的湘证为准。若用户明确询问苏证，则仍可查询并展示其正式注册内容，同时标注“未启用”。\n\n机型和探头结论必须绑定到对应注册证及其配套注册差异表；“未注册”以该证对应的注册差异表为准。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "迁移产品负责人历史确认：湘证已启用；苏证为正式版但未启用。查询不合并注册单元，并按注册证分别说明。",
+        "created_at": "2026-09-03 09:22:55",
+        "updated_at": "2026-09-03 09:22:55",
+        "citations": [
+          {
+            "document_sha256": "af6506c2f8a99fc01763c55cc47d85a6aa3e7cd009d83586b7fb229c7fa11a96",
+            "document_title": "V10系列国内注册变更",
+            "source_ref": "第1页",
+            "excerpt": "本文件与‘湘械注准20222062053’医疗器械注册证共同使用。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "2f6cce6920c4907f0e9cb89c7cfcc74459b4d93ee630172737ab0be37395a354",
+            "document_title": "V10系列苏州注册 注册证",
+            "source_ref": "注册证",
+            "excerpt": "V10系列苏州注册 注册证（苏械注准20232061322）。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：V10 系列当前同时保留两张正式注册证，但启用状态不同。\n\n- 湘证：湘械注准20222062053，正式且已启用。\n- 苏证：苏械注准20232061322，正式但当前未启用。\n\n查询未明确指定注册证时，系统应分别说明湘证与苏证的结果，不能把两张证的数据合并成一个注册结论；需要给出当前有效判断时，以已启用的湘证为准。若用户明确询问苏证，则仍可查询并展示其正式注册内容，同时标注“未启用”。\n\n机型和探头结论必须绑定到对应注册证及其配套注册差异表；“未注册”以该证对应的注册差异表为准。",
+            "review_status": "published",
+            "change_note": "迁移产品负责人历史确认：湘证已启用；苏证为正式版但未启用。查询不合并注册单元，并按注册证分别说明。",
+            "created_at": "2026-09-03 09:22:55"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列的图像触摸屏缩放操作模式属于标配、选配还是招标支持？",
+      "normalized_question": "v10系列的图像触摸屏缩放操作模式属于标配选配还是招标支持",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:37",
+      "created_at": "2026-09-03 09:09:37",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000067在V10系列是什么选型类别",
+          "normalized_phrasing": "6000067在v10系列是什么选型类别",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Smart Touch Zoom是标配还是招标支持",
+          "normalized_phrasing": "smarttouchzoom是标配还是招标支持",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：图像触摸屏缩放操作模式（IPN 6000067）在8个完整型号中均为Δ招标支持。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：图像触摸屏缩放操作模式（IPN 6000067）在8个完整型号中均为Δ招标支持。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列的自动穿刺增强是否为标配？",
+      "normalized_question": "v10系列的自动穿刺增强是否为标配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:37",
+      "created_at": "2026-09-03 09:09:37",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000301是什么配置类别",
+          "normalized_phrasing": "6000301是什么配置类别",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Auto Needle在V10系列标配吗",
+          "normalized_phrasing": "autoneedle在v10系列标配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：自动穿刺增强（IPN 6000301）在8个完整型号中均为X标配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：自动穿刺增强（IPN 6000301）在8个完整型号中均为X标配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列的超微细血流成像属于标配、选配还是招标支持？",
+      "normalized_question": "v10系列的超微细血流成像属于标配选配还是招标支持",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:37",
+      "created_at": "2026-09-03 09:09:37",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000273当前是招标功能吗",
+          "normalized_phrasing": "6000273当前是招标功能吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "SMF在V10系列是选配吗",
+          "normalized_phrasing": "smf在v10系列是选配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：超微细血流成像（IPN 6000273）在8个完整型号中均为Δ招标支持；历史final_config=O不覆盖正式选型类别。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：超微细血流成像（IPN 6000273）在8个完整型号中均为Δ招标支持；历史final_config=O不覆盖正式选型类别。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "V10系列苏证是正式版本吗，为什么当前未启用？",
+      "normalized_question": "v10系列苏证是正式版本吗为什么当前未启用",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:36",
+      "created_at": "2026-09-03 09:09:36",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "V10苏证有效吗",
+          "normalized_phrasing": "v10苏证有效吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "苏证为什么没有启用",
+          "normalized_phrasing": "苏证为什么没有启用",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：苏械注准20232061322是正式注册证，但当前系统状态为未启用；未启用不等于注册证无效。现有受控材料和变更记录没有登记未启用的业务原因，因此不能推测，需由产品负责人后续补充后再修订答案。\n\n适用范围：中国国内版V10系列，苏证苏械注准20232061322。明确查询苏证时可以展示其正式注册内容，但必须标注未启用；默认当前有效判断使用已启用湘证。\n\n依据：注册证受控材料及注册单元启用状态；未启用原因标记为尚未登记。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "2f6cce6920c4907f0e9cb89c7cfcc74459b4d93ee630172737ab0be37395a354",
+            "document_title": "V10系列苏州注册 注册证",
+            "source_ref": "注册证",
+            "excerpt": "V10系列苏州注册证苏械注准20232061322。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证配套注册差异表。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：苏械注准20232061322是正式注册证，但当前系统状态为未启用；未启用不等于注册证无效。现有受控材料和变更记录没有登记未启用的业务原因，因此不能推测，需由产品负责人后续补充后再修订答案。\n\n适用范围：中国国内版V10系列，苏证苏械注准20232061322。明确查询苏证时可以展示其正式注册内容，但必须标注未启用；默认当前有效判断使用已启用湘证。\n\n依据：注册证受控材料及注册单元启用状态；未启用原因标记为尚未登记。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 10E在湘证下是否支持I4-11T探头？",
+      "normalized_question": "vinno10e在湘证下是否支持i411t探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:36",
+      "created_at": "2026-09-03 09:09:36",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "I4-11T在VINNO 10E湘证下注册了吗",
+          "normalized_phrasing": "i411t在vinno10e湘证下注册了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 10E能不能配I4-11T",
+          "normalized_phrasing": "vinno10e能不能配i411t",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 10E与I4-11T的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10E。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 10E行",
+            "excerpt": "湘证支持探头包含I4-11T，VINNO 10E不支持清单未列I4-11T。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证登记VINNO 10E的I4-11T不适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 10E与I4-11T的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10E。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 10P在湘证下是否支持I7-18L探头？",
+      "normalized_question": "vinno10p在湘证下是否支持i718l探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:36",
+      "created_at": "2026-09-03 09:09:36",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "I7-18L在VINNO 10P湘证下注册了吗",
+          "normalized_phrasing": "i718l在vinno10p湘证下注册了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 10P能不能配I7-18L",
+          "normalized_phrasing": "vinno10p能不能配i718l",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 10P与I7-18L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10P。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 10P行",
+            "excerpt": "湘证支持探头包含I7-18L，VINNO 10P不支持清单未列I7-18L。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证登记VINNO 10P的I7-18L不适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 10P与I7-18L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10P。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 10、VINNO 10E和VINNO 10P的主要配置差异是什么？",
+      "normalized_question": "vinno10vinno10e和vinno10p的主要配置差异是什么",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:34",
+      "created_at": "2026-09-03 09:09:34",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "10P和10E的功能配置差异",
+          "normalized_phrasing": "10p和10e的功能配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 10、10E、10P正式功能选型有什么差异",
+          "normalized_phrasing": "vinno1010e10p正式功能选型有什么差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：按当前正式功能选型口径，VINNO 10与VINNO 10E基本一致；VINNO 10P在自动B线、胸膜自动识别、实时EF、LV Study等项目为X，而VINNO 10/10E为O；在产科自动测量、二维卵泡、DICOM3.0基础功能等项目上，VINNO 10P为O，而VINNO 10/10E为X。探头、穿刺架、ECG和外设差异应分别查询，不混入本答案。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：按当前正式功能选型口径，VINNO 10与VINNO 10E基本一致；VINNO 10P在自动B线、胸膜自动识别、实时EF、LV Study等项目为X，而VINNO 10/10E为O；在产科自动测量、二维卵泡、DICOM3.0基础功能等项目上，VINNO 10P为O，而VINNO 10/10E为X。探头、穿刺架、ECG和外设差异应分别查询，不混入本答案。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 10在湘证下注册支持哪些探头？",
+      "normalized_question": "vinno10在湘证下注册支持哪些探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:36",
+      "created_at": "2026-09-03 09:09:36",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "VINNO 10国内可配哪些注册探头",
+          "normalized_phrasing": "vinno10国内可配哪些注册探头",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 10湘证注册了哪些探头",
+          "normalized_phrasing": "vinno10湘证注册了哪些探头",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 10在已启用湘证下对本证38把探头全部适用。苏证下对本证28把探头全部适用，但苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10。湘证38把探头为SR1-10C、S1-9C、S2-9C、S1-8CM、F2-5C、X2-6C、G2-6C、B2-6C、D2-6C、D2-7C、D4-9EV、S4-9E、G4-9EV、F4-9E、X4-9E、BP4-9、S3-11M、G3-9M、S3-13L、X3-10L、F4-12L、X4-12L、U5-15LE、U5-16LE、X6-16L、X9-22L、X10-23L、G14-30L、G17-40L、G1-3P、G1-4P、SR1-6P、S1-6PE、S1-6P、G3-11P、G4-12P、I7-18L、I4-11T。\n\n依据：每张注册证分别绑定自己的机型、探头和差异表；未注册判断不跨证合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 10行",
+            "excerpt": "湘证支持探头共38把，VINNO 10记录为探头全适用。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证VINNO 10记录为探头全适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 10在已启用湘证下对本证38把探头全部适用。苏证下对本证28把探头全部适用，但苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 10。湘证38把探头为SR1-10C、S1-9C、S2-9C、S1-8CM、F2-5C、X2-6C、G2-6C、B2-6C、D2-6C、D2-7C、D4-9EV、S4-9E、G4-9EV、F4-9E、X4-9E、BP4-9、S3-11M、G3-9M、S3-13L、X3-10L、F4-12L、X4-12L、U5-15LE、U5-16LE、X6-16L、X9-22L、X10-23L、G14-30L、G17-40L、G1-3P、G1-4P、SR1-6P、S1-6PE、S1-6P、G3-11P、G4-12P、I7-18L、I4-11T。\n\n依据：每张注册证分别绑定自己的机型、探头和差异表；未注册判断不跨证合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9E在湘证下是否支持X10-23L探头？",
+      "normalized_question": "vinno9e在湘证下是否支持x1023l探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:35",
+      "created_at": "2026-09-03 09:09:35",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "VINNO 9E能不能配X10-23L",
+          "normalized_phrasing": "vinno9e能不能配x1023l",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "X10-23L在VINNO 9E湘证下注册了吗",
+          "normalized_phrasing": "x1023l在vinno9e湘证下注册了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 9E与X10-23L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9E。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 9E行",
+            "excerpt": "湘证支持探头包含X10-23L，VINNO 9E不支持清单未列X10-23L。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证登记VINNO 9E的X10-23L不适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 9E与X10-23L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9E。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9_Private和VINNO 9综合版查询注册信息时对应哪个基础型号？",
+      "normalized_question": "vinno9private和vinno9综合版查询注册信息时对应哪个基础型号",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:34",
+      "created_at": "2026-09-03 09:09:34",
+      "updated_at": "2026-09-03 09:22:55",
+      "phrasings": [
+        {
+          "phrasing_text": "VINNO 9_Private和VINNO 9综合版是不是同一个衍生型号？",
+          "normalized_phrasing": "vinno9private和vinno9综合版是不是同一个衍生型号",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "VINNO 9_Private注册对应什么型号？",
+          "normalized_phrasing": "vinno9private注册对应什么型号",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        },
+        {
+          "phrasing_text": "VINNO 9综合版查询注册时按哪个型号？",
+          "normalized_phrasing": "vinno9综合版查询注册时按哪个型号",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 09:22:55"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 9_Private 与 VINNO 9 综合版按同一衍生型号管理；查询注册信息时，两者都映射到基础注册型号 VINNO 9。\n\n原因：注册资料只登记基础型号，不单列衍生型号。系统保留完整产品型号用于配置查询，同时通过已审核的型号映射关联 VINNO 9，因此不会把衍生型号误判为独立注册型号。\n\n限制：最终探头是否可用，仍须在所查询注册证对应的注册差异表中核对 VINNO 9 与目标探头的组合。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "迁移产品负责人历史确认：VINNO 9_Private与VINNO 9综合版为同一衍生型号，注册查询映射基础型号VINNO 9；系统映射已审核。",
+        "created_at": "2026-09-03 09:22:55",
+        "updated_at": "2026-09-03 09:22:55",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 9_Private 与 VINNO 9 综合版按同一衍生型号管理；查询注册信息时，两者都映射到基础注册型号 VINNO 9。\n\n原因：注册资料只登记基础型号，不单列衍生型号。系统保留完整产品型号用于配置查询，同时通过已审核的型号映射关联 VINNO 9，因此不会把衍生型号误判为独立注册型号。\n\n限制：最终探头是否可用，仍须在所查询注册证对应的注册差异表中核对 VINNO 9 与目标探头的组合。",
+            "review_status": "published",
+            "change_note": "迁移产品负责人历史确认：VINNO 9_Private与VINNO 9综合版为同一衍生型号，注册查询映射基础型号VINNO 9；系统映射已审核。",
+            "created_at": "2026-09-03 09:22:55"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9P在湘证下是否支持X9-22L探头？",
+      "normalized_question": "vinno9p在湘证下是否支持x922l探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:35",
+      "created_at": "2026-09-03 09:09:35",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "VINNO 9P能不能配X9-22L",
+          "normalized_phrasing": "vinno9p能不能配x922l",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "X9-22L在VINNO 9P湘证下注册了吗",
+          "normalized_phrasing": "x922l在vinno9p湘证下注册了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 9P与X9-22L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9P。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 9P行",
+            "excerpt": "湘证支持探头包含X9-22L，VINNO 9P不支持清单未列X9-22L。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证登记VINNO 9P的X9-22L不适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 9P与X9-22L的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9P。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9和VINNO 10系列基本用户手册适用于哪些完整型号？",
+      "normalized_question": "vinno9和vinno10系列基本用户手册适用于哪些完整型号",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:33",
+      "created_at": "2026-09-03 09:09:33",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "VINNO 9和VINNO 10说明书覆盖哪些型号",
+          "normalized_phrasing": "vinno9和vinno10说明书覆盖哪些型号",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 9综合版适用哪份说明书",
+          "normalized_phrasing": "vinno9综合版适用哪份说明书",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：《VINNO 9/10系列基本用户手册》适用于手册列出的VINNO 9和VINNO 10系列完整型号；VINNO 9 综合版（源系统名VINNO 9_Private）作为VINNO 9衍生型号沿用基础型号资料。\n\n适用范围：中国国内版。VINNO 9系列包括VINNO 9、9E、9P、9 Pro、9 Super、9 Elite、9 Expert、9 Plus、9 Max、9L、9G、9T、9S；VINNO 10系列包括VINNO 10、10E、10P、10 Pro、10 Super、10 Elite、10 Expert、10 Plus、10 Max、10L、10G、10T、10S。注册查询时衍生型号仍映射基础型号VINNO 9。\n\n依据：受控资料《VINNO 9/10系列基本用户手册》第9页；衍生型号规则由产品负责人确认。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "bc4024c11cd7a91943da293b3cc08d707edce2fdd27c7d5f925bdecfad7aa0a4",
+            "document_title": "VINNO 9/10系列基本用户手册",
+            "source_ref": "第9页",
+            "excerpt": "手册适用的VINNO 9和VINNO 10系列型号列表。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：《VINNO 9/10系列基本用户手册》适用于手册列出的VINNO 9和VINNO 10系列完整型号；VINNO 9 综合版（源系统名VINNO 9_Private）作为VINNO 9衍生型号沿用基础型号资料。\n\n适用范围：中国国内版。VINNO 9系列包括VINNO 9、9E、9P、9 Pro、9 Super、9 Elite、9 Expert、9 Plus、9 Max、9L、9G、9T、9S；VINNO 10系列包括VINNO 10、10E、10P、10 Pro、10 Super、10 Elite、10 Expert、10 Plus、10 Max、10L、10G、10T、10S。注册查询时衍生型号仍映射基础型号VINNO 9。\n\n依据：受控资料《VINNO 9/10系列基本用户手册》第9页；衍生型号规则由产品负责人确认。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9和VINNO 10系列如何调节显示器亮度？",
+      "normalized_question": "vinno9和vinno10系列如何调节显示器亮度",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:42",
+      "created_at": "2026-09-03 09:09:42",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "V10显示器亮度在哪里调",
+          "normalized_phrasing": "v10显示器亮度在哪里调",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 9和10怎么把图像调亮",
+          "normalized_phrasing": "vinno9和10怎么把图像调亮",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：需要区分三类亮度：主屏背光在系统设置的服务相关页面选择“显示器背光调节”；新版摄像头硬件支持环境光自动调节且默认关闭，旧硬件不能仅靠软件升级获得；超声图像整体亮度旋转GAIN键，局部深度亮度使用TGC调节。\n\n适用范围：VINNO 9和VINNO 10系列中国国内版；环境光自动调节受摄像头硬件版本限制。\n\n依据：受控基本用户手册和1.14.40 Release Note。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "bc4024c11cd7a91943da293b3cc08d707edce2fdd27c7d5f925bdecfad7aa0a4",
+            "document_title": "VINNO 9/10系列基本用户手册",
+            "source_ref": "第50、140页",
+            "excerpt": "显示器背光、GAIN和TGC调节说明。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "18607a33d3cf167e5d7df75753d5cdcd63b4f284875f323c700923282b70c709",
+            "document_title": "V10系列Release Note_1.14.40",
+            "source_ref": "第3页",
+            "excerpt": "新版摄像头硬件的环境光自动亮度调节说明。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：需要区分三类亮度：主屏背光在系统设置的服务相关页面选择“显示器背光调节”；新版摄像头硬件支持环境光自动调节且默认关闭，旧硬件不能仅靠软件升级获得；超声图像整体亮度旋转GAIN键，局部深度亮度使用TGC调节。\n\n适用范围：VINNO 9和VINNO 10系列中国国内版；环境光自动调节受摄像头硬件版本限制。\n\n依据：受控基本用户手册和1.14.40 Release Note。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9和VINNO 10系列如何进行针增益调节？",
+      "normalized_question": "vinno9和vinno10系列如何进行针增益调节",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:42",
+      "created_at": "2026-09-03 09:09:42",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "穿刺针增益在哪里调",
+          "normalized_phrasing": "穿刺针增益在哪里调",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "针增益有几档",
+          "normalized_phrasing": "针增益有几档",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：先进入“穿刺增强”功能，再调节其中的“穿刺针增益”参数，当前支持0、1、2三档。针增益不是独立招标功能，而是穿刺增强的一部分。\n\n适用范围：VINNO 9和VINNO 10系列中国国内版；适用探头、应用和穿刺模式以当前界面可用项及受控说明为准。\n\n依据：受控1.14.40 Release Note；已有正式问答的功能归属结论。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "18607a33d3cf167e5d7df75753d5cdcd63b4f284875f323c700923282b70c709",
+            "document_title": "V10系列Release Note_1.14.40",
+            "source_ref": "第11页",
+            "excerpt": "穿刺增强新增0、1、2三档针增益调节。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：先进入“穿刺增强”功能，再调节其中的“穿刺针增益”参数，当前支持0、1、2三档。针增益不是独立招标功能，而是穿刺增强的一部分。\n\n适用范围：VINNO 9和VINNO 10系列中国国内版；适用探头、应用和穿刺模式以当前界面可用项及受控说明为准。\n\n依据：受控1.14.40 Release Note；已有正式问答的功能归属结论。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "VINNO 9在湘证下是否支持B2-6C探头？",
+      "normalized_question": "vinno9在湘证下是否支持b26c探头",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:35",
+      "created_at": "2026-09-03 09:09:35",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "B2-6C在VINNO 9湘证下注册了吗",
+          "normalized_phrasing": "b26c在vinno9湘证下注册了吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VINNO 9能不能配B2-6C",
+          "normalized_phrasing": "vinno9能不能配b26c",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：VINNO 9与B2-6C的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [
+          {
+            "document_sha256": "fa1779797f78da377b8b0518067e0a213eb8047aa0faee9947c91ecc179a7b8e",
+            "document_title": "V10系列国内注册型号差异",
+            "source_ref": "0729!支持探头及VINNO 9行",
+            "excerpt": "湘证支持探头包含B2-6C，VINNO 9不支持清单未列B2-6C。",
+            "sort_order": 0
+          },
+          {
+            "document_sha256": "3e7f4ba821d0890523796ac960d681449aa217f39df95d5974f869cd8cb5eb50",
+            "document_title": "V10系列苏州注册 注册差异表",
+            "source_ref": "型号差异表",
+            "excerpt": "苏证登记VINNO 9的B2-6C不适用。",
+            "sort_order": 1
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：VINNO 9与B2-6C的组合在已启用湘证下已注册；在苏证下为不适用/未注册，且苏证当前未启用。\n\n适用范围：中国国内版，基础注册型号VINNO 9。湘证为湘械注准20222062053；苏证为苏械注准20232061322。\n\n依据：未注册判断分别以每张注册证配套的注册差异表为准，两张证的红线不合并。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "三维卵泡自动测量在V10系列中是否为选配？",
+      "normalized_question": "三维卵泡自动测量在v10系列中是否为选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:40",
+      "created_at": "2026-09-03 09:09:40",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000091是什么配置类别",
+          "normalized_phrasing": "6000091是什么配置类别",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "三维卵泡自动测量是选配吗",
+          "normalized_phrasing": "三维卵泡自动测量是选配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：三维卵泡自动测量（IPN 6000091）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：三维卵泡自动测量（IPN 6000091）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "二维卵泡自动测量在V10系列各型号中的配置有何差异？",
+      "normalized_question": "二维卵泡自动测量在v10系列各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:40",
+      "created_at": "2026-09-03 09:09:40",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000090各型号选型差异",
+          "normalized_phrasing": "6000090各型号选型差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "二维卵泡自动测量各型号怎么配置",
+          "normalized_phrasing": "二维卵泡自动测量各型号怎么配置",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：二维卵泡自动测量（IPN 6000090）在VINNO 10P、VINNO 9P为O选配；其余6个完整型号为X标配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：二维卵泡自动测量（IPN 6000090）在VINNO 10P、VINNO 9P为O选配；其余6个完整型号为X标配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "全方位M型在V10系列各型号中的配置有何差异？",
+      "normalized_question": "全方位m型在v10系列各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:38",
+      "created_at": "2026-09-03 09:09:38",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000008各型号选型差异",
+          "normalized_phrasing": "6000008各型号选型差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "MAM在V10系列怎么配置",
+          "normalized_phrasing": "mam在v10系列怎么配置",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：全方位M型（IPN 6000008）在VINNO 10、10E、10P、VINNO 9P、9_Private、9 综合版为X标配；VINNO 9、9E为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：全方位M型（IPN 6000008）在VINNO 10、10E、10P、VINNO 9P、9_Private、9 综合版为X标配；VINNO 9、9E为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "剪切波弹性成像在V10系列各型号中是标配还是选配？",
+      "normalized_question": "剪切波弹性成像在v10系列各型号中是标配还是选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:38",
+      "created_at": "2026-09-03 09:09:38",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000190当前是选配吗",
+          "normalized_phrasing": "6000190当前是选配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VShear在V10系列标配吗",
+          "normalized_phrasing": "vshear在v10系列标配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：剪切波弹性成像（IPN 6000190）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：剪切波弹性成像（IPN 6000190）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "压力式弹性成像在VINNO 9和VINNO 10各型号中的配置有何差异？",
+      "normalized_question": "压力式弹性成像在vinno9和vinno10各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:38",
+      "created_at": "2026-09-03 09:09:38",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000018各型号选型差异",
+          "normalized_phrasing": "6000018各型号选型差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "压力弹性在VINNO 9和10怎么配置",
+          "normalized_phrasing": "压力弹性在vinno9和10怎么配置",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：压力式弹性成像（IPN 6000018）在VINNO 10、10E、10P为X标配；在VINNO 9、9E、9P、9_Private、9 综合版为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：压力式弹性成像（IPN 6000018）在VINNO 10、10E、10P为X标配；在VINNO 9、9E、9P、9_Private、9 综合版为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "实时EF在V10系列各型号中是标配还是选配？",
+      "normalized_question": "实时ef在v10系列各型号中是标配还是选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:39",
+      "created_at": "2026-09-03 09:09:39",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000398各型号配置差异",
+          "normalized_phrasing": "6000398各型号配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Live EF在哪些V10型号标配",
+          "normalized_phrasing": "liveef在哪些v10型号标配",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：实时EF（IPN 6000398）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：实时EF（IPN 6000398）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "神经自动检测分析在V10系列中是否为选配？",
+      "normalized_question": "神经自动检测分析在v10系列中是否为选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:39",
+      "created_at": "2026-09-03 09:09:39",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000312当前是什么配置类别",
+          "normalized_phrasing": "6000312当前是什么配置类别",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "VAid Nerve在V10系列是选配吗",
+          "normalized_phrasing": "vaidnerve在v10系列是选配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：神经自动检测分析（IPN 6000312）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：神经自动检测分析（IPN 6000312）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "胸膜自动识别在V10系列各型号中的配置有何差异？",
+      "normalized_question": "胸膜自动识别在v10系列各型号中的配置有何差异",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:39",
+      "created_at": "2026-09-03 09:09:39",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000317各型号配置差异",
+          "normalized_phrasing": "6000317各型号配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Auto Pleura在哪些型号标配",
+          "normalized_phrasing": "autopleura在哪些型号标配",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：胸膜自动识别（IPN 6000317）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：胸膜自动识别（IPN 6000317）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "自动B线功能在V10系列各型号中是标配还是选配？",
+      "normalized_question": "自动b线功能在v10系列各型号中是标配还是选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:39",
+      "created_at": "2026-09-03 09:09:39",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "6000309各型号配置差异",
+          "normalized_phrasing": "6000309各型号配置差异",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Auto B-line在哪些型号标配",
+          "normalized_phrasing": "autobline在哪些型号标配",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：自动B线（IPN 6000309）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：自动B线（IPN 6000309）在VINNO 10P、VINNO 9P为X标配；其余6个完整型号为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "自动颈项透明层测量在V10系列中是否为选配？",
+      "normalized_question": "自动颈项透明层测量在v10系列中是否为选配",
+      "status": "answered",
+      "asked_count": 0,
+      "last_asked_at": "2026-09-03 09:09:40",
+      "created_at": "2026-09-03 09:09:40",
+      "updated_at": "2026-09-03 15:31:21",
+      "phrasings": [
+        {
+          "phrasing_text": "3200484是什么配置类别",
+          "normalized_phrasing": "3200484是什么配置类别",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        },
+        {
+          "phrasing_text": "Auto NT在V10系列是选配吗",
+          "normalized_phrasing": "autont在v10系列是选配吗",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-03 15:31:21"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：自动颈项透明层测量（IPN 3200484）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+        "created_at": "2026-09-03 15:31:21",
+        "updated_at": "2026-09-03 15:31:21",
+        "citations": [],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：自动颈项透明层测量（IPN 3200484）在8个完整型号中均为O选配。\n\n适用范围：中国国内版V10系列，正式软件版本1.14.80；当前纳管型号为VINNO 10E、VINNO 10、VINNO 10P、VINNO 9E、VINNO 9、VINNO 9P、VINNO 9_Private、VINNO 9 综合版。\n\n依据：产品配置管理系统基础数据管理中的正式选型类别。X=标配，O=选配，Δ=招标支持；研发当前配置仅作辅助，不覆盖正式选型类别。",
+            "review_status": "published",
+            "change_note": "产品负责人于2026-09-03集中确认V10首批问答审核清单后首次发布。",
+            "created_at": "2026-09-03 15:31:21"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "针增益调节是招标功能吗？",
+      "normalized_question": "针增益调节是招标功能吗",
+      "status": "answered",
+      "asked_count": 1,
+      "last_asked_at": "2026-09-02 22:49:16",
+      "created_at": "2026-09-02 22:49:16",
+      "updated_at": "2026-09-02 22:49:16",
+      "phrasings": [
+        {
+          "phrasing_text": "穿刺针增益调节是否为招标支持？",
+          "normalized_phrasing": "穿刺针增益调节是否为招标支持",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-02 22:49:16"
+        },
+        {
+          "phrasing_text": "针增益调节是标配还是招标？",
+          "normalized_phrasing": "针增益调节是标配还是招标",
+          "phrasing_type": "alias",
+          "created_at": "2026-09-02 22:49:16"
+        }
+      ],
+      "answer": {
+        "answer_text": "结论：不是单独的招标功能。针增益调节已按确认规则并入“穿刺增强”（IPN 6000034）；国内 V10 系列该功能的正式选型类别均为 X，因此按标配处理。\n\n适用范围：国内 V10 系列，软件 1.14.40 及以上；当前受控版本 1.14.80。\n\n依据：基础数据管理中的正式选型类别为 X；Release Note 1.14.40 说明穿刺增强新增 0、1、2 三档穿刺针增益调节参数。\n\n状态提示：Release Note 证明版本中存在该能力，标配结论来自配置系统的正式选型类别及已确认的功能归并关系。",
+        "review_status": "published",
+        "version": 1,
+        "change_note": "根据已确认的穿刺增强归并规则、IPN 6000034 正式选型及 V10 Release Note 1.14.40 建立首版正式答案。",
+        "created_at": "2026-09-02 22:49:16",
+        "updated_at": "2026-09-02 22:49:16",
+        "citations": [
+          {
+            "document_sha256": "18607a33d3cf167e5d7df75753d5cdcd63b4f284875f323c700923282b70c709",
+            "document_title": "V10系列Release Note_1.14.40",
+            "source_ref": "第11页",
+            "excerpt": "穿刺增强优化：添加穿刺针增益调节参数，0、1、2 三档可调。",
+            "sort_order": 0
+          }
+        ],
+        "revisions": [
+          {
+            "version": 1,
+            "answer_text": "结论：不是单独的招标功能。针增益调节已按确认规则并入“穿刺增强”（IPN 6000034）；国内 V10 系列该功能的正式选型类别均为 X，因此按标配处理。\n\n适用范围：国内 V10 系列，软件 1.14.40 及以上；当前受控版本 1.14.80。\n\n依据：基础数据管理中的正式选型类别为 X；Release Note 1.14.40 说明穿刺增强新增 0、1、2 三档穿刺针增益调节参数。\n\n状态提示：Release Note 证明版本中存在该能力，标配结论来自配置系统的正式选型类别及已确认的功能归并关系。",
+            "review_status": "published",
+            "change_note": "根据已确认的穿刺增强归并规则、IPN 6000034 正式选型及 V10 Release Note 1.14.40 建立首版正式答案。",
+            "created_at": "2026-09-02 22:49:16"
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot_sha256": "5793fbd01a7246b28fa1d528bf2f5ee98c728605ad9e571cec19f4c95d26057b"
+}
