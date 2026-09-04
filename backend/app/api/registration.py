@@ -14,6 +14,7 @@ from app.database import get_db
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
     RegistrationMasterProbeList,
+    RegistrationDifferenceSummary,
     RegistrationModelList,
     RegistrationPackageBase,
     RegistrationPackageEnableUpdate,
@@ -33,6 +34,7 @@ from app.services.registration_packages import (
     update_registration_package_version_mappings,
 )
 from app.services.registration_package_query import (
+    get_registration_difference_summary,
     get_registration_package_artifact,
     get_registration_package_version,
     list_registration_package_versions,
@@ -227,6 +229,20 @@ async def registration_package_version(
     if result is None:
         raise HTTPException(status_code=404, detail="注册资料包版本不存在")
     return RegistrationPackageVersionItem(**result)
+
+
+@router.get(
+    "/package-versions/{version_id}/difference-summary",
+    response_model=RegistrationDifferenceSummary,
+)
+async def registration_difference_summary(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await get_registration_difference_summary(db, version_id=version_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="注册资料包版本不存在")
+    return RegistrationDifferenceSummary(**result)
 
 
 @router.get("/package-versions/{version_id}/artifacts/{artifact_type}")

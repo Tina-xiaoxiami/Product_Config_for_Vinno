@@ -29,16 +29,22 @@
       <div class="package-heading">
         <div>
           <h3>注册资料版本</h3>
-          <p>注册证与注册差异表成对记录；更新会生成新版本，不覆盖历史。</p>
+          <p>共 {{ packageGroups.length }} 个注册资料包；注册证与差异表成对留存版本。</p>
         </div>
-        <el-tag type="info" effect="plain">成对受控</el-tag>
+        <div class="package-heading-actions">
+          <el-tag type="info" effect="plain">成对受控</el-tag>
+          <el-button text @click="historyExpanded = !historyExpanded">
+            {{ historyExpanded ? '收起版本' : '查看版本' }}
+          </el-button>
+        </div>
       </div>
-      <el-empty
-        v-if="!packageLoading && packageGroups.length === 0"
-        description="暂无注册资料版本"
-        :image-size="52"
-      />
-      <article v-for="group in packageGroups" :key="group.id" class="package-card">
+      <div v-show="historyExpanded" class="package-list">
+        <el-empty
+          v-if="!packageLoading && packageGroups.length === 0"
+          description="暂无注册资料版本"
+          :image-size="52"
+        />
+        <article v-for="group in packageGroups" :key="group.id" class="package-card">
         <div class="package-title">
           <div class="package-identity">
             <strong>{{ group.display_name }}</strong>
@@ -157,104 +163,203 @@
             </div>
           </el-collapse-item>
         </el-collapse>
-      </article>
+        </article>
+      </div>
     </section>
 
-    <section class="toolbar">
-      <el-select v-model="countryCode" aria-label="注册国家" @change="loadModels">
-        <el-option label="中国 / CN" value="CN" />
-      </el-select>
-      <el-input
-        v-model="modelQuery"
-        clearable
-        placeholder="搜索注册型号"
-        :prefix-icon="Search"
-        @keyup.enter="loadModels"
-        @clear="loadModels"
-      />
-      <el-button type="primary" :icon="Search" @click="loadModels">查询</el-button>
-    </section>
-
-    <section class="content-grid">
-      <aside class="model-panel" v-loading="modelLoading">
-        <div class="panel-title">注册型号</div>
-        <button
-          v-for="model in models"
-          :key="model.id"
-          type="button"
-          :class="['model-item', { active: selectedModelId === model.id }]"
-          @click="selectModel(model.id)"
+    <el-tabs v-model="registrationView" class="registration-data-tabs">
+      <el-tab-pane label="差异汇总" name="summary">
+        <section
+          data-testid="registration-difference-summary"
+          class="difference-panel"
+          v-loading="differenceLoading"
         >
-          <span>{{ model.model_name }}</span>
-          <small v-if="model.channel_count">{{ model.channel_count }} 通道</small>
-        </button>
-        <el-empty v-if="!modelLoading && models.length === 0" description="暂无注册型号" :image-size="56" />
-      </aside>
-
-      <main class="probe-panel">
-        <div class="probe-header">
-          <div>
-            <h3>{{ selectedModel?.model_name || '请选择注册型号' }}</h3>
-            <p v-if="mappedProductModels.length">
-              对应产品型号：{{ mappedProductModels.join('、') }}
-            </p>
-            <p v-else-if="selectedModelId">尚未关联产品型号</p>
-          </div>
-          <el-button
-            v-if="selectedModel?.source_document_id"
-            tag="a"
-            :icon="View"
-            :href="getKnowledgeDocumentPreviewUrl(selectedModel.source_document_id)"
-            target="_blank"
-            rel="noopener"
-          >
-            查看注册原文
-          </el-button>
-        </div>
-
-        <div v-if="selectedModelId" class="summary-row">
-          <span>探头总数 <strong>{{ probeRows.length }}</strong></span>
-          <span>已注册 <strong>{{ registeredCount }}</strong></span>
-          <span class="danger">未注册 <strong>{{ unregisteredCount }}</strong></span>
-          <span>已关联配置项 <strong>{{ linkedConfigCount }}</strong></span>
-        </div>
-
-        <el-table
-          :data="probeRows"
-          v-loading="probeLoading"
-          border
-          stripe
-          empty-text="请选择注册型号"
-          class="probe-table"
-        >
-          <el-table-column prop="probe_model" label="注册探头型号" min-width="150" />
-          <el-table-column prop="probe_master_model" label="基础探头型号" min-width="150">
-            <template #default="scope">
-              <span v-if="scope.row.probe_master_id">{{ scope.row.probe_master_model }}</span>
-              <span v-else class="unlinked">未匹配探头主数据</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="ipn" label="IPN" min-width="115" />
-          <el-table-column label="注册状态" width="110" align="center">
-            <template #default="scope">
-              <el-tag
-                :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'"
-                effect="plain"
+          <div class="difference-toolbar">
+            <el-select
+              v-model="selectedPackageVersionId"
+              aria-label="注册资料包"
+              placeholder="选择注册资料包"
+              @change="loadDifferenceSummary"
+            >
+              <el-option
+                v-for="group in currentPackageGroups"
+                :key="group.current_version.id"
+                :label="`${group.display_name} · ${group.registration_number}`"
+                :value="group.current_version.id"
+              />
+            </el-select>
+            <el-input
+              v-model="differenceQuery"
+              clearable
+              placeholder="在当前注册证内搜索型号"
+              :prefix-icon="Search"
+            />
+            <div class="difference-actions">
+              <el-button
+                v-if="selectedPackageGroup?.current_version"
+                tag="a"
+                :href="selectedPackageGroup.current_version.certificate.preview_url"
+                target="_blank"
+                rel="noopener"
+                :icon="View"
               >
-                {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="config_name" label="基础配置项" min-width="210">
-            <template #default="scope">
-              <span v-if="scope.row.config_item_id">{{ scope.row.config_name }}</span>
-              <span v-else class="unlinked">未匹配配置项</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="source_ref" label="来源位置" min-width="160" />
-        </el-table>
-      </main>
-    </section>
+                查看注册证
+              </el-button>
+              <el-button
+                v-if="selectedPackageGroup?.current_version"
+                tag="a"
+                :href="selectedPackageGroup.current_version.difference.preview_url"
+                target="_blank"
+                rel="noopener"
+                :icon="View"
+              >
+                查看差异表
+              </el-button>
+            </div>
+          </div>
+
+          <div class="summary-row difference-metrics">
+            <span>注册型号 <strong>{{ differenceSummary.total_models }}</strong></span>
+            <span>探头范围 <strong>{{ differenceSummary.total_probes }}</strong></span>
+            <span>全部适用 <strong>{{ allApplicableCount }}</strong></span>
+            <span class="danger">存在差异 <strong>{{ differenceModelCount }}</strong></span>
+          </div>
+
+          <div class="difference-section-title">不适用/未注册探头差异（按原表格式）</div>
+          <el-empty
+            v-if="differenceTableGroups.length === 0"
+            description="当前注册资料包暂无型号差异数据"
+            :image-size="56"
+          />
+          <div v-else class="difference-original-grid">
+            <table
+              v-for="(group, groupIndex) in differenceTableGroups"
+              :key="group[0]?.registration_model_id || groupIndex"
+              class="difference-original-table"
+            >
+              <tbody>
+                <tr>
+                  <th scope="row">型号</th>
+                  <td v-for="model in group" :key="model.registration_model_id">
+                    <strong>{{ model.model_name }}</strong>
+                    <small v-if="model.channel_count">{{ model.channel_count }} 通道</small>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">差异</th>
+                  <td v-for="model in group" :key="`${model.registration_model_id}-difference`">
+                    <span v-if="model.unregistered_probes.length === 0" class="all-applicable">
+                      探头全适用
+                    </span>
+                    <span v-else class="not-applicable">
+                      {{ model.unregistered_probes.map(probe => probe.probe_model).join('、') }}不适用
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="逐型号明细" name="detail">
+        <section class="toolbar">
+          <el-select v-model="countryCode" aria-label="注册国家" @change="loadModels">
+            <el-option label="中国 / CN" value="CN" />
+          </el-select>
+          <el-input
+            v-model="modelQuery"
+            clearable
+            placeholder="搜索注册型号"
+            :prefix-icon="Search"
+            @keyup.enter="loadModels"
+            @clear="loadModels"
+          />
+          <el-button type="primary" :icon="Search" @click="loadModels">查询</el-button>
+        </section>
+
+        <section class="content-grid">
+          <aside class="model-panel" v-loading="modelLoading">
+            <div class="panel-title">注册型号</div>
+            <button
+              v-for="model in models"
+              :key="model.id"
+              type="button"
+              :class="['model-item', { active: selectedModelId === model.id }]"
+              @click="selectModel(model.id)"
+            >
+              <span>{{ model.model_name }}</span>
+              <small v-if="model.channel_count">{{ model.channel_count }} 通道</small>
+            </button>
+            <el-empty v-if="!modelLoading && models.length === 0" description="暂无注册型号" :image-size="56" />
+          </aside>
+
+          <main class="probe-panel">
+            <div class="probe-header">
+              <div>
+                <h3>{{ selectedModel?.model_name || '请选择注册型号' }}</h3>
+                <p v-if="mappedProductModels.length">
+                  对应产品型号：{{ mappedProductModels.join('、') }}
+                </p>
+                <p v-else-if="selectedModelId">尚未关联产品型号</p>
+              </div>
+              <el-button
+                v-if="selectedModel?.source_document_id"
+                tag="a"
+                :icon="View"
+                :href="getKnowledgeDocumentPreviewUrl(selectedModel.source_document_id)"
+                target="_blank"
+                rel="noopener"
+              >
+                查看注册原文
+              </el-button>
+            </div>
+
+            <div v-if="selectedModelId" class="summary-row">
+              <span>探头总数 <strong>{{ probeRows.length }}</strong></span>
+              <span>已注册 <strong>{{ registeredCount }}</strong></span>
+              <span class="danger">未注册 <strong>{{ unregisteredCount }}</strong></span>
+              <span>已关联配置项 <strong>{{ linkedConfigCount }}</strong></span>
+            </div>
+
+            <el-table
+              :data="probeRows"
+              v-loading="probeLoading"
+              border
+              stripe
+              empty-text="请选择注册型号"
+              class="probe-table"
+            >
+              <el-table-column prop="probe_model" label="注册探头型号" min-width="150" />
+              <el-table-column prop="probe_master_model" label="基础探头型号" min-width="150">
+                <template #default="scope">
+                  <span v-if="scope.row.probe_master_id">{{ scope.row.probe_master_model }}</span>
+                  <span v-else class="unlinked">未匹配探头主数据</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="ipn" label="IPN" min-width="115" />
+              <el-table-column label="注册状态" width="110" align="center">
+                <template #default="scope">
+                  <el-tag
+                    :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'"
+                    effect="plain"
+                  >
+                    {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="config_name" label="基础配置项" min-width="210">
+                <template #default="scope">
+                  <span v-if="scope.row.config_item_id">{{ scope.row.config_name }}</span>
+                  <span v-else class="unlinked">未匹配配置项</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="source_ref" label="来源位置" min-width="160" />
+            </el-table>
+          </main>
+        </section>
+      </el-tab-pane>
+    </el-tabs>
 
     <el-dialog
       v-model="packageDialogVisible"
@@ -397,6 +502,7 @@ import {
   getKnowledgeDocumentPreviewUrl,
   getRegistrationModelProbes,
   getRegistrationModels,
+  getRegistrationDifferenceSummary,
   getRegistrationPackageMappings,
   getRegistrationPackages,
   getRegistrationPackageVersions,
@@ -416,6 +522,12 @@ const modelLoading = ref(false)
 const probeLoading = ref(false)
 const packageLoading = ref(false)
 const packageGroups = ref([])
+const historyExpanded = ref(false)
+const registrationView = ref('summary')
+const selectedPackageVersionId = ref(null)
+const differenceSummary = ref({ total_models: 0, total_probes: 0, models: [] })
+const differenceQuery = ref('')
+const differenceLoading = ref(false)
 const packageDialogVisible = ref(false)
 const certificateFile = ref(null)
 const differenceFile = ref(null)
@@ -442,6 +554,28 @@ const mappedProductModels = computed(() => productMappings.value
 const registeredCount = computed(() => probeRows.value.filter(row => row.registration_status === 'registered').length)
 const unregisteredCount = computed(() => probeRows.value.filter(row => row.registration_status === 'unregistered').length)
 const linkedConfigCount = computed(() => probeRows.value.filter(row => row.config_item_id).length)
+const currentPackageGroups = computed(() => packageGroups.value.filter(group => group.current_version))
+const selectedPackageGroup = computed(() => currentPackageGroups.value.find(
+  group => group.current_version.id === selectedPackageVersionId.value
+))
+const filteredDifferenceModels = computed(() => {
+  const query = differenceQuery.value.trim().toLowerCase()
+  if (!query) return differenceSummary.value.models
+  return differenceSummary.value.models.filter(model => model.model_name.toLowerCase().includes(query))
+})
+const differenceTableGroups = computed(() => {
+  const groups = []
+  for (let index = 0; index < filteredDifferenceModels.value.length; index += 3) {
+    groups.push(filteredDifferenceModels.value.slice(index, index + 3))
+  }
+  return groups
+})
+const allApplicableCount = computed(() => differenceSummary.value.models.filter(
+  model => model.unregistered_probes.length === 0
+).length)
+const differenceModelCount = computed(() => differenceSummary.value.models.filter(
+  model => model.unregistered_probes.length > 0
+).length)
 
 const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
 const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
@@ -493,6 +627,22 @@ const selectModel = async (modelId) => {
   await loadProbes()
 }
 
+const loadDifferenceSummary = async () => {
+  if (!selectedPackageVersionId.value) {
+    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    return
+  }
+  differenceLoading.value = true
+  try {
+    differenceSummary.value = await getRegistrationDifferenceSummary(selectedPackageVersionId.value)
+  } catch {
+    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    ElMessage.error('注册差异汇总加载失败')
+  } finally {
+    differenceLoading.value = false
+  }
+}
+
 const loadPackageHistory = async () => {
   packageLoading.value = true
   try {
@@ -501,8 +651,20 @@ const loadPackageHistory = async () => {
       const history = await getRegistrationPackageVersions(item.id)
       return { ...item, versions: history.items || [] }
     }))
+    const selectedVersionStillExists = currentPackageGroups.value.some(
+      group => group.current_version.id === selectedPackageVersionId.value
+    )
+    if (!selectedVersionStillExists) {
+      const preferred = currentPackageGroups.value.find(
+        group => group.is_enabled && group.unit_code?.toUpperCase().startsWith('V10')
+      ) || currentPackageGroups.value.find(group => group.is_enabled) || currentPackageGroups.value[0]
+      selectedPackageVersionId.value = preferred?.current_version.id || null
+    }
+    await loadDifferenceSummary()
   } catch {
     packageGroups.value = []
+    selectedPackageVersionId.value = null
+    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
     ElMessage.error('注册资料版本加载失败')
   } finally {
     packageLoading.value = false
@@ -640,7 +802,9 @@ onMounted(async () => {
 .source-alert { margin-bottom: 14px; }
 .package-history { margin-bottom: 14px; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .package-heading, .package-title, .version-title, .change-summary { display: flex; align-items: center; gap: 10px; }
-.package-heading { justify-content: space-between; margin-bottom: 10px; }
+.package-heading { justify-content: space-between; }
+.package-heading-actions { display: flex; align-items: center; gap: 6px; }
+.package-list { margin-top: 10px; }
 .package-heading h3 { margin: 0 0 4px; color: #1f2937; font-size: 16px; }
 .package-heading p { margin: 0; color: #64748b; font-size: 12px; }
 .package-card { padding: 11px 13px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
@@ -656,6 +820,21 @@ onMounted(async () => {
 .baseline-note, .change-summary { margin-top: 10px; padding: 9px 11px; border-radius: 7px; background: #f8fafc; color: #475569; font-size: 12px; }
 .change-summary { flex-wrap: wrap; }
 .change-table { margin-top: 10px; }
+.registration-data-tabs { margin-top: 4px; }
+.difference-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.difference-toolbar { display: grid; grid-template-columns: minmax(280px, 0.8fr) minmax(260px, 1fr) auto; gap: 10px; align-items: center; }
+.difference-actions { display: flex; gap: 8px; }
+.difference-metrics { margin-bottom: 12px; }
+.difference-section-title { margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
+.difference-original-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.difference-original-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #334155; font-size: 13px; }
+.difference-original-table th, .difference-original-table td { padding: 10px 8px; border: 1px solid #cbd5e1; text-align: center; vertical-align: middle; }
+.difference-original-table th { width: 54px; background: #f8fafc; color: #475569; font-weight: 600; }
+.difference-original-table td { background: #fff; }
+.difference-original-table td strong, .difference-original-table td small { display: block; }
+.difference-original-table td small { margin-top: 3px; color: #94a3b8; font-weight: 400; }
+.all-applicable { color: #15803d; }
+.not-applicable { color: #b91c1c; }
 .toolbar { display: grid; grid-template-columns: 180px minmax(280px, 1fr) auto; gap: 10px; margin-bottom: 14px; }
 .content-grid { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 14px; align-items: start; }
 .model-panel, .probe-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }
@@ -682,7 +861,9 @@ onMounted(async () => {
 .review-heading p { margin: 0; color: #64748b; font-size: 13px; }
 .mapping-alert { margin-top: 12px; }
 @media (max-width: 850px) {
-  .toolbar, .content-grid, .form-grid, .upload-grid { grid-template-columns: 1fr; }
+  .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid { grid-template-columns: 1fr; }
+  .difference-original-grid { grid-template-columns: 1fr; }
+  .difference-actions { flex-wrap: wrap; }
   .model-panel { min-height: auto; }
 }
 </style>

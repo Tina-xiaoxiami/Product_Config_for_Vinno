@@ -178,6 +178,8 @@ export const setRegistrationPackageEnabled = (packageId, data) =>
   api.patch(`/registrations/packages/${packageId}/enabled`, data)
 export const getRegistrationPackageVersions = (packageId) =>
   api.get(`/registrations/packages/${packageId}/versions`)
+export const getRegistrationDifferenceSummary = (versionId) =>
+  api.get(`/registrations/package-versions/${versionId}/difference-summary`)
 export const getRegistrationPackageVersion = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}`)
 export const stageRegistrationPackageDraft = (formData) =>

@@ -58,6 +58,27 @@ class RegistrationMasterProbeList(BaseModel):
     total: int
 
 
+class RegistrationDifferenceProbe(BaseModel):
+    probe_model: str
+    ipn: str | None = None
+
+
+class RegistrationDifferenceModel(BaseModel):
+    registration_model_id: int
+    model_name: str
+    channel_count: int | None = None
+    registered_count: int
+    unregistered_count: int
+    unregistered_probes: list[RegistrationDifferenceProbe] = Field(default_factory=list)
+
+
+class RegistrationDifferenceSummary(BaseModel):
+    version_id: int
+    total_models: int
+    total_probes: int
+    models: list[RegistrationDifferenceModel] = Field(default_factory=list)
+
+
 class RegistrationProbeStrategyItem(BaseModel):
     probe_id: int
     probe_model: str

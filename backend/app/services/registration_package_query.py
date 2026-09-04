@@ -213,6 +213,84 @@ async def get_registration_package_version(
     return await _add_supporting_documents(session, _version_item(row))
 
 
+async def get_registration_difference_summary(
+    session: AsyncSession,
+    *,
+    version_id: int,
+) -> dict | None:
+    version_result = await session.execute(
+        text(
+            """
+            SELECT id, model_count, probe_count
+            FROM registration_package_versions
+            WHERE id = :version_id
+            """
+        ),
+        {"version_id": version_id},
+    )
+    version = version_result.one_or_none()
+    if version is None:
+        return None
+
+    model_result = await session.execute(
+        text(
+            """
+            SELECT id, model_name, channel_count
+            FROM registration_package_version_models
+            WHERE version_id = :version_id
+            ORDER BY id
+            """
+        ),
+        {"version_id": version_id},
+    )
+    models = [
+        {
+            "registration_model_id": int(row.id),
+            "model_name": row.model_name,
+            "channel_count": row.channel_count,
+            "registered_count": 0,
+            "unregistered_count": 0,
+            "unregistered_probes": [],
+        }
+        for row in model_result
+    ]
+    models_by_id = {item["registration_model_id"]: item for item in models}
+
+    matrix_result = await session.execute(
+        text(
+            """
+            SELECT matrix.version_model_id, matrix.registration_status,
+                   probe.probe_model, probe.ipn
+            FROM registration_package_version_model_probes matrix
+            JOIN registration_package_version_probes probe
+              ON probe.id = matrix.version_probe_id
+             AND probe.version_id = matrix.version_id
+            WHERE matrix.version_id = :version_id
+            ORDER BY matrix.version_model_id, probe.id
+            """
+        ),
+        {"version_id": version_id},
+    )
+    for row in matrix_result:
+        model = models_by_id.get(int(row.version_model_id))
+        if model is None:
+            continue
+        if row.registration_status == "unregistered":
+            model["unregistered_count"] += 1
+            model["unregistered_probes"].append(
+                {"probe_model": row.probe_model, "ipn": row.ipn}
+            )
+        else:
+            model["registered_count"] += 1
+
+    return {
+        "version_id": int(version.id),
+        "total_models": int(version.model_count),
+        "total_probes": int(version.probe_count),
+        "models": models,
+    }
+
+
 async def get_registration_package_artifact(
     session: AsyncSession,
     *,
