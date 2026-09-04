@@ -144,6 +144,21 @@ test('registration management shows paired certificate and difference history', 
   assert.match(api, /export const getRegistrationPackageVersion/)
 })
 
+
+test('registration management defaults to an original-table-style difference summary', () => {
+  const registrationView = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(registrationView, /data-testid="registration-difference-summary"/)
+  assert.match(registrationView, /label="差异汇总"/)
+  assert.match(registrationView, /label="逐型号明细"/)
+  assert.match(registrationView, /不适用\/未注册探头/)
+  assert.match(registrationView, /探头全适用/)
+  assert.match(registrationView, /getRegistrationDifferenceSummary/)
+  assert.match(api, /export const getRegistrationDifferenceSummary/)
+  assert.match(api, /package-versions\/\$\{versionId\}\/difference-summary/)
+})
+
 test('registration management supports paired upload mapping review and publish', () => {
   const view = read('../src/views/RegistrationManage.vue')
   const api = read('../src/api/data.js')

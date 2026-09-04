@@ -293,6 +293,69 @@ async def test_registration_master_data_lists_source_rows_by_registration_model(
 
 
 @pytest.mark.asyncio
+async def test_registration_difference_summary_matches_original_compact_table(tmp_path):
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    package = _activate_imported_package(database_path, workbook_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        response = await client.get(
+            f"/api/registrations/package-versions/{package['id']}/difference-summary"
+        )
+        missing = await client.get(
+            "/api/registrations/package-versions/999/difference-summary"
+        )
+    await engine.dispose()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version_id"] == package["id"]
+    assert body["total_models"] == 3
+    assert body["total_probes"] == 3
+    assert body["models"] == [
+        {
+            "registration_model_id": body["models"][0]["registration_model_id"],
+            "model_name": "VINNO 10",
+            "channel_count": 128,
+            "registered_count": 3,
+            "unregistered_count": 0,
+            "unregistered_probes": [],
+        },
+        {
+            "registration_model_id": body["models"][1]["registration_model_id"],
+            "model_name": "VINNO 10E",
+            "channel_count": 128,
+            "registered_count": 2,
+            "unregistered_count": 1,
+            "unregistered_probes": [
+                {"probe_model": "F2-5C", "ipn": "1000530"}
+            ],
+        },
+        {
+            "registration_model_id": body["models"][2]["registration_model_id"],
+            "model_name": "VINNO 9",
+            "channel_count": 128,
+            "registered_count": 1,
+            "unregistered_count": 2,
+            "unregistered_probes": [
+                {"probe_model": "G1-4P", "ipn": "1000744"},
+                {"probe_model": "F4-9E", "ipn": "1000784"},
+            ],
+        },
+    ]
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_product_query_only_uses_registration_certificate_mapped_to_model(tmp_path):
     database_path = tmp_path / "product_config.db"
     workbook_path = tmp_path / "registration.xlsx"
