@@ -162,8 +162,9 @@ def test_registers_controlled_tracking_document_idempotently(tmp_path):
         controlled_root=controlled_root,
     )
 
-    assert first == repeated
+    assert first["document_id"] == repeated["document_id"]
     assert first["status"] == "inserted"
+    assert repeated["status"] == "unchanged"
     connection = sqlite3.connect(database_path)
     row = connection.execute(
         """

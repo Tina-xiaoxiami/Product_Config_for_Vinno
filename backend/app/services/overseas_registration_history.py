@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 from pathlib import Path
+import re
 import sqlite3
 
 from sqlalchemy import text
@@ -14,6 +16,125 @@ from app.services.overseas_registration_preview import (
     OverseasRegistrationPreview,
 )
 from app.services.registration_rules import normalize_business_name
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_snapshot_date(path: Path) -> str | None:
+    match = re.search(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)", path.stem)
+    if match is None:
+        return None
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+
+def register_controlled_overseas_tracking_document(
+    database_path: str | Path,
+    file_path: str | Path,
+    *,
+    controlled_root: str | Path,
+) -> dict[str, int | str]:
+    """Register one controlled overseas tracking workbook without duplicating it."""
+
+    source = Path(file_path).expanduser().resolve()
+    root = Path(controlled_root).expanduser().resolve()
+    try:
+        source.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("海外注册跟踪表必须位于 Obsidian 受控材料目录") from exc
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    if source.suffix.casefold() not in {".xls", ".xlsx"}:
+        raise ValueError("海外注册跟踪材料必须是 Excel 文件")
+
+    digest = _file_sha256(source)
+    database = Path(database_path).expanduser().resolve()
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        by_path = connection.execute(
+            "SELECT id, sha256 FROM knowledge_documents WHERE file_path = ?",
+            (str(source),),
+        ).fetchone()
+        if by_path is not None:
+            if str(by_path["sha256"] or "").lower() != digest:
+                raise ValueError("受控路径已登记，但文件哈希发生变化")
+            return {
+                "document_id": int(by_path["id"]),
+                "status": "unchanged",
+                "file_path": str(source),
+                "sha256": digest,
+            }
+
+        by_hash = connection.execute(
+            "SELECT id, file_path FROM knowledge_documents WHERE sha256 = ? ORDER BY id",
+            (digest,),
+        ).fetchone()
+        if by_hash is not None:
+            connection.execute(
+                """
+                UPDATE knowledge_documents
+                SET file_path = ?, file_name = ?, document_type = 'registration_tracking',
+                    title = ?, version = ?, market = 'overseas', country = NULL,
+                    product_series = NULL, mime_type = ?, source_status = 'active'
+                WHERE id = ?
+                """,
+                (
+                    str(source),
+                    source.name,
+                    source.stem,
+                    _file_snapshot_date(source),
+                    mimetypes.guess_type(source.name)[0]
+                    or "application/octet-stream",
+                    int(by_hash["id"]),
+                ),
+            )
+            connection.commit()
+            return {
+                "document_id": int(by_hash["id"]),
+                "status": "migrated_to_controlled_path",
+                "file_path": str(source),
+                "sha256": digest,
+            }
+
+        cursor = connection.execute(
+            """
+            INSERT INTO knowledge_documents (
+                document_type, title, file_name, file_path, version, market,
+                country, product_series, mime_type, sha256, source_status
+            ) VALUES (
+                'registration_tracking', ?, ?, ?, ?, 'overseas',
+                NULL, NULL, ?, ?, 'active'
+            )
+            """,
+            (
+                source.stem,
+                source.name,
+                str(source),
+                _file_snapshot_date(source),
+                mimetypes.guess_type(source.name)[0]
+                or "application/octet-stream",
+                digest,
+            ),
+        )
+        connection.commit()
+        return {
+            "document_id": int(cursor.lastrowid),
+            "status": "inserted",
+            "file_path": str(source),
+            "sha256": digest,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def migrate_overseas_registration_history_schema(database_path: str | Path) -> None:
@@ -107,7 +228,7 @@ def _controlled_document(
     if not registered_path.is_file():
         raise ValueError("受控海外注册原件不存在")
     registered_sha = str(row[2] or "").lower()
-    digest = hashlib.sha256(registered_path.read_bytes()).hexdigest()
+    digest = _file_sha256(registered_path)
     if registered_sha != preview.source_sha256.lower() or registered_sha != digest:
         raise ValueError("受控海外注册原件哈希与预览不一致")
     return str(row[1] or registered_path.name), registered_sha
