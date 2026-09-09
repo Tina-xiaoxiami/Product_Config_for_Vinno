@@ -4,6 +4,7 @@ from openpyxl import Workbook
 
 from app.services.overseas_registration_preview import (
     build_overseas_registration_preview,
+    write_overseas_registration_preview,
 )
 
 
@@ -101,3 +102,39 @@ def test_preview_supports_legacy_xls_through_temporary_conversion(
 
     assert preview.source_file == str(legacy_path.resolve())
     assert preview.summary["source_rows"] == 6
+
+
+def test_preview_does_not_expand_abbreviated_model_lists_silently(tmp_path):
+    workbook_path = tmp_path / "tracking.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "已完成注册"
+    sheet.append(["国家/地区", "机型", "探头"])
+    sheet.append(["阿根廷", "Ultimus 7P,7E,8P", "S2-9C,F2-5C"])
+    sheet.append(["埃及", "G65,75", "S2-9C,F2-5C"])
+    workbook.save(workbook_path)
+
+    preview = build_overseas_registration_preview(workbook_path)
+
+    assert all(record.ready_for_import is False for record in preview.records)
+    assert all(
+        "model_name_requires_review" in record.issue_codes
+        for record in preview.records
+    )
+    assert preview.summary["normalized_relations"] == 0
+
+
+def test_preview_writes_reviewable_json_and_csv_without_database_changes(tmp_path):
+    workbook_path = tmp_path / "tracking.xlsx"
+    _write_tracking_workbook(workbook_path)
+    preview = build_overseas_registration_preview(workbook_path)
+
+    outputs = write_overseas_registration_preview(preview, tmp_path / "preview")
+
+    assert outputs["json"].is_file()
+    assert outputs["review_csv"].is_file()
+    assert '"source_rows": 6' in outputs["json"].read_text(encoding="utf-8")
+    review_text = outputs["review_csv"].read_text(encoding="utf-8-sig")
+    assert "source_ref,jurisdiction_raw" in review_text
+    assert "沙特-未注册成功" in review_text
+    assert "泰国,V10" not in review_text
