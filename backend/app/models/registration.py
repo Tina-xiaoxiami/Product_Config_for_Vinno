@@ -295,7 +295,12 @@ class OverseasRegistrationSnapshot(Base):
     source_file_name = Column(Text, nullable=False)
     source_sha256 = Column(Text, nullable=False, unique=True)
     snapshot_date = Column(Text)
-    status = Column(Text, nullable=False, default="draft")
+    status = Column(
+        Text,
+        nullable=False,
+        default="draft",
+        server_default=text("'draft'"),
+    )
     relation_count = Column(Integer, nullable=False)
     country_count = Column(Integer, nullable=False)
     model_count = Column(Integer, nullable=False)

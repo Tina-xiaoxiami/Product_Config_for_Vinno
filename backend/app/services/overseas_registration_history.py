@@ -293,8 +293,8 @@ def stage_overseas_registration_snapshot(
             """
             INSERT INTO overseas_registration_snapshots (
                 source_document_id, source_file_name, source_sha256, snapshot_date,
-                relation_count, country_count, model_count, probe_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                status, relation_count, country_count, model_count, probe_count
+            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)
             """,
             (
                 source_document_id,
