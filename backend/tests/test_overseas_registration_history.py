@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import registration
 from app.database import get_db
+from app.models.registration import (
+    OverseasRegistrationRelation as OverseasRegistrationRelationModel,
+    ProductRegistrationModelLink,
+)
 from app.services.overseas_registration_history import (
     list_overseas_registration_countries,
     list_overseas_registration_relations,
@@ -104,6 +108,22 @@ def _matches():
         ),
         summary={},
     )
+
+
+def test_history_orm_does_not_take_columns_from_product_registration_links():
+    product_link_columns = set(ProductRegistrationModelLink.__table__.columns.keys())
+    history_columns = set(OverseasRegistrationRelationModel.__table__.columns.keys())
+
+    assert {
+        "product_model_id",
+        "registration_model_id",
+        "registration_package_id",
+        "mapping_type",
+        "source",
+        "review_status",
+    } <= product_link_columns
+    assert "registration_model_id" not in history_columns
+    assert "registration_package_id" not in history_columns
 
 
 async def _client_for(database_path):
