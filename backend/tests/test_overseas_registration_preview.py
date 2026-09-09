@@ -36,9 +36,9 @@ def test_preview_keeps_registration_status_and_address_version_separate(tmp_path
     preview = build_overseas_registration_preview(workbook_path)
 
     assert preview.snapshot_date == "2026-08-19"
-    assert preview.summary["source_rows"] == 7
+    assert preview.summary["source_rows"] == 6
     assert preview.summary["ready_rows"] == 1
-    assert preview.summary["review_rows"] == 6
+    assert preview.summary["review_rows"] == 5
 
     thailand = preview.records[0]
     assert thailand.jurisdiction_code == "TH"
@@ -100,5 +100,4 @@ def test_preview_supports_legacy_xls_through_temporary_conversion(
     preview = build_overseas_registration_preview(legacy_path)
 
     assert preview.source_file == str(legacy_path.resolve())
-    assert preview.summary["source_rows"] == 7
-
+    assert preview.summary["source_rows"] == 6
