@@ -18,6 +18,7 @@ from app.services.overseas_registration_history import (
     list_overseas_registration_relations,
     migrate_overseas_registration_history_schema,
     publish_overseas_registration_snapshot,
+    register_controlled_overseas_tracking_document,
     stage_overseas_registration_snapshot,
 )
 from app.services.overseas_registration_preview import (
@@ -36,9 +37,17 @@ def _create_database(path: Path, controlled_file: Path) -> None:
         PRAGMA foreign_keys = ON;
         CREATE TABLE knowledge_documents (
             id INTEGER PRIMARY KEY,
+            document_type TEXT NOT NULL DEFAULT 'registration_tracking',
+            title TEXT NOT NULL DEFAULT '',
             file_path TEXT NOT NULL,
             file_name TEXT NOT NULL,
-            sha256 TEXT NOT NULL
+            sha256 TEXT NOT NULL,
+            version TEXT,
+            market TEXT NOT NULL DEFAULT 'overseas',
+            country TEXT,
+            product_series TEXT,
+            mime_type TEXT,
+            source_status TEXT NOT NULL DEFAULT 'active'
         );
         CREATE TABLE product_series (
             id INTEGER PRIMARY KEY,
@@ -60,7 +69,11 @@ def _create_database(path: Path, controlled_file: Path) -> None:
         """
     )
     connection.execute(
-        "INSERT INTO knowledge_documents VALUES (1, ?, ?, ?)",
+        """
+        INSERT INTO knowledge_documents (
+            id, title, file_path, file_name, sha256
+        ) VALUES (1, 'controlled', ?, ?, ?)
+        """,
         (str(controlled_file), controlled_file.name, digest),
     )
     connection.commit()
@@ -124,6 +137,63 @@ def test_history_orm_does_not_take_columns_from_product_registration_links():
     } <= product_link_columns
     assert "registration_model_id" not in history_columns
     assert "registration_package_id" not in history_columns
+
+
+def test_registers_controlled_tracking_document_idempotently(tmp_path):
+    controlled_root = tmp_path / "Obsidian" / "受控材料"
+    controlled_file = controlled_root / "注册跟踪表" / "海外注册跟踪表-20260819.xls"
+    controlled_file.parent.mkdir(parents=True)
+    controlled_file.write_bytes(b"controlled overseas registration")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    connection = sqlite3.connect(database_path)
+    connection.execute("DELETE FROM knowledge_documents")
+    connection.commit()
+    connection.close()
+
+    first = register_controlled_overseas_tracking_document(
+        database_path,
+        controlled_file,
+        controlled_root=controlled_root,
+    )
+    repeated = register_controlled_overseas_tracking_document(
+        database_path,
+        controlled_file,
+        controlled_root=controlled_root,
+    )
+
+    assert first == repeated
+    assert first["status"] == "inserted"
+    connection = sqlite3.connect(database_path)
+    row = connection.execute(
+        """
+        SELECT document_type, title, file_path, version, market, country,
+               product_series, mime_type, source_status
+        FROM knowledge_documents WHERE id = ?
+        """,
+        (first["document_id"],),
+    ).fetchone()
+    connection.close()
+    assert row == (
+        "registration_tracking",
+        "海外注册跟踪表-20260819",
+        str(controlled_file.resolve()),
+        "2026-08-19",
+        "overseas",
+        None,
+        None,
+        "application/vnd.ms-excel",
+        "active",
+    )
+
+    outside = tmp_path / "outside.xls"
+    outside.write_bytes(b"outside")
+    with pytest.raises(ValueError, match="受控材料目录"):
+        register_controlled_overseas_tracking_document(
+            database_path,
+            outside,
+            controlled_root=controlled_root,
+        )
 
 
 async def _client_for(database_path):
