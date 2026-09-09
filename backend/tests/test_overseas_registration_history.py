@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
 
@@ -197,6 +198,33 @@ def test_registers_controlled_tracking_document_idempotently(tmp_path):
             outside,
             controlled_root=controlled_root,
         )
+
+
+def test_stage_deduplicates_same_business_relation_from_multiple_source_rows(tmp_path):
+    controlled_file = tmp_path / "controlled.xls"
+    controlled_file.write_bytes(b"controlled overseas registration")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_overseas_registration_history_schema(database_path)
+    original = _preview(controlled_file).relations[0]
+    preview = replace(
+        _preview(controlled_file),
+        relations=(original, replace(original, source_ref="已完成注册!A9:C9")),
+    )
+
+    staged = stage_overseas_registration_snapshot(
+        database_path,
+        preview=preview,
+        matches=_matches(),
+        source_document_id=1,
+    )
+
+    assert staged["relation_count"] == 1
+    connection = sqlite3.connect(database_path)
+    assert connection.execute(
+        "SELECT source_ref FROM overseas_registration_relations"
+    ).fetchall() == [("已完成注册!A2:C2",)]
+    connection.close()
 
 
 async def _client_for(database_path):
