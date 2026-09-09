@@ -177,7 +177,10 @@ def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp
         """
     )
     connection.commit()
-    before = connection.total_changes
+    before = (
+        connection.execute("SELECT COUNT(*) FROM product_models").fetchone()[0],
+        connection.execute("SELECT COUNT(*) FROM probe_models").fetchone()[0],
+    )
     connection.close()
 
     preview = build_overseas_registration_preview(workbook_path)
@@ -197,6 +200,9 @@ def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp
     assert by_probe["A2-5C"].match_status == "registration_only_candidate"
 
     connection = sqlite3.connect(database_path)
-    assert connection.total_changes == before
-    assert connection.execute("SELECT COUNT(*) FROM product_models").fetchone()[0] == 1
+    after = (
+        connection.execute("SELECT COUNT(*) FROM product_models").fetchone()[0],
+        connection.execute("SELECT COUNT(*) FROM probe_models").fetchone()[0],
+    )
+    assert after == before
     connection.close()
