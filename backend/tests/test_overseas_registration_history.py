@@ -2,9 +2,13 @@ import hashlib
 from pathlib import Path
 import sqlite3
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api import registration
+from app.database import get_db
 from app.services.overseas_registration_history import (
     list_overseas_registration_countries,
     list_overseas_registration_relations,
@@ -99,6 +103,25 @@ def _matches():
             MasterDataMatch("A2-5C", "registration_only_candidate"),
         ),
         summary={},
+    )
+
+
+async def _client_for(database_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    app = FastAPI()
+    app.include_router(registration.router, prefix="/api/registrations")
+
+    async def override_db():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_db
+    return (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ),
+        engine,
     )
 
 
@@ -230,3 +253,49 @@ def test_stage_rejects_uncontrolled_or_changed_source(tmp_path):
             matches=_matches(),
             source_document_id=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
+    tmp_path,
+    monkeypatch,
+):
+    controlled_file = tmp_path / "controlled.xls"
+    controlled_file.write_bytes(b"controlled overseas registration")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_overseas_registration_history_schema(database_path)
+    monkeypatch.setattr(
+        registration, "build_overseas_registration_preview", lambda _: _preview(controlled_file)
+    )
+    monkeypatch.setattr(
+        registration,
+        "match_overseas_registration_master_data",
+        lambda *_: _matches(),
+    )
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        staged = await client.post(
+            "/api/registrations/overseas/snapshots/drafts",
+            json={"source_document_id": 1},
+        )
+        hidden = await client.get("/api/registrations/overseas/relations")
+        published = await client.post(
+            "/api/registrations/overseas/snapshots/1/publish",
+            json={"confirmed_by": "owner"},
+        )
+        visible = await client.get(
+            "/api/registrations/overseas/relations",
+            params={"country_code": "TH", "q": "V10"},
+        )
+    await engine.dispose()
+
+    assert staged.status_code == 200
+    assert staged.json()["status"] == "draft"
+    assert hidden.json()["total"] == 0
+    assert published.status_code == 200
+    assert published.json() == {"snapshot_id": 1, "status": "active"}
+    assert visible.status_code == 200
+    assert visible.json()["total"] == 1
+    assert visible.json()["items"][0]["visible_in_current_config"] is False
