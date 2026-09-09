@@ -277,7 +277,17 @@ def stage_overseas_registration_snapshot(
                 "probe_count": int(existing[5]),
             }
 
-        relations = tuple(dict.fromkeys(preview.relations))
+        unique_relations = {}
+        for relation in preview.relations:
+            business_key = (
+                relation.jurisdiction_code,
+                normalize_business_name(relation.model_name).casefold(),
+                normalize_business_name(relation.probe_model).casefold(),
+                relation.registration_status,
+                relation.address_version,
+            )
+            unique_relations.setdefault(business_key, relation)
+        relations = tuple(unique_relations.values())
         if not relations:
             raise ValueError("海外注册预览中没有可发布的国家－型号－探头关系")
         if any(item.registration_status != "completed" for item in relations):
