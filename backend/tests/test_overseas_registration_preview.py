@@ -1,9 +1,11 @@
 from pathlib import Path
+import sqlite3
 
 from openpyxl import Workbook
 
 from app.services.overseas_registration_preview import (
     build_overseas_registration_preview,
+    match_overseas_registration_master_data,
     write_overseas_registration_preview,
 )
 
@@ -138,3 +140,63 @@ def test_preview_writes_reviewable_json_and_csv_without_database_changes(tmp_pat
     assert "source_ref,jurisdiction_raw" in review_text
     assert "沙特-未注册成功" in review_text
     assert "泰国,V10" not in review_text
+
+
+def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp_path):
+    workbook_path = tmp_path / "tracking.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "已完成注册"
+    sheet.append(["国家/地区", "机型", "探头"])
+    sheet.append(["泰国", "VINNO 10", "S2-9C"])
+    sheet.append(["巴西", "V10", "X4-0E"])
+    sheet.append(["埃及", "A3", "A2-5C"])
+    sheet.append(["阿根廷", "V10 series", "F2-5C"])
+    workbook.save(workbook_path)
+
+    database_path = tmp_path / "product_config.db"
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        CREATE TABLE product_series (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE product_models (
+            id INTEGER PRIMARY KEY,
+            series_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            config_group TEXT
+        );
+        CREATE TABLE probe_models (
+            id INTEGER PRIMARY KEY,
+            model_number TEXT NOT NULL
+        );
+        INSERT INTO product_series VALUES (1, 'R&V10 series-Oversea');
+        INSERT INTO product_models VALUES (10, 1, 'VINNO 10', NULL);
+        INSERT INTO probe_models VALUES (20, 'S2-9C');
+        INSERT INTO probe_models VALUES (21, 'X4-9E');
+        INSERT INTO probe_models VALUES (22, 'F2-5C');
+        """
+    )
+    connection.commit()
+    before = connection.total_changes
+    connection.close()
+
+    preview = build_overseas_registration_preview(workbook_path)
+    matches = match_overseas_registration_master_data(preview, database_path)
+
+    by_model = {item.source_name: item for item in matches.models}
+    assert by_model["VINNO 10"].match_status == "direct"
+    assert by_model["V10"].match_status == "alias_candidate"
+    assert by_model["V10"].candidate_names == ("VINNO 10",)
+    assert by_model["A3"].match_status == "registration_only_candidate"
+    assert by_model["V10 series"].match_status == "source_review_required"
+
+    by_probe = {item.source_name: item for item in matches.probes}
+    assert by_probe["S2-9C"].match_status == "direct"
+    assert by_probe["X4-0E"].match_status == "typo_candidate"
+    assert by_probe["X4-0E"].candidate_names == ("X4-9E",)
+    assert by_probe["A2-5C"].match_status == "registration_only_candidate"
+
+    connection = sqlite3.connect(database_path)
+    assert connection.total_changes == before
+    assert connection.execute("SELECT COUNT(*) FROM product_models").fetchone()[0] == 1
+    connection.close()
