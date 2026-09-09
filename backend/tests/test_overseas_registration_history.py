@@ -11,6 +11,7 @@ from app.api import registration
 from app.database import get_db
 from app.models.registration import (
     OverseasRegistrationRelation as OverseasRegistrationRelationModel,
+    OverseasRegistrationSnapshot,
     ProductRegistrationModelLink,
 )
 from app.services.overseas_registration_history import (
@@ -137,6 +138,7 @@ def test_history_orm_does_not_take_columns_from_product_registration_links():
     } <= product_link_columns
     assert "registration_model_id" not in history_columns
     assert "registration_package_id" not in history_columns
+    assert OverseasRegistrationSnapshot.__table__.c.status.server_default is not None
 
 
 def test_registers_controlled_tracking_document_idempotently(tmp_path):
