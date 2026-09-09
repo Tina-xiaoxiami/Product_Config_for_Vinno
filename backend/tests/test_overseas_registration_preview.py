@@ -6,6 +6,7 @@ from openpyxl import Workbook
 from app.services.overseas_registration_preview import (
     build_overseas_registration_preview,
     match_overseas_registration_master_data,
+    write_overseas_master_data_match_preview,
     write_overseas_registration_preview,
 )
 
@@ -142,7 +143,9 @@ def test_preview_writes_reviewable_json_and_csv_without_database_changes(tmp_pat
     assert "泰国,V10" not in review_text
 
 
-def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp_path):
+def test_master_data_match_separates_direct_alias_similarity_and_registration_only(
+    tmp_path,
+):
     workbook_path = tmp_path / "tracking.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -152,6 +155,7 @@ def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp
     sheet.append(["巴西", "V10", "X4-0E"])
     sheet.append(["埃及", "A3", "A2-5C"])
     sheet.append(["阿根廷", "V10 series", "F2-5C"])
+    sheet.append(["阿根廷", "P series,V10", "F2-5C"])
     workbook.save(workbook_path)
 
     database_path = tmp_path / "product_config.db"
@@ -195,7 +199,7 @@ def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp
 
     by_probe = {item.source_name: item for item in matches.probes}
     assert by_probe["S2-9C"].match_status == "direct"
-    assert by_probe["X4-0E"].match_status == "typo_candidate"
+    assert by_probe["X4-0E"].match_status == "similarity_candidate"
     assert by_probe["X4-0E"].candidate_names == ("X4-9E",)
     assert by_probe["A2-5C"].match_status == "registration_only_candidate"
 
@@ -206,3 +210,13 @@ def test_master_data_match_separates_direct_alias_typo_and_registration_only(tmp
     )
     assert after == before
     connection.close()
+
+    output = write_overseas_master_data_match_preview(
+        matches,
+        tmp_path / "master-match",
+        snapshot_date=preview.snapshot_date,
+    )
+    text = output.read_text(encoding="utf-8-sig")
+    assert "entity_type,source_name,match_status" in text
+    assert "model,V10,alias_candidate,VINNO 10" in text
+    assert "probe,X4-0E,similarity_candidate,X4-9E" in text

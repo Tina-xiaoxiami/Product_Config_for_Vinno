@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 
@@ -126,6 +127,24 @@ class OverseasRegistrationPreview:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
 
+@dataclass(frozen=True)
+class MasterDataMatch:
+    source_name: str
+    match_status: str
+    candidate_names: tuple[str, ...] = ()
+    candidate_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class OverseasMasterDataMatchPreview:
+    models: tuple[MasterDataMatch, ...]
+    probes: tuple[MasterDataMatch, ...]
+    summary: dict[str, dict[str, int]]
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -210,6 +229,45 @@ def _has_abbreviated_model_tokens(models: tuple[str, ...]) -> bool:
         re.fullmatch(r"\d+[A-Za-z]?", model) is not None
         for model in models[1:]
     )
+
+
+def _identity(value: str) -> str:
+    return normalize_business_name(value).casefold()
+
+
+def _model_alias_identity(value: str) -> str:
+    compact = re.sub(r"[^A-Z0-9]+", "", normalize_business_name(value).upper())
+    if compact.startswith("VINNO"):
+        compact = compact[5:]
+    if re.fullmatch(r"V\d+[A-Z]?", compact):
+        compact = compact[1:]
+    return compact
+
+
+def _edit_distance_at_most_one(left: str, right: str) -> bool:
+    left = left.upper()
+    right = right.upper()
+    if not left or not right or left[0] != right[0]:
+        return False
+    if left == right:
+        return True
+    if abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right)) == 1
+    if len(left) > len(right):
+        left, right = right, left
+    index_left = index_right = differences = 0
+    while index_left < len(left) and index_right < len(right):
+        if left[index_left] == right[index_right]:
+            index_left += 1
+            index_right += 1
+            continue
+        differences += 1
+        if differences > 1:
+            return False
+        index_right += 1
+    return True
 
 
 def _issues(
@@ -373,6 +431,153 @@ def build_overseas_registration_preview(
     )
 
 
+def match_overseas_registration_master_data(
+    preview: OverseasRegistrationPreview,
+    database_path: str | Path,
+) -> OverseasMasterDataMatchPreview:
+    """Compare preview names with overseas master data without changing the DB."""
+
+    connection = sqlite3.connect(Path(database_path).expanduser().resolve())
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        product_rows = connection.execute(
+            """
+            SELECT product.id, product.name, product.config_group
+            FROM product_models product
+            JOIN product_series series ON series.id = product.series_id
+            WHERE LOWER(series.name) LIKE '%oversea%'
+            ORDER BY product.id
+            """
+        ).fetchall()
+        probe_rows = connection.execute(
+            "SELECT id, model_number FROM probe_models ORDER BY id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    products_by_name: dict[str, list[tuple[int, str]]] = {}
+    products_by_group: dict[str, list[tuple[int, str]]] = {}
+    products_by_alias: dict[str, list[tuple[int, str]]] = {}
+    for product_id, product_name, config_group in product_rows:
+        item = (int(product_id), str(product_name))
+        products_by_name.setdefault(_identity(str(product_name)), []).append(item)
+        products_by_alias.setdefault(
+            _model_alias_identity(str(product_name)), []
+        ).append(item)
+        if config_group and normalize_business_name(config_group):
+            products_by_group.setdefault(_identity(str(config_group)), []).append(item)
+
+    model_issue_codes = {
+        "model_name_requires_review",
+        "model_scope_requires_expansion",
+        "narrative_rule_requires_review",
+    }
+    model_review_names = {
+        model
+        for record in preview.records
+        if model_issue_codes & set(record.issue_codes)
+        for model in record.models
+    }
+    clean_model_names = {
+        model
+        for record in preview.records
+        if not model_issue_codes & set(record.issue_codes)
+        for model in record.models
+    }
+    model_review_names -= clean_model_names
+    source_models = sorted(
+        {model for record in preview.records for model in record.models},
+        key=str.casefold,
+    )
+    model_matches: list[MasterDataMatch] = []
+    for source_name in source_models:
+        identity = _identity(source_name)
+        candidates = products_by_name.get(identity, [])
+        status = "direct"
+        if not candidates:
+            candidates = products_by_group.get(identity, [])
+            status = "config_group"
+        if not candidates:
+            candidates = products_by_alias.get(_model_alias_identity(source_name), [])
+            status = "alias_candidate"
+        if source_name in model_review_names:
+            status = "source_review_required"
+            candidates = []
+        elif not candidates:
+            status = "registration_only_candidate"
+        model_matches.append(
+            MasterDataMatch(
+                source_name=source_name,
+                match_status=status,
+                candidate_names=tuple(item[1] for item in candidates),
+                candidate_ids=tuple(item[0] for item in candidates),
+            )
+        )
+
+    probes_by_name = {
+        _identity(str(model_number)): (int(probe_id), str(model_number))
+        for probe_id, model_number in probe_rows
+    }
+    probe_issue_codes = {"complex_probe_mapping", "probe_name_requires_review"}
+    probe_review_names = {
+        probe
+        for record in preview.records
+        if probe_issue_codes & set(record.issue_codes)
+        for probe in record.probes
+    }
+    clean_probe_names = {
+        probe
+        for record in preview.records
+        if not probe_issue_codes & set(record.issue_codes)
+        for probe in record.probes
+    }
+    probe_review_names -= clean_probe_names
+    source_probes = sorted(
+        {probe for record in preview.records for probe in record.probes},
+        key=str.casefold,
+    )
+    probe_matches: list[MasterDataMatch] = []
+    for source_name in source_probes:
+        direct = probes_by_name.get(_identity(source_name))
+        if direct is not None:
+            status = "direct"
+            candidates = [direct]
+        else:
+            typo_candidates = [
+                item
+                for item in probes_by_name.values()
+                if _edit_distance_at_most_one(source_name, item[1])
+            ]
+            if len(typo_candidates) == 1:
+                status = "similarity_candidate"
+                candidates = typo_candidates
+            elif source_name in probe_review_names:
+                status = "source_review_required"
+                candidates = typo_candidates
+            else:
+                status = "registration_only_candidate"
+                candidates = []
+        probe_matches.append(
+            MasterDataMatch(
+                source_name=source_name,
+                match_status=status,
+                candidate_names=tuple(item[1] for item in candidates),
+                candidate_ids=tuple(item[0] for item in candidates),
+            )
+        )
+
+    model_counts = Counter(item.match_status for item in model_matches)
+    probe_counts = Counter(item.match_status for item in probe_matches)
+    return OverseasMasterDataMatchPreview(
+        models=tuple(model_matches),
+        probes=tuple(probe_matches),
+        summary={
+            "models": dict(sorted(model_counts.items())),
+            "probes": dict(sorted(probe_counts.items())),
+        },
+    )
+
+
 def write_overseas_registration_preview(
     preview: OverseasRegistrationPreview,
     output_directory: str | Path,
@@ -416,3 +621,40 @@ def write_overseas_registration_preview(
                 ]
             )
     return {"json": json_path, "review_csv": review_path}
+
+
+def write_overseas_master_data_match_preview(
+    matches: OverseasMasterDataMatchPreview,
+    output_directory: str | Path,
+    *,
+    snapshot_date: str | None = None,
+) -> Path:
+    """Write a compact mapping review sheet without changing master data."""
+
+    directory = Path(output_directory).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    suffix = snapshot_date or "undated"
+    target = directory / f"overseas-registration-master-match-{suffix}.csv"
+    with target.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(
+            [
+                "entity_type",
+                "source_name",
+                "match_status",
+                "candidate_names",
+                "candidate_ids",
+            ]
+        )
+        for entity_type, items in (("model", matches.models), ("probe", matches.probes)):
+            for item in items:
+                writer.writerow(
+                    [
+                        entity_type,
+                        item.source_name,
+                        item.match_status,
+                        ";".join(item.candidate_names),
+                        ";".join(str(value) for value in item.candidate_ids),
+                    ]
+                )
+    return target
