@@ -285,6 +285,85 @@ class ProductRegistrationModelLink(Base):
     )
 
 
+class OverseasRegistrationSnapshot(Base):
+    __tablename__ = "overseas_registration_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    source_document_id = Column(
+        Integer, ForeignKey("knowledge_documents.id"), nullable=False
+    )
+    source_file_name = Column(Text, nullable=False)
+    source_sha256 = Column(Text, nullable=False, unique=True)
+    snapshot_date = Column(Text)
+    status = Column(Text, nullable=False, default="draft")
+    relation_count = Column(Integer, nullable=False)
+    country_count = Column(Integer, nullable=False)
+    model_count = Column(Integer, nullable=False)
+    probe_count = Column(Integer, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    published_at = Column(Text)
+    confirmed_by = Column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'active', 'superseded')",
+            name="ck_overseas_registration_snapshot_status",
+        ),
+        Index(
+            "uq_overseas_registration_active",
+            "status",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+
+class OverseasRegistrationRelation(Base):
+    __tablename__ = "overseas_registration_relations"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(
+        Integer,
+        ForeignKey("overseas_registration_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    country_code = Column(Text, nullable=False)
+    model_name = Column(Text, nullable=False)
+    normalized_model = Column(Text, nullable=False)
+    probe_model = Column(Text, nullable=False)
+    normalized_probe = Column(Text, nullable=False)
+    registration_status = Column(Text, nullable=False)
+    address_version = Column(Text, nullable=False)
+    source_ref = Column(Text)
+    model_match_status = Column(Text, nullable=False)
+    product_model_id = Column(Integer, ForeignKey("product_models.id"))
+    probe_match_status = Column(Text, nullable=False)
+    probe_model_id = Column(Integer, ForeignKey("probe_models.id"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "country_code",
+            "normalized_model",
+            "normalized_probe",
+            "registration_status",
+            "address_version",
+            name="uq_overseas_registration_relation",
+        ),
+        Index(
+            "ix_overseas_registration_country_model",
+            "snapshot_id",
+            "country_code",
+            "normalized_model",
+        ),
+        Index(
+            "ix_overseas_registration_probe",
+            "snapshot_id",
+            "normalized_probe",
+        ),
+    )
+
+
 class RegistrationPackageVersionModel(Base):
     __tablename__ = "registration_package_version_models"
 

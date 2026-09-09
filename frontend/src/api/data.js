@@ -182,6 +182,14 @@ export const getRegistrationDifferenceSummary = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}/difference-summary`)
 export const getRegistrationPackageVersion = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}`)
+export const getOverseasRegistrationCountries = () =>
+  api.get('/registrations/overseas/countries')
+export const getOverseasRegistrationRelations = (params) =>
+  api.get('/registrations/overseas/relations', { params })
+export const stageOverseasRegistrationSnapshot = (sourceDocumentId) =>
+  api.post('/registrations/overseas/snapshots/drafts', { source_document_id: sourceDocumentId })
+export const publishOverseasRegistrationSnapshot = (snapshotId, confirmedBy) =>
+  api.post(`/registrations/overseas/snapshots/${snapshotId}/publish`, { confirmed_by: confirmedBy })
 export const stageRegistrationPackageDraft = (formData) =>
   api.post('/registrations/packages/drafts', formData)
 export const getRegistrationPackageMappings = (versionId) =>

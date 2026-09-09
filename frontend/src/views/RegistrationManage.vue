@@ -359,6 +359,86 @@
           </main>
         </section>
       </el-tab-pane>
+
+      <el-tab-pane label="海外注册查询" name="overseas">
+        <section
+          data-testid="overseas-registration-query"
+          class="overseas-panel"
+          v-loading="overseasLoading"
+        >
+          <el-alert
+            title="这里显示国家－型号－探头的仅注册历史数据，可用于注册查询，但不会进入当前配置管理列表。"
+            type="info"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          />
+          <div class="toolbar overseas-toolbar">
+            <el-select
+              v-model="overseasCountryCode"
+              clearable
+              placeholder="全部国家"
+              aria-label="海外注册国家"
+              @change="loadOverseasRelations"
+            >
+              <el-option
+                v-for="country in overseasCountries"
+                :key="country.country_code"
+                :label="`${country.country_code}（${country.relation_count}）`"
+                :value="country.country_code"
+              />
+            </el-select>
+            <el-input
+              v-model="overseasQuery"
+              clearable
+              placeholder="搜索型号或探头型号"
+              :prefix-icon="Search"
+              @keyup.enter="loadOverseasRelations"
+              @clear="loadOverseasRelations"
+            />
+            <el-button type="primary" :icon="Search" @click="loadOverseasRelations">
+              查询
+            </el-button>
+          </div>
+          <div class="summary-row">
+            <span>查询结果 <strong>{{ overseasTotal }}</strong></span>
+            <span>数据范围 <strong>注册历史</strong></span>
+          </div>
+          <el-table :data="overseasRows" border stripe empty-text="暂无已发布的海外注册数据">
+            <el-table-column prop="country_code" label="国家/地区" width="110" />
+            <el-table-column prop="model_name" label="注册型号" min-width="150" />
+            <el-table-column prop="probe_model" label="注册探头型号" min-width="150" />
+            <el-table-column label="注册状态" width="120" align="center">
+              <template #default>
+                <el-tag type="success" effect="plain">已完成注册</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="数据属性" min-width="150">
+              <template #default="scope">
+                <el-tag type="info" effect="plain">仅注册历史数据</el-tag>
+                <small v-if="scope.row.product_model_id || scope.row.probe_model_id" class="master-link-note">
+                  已找到当前基础数据候选
+                </small>
+              </template>
+            </el-table-column>
+            <el-table-column prop="snapshot_date" label="资料日期" width="120" />
+            <el-table-column label="原始材料" width="120" align="center">
+              <template #default="scope">
+                <el-button
+                  link
+                  type="primary"
+                  tag="a"
+                  :href="getKnowledgeDocumentPreviewUrl(scope.row.source_document_id)"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  查看原表
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog
@@ -506,6 +586,8 @@ import {
   getRegistrationPackageMappings,
   getRegistrationPackages,
   getRegistrationPackageVersions,
+  getOverseasRegistrationCountries,
+  getOverseasRegistrationRelations,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
   stageRegistrationPackageDraft,
@@ -533,6 +615,12 @@ const certificateFile = ref(null)
 const differenceFile = ref(null)
 const staging = ref(false)
 const publishing = ref(false)
+const overseasLoading = ref(false)
+const overseasCountries = ref([])
+const overseasCountryCode = ref('')
+const overseasQuery = ref('')
+const overseasRows = ref([])
+const overseasTotal = ref(0)
 const draftReview = ref(null)
 const packageForm = ref({
   country_code: 'CN',
@@ -579,6 +667,35 @@ const differenceModelCount = computed(() => differenceSummary.value.models.filte
 
 const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
 const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
+
+const loadOverseasRelations = async () => {
+  overseasLoading.value = true
+  try {
+    const result = await getOverseasRegistrationRelations({
+      country_code: overseasCountryCode.value || undefined,
+      q: overseasQuery.value || undefined,
+      limit: 500
+    })
+    overseasRows.value = result.items || []
+    overseasTotal.value = result.total || 0
+  } catch {
+    overseasRows.value = []
+    overseasTotal.value = 0
+    ElMessage.error('海外注册数据加载失败')
+  } finally {
+    overseasLoading.value = false
+  }
+}
+
+const loadOverseasCountries = async () => {
+  try {
+    const result = await getOverseasRegistrationCountries()
+    overseasCountries.value = result.items || []
+  } catch {
+    overseasCountries.value = []
+    ElMessage.error('海外注册国家列表加载失败')
+  }
+}
 
 const loadMappings = async () => {
   const result = await getConfiguredRegistrationModels({
@@ -786,7 +903,13 @@ const handlePublishPackage = async () => {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMappings(), loadModels(), loadPackageHistory()])
+    await Promise.all([
+      loadMappings(),
+      loadModels(),
+      loadPackageHistory(),
+      loadOverseasCountries(),
+      loadOverseasRelations()
+    ])
   } catch {
     ElMessage.error('注册主数据加载失败')
   }
@@ -853,6 +976,9 @@ onMounted(async () => {
 .summary-row .danger strong { color: #b91c1c; }
 .unlinked { color: #b45309; }
 .probe-table { width: 100%; }
+.overseas-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.overseas-toolbar { margin-bottom: 0; }
+.master-link-note { display: block; margin-top: 4px; color: #64748b; }
 .dialog-alert { margin-bottom: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
 .upload-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }

@@ -35,6 +35,8 @@ from app.models.registration import (
     RegistrationProbe,
     RegistrationModelProbe,
     ProductRegistrationModelLink,
+    OverseasRegistrationSnapshot,
+    OverseasRegistrationRelation,
 )
 
 __all__ = [
@@ -80,4 +82,6 @@ __all__ = [
     "RegistrationProbe",
     "RegistrationModelProbe",
     "ProductRegistrationModelLink",
+    "OverseasRegistrationSnapshot",
+    "OverseasRegistrationRelation",
 ]

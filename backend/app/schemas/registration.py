@@ -203,3 +203,43 @@ class RegistrationPackagePublishRequest(BaseModel):
 class RegistrationPackageEnableUpdate(BaseModel):
     is_enabled: bool
     updated_by: str = Field(min_length=1, max_length=100)
+
+
+class OverseasRegistrationCountry(BaseModel):
+    country_code: str
+    relation_count: int
+
+
+class OverseasRegistrationCountryList(BaseModel):
+    items: list[OverseasRegistrationCountry] = Field(default_factory=list)
+    total: int
+
+
+class OverseasRegistrationRelationItem(BaseModel):
+    id: int
+    country_code: str
+    model_name: str
+    probe_model: str
+    registration_status: str
+    address_version: str
+    source_ref: str | None = None
+    model_match_status: str
+    product_model_id: int | None = None
+    probe_match_status: str
+    probe_model_id: int | None = None
+    snapshot_id: int
+    snapshot_date: str | None = None
+    source_document_id: int
+    data_scope: str
+    visible_in_current_config: bool
+
+
+class OverseasRegistrationRelationList(BaseModel):
+    items: list[OverseasRegistrationRelationItem] = Field(default_factory=list)
+    total: int
+    skip: int
+    limit: int
+
+
+class OverseasRegistrationDraftRequest(BaseModel):
+    source_document_id: int = Field(ge=1)

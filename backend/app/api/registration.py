@@ -4,6 +4,7 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
+import sqlite3
 import tempfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -11,6 +12,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.registration import (  # Ensure startup metadata includes history tables.
+    OverseasRegistrationRelation,
+    OverseasRegistrationSnapshot,
+)
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
     RegistrationMasterProbeList,
@@ -24,6 +29,9 @@ from app.schemas.registration import (
     RegistrationPackageVersionItem,
     RegistrationPackageVersionList,
     RegistrationProbeStrategyList,
+    OverseasRegistrationCountryList,
+    OverseasRegistrationRelationList,
+    OverseasRegistrationDraftRequest,
 )
 from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
@@ -46,9 +54,91 @@ from app.services.registration_query import (
     list_registration_model_probes,
     list_registration_models,
 )
+from app.services.overseas_registration_history import (
+    list_overseas_registration_countries,
+    list_overseas_registration_relations,
+    publish_overseas_registration_snapshot,
+    stage_overseas_registration_snapshot,
+)
+from app.services.overseas_registration_preview import (
+    build_overseas_registration_preview,
+    match_overseas_registration_master_data,
+)
 
 
 router = APIRouter()
+
+
+@router.get("/overseas/countries", response_model=OverseasRegistrationCountryList)
+async def overseas_registration_countries(db: AsyncSession = Depends(get_db)):
+    items = await list_overseas_registration_countries(db)
+    return OverseasRegistrationCountryList(items=items, total=len(items))
+
+
+@router.get("/overseas/relations", response_model=OverseasRegistrationRelationList)
+async def overseas_registration_relations(
+    country_code: str | None = Query(None, pattern="^[A-Z]{2}$"),
+    q: str | None = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_overseas_registration_relations(
+        db,
+        country_code=country_code,
+        query=q,
+        skip=skip,
+        limit=limit,
+    )
+    return OverseasRegistrationRelationList(
+        items=items, total=total, skip=skip, limit=limit
+    )
+
+
+@router.post("/overseas/snapshots/drafts")
+async def create_overseas_registration_snapshot_draft(
+    payload: OverseasRegistrationDraftRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    database = _database_path(db)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        row = connection.execute(
+            "SELECT file_path FROM knowledge_documents WHERE id = ?",
+            (payload.source_document_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="受控海外注册材料不存在")
+    try:
+        preview = build_overseas_registration_preview(row[0])
+        matches = match_overseas_registration_master_data(preview, database)
+        return stage_overseas_registration_snapshot(
+            database,
+            preview=preview,
+            matches=matches,
+            source_document_id=payload.source_document_id,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/overseas/snapshots/{snapshot_id}/publish")
+async def publish_overseas_registration_snapshot_api(
+    snapshot_id: int,
+    payload: RegistrationPackagePublishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return publish_overseas_registration_snapshot(
+            _database_path(db),
+            snapshot_id=snapshot_id,
+            confirmed_by=payload.confirmed_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _database_path(db: AsyncSession) -> Path:
