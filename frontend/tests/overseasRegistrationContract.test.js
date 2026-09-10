@@ -29,6 +29,8 @@ test('registration management exposes a generic source-row review center', () =>
   assert.match(view, /原始识别值/)
   assert.match(view, /修正后内容/)
   assert.match(view, /查看原文/)
+  assert.match(view, /knowledge_document_chunk/)
+  assert.match(view, /识别正文/)
   assert.match(view, /getDataReviewBatches/)
   assert.match(view, /getDataReviewItems/)
   assert.match(view, /updateDataReviewItem/)

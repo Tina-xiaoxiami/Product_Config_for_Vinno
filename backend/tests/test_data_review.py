@@ -15,6 +15,7 @@ from app.services.data_review import (
     list_data_review_items,
     migrate_data_review_schema,
     revise_data_review_item,
+    stage_knowledge_document_review_items,
     stage_overseas_preview_review_items,
 )
 from app.services.overseas_registration_preview import (
@@ -58,6 +59,18 @@ def _create_database(path: Path, controlled_file: Path) -> None:
             published_at TEXT,
             confirmed_by TEXT
         );
+        CREATE TABLE knowledge_document_chunks (
+            id INTEGER PRIMARY KEY,
+            document_id INTEGER NOT NULL REFERENCES knowledge_documents(id),
+            chunk_index INTEGER NOT NULL,
+            page_number INTEGER,
+            section_name TEXT,
+            source_ref TEXT NOT NULL,
+            content TEXT NOT NULL,
+            normalized_content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            UNIQUE(document_id, chunk_index)
+        );
         """
     )
     connection.execute(
@@ -79,6 +92,72 @@ def _create_database(path: Path, controlled_file: Path) -> None:
     )
     connection.commit()
     connection.close()
+
+
+def test_document_text_chunks_can_be_corrected_without_losing_ocr_text(tmp_path):
+    controlled_file = tmp_path / "manual.pdf"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE knowledge_documents SET document_type = 'manual', title = '产品说明书' WHERE id = 1"
+    )
+    connection.execute(
+        """
+        INSERT INTO knowledge_document_chunks (
+            id, document_id, chunk_index, page_number, section_name,
+            source_ref, content, normalized_content, content_hash
+        ) VALUES (9, 1, 0, 12, '功能说明', '第12页', '支持 VINNNO 10',
+                  '支持vinnno10', 'raw-hash')
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrate_data_review_schema(database_path)
+    staged = stage_knowledge_document_review_items(database_path, document_id=1)
+    assert staged == {"item_count": 1, "needs_review_count": 0}
+
+    async def load_item():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            items, _ = await list_data_review_items(
+                session,
+                data_type="knowledge_document_chunk",
+                batch_id=1,
+                review_status=None,
+                query=None,
+                skip=0,
+                limit=10,
+            )
+        await engine.dispose()
+        return items[0]
+
+    import asyncio
+
+    item = asyncio.run(load_item())
+    revised = revise_data_review_item(
+        database_path,
+        item_id=item["id"],
+        effective_payload={
+            **item["effective_payload"],
+            "content": "支持 VINNO 10",
+        },
+        review_status="corrected",
+        changed_by="product_owner",
+        change_note="修正 OCR 拼写",
+    )
+
+    assert revised["raw_payload"]["content"] == "支持 VINNNO 10"
+    assert revised["effective_payload"]["content"] == "支持 VINNO 10"
+    connection = sqlite3.connect(database_path)
+    chunk = connection.execute(
+        "SELECT content, normalized_content FROM knowledge_document_chunks WHERE id = 9"
+    ).fetchone()
+    connection.close()
+    assert chunk == ("支持 VINNO 10", "支持vinno10")
 
 
 def _preview(controlled_file: Path) -> OverseasRegistrationPreview:
