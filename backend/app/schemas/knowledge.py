@@ -1,5 +1,7 @@
 """Schemas for the unified product knowledge API."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -166,3 +168,71 @@ class KnowledgeAnswerRevisionItem(BaseModel):
 
 class KnowledgeAnswerHistory(BaseModel):
     items: list[KnowledgeAnswerRevisionItem]
+
+
+class DataReviewBatchItem(BaseModel):
+    data_type: str
+    batch_id: int
+    document_id: int
+    document_title: str
+    document_type: str
+    market: str
+    batch_status: str | None = None
+    snapshot_date: str | None = None
+    total_count: int
+    needs_review_count: int
+    corrected_count: int
+    excluded_count: int
+    preview_url: str
+
+
+class DataReviewBatchList(BaseModel):
+    items: list[DataReviewBatchItem] = Field(default_factory=list)
+    total: int
+
+
+class DataReviewItem(BaseModel):
+    id: int
+    document_id: int
+    document_title: str
+    data_type: str
+    batch_id: int
+    source_record_key: str
+    source_ref: str
+    raw_payload: dict[str, Any]
+    effective_payload: dict[str, Any]
+    issue_codes: list[str] = Field(default_factory=list)
+    review_status: str
+    updated_by: str | None = None
+    change_note: str | None = None
+    created_at: str
+    updated_at: str
+    preview_url: str
+
+
+class DataReviewItemList(BaseModel):
+    items: list[DataReviewItem] = Field(default_factory=list)
+    total: int
+    skip: int
+    limit: int
+
+
+class DataReviewItemUpdate(BaseModel):
+    effective_payload: dict[str, Any]
+    review_status: str = Field(pattern="^(corrected|confirmed|excluded)$")
+    changed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=1000)
+
+
+class DataReviewRevisionItem(BaseModel):
+    revision_no: int
+    before_payload: dict[str, Any]
+    after_payload: dict[str, Any]
+    action: str
+    change_note: str | None = None
+    changed_by: str
+    created_at: str
+
+
+class DataReviewRevisionList(BaseModel):
+    items: list[DataReviewRevisionItem] = Field(default_factory=list)

@@ -439,7 +439,187 @@
           </el-table>
         </section>
       </el-tab-pane>
+
+      <el-tab-pane label="数据审核与修正" name="review">
+        <section
+          data-testid="data-review-center"
+          class="review-center"
+          v-loading="dataReviewLoading"
+        >
+          <el-alert
+            title="原文和原始识别值始终保留；修正后内容作为草稿的有效值，每次修改都会留下记录。"
+            type="info"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          />
+          <div class="review-toolbar">
+            <el-select
+              v-model="selectedReviewBatchKey"
+              placeholder="选择待审核材料"
+              aria-label="待审核材料"
+              @change="handleReviewBatchChange"
+            >
+              <el-option
+                v-for="batch in dataReviewBatches"
+                :key="reviewBatchKey(batch)"
+                :label="`${batch.document_title}（${batch.total_count} 行）`"
+                :value="reviewBatchKey(batch)"
+              />
+            </el-select>
+            <el-select
+              v-model="dataReviewStatus"
+              clearable
+              placeholder="全部审核状态"
+              aria-label="审核状态"
+              @change="loadDataReviewItems"
+            >
+              <el-option label="待修正" value="needs_review" />
+              <el-option label="已修正" value="corrected" />
+              <el-option label="已确认" value="confirmed" />
+              <el-option label="自动可用" value="auto_ready" />
+              <el-option label="已排除" value="excluded" />
+            </el-select>
+            <el-input
+              v-model="dataReviewQuery"
+              clearable
+              placeholder="搜索国家、型号、探头或原文位置"
+              :prefix-icon="Search"
+              @keyup.enter="loadDataReviewItems"
+              @clear="loadDataReviewItems"
+            />
+            <el-button type="primary" :icon="Search" @click="loadDataReviewItems">查询</el-button>
+          </div>
+
+          <div v-if="selectedReviewBatch" class="summary-row review-summary">
+            <span>原表行 <strong>{{ selectedReviewBatch.total_count }}</strong></span>
+            <span class="danger">待修正 <strong>{{ selectedReviewBatch.needs_review_count }}</strong></span>
+            <span>已修正 <strong>{{ selectedReviewBatch.corrected_count }}</strong></span>
+            <span>已排除 <strong>{{ selectedReviewBatch.excluded_count }}</strong></span>
+            <el-button
+              link
+              type="primary"
+              tag="a"
+              :href="selectedReviewBatch.preview_url"
+              target="_blank"
+              rel="noopener"
+            >
+              查看原文
+            </el-button>
+          </div>
+
+          <el-table
+            :data="dataReviewRows"
+            border
+            stripe
+            empty-text="暂无待审核数据"
+            class="review-table"
+          >
+            <el-table-column prop="source_ref" label="原表位置" min-width="155" />
+            <el-table-column label="原始识别值" min-width="235">
+              <template #default="scope">
+                <div class="source-values">
+                  <span>{{ scope.row.raw_payload.jurisdiction_raw || scope.row.raw_payload.jurisdiction_code }}</span>
+                  <strong>{{ scope.row.raw_payload.model_raw }}</strong>
+                  <span>{{ scope.row.raw_payload.probe_raw }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="修正后内容" min-width="235">
+              <template #default="scope">
+                <div class="source-values effective-values">
+                  <span>{{ scope.row.effective_payload.jurisdiction_code }}</span>
+                  <strong>{{ scope.row.effective_payload.model_raw }}</strong>
+                  <span>{{ scope.row.effective_payload.probe_raw }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="问题/状态" min-width="190">
+              <template #default="scope">
+                <el-tag :type="reviewStatusType(scope.row.review_status)" effect="plain" size="small">
+                  {{ reviewStatusLabel(scope.row.review_status) }}
+                </el-tag>
+                <div v-if="scope.row.issue_codes.length" class="issue-list">
+                  {{ scope.row.issue_codes.map(issueLabel).join('、') }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="145" align="center" fixed="right">
+              <template #default="scope">
+                <el-button link type="primary" @click="openDataReviewEditor(scope.row)">
+                  审核/修正
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination
+            v-if="dataReviewTotal > dataReviewPageSize"
+            v-model:current-page="dataReviewPage"
+            :page-size="dataReviewPageSize"
+            :total="dataReviewTotal"
+            layout="prev, pager, next, total"
+            class="review-pagination"
+            @current-change="loadDataReviewItems"
+          />
+        </section>
+      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="dataReviewDialogVisible"
+      title="审核与修正提取结果"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        v-if="editingReviewItem"
+        :title="`原始识别值：${editingReviewItem.raw_payload.model_raw || '-'} / ${editingReviewItem.raw_payload.probe_raw || '-'}`"
+        type="info"
+        :closable="false"
+        class="dialog-alert"
+      />
+      <el-form :model="dataReviewForm" label-width="100px">
+        <div class="form-grid">
+          <el-form-item label="国家代码">
+            <el-input v-model="dataReviewForm.jurisdiction_code" maxlength="2" />
+          </el-form-item>
+          <el-form-item label="注册状态">
+            <el-select v-model="dataReviewForm.registration_status">
+              <el-option label="已完成注册" value="completed" />
+              <el-option label="进行中" value="in_progress" />
+              <el-option label="不需注册" value="not_required" />
+              <el-option label="暂停/失败" value="suspended" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="机型">
+            <el-input v-model="dataReviewForm.model_raw" />
+          </el-form-item>
+          <el-form-item label="探头型号">
+            <el-input v-model="dataReviewForm.probe_raw" />
+          </el-form-item>
+        </div>
+        <el-form-item label="修改人">
+          <el-input v-model="dataReviewChangedBy" placeholder="姓名或工号" />
+        </el-form-item>
+        <el-form-item label="修正说明">
+          <el-input
+            v-model="dataReviewChangeNote"
+            type="textarea"
+            :rows="2"
+            placeholder="如：OCR 将 VINNO 识别为 VINNNO"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dataReviewDialogVisible = false">取消</el-button>
+        <el-button type="danger" plain :loading="dataReviewSaving" @click="saveDataReview('excluded')">
+          排除此行
+        </el-button>
+        <el-button type="success" :loading="dataReviewSaving" @click="saveDataReview('corrected')">
+          保存修正
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="packageDialogVisible"
@@ -580,6 +760,8 @@ import { Plus, Search, UploadFilled, View } from '@element-plus/icons-vue'
 import {
   getConfiguredRegistrationModels,
   getKnowledgeDocumentPreviewUrl,
+  getDataReviewBatches,
+  getDataReviewItems,
   getRegistrationModelProbes,
   getRegistrationModels,
   getRegistrationDifferenceSummary,
@@ -588,6 +770,7 @@ import {
   getRegistrationPackageVersions,
   getOverseasRegistrationCountries,
   getOverseasRegistrationRelations,
+  updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
   stageRegistrationPackageDraft,
@@ -621,6 +804,21 @@ const overseasCountryCode = ref('')
 const overseasQuery = ref('')
 const overseasRows = ref([])
 const overseasTotal = ref(0)
+const dataReviewLoading = ref(false)
+const dataReviewBatches = ref([])
+const selectedReviewBatchKey = ref('')
+const dataReviewStatus = ref('needs_review')
+const dataReviewQuery = ref('')
+const dataReviewRows = ref([])
+const dataReviewTotal = ref(0)
+const dataReviewPage = ref(1)
+const dataReviewPageSize = 50
+const dataReviewDialogVisible = ref(false)
+const dataReviewSaving = ref(false)
+const editingReviewItem = ref(null)
+const dataReviewForm = ref({})
+const dataReviewChangedBy = ref('product_owner')
+const dataReviewChangeNote = ref('')
 const draftReview = ref(null)
 const packageForm = ref({
   country_code: 'CN',
@@ -664,6 +862,34 @@ const allApplicableCount = computed(() => differenceSummary.value.models.filter(
 const differenceModelCount = computed(() => differenceSummary.value.models.filter(
   model => model.unregistered_probes.length > 0
 ).length)
+const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
+const selectedReviewBatch = computed(() => dataReviewBatches.value.find(
+  batch => reviewBatchKey(batch) === selectedReviewBatchKey.value
+))
+const reviewStatusLabel = status => ({
+  auto_ready: '自动可用',
+  needs_review: '待修正',
+  corrected: '已修正',
+  confirmed: '已确认',
+  excluded: '已排除'
+}[status] || status)
+const reviewStatusType = status => ({
+  auto_ready: 'success',
+  needs_review: 'warning',
+  corrected: 'primary',
+  confirmed: 'success',
+  excluded: 'info'
+}[status] || 'info')
+const issueLabel = issue => ({
+  jurisdiction_requires_mapping: '国家待匹配',
+  non_final_status: '非最终状态',
+  narrative_rule_requires_review: '含说明性文字',
+  model_scope_requires_expansion: '机型范围待展开',
+  model_name_requires_review: '机型名称待修正',
+  probe_scope_not_explicit: '探头范围不明确',
+  complex_probe_mapping: '探头表述需拆分',
+  probe_name_requires_review: '探头名称待修正'
+}[issue] || issue)
 
 const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
 const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
@@ -694,6 +920,85 @@ const loadOverseasCountries = async () => {
   } catch {
     overseasCountries.value = []
     ElMessage.error('海外注册国家列表加载失败')
+  }
+}
+
+const loadDataReviewBatches = async () => {
+  try {
+    const result = await getDataReviewBatches()
+    dataReviewBatches.value = result.items || []
+    if (!dataReviewBatches.value.some(batch => reviewBatchKey(batch) === selectedReviewBatchKey.value)) {
+      const preferred = dataReviewBatches.value.find(batch => batch.batch_status === 'draft') || dataReviewBatches.value[0]
+      selectedReviewBatchKey.value = preferred ? reviewBatchKey(preferred) : ''
+    }
+    await loadDataReviewItems()
+  } catch {
+    dataReviewBatches.value = []
+    dataReviewRows.value = []
+    ElMessage.error('待审核数据加载失败')
+  }
+}
+
+const loadDataReviewItems = async () => {
+  if (!selectedReviewBatch.value) {
+    dataReviewRows.value = []
+    dataReviewTotal.value = 0
+    return
+  }
+  dataReviewLoading.value = true
+  try {
+    const result = await getDataReviewItems({
+      data_type: selectedReviewBatch.value.data_type,
+      batch_id: selectedReviewBatch.value.batch_id,
+      review_status: dataReviewStatus.value || undefined,
+      q: dataReviewQuery.value || undefined,
+      skip: (dataReviewPage.value - 1) * dataReviewPageSize,
+      limit: dataReviewPageSize
+    })
+    dataReviewRows.value = result.items || []
+    dataReviewTotal.value = result.total || 0
+  } catch {
+    dataReviewRows.value = []
+    dataReviewTotal.value = 0
+    ElMessage.error('审核明细加载失败')
+  } finally {
+    dataReviewLoading.value = false
+  }
+}
+
+const handleReviewBatchChange = async () => {
+  dataReviewPage.value = 1
+  await loadDataReviewItems()
+}
+
+const openDataReviewEditor = (item) => {
+  editingReviewItem.value = item
+  dataReviewForm.value = { ...item.effective_payload }
+  dataReviewChangeNote.value = item.change_note || ''
+  dataReviewDialogVisible.value = true
+}
+
+const saveDataReview = async (reviewStatus) => {
+  if (!editingReviewItem.value) return
+  if (!dataReviewChangedBy.value.trim()) {
+    ElMessage.warning('请填写修改人')
+    return
+  }
+  dataReviewSaving.value = true
+  try {
+    await updateDataReviewItem(editingReviewItem.value.id, {
+      effective_payload: dataReviewForm.value,
+      review_status: reviewStatus,
+      changed_by: dataReviewChangedBy.value.trim(),
+      change_note: dataReviewChangeNote.value.trim() || undefined
+    })
+    ElMessage.success(reviewStatus === 'excluded' ? '已排除该行' : '修正已保存')
+    dataReviewDialogVisible.value = false
+    await loadDataReviewBatches()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '保存修正失败')
+  } finally {
+    dataReviewSaving.value = false
   }
 }
 
@@ -908,7 +1213,8 @@ onMounted(async () => {
       loadModels(),
       loadPackageHistory(),
       loadOverseasCountries(),
-      loadOverseasRelations()
+      loadOverseasRelations(),
+      loadDataReviewBatches()
     ])
   } catch {
     ElMessage.error('注册主数据加载失败')
@@ -979,6 +1285,16 @@ onMounted(async () => {
 .overseas-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .overseas-toolbar { margin-bottom: 0; }
 .master-link-note { display: block; margin-top: 4px; color: #64748b; }
+.review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.review-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 150px minmax(260px, 1.3fr) auto; gap: 10px; }
+.review-summary { align-items: center; }
+.review-summary .el-button { margin-left: auto; }
+.review-table { width: 100%; }
+.source-values { display: grid; gap: 3px; color: #64748b; font-size: 12px; }
+.source-values strong { color: #334155; font-size: 13px; }
+.effective-values strong { color: #1d4ed8; }
+.issue-list { margin-top: 5px; color: #b45309; font-size: 11px; line-height: 1.45; }
+.review-pagination { justify-content: flex-end; margin-top: 14px; }
 .dialog-alert { margin-bottom: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
 .upload-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
@@ -987,7 +1303,7 @@ onMounted(async () => {
 .review-heading p { margin: 0; color: #64748b; font-size: 13px; }
 .mapping-alert { margin-top: 12px; }
 @media (max-width: 850px) {
-  .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid { grid-template-columns: 1fr; }
+  .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid, .review-toolbar { grid-template-columns: 1fr; }
   .difference-original-grid { grid-template-columns: 1fr; }
   .difference-actions { flex-wrap: wrap; }
   .model-panel { min-height: auto; }

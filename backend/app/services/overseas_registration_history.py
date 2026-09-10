@@ -16,6 +16,10 @@ from app.services.overseas_registration_preview import (
     OverseasRegistrationPreview,
 )
 from app.services.registration_rules import normalize_business_name
+from app.services.data_review import (
+    migrate_data_review_schema,
+    stage_overseas_preview_review_items,
+)
 
 
 def _file_sha256(path: Path) -> str:
@@ -252,6 +256,7 @@ def stage_overseas_registration_snapshot(
 
     migrate_overseas_registration_history_schema(database_path)
     database = Path(database_path).expanduser().resolve()
+    migrate_data_review_schema(database)
     connection = sqlite3.connect(database)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
@@ -268,6 +273,14 @@ def stage_overseas_registration_snapshot(
             (source_sha,),
         ).fetchone()
         if existing is not None:
+            stage_overseas_preview_review_items(
+                database,
+                snapshot_id=int(existing[0]),
+                source_document_id=source_document_id,
+                preview=preview,
+                _connection=connection,
+            )
+            connection.commit()
             return {
                 "snapshot_id": int(existing[0]),
                 "status": str(existing[1]),
@@ -352,6 +365,13 @@ def stage_overseas_registration_snapshot(
                     (getattr(probe_match, "candidate_ids", ()) or (None,))[0],
                 ),
             )
+        stage_overseas_preview_review_items(
+            database,
+            snapshot_id=snapshot_id,
+            source_document_id=source_document_id,
+            preview=preview,
+            _connection=connection,
+        )
         connection.commit()
         return {
             "snapshot_id": snapshot_id,

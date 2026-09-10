@@ -162,6 +162,10 @@ export const getKnowledgeQuestion = (id) => api.get(`/knowledge/questions/${id}`
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)
 export const getKnowledgeQuestionCandidates = (id) => api.get(`/knowledge/questions/${id}/candidates`)
+export const getDataReviewBatches = () => api.get('/knowledge/review-batches')
+export const getDataReviewItems = (params) => api.get('/knowledge/review-items', { params })
+export const updateDataReviewItem = (id, data) => api.put(`/knowledge/review-items/${id}`, data)
+export const getDataReviewItemHistory = (id) => api.get(`/knowledge/review-items/${id}/history`)
 
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>

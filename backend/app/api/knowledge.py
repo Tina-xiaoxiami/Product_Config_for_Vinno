@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.knowledge import (
+    DataReviewBatchList,
+    DataReviewItem,
+    DataReviewItemList,
+    DataReviewItemUpdate,
+    DataReviewRevisionList,
     FeatureKnowledgeItem,
     FeatureKnowledgeList,
     KnowledgeAnswerHistory,
@@ -21,6 +26,12 @@ from app.schemas.knowledge import (
     KnowledgeQuestionList,
     KnowledgeQuestionResult,
     KnowledgeStats,
+)
+from app.services.data_review import (
+    get_data_review_item_history,
+    list_data_review_batches,
+    list_data_review_items,
+    revise_data_review_item,
 )
 from app.services.knowledge_documents import (
     get_registered_document,
@@ -49,6 +60,70 @@ from app.services.knowledge_content import (
 
 
 router = APIRouter()
+
+
+def _database_path(db: AsyncSession) -> Path:
+    bind = db.bind
+    database = getattr(getattr(bind, "url", None), "database", None)
+    if not database:
+        raise HTTPException(status_code=500, detail="无法确定知识库数据库路径")
+    return Path(str(database)).resolve()
+
+
+@router.get("/review-batches", response_model=DataReviewBatchList)
+async def get_review_batches(db: AsyncSession = Depends(get_db)):
+    items = await list_data_review_batches(db)
+    return DataReviewBatchList(items=items, total=len(items))
+
+
+@router.get("/review-items", response_model=DataReviewItemList)
+async def get_review_items(
+    data_type: str = Query(..., min_length=1, max_length=80),
+    batch_id: int = Query(..., ge=1),
+    review_status: str | None = Query(
+        None,
+        pattern="^(auto_ready|needs_review|corrected|confirmed|excluded)$",
+    ),
+    q: str | None = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_data_review_items(
+        db,
+        data_type=data_type,
+        batch_id=batch_id,
+        review_status=review_status,
+        query=q,
+        skip=skip,
+        limit=limit,
+    )
+    return DataReviewItemList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.put("/review-items/{item_id}", response_model=DataReviewItem)
+async def update_review_item(
+    item_id: int,
+    payload: DataReviewItemUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return DataReviewItem(
+            **revise_data_review_item(
+                _database_path(db), item_id=item_id, **payload.model_dump()
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/review-items/{item_id}/history",
+    response_model=DataReviewRevisionList,
+)
+async def get_review_item_history(item_id: int, db: AsyncSession = Depends(get_db)):
+    items = get_data_review_item_history(_database_path(db), item_id=item_id)
+    return DataReviewRevisionList(items=items)
 
 
 @router.post("/questions/ask", response_model=KnowledgeQuestionResult)
