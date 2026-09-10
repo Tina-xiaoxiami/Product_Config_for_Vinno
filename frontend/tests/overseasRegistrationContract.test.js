@@ -19,3 +19,20 @@ test('registration management exposes a simple overseas history query', () => {
   assert.match(api, /api\.get\('\/registrations\/overseas\/countries'/)
   assert.match(api, /api\.get\('\/registrations\/overseas\/relations'/)
 })
+
+test('registration management exposes a generic source-row review center', () => {
+  const view = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /label="数据审核与修正"/)
+  assert.match(view, /data-testid="data-review-center"/)
+  assert.match(view, /原始识别值/)
+  assert.match(view, /修正后内容/)
+  assert.match(view, /查看原文/)
+  assert.match(view, /getDataReviewBatches/)
+  assert.match(view, /getDataReviewItems/)
+  assert.match(view, /updateDataReviewItem/)
+  assert.match(api, /api\.get\('\/knowledge\/review-batches'/)
+  assert.match(api, /api\.get\('\/knowledge\/review-items'/)
+  assert.match(api, /api\.put\(`\/knowledge\/review-items\/\$\{id\}`/)
+})
