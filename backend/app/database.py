@@ -2,12 +2,17 @@
 数据库配置
 """
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# 数据库路径
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./product_config.db")
+# 数据库路径（锚定到 backend/ 目录，避免依赖启动时的工作目录）
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"sqlite+aiosqlite:///{BACKEND_ROOT / 'product_config.db'}",
+)
 
 # 异步引擎
 engine = create_async_engine(DATABASE_URL, echo=False)

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
 from typing import List, Optional
 from datetime import datetime, timedelta
-import os
+from pathlib import Path
 
 from app.database import get_db
 from app.models import ConfigVersion, ProductSeries
@@ -23,11 +23,11 @@ async def get_storage_status(
     result = await db.execute(select(func.count(ConfigVersion.id)))
     total_versions = result.scalar()
 
-    # 获取数据库大小
-    db_path = "product_config.db"
+    # 获取数据库大小（锚定到 backend/ 目录，避免依赖工作目录）
+    db_path = Path(__file__).resolve().parents[2] / "product_config.db"
     db_size_mb = 0
-    if os.path.exists(db_path):
-        db_size_mb = os.path.getsize(db_path) / (1024 * 1024)
+    if db_path.exists():
+        db_size_mb = db_path.stat().st_size / (1024 * 1024)
 
     # 按系列统计
     series_result = await db.execute(
