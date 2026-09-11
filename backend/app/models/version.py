@@ -15,7 +15,7 @@ class ConfigVersion(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     series_id = Column(Integer, ForeignKey("product_series.id", ondelete="CASCADE"), nullable=False, index=True)
-    version_number = Column(String(20), nullable=False)  # v1.0.0
+    version_number = Column(String(20), nullable=False)  # 1.0.0
     version_name = Column(String(100))
     description = Column(Text)
 
