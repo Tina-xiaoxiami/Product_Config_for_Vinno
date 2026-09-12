@@ -196,6 +196,12 @@ export const getOverseasRegistrationCountries = () =>
   api.get('/registrations/overseas/countries')
 export const getOverseasRegistrationRelations = (params) =>
   api.get('/registrations/overseas/relations', { params })
+export const getOverseasNameMappings = () =>
+  api.get('/registrations/overseas/name-mappings')
+export const saveOverseasNameMapping = (payload) =>
+  api.post('/registrations/overseas/name-mappings', payload)
+export const deleteOverseasNameMapping = (params) =>
+  api.delete('/registrations/overseas/name-mappings', { params })
 export const getOverseasRegistrationSnapshots = () =>
   api.get('/registrations/overseas/snapshots')
 export const stageOverseasRegistrationSnapshot = (sourceDocumentId) =>

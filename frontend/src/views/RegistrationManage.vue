@@ -452,6 +452,7 @@
             <el-button type="primary" :icon="Search" @click="loadOverseasRelations">
               查询
             </el-button>
+            <el-button @click="openNameMappings">名称映射</el-button>
           </div>
           <div class="summary-row">
             <span>查询结果 <strong>{{ overseasTotal }}</strong></span>
@@ -625,6 +626,58 @@
         </section>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="nameMappingVisible"
+      title="海外名称映射（编辑一次，后续导入自动沿用）"
+      width="780px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        title="登记「原表写法 → 系统名称」。只影响系统内的解析结果，不会改写受控原件。"
+        type="info"
+        :closable="false"
+        show-icon
+        class="dialog-alert"
+      />
+      <div class="mapping-form">
+        <el-select v-model="nameMappingForm.entity_type" aria-label="映射类型">
+          <el-option label="探头" value="probe" />
+          <el-option label="机型" value="model" />
+        </el-select>
+        <el-input v-model="nameMappingForm.source_name" placeholder="原表写法，如 X4-12" />
+        <el-input v-model="nameMappingForm.target_name" placeholder="系统名称，如 X4-12L" />
+        <el-input v-model="nameMappingForm.confirmed_by" placeholder="确认人（必填）" />
+        <el-button type="primary" :loading="nameMappingSaving" @click="saveNameMapping">
+          登记
+        </el-button>
+      </div>
+      <el-table
+        :data="nameMappings"
+        border
+        stripe
+        empty-text="暂无名称映射"
+        max-height="320px"
+      >
+        <el-table-column label="类型" width="86">
+          <template #default="scope">
+            {{ scope.row.entity_type === 'probe' ? '探头' : '机型' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="source_name" label="原表写法" min-width="130" />
+        <el-table-column prop="target_name" label="系统名称" min-width="130" />
+        <el-table-column prop="confirmed_by" label="确认人" width="110" />
+        <el-table-column prop="change_note" label="备注" min-width="150" />
+        <el-table-column label="操作" width="86" align="center">
+          <template #default="scope">
+            <el-button link type="danger" @click="removeNameMapping(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="nameMappingVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="artifactPreviewVisible"
@@ -905,6 +958,9 @@ import {
   getOverseasRegistrationCountries,
   getOverseasRegistrationRelations,
   getOverseasRegistrationSnapshots,
+  getOverseasNameMappings,
+  saveOverseasNameMapping,
+  deleteOverseasNameMapping,
   publishOverseasRegistrationSnapshot,
   updateDataReviewItem,
   publishRegistrationPackageVersion,
@@ -1128,6 +1184,81 @@ const loadOverseasSnapshots = async () => {
     overseasSnapshots.value = result.items || []
   } catch {
     overseasSnapshots.value = []
+  }
+}
+
+// 名称映射：原表写法 → 系统名称。登记一次，后续导入自动套用，不再重复问人。
+const nameMappingVisible = ref(false)
+const nameMappingSaving = ref(false)
+const nameMappings = ref([])
+const nameMappingForm = ref({
+  entity_type: 'probe',
+  source_name: '',
+  target_name: '',
+  confirmed_by: ''
+})
+
+const loadNameMappings = async () => {
+  try {
+    const result = await getOverseasNameMappings()
+    nameMappings.value = result.items || []
+  } catch {
+    nameMappings.value = []
+  }
+}
+
+const openNameMappings = async () => {
+  nameMappingVisible.value = true
+  await loadNameMappings()
+}
+
+const saveNameMapping = async () => {
+  const form = nameMappingForm.value
+  if (!form.source_name.trim() || !form.target_name.trim()) {
+    ElMessage.warning('原表写法与系统名称都不能为空')
+    return
+  }
+  if (!form.confirmed_by.trim()) {
+    ElMessage.warning('请填写确认人')
+    return
+  }
+  nameMappingSaving.value = true
+  try {
+    await saveOverseasNameMapping({ ...form })
+    ElMessage.success('已登记，后续导入会自动沿用这条映射')
+    nameMappingForm.value = {
+      entity_type: form.entity_type,
+      source_name: '',
+      target_name: '',
+      confirmed_by: form.confirmed_by
+    }
+    await loadNameMappings()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '登记失败')
+  } finally {
+    nameMappingSaving.value = false
+  }
+}
+
+const removeNameMapping = async (mapping) => {
+  try {
+    await ElMessageBox.confirm(
+      `删除后「${mapping.source_name}」不再自动映射为「${mapping.target_name}」，下次导入会重新询问。`,
+      '删除名称映射',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteOverseasNameMapping({
+      entity_type: mapping.entity_type,
+      source_name: mapping.source_name
+    })
+    ElMessage.success('已删除')
+    await loadNameMappings()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '删除失败')
   }
 }
 
@@ -1562,6 +1693,7 @@ onMounted(async () => {
 .overseas-toolbar { margin-bottom: 0; }
 .overseas-snapshot-row { margin-top: 10px; }
 .overseas-publish-button { margin-top: 6px; }
+.mapping-form { display: grid; grid-template-columns: 110px 1fr 1fr 150px auto; gap: 8px; margin-bottom: 12px; }
 .master-link-note { display: block; margin-top: 4px; color: #64748b; }
 .review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .review-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 150px minmax(260px, 1.3fr) auto; gap: 10px; }
