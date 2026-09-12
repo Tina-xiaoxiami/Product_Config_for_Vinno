@@ -867,10 +867,14 @@ const filteredDifferenceModels = computed(() => {
   if (!query) return differenceSummary.value.models
   return differenceSummary.value.models.filter(model => model.model_name.toLowerCase().includes(query))
 })
+// 每行 6 个机型、合并成一个块：原表截图是一块 3 个机型，页面再把两块并排，
+// 结果一行出现两套"型号/差异"行标签、还多一条块间距。合并后行标签只留一套，
+// 同样的页宽下每个机型反而更宽（少的那个标签列宽度直接还给机型列）。
+const DIFFERENCE_MODELS_PER_ROW = 6
 const differenceTableGroups = computed(() => {
   const groups = []
-  for (let index = 0; index < filteredDifferenceModels.value.length; index += 3) {
-    groups.push(filteredDifferenceModels.value.slice(index, index + 3))
+  for (let index = 0; index < filteredDifferenceModels.value.length; index += DIFFERENCE_MODELS_PER_ROW) {
+    groups.push(filteredDifferenceModels.value.slice(index, index + DIFFERENCE_MODELS_PER_ROW))
   }
   return groups
 })
@@ -1273,7 +1277,8 @@ onMounted(async () => {
 .difference-actions { display: flex; gap: 8px; }
 .difference-metrics { margin-bottom: 12px; }
 .difference-section-title { margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
-.difference-original-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* 一块 6 个机型占满整行：行标签只出现一次，机型列拿到全部剩余宽度 */
+.difference-original-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .difference-original-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #334155; font-size: 13px; }
 .difference-original-table th, .difference-original-table td { padding: 10px 8px; border: 1px solid #cbd5e1; text-align: center; vertical-align: middle; }
 .difference-original-table th { width: 54px; background: #f8fafc; color: #475569; font-weight: 600; }
@@ -1324,7 +1329,6 @@ onMounted(async () => {
 .mapping-alert { margin-top: 12px; }
 @media (max-width: 850px) {
   .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid, .review-toolbar { grid-template-columns: 1fr; }
-  .difference-original-grid { grid-template-columns: 1fr; }
   .difference-actions { flex-wrap: wrap; }
   .model-panel { min-height: auto; }
 }
