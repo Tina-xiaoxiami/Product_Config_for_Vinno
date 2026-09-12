@@ -876,6 +876,7 @@ import {
   getRegistrationPackageMappings,
   getRegistrationPackages,
   getRegistrationPackageVersions,
+  openRegistrationArtifactLocally,
   getOverseasRegistrationCountries,
   getOverseasRegistrationRelations,
   updateDataReviewItem,

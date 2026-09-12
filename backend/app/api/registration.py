@@ -8,7 +8,16 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +26,7 @@ from app.models.registration import (  # Ensure startup metadata includes histor
     OverseasRegistrationRelation,
     OverseasRegistrationSnapshot,
 )
+from app.schemas.knowledge import LocalFileOpenRequest, LocalFileOpenResult
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
     RegistrationArtifactWorkbook,
@@ -55,6 +65,11 @@ from app.services.registration_query import (
     list_product_registration_probes,
     list_registration_model_probes,
     list_registration_models,
+)
+from app.services.local_file_actions import (
+    LocalOpenError,
+    is_local_host,
+    open_local_path,
 )
 from app.services.overseas_registration_history import (
     list_overseas_registration_countries,
@@ -408,6 +423,35 @@ async def registration_artifact_sheets(
     return RegistrationArtifactWorkbook(
         file_name=artifact["file_name"] or path.name,
         **preview,
+    )
+
+
+@router.post(
+    "/package-versions/{version_id}/artifacts/{artifact_type}/open-locally",
+    response_model=LocalFileOpenResult,
+)
+async def registration_artifact_open_locally(
+    version_id: int,
+    artifact_type: str,
+    request: Request,
+    payload: LocalFileOpenRequest = LocalFileOpenRequest(),
+    db: AsyncSession = Depends(get_db),
+):
+    """用系统默认程序打开原件；仅限本机请求，路径只取自登记记录。"""
+
+    if not is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="仅允许在本机打开受控原件")
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
+    try:
+        await asyncio.to_thread(
+            open_local_path, path, reveal=payload.mode == "reveal"
+        )
+    except LocalOpenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LocalFileOpenResult(
+        file_name=artifact["file_name"] or path.name,
+        mode=payload.mode,
+        file_path=str(path),
     )
 
 

@@ -5,6 +5,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class LocalFileOpenRequest(BaseModel):
+    """在本机打开受控原件的方式。"""
+
+    mode: str = Field(default="open", pattern="^(open|reveal)$")
+
+
+class LocalFileOpenResult(BaseModel):
+    file_name: str
+    mode: str
+    file_path: str
+
+
 class FeatureKnowledgeName(BaseModel):
     language: str
     name: str

@@ -624,6 +624,22 @@
               <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
                 {{ canInline(document) ? '预览' : '打开原文' }}
               </el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="!document.available"
+                @click="openDocumentLocally(document, 'reveal')"
+              >
+                在访达中显示
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="!document.available"
+                @click="openDocumentLocally(document, 'open')"
+              >
+                本机打开
+              </el-button>
             </div>
           </article>
           <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
@@ -728,6 +744,7 @@ import {
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
+  openKnowledgeDocumentLocally,
   getKnowledgeFeatures,
   getKnowledgeStats,
   getKnowledgeQuestions,
@@ -1215,6 +1232,20 @@ const previewDocument = (document) => {
   previewTitle.value = document.title
   previewUrl.value = url
   previewVisible.value = true
+}
+
+// 后端就跑在本机，因此可直接调用系统默认程序打开原件（仅本机请求有效）。
+const openDocumentLocally = async (document, mode) => {
+  try {
+    const result = await openKnowledgeDocumentLocally(document.id, mode)
+    ElMessage.success(
+      mode === 'reveal'
+        ? `已在访达中定位 ${result.file_name}`
+        : `已在本机打开 ${result.file_name}`
+    )
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '本机打开失败')
+  }
 }
 
 const askQuestion = async () => {

@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,8 @@ from app.schemas.knowledge import (
     KnowledgeQuestionList,
     KnowledgeQuestionResult,
     KnowledgeStats,
+    LocalFileOpenRequest,
+    LocalFileOpenResult,
 )
 from app.services.data_review import (
     get_data_review_item_history,
@@ -38,6 +40,11 @@ from app.services.data_review import (
 from app.services.knowledge_documents import (
     get_registered_document,
     list_knowledge_documents,
+)
+from app.services.local_file_actions import (
+    LocalOpenError,
+    is_local_host,
+    open_local_path,
 )
 from app.services.knowledge_query import (
     get_feature_knowledge,
@@ -344,4 +351,36 @@ async def preview_document(
         media_type=media_type or "application/octet-stream",
         filename=document["file_name"],
         content_disposition_type="inline",
+    )
+
+
+@router.post("/documents/{document_id}/open-locally", response_model=LocalFileOpenResult)
+async def open_document_locally(
+    document_id: int,
+    request: Request,
+    payload: LocalFileOpenRequest = LocalFileOpenRequest(),
+    db: AsyncSession = Depends(get_db),
+):
+    """用系统默认程序打开受控原件；仅限本机请求，路径只取自登记记录。"""
+
+    if not is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="仅允许在本机打开受控原件")
+    document = await get_registered_document(db, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+
+    path = Path(str(document["file_path"] or ""))
+    if not path.is_absolute() or not path.is_file():
+        raise HTTPException(status_code=410, detail="原文件不存在或尚未同步")
+
+    try:
+        await asyncio.to_thread(
+            open_local_path, path, reveal=payload.mode == "reveal"
+        )
+    except LocalOpenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LocalFileOpenResult(
+        file_name=document["file_name"] or path.name,
+        mode=payload.mode,
+        file_path=str(path),
     )
