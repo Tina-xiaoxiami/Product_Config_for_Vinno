@@ -114,6 +114,9 @@ export const updateFeatureMasterData = (id, data) => api.put(`/features/${id}/ma
 export const downloadFeatureTemplate = () => api.get('/features/import/template', { responseType: 'blob' })
 export const previewFeatureImport = (formData) => api.post('/features/import/preview', formData)
 export const applyFeatureImport = (formData) => api.post('/features/import', formData)
+export const getFeatureNameStandardFlags = () => api.get('/features/standards/flags')
+export const getFeatureNameStandards = () => api.get('/features/standards')
+export const importFeatureNameStandards = (formData) => api.post('/features/standards/import', formData)
 
 // 模板配置
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)

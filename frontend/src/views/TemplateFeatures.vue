@@ -76,6 +76,12 @@
             </el-table-column>
             <el-table-column v-for="g in visibleGroups" :key="g.id" :label="g.name" align="center">
               <el-table-column v-for="f in getGroupFeatures(g.id)" :key="f.id" :label="f.name" min-width="72" align="center">
+                <template #header>
+                  <span class="matrix-feature-header">
+                    {{ f.name }}
+                    <FeatureNameMark :feature-id="f.id" :name="f.name" />
+                  </span>
+                </template>
                 <template #default="{ row: cat }">
                   <el-popover
                     v-if="editMode"
@@ -597,4 +603,9 @@ onMounted(async () => { await loadData(); await loadDrafts() })
 .cat-name { font-weight:600; white-space:nowrap }
 .cat-apps { display:flex; flex-wrap:wrap; gap:2px; max-height:80px; overflow-y:auto }
 .app-tag { margin:0; font-size:10px }
+.matrix-feature-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 </style>

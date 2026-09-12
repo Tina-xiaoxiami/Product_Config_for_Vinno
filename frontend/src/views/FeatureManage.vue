@@ -7,6 +7,7 @@
         <span class="page-subtitle">{{ tableData.length }} 个功能组 / {{ totalFeatures }} 项功能</span>
       </div>
       <div class="header-actions">
+        <el-button size="small" @click="openStandardDialog">标准名称</el-button>
         <el-button size="small" :loading="exporting" @click="handleExportTemplate">导出模板</el-button>
         <el-button size="small" type="success" @click="openImportDialog">导入更新</el-button>
         <el-button size="small" @click="handleCreateGroup">新增功能组</el-button>
@@ -34,7 +35,10 @@
             <div v-for="feature in group.features" :key="feature.id" class="feature-item">
               <div class="feature-main">
                 <div class="feature-names">
-                  <span class="feature-name">{{ feature.primary_cn_name || feature.name }}</span>
+                  <span class="feature-name">
+                    {{ feature.primary_cn_name || feature.name }}
+                    <FeatureNameMark :feature-id="feature.id" :cn="feature.primary_cn_name" :en="feature.primary_en_name" :name="feature.name" />
+                  </span>
                   <span v-if="feature.primary_en_name" class="feature-en-name">{{ feature.primary_en_name }}</span>
                 </div>
                 <span v-if="feature.ipn" class="feature-ipn">IPN: {{ feature.ipn }}</span>
@@ -212,6 +216,95 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 标准名称核对 -->
+    <el-dialog v-model="showStandardDialog" title="功能名称标准" width="980px" destroy-on-close>
+      <el-alert type="info" :closable="false" show-icon class="import-note">
+        <template #title>
+          标准表是功能中英文名称的定义来源，系统名称与标准不一致时只在页面上提示，不会自动改写功能主数据。
+        </template>
+      </el-alert>
+
+      <div class="import-toolbar">
+        <el-upload
+          :show-file-list="false"
+          :auto-upload="false"
+          :on-change="h => handleImportStandard(h.raw)"
+          accept=".xlsx,.csv,.tsv"
+          style="display:inline-block"
+        >
+          <el-button size="small" type="primary" :loading="importingStandard">导入/更新标准表</el-button>
+        </el-upload>
+        <span class="import-file-name">
+          共 {{ standardData?.standard_count || 0 }} 条标准定义<template v-if="standardData?.source_file">，来源 {{ standardData.source_file }}</template><template v-if="standardData?.last_imported_at">，更新于 {{ standardData.last_imported_at.replace('T', ' ').slice(0, 16) }}</template>
+        </span>
+      </div>
+
+      <div v-loading="loadingStandard">
+        <div class="import-summary" v-if="standardData">
+          <el-tag size="small" type="success">一致 {{ standardData.summary.ok }}</el-tag>
+          <el-tag size="small" type="warning">写法不同 {{ standardData.summary.style }}</el-tag>
+          <el-tag size="small" type="danger">不一致 {{ standardData.summary.differs }}</el-tag>
+          <el-tag size="small" type="warning" v-if="standardData.summary.ambiguous">待人工确认 {{ standardData.summary.ambiguous }}</el-tag>
+          <el-tag size="small" type="info">标准表有、系统未登记 {{ standardData.summary.missing }}</el-tag>
+          <el-tag size="small" type="info">系统有、标准表未收录 {{ standardData.summary.uncovered }}</el-tag>
+        </div>
+
+        <el-tabs v-if="standardData" v-model="standardTab">
+          <el-tab-pane :label="`与标准不一致（${mismatchedStandards.length}）`" name="mismatch">
+            <el-table :data="mismatchedStandards" size="small" border max-height="380">
+              <el-table-column label="功能" min-width="170">
+                <template #default="{ row }">
+                  <div class="import-cn">{{ row.feature_cn_name || '（空）' }}</div>
+                  <div class="import-en">{{ row.group_name }} · ID {{ row.feature_id }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="中文名称对照" min-width="220">
+                <template #default="{ row }">
+                  <div v-if="!row.cn_field || row.cn_field.status === 'ok'" class="std-ok">一致</div>
+                  <div v-else>
+                    <div class="std-before">系统：{{ row.cn_field.system_value || '（空）' }}</div>
+                    <div class="std-after">标准：{{ row.cn_field.standard_value }}（{{ row.cn_field.label }}）</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="英文名称对照" min-width="240">
+                <template #default="{ row }">
+                  <div v-if="!row.en_field || row.en_field.status === 'ok'" class="std-ok">一致</div>
+                  <div v-else>
+                    <div class="std-before">系统：{{ row.en_field.system_value || '（空）' }}</div>
+                    <div class="std-after">标准：{{ row.en_field.standard_value }}（{{ row.en_field.label }}）</div>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="匹配方式" width="130" prop="match_reason" />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane :label="`标准表有、系统未登记（${standardData.summary.missing}）`" name="missing">
+            <el-table :data="missingStandards" size="small" border max-height="380">
+              <el-table-column prop="cn_name" label="标准中文名称" min-width="200" />
+              <el-table-column prop="en_name" label="标准英文名称" min-width="160">
+                <template #default="{ row }">{{ row.en_name || row.short_en || '-' }}</template>
+              </el-table-column>
+              <el-table-column prop="ui_label" label="中文UI" min-width="200" />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane :label="`系统有、标准表未收录（${standardData.summary.uncovered}）`" name="uncovered">
+            <el-table :data="standardData.uncovered_features" size="small" border max-height="380">
+              <el-table-column prop="cn_name" label="功能" min-width="200" />
+              <el-table-column prop="group_name" label="功能组" width="120" />
+              <el-table-column prop="en_name" label="英文名称" min-width="160" />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+
+      <template #footer>
+        <el-button @click="showStandardDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -219,6 +312,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import { loadFeatureNameStandardFlags } from '../utils/featureNameStandard'
 import {
   getFeatureGroups,
   createFeatureGroup,
@@ -231,7 +325,9 @@ import {
   updateFeatureMasterData,
   downloadFeatureTemplate,
   previewFeatureImport,
-  applyFeatureImport
+  applyFeatureImport,
+  getFeatureNameStandards,
+  importFeatureNameStandards
 } from '../api/data'
 
 const tableData = ref([])
@@ -248,6 +344,20 @@ const showImportDialog = ref(false)
 const importFile = ref(null)
 const importFileName = ref('')
 const importReport = ref(null)
+const showStandardDialog = ref(false)
+const standardData = ref(null)
+const standardTab = ref('mismatch')
+const loadingStandard = ref(false)
+const importingStandard = ref(false)
+
+const mismatchedStandards = computed(() =>
+  (standardData.value?.standards || []).filter(
+    (entry) => entry.severity === 'differs' || entry.severity === 'style' || entry.severity === 'ambiguous'
+  )
+)
+const missingStandards = computed(() =>
+  (standardData.value?.standards || []).filter((entry) => entry.severity === 'missing')
+)
 const groupForm = reactive({ name: '', sort_order: 0 })
 const featureForm = reactive({
   group_id: null,
@@ -474,7 +584,38 @@ const handleApplyImport = async () => {
   } finally { applying.value = false }
 }
 
-onMounted(() => loadData())
+// 功能名称标准核对
+const loadStandardAudit = async () => {
+  loadingStandard.value = true
+  try {
+    standardData.value = await getFeatureNameStandards()
+  } catch { ElMessage.error('标准名称核对结果加载失败') } finally { loadingStandard.value = false }
+}
+
+const openStandardDialog = async () => {
+  showStandardDialog.value = true
+  await loadStandardAudit()
+}
+
+const handleImportStandard = async (file) => {
+  if (!file) return
+  importingStandard.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await importFeatureNameStandards(fd)
+    ElMessage.success(`标准表已更新：${res.imported} 条定义，其中 ${res.summary.differs} 条与系统名称不一致`)
+    await loadStandardAudit()
+    await loadFeatureNameStandardFlags({ force: true })
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '标准表导入失败')
+  } finally { importingStandard.value = false }
+}
+
+onMounted(() => {
+  loadData()
+  loadFeatureNameStandardFlags()
+})
 </script>
 
 <style scoped>
@@ -634,6 +775,9 @@ onMounted(() => loadData())
 .import-arrow { margin: 0 4px; color: #c0c4cc; }
 .import-change-after { color: #67c23a; }
 .import-error { font-size: 12px; color: #f56c6c; line-height: 1.5; }
+.std-ok { font-size: 12px; color: #909399; }
+.std-before { font-size: 12px; color: #f56c6c; }
+.std-after { font-size: 12px; color: #67c23a; }
 .import-warning { font-size: 12px; color: #e6a23c; line-height: 1.5; }
 
 .ipn-editor { width: 100%; display: flex; flex-direction: column; gap: 8px; }

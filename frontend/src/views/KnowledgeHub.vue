@@ -219,7 +219,10 @@
               class="feature-row-main"
             >
               <div v-if="columnVisible('cn_name') || columnVisible('status')" class="feature-title-row">
-                <h3 v-if="columnVisible('cn_name')">{{ feature.primary_cn_name || feature.legacy_name }}</h3>
+                <h3 v-if="columnVisible('cn_name')">
+                  {{ feature.primary_cn_name || feature.legacy_name }}
+                  <FeatureNameMark :feature-id="feature.id" :cn="feature.primary_cn_name" :en="feature.primary_en_name" :name="feature.legacy_name" />
+                </h3>
                 <el-tag v-if="columnVisible('status')" :type="statusType(feature.identity_status)" size="small" effect="plain">
                   {{ statusLabel(feature.identity_status) }}
                 </el-tag>
