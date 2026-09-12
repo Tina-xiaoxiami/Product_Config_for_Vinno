@@ -450,15 +450,16 @@
               <el-table-column label="选型类别（正式）" min-width="135" align="center">
                 <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
               </el-table-column>
-              <el-table-column label="当前配置（辅助）" min-width="135" align="center">
+              <el-table-column label="当前配置（备注）" min-width="135" align="center">
                 <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
               </el-table-column>
-              <el-table-column label="判定依据" min-width="165">
+              <el-table-column label="判定依据" min-width="205">
                 <template #default="scope">
-                  <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
-                    {{ statusSourceLabel(scope.row.status_source) }}
-                  </span>
+                  <span>{{ statusSourceLabel(scope.row.status_source) }}</span>
                   <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
+                  <div v-if="scope.row.current_config_note" class="config-note">
+                    {{ scope.row.current_config_note }}
+                  </div>
                 </template>
               </el-table-column>
               <!-- 最终判定声明在最后：窄窗口时 fixed="right" 把它钉在右侧，
@@ -792,8 +793,7 @@ const effectiveStatusType = (status) => ({
 const statusSourceLabel = (source) => ({
   registration_redline: '注册红线',
   selection_config: '正式选型类别',
-  current_config_aux: '研发当前配置（辅助）',
-  missing: '尚无正式策略'
+  missing: '选型类别未定义'
 }[source] || source || '—')
 
 // 判定分布卡片：点击即在当前注册证内筛选表格。
@@ -1263,7 +1263,7 @@ onMounted(() => {
 .registration-table :deep(.el-tag--warning.el-tag--dark) { background: #92400e; border-color: #92400e; }
 .registration-table :deep(.el-tag--danger.el-tag--dark) { background: #b91c1c; border-color: #b91c1c; }
 .registration-table :deep(.el-tag--info.el-tag--dark) { background: #475569; border-color: #475569; }
-.auxiliary-source { color: #b45309; }
+.config-note { margin-top: 4px; color: #b45309; font-size: 11px; line-height: 1.45; }
 .conflict-tag { display: block; width: fit-content; margin-top: 4px; }
 .preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
