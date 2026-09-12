@@ -239,7 +239,7 @@
           </div>
 
           <div class="difference-section-title">
-            <span>不适用/未注册探头差异（按原表格式）</span>
+            <span>不适用/未注册探头差异</span>
             <el-tag
               v-if="differenceProbeFilter"
               type="warning"
