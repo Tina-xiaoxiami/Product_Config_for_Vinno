@@ -401,7 +401,9 @@ async def test_non_completed_rows_are_kept_as_excluded_records(tmp_path):
     assert row is not None
     assert row[0] == "excluded"
     assert "non_final_status" in row[1]
-    assert "非已完成" in (row[2] or "")
+    # 自动排除必须写明原因，便于日后对账
+    assert "自动排除" in (row[2] or "")
+    assert "不作为正式数据" in (row[2] or "")
 
 
 @pytest.mark.asyncio

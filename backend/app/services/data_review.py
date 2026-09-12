@@ -116,6 +116,21 @@ def _overseas_payload(record) -> dict[str, Any]:
     return {key: raw.get(key) for key in _OVERSEAS_EDITABLE_FIELDS}
 
 
+_NON_FORMAL_NOTE = "注册状态非「已完成注册」，自动排除：仅保留记录，不作为正式数据"
+
+
+def _overseas_review_status(record) -> str:
+    """非「已完成注册」的行只作记录保留，不进待确认队列。
+
+    这类行本来就不生成正式数据（关系数据只在 ``ready_for_import`` 时构建），
+    再要求人工逐条确认没有意义，只会把待确认队列淹没。
+    """
+
+    if str(getattr(record, "registration_status", "") or "") != "completed":
+        return "excluded"
+    return "auto_ready" if record.ready_for_import else "needs_review"
+
+
 def stage_overseas_preview_review_items(
     database_path: str | Path,
     *,
@@ -144,13 +159,14 @@ def stage_overseas_preview_review_items(
             raise ValueError("审核批次与受控原件不匹配")
         for record in preview.records:
             payload = _overseas_payload(record)
+            review_status = _overseas_review_status(record)
             connection.execute(
                 """
                 INSERT INTO data_review_items (
                     document_id, data_type, batch_id, source_record_key, source_ref,
                     raw_payload_json, effective_payload_json, issue_codes_json,
-                    review_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    review_status, change_note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(data_type, batch_id, source_record_key) DO NOTHING
                 """,
                 (
@@ -162,14 +178,19 @@ def stage_overseas_preview_review_items(
                     _json_dump(payload),
                     _json_dump(payload),
                     _json_dump(list(record.issue_codes)),
-                    "auto_ready" if record.ready_for_import else "needs_review",
+                    review_status,
+                    _NON_FORMAL_NOTE if review_status == "excluded" else None,
                 ),
             )
         if owns_connection:
             connection.commit()
         return {
             "item_count": len(preview.records),
-            "needs_review_count": sum(not record.ready_for_import for record in preview.records),
+            "needs_review_count": sum(
+                1
+                for record in preview.records
+                if _overseas_review_status(record) == "needs_review"
+            ),
         }
     except Exception:
         if owns_connection:
