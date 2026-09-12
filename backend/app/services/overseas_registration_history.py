@@ -200,6 +200,21 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
             ON overseas_registration_relations(snapshot_id, country_code, normalized_model);
             CREATE INDEX IF NOT EXISTS ix_overseas_registration_probe
             ON overseas_registration_relations(snapshot_id, normalized_probe);
+
+            -- 人工确认的源写法 → 系统名称映射：编辑一次，后续每份文件自动沿用。
+            CREATE TABLE IF NOT EXISTS overseas_name_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL
+                    CHECK (entity_type IN ('model', 'probe')),
+                source_name TEXT NOT NULL,
+                target_name TEXT NOT NULL,
+                normalized_source TEXT NOT NULL,
+                confirmed_by TEXT NOT NULL,
+                change_note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (entity_type, normalized_source)
+            );
             COMMIT;
             """
         )

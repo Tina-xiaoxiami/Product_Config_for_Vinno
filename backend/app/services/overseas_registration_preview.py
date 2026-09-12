@@ -270,7 +270,7 @@ def _edit_distance_at_most_one(left: str, right: str) -> bool:
     return True
 
 
-def _issues(
+def evaluate_overseas_row_issues(
     *,
     jurisdiction_code: str | None,
     status: str,
@@ -348,7 +348,7 @@ def _parse_workbook(path: Path) -> tuple[tuple[OverseasRegistrationRecord, ...],
                 )
                 models = _split_models(model_raw)
                 probes = _split_probes(probe_raw)
-                issue_codes = _issues(
+                issue_codes = evaluate_overseas_row_issues(
                     jurisdiction_code=jurisdiction_code,
                     status=registration_status,
                     model_raw=model_raw,
@@ -376,22 +376,36 @@ def _parse_workbook(path: Path) -> tuple[tuple[OverseasRegistrationRecord, ...],
                     issue_codes=issue_codes,
                 )
                 records.append(record)
-                if ready and jurisdiction_code is not None:
-                    for model in models:
-                        for probe in probes:
-                            relations.append(
-                                OverseasRegistrationRelation(
-                                    jurisdiction_code=jurisdiction_code,
-                                    model_name=model,
-                                    probe_model=probe,
-                                    registration_status=registration_status,
-                                    address_version=address_version,
-                                    source_ref=source_ref,
-                                )
-                            )
-        return tuple(records), tuple(relations)
+        return tuple(records), build_overseas_relations(records)
     finally:
         workbook.close()
+
+
+def build_overseas_relations(
+    records,
+) -> tuple[OverseasRegistrationRelation, ...]:
+    """从已定稿的记录构建「国家－型号－探头」关系。
+
+    只有 ``ready_for_import`` 的记录才生成关系；重复由暂存阶段的唯一约束收敛。
+    """
+
+    relations: list[OverseasRegistrationRelation] = []
+    for record in records:
+        if not record.ready_for_import or record.jurisdiction_code is None:
+            continue
+        for model in record.models:
+            for probe in record.probes:
+                relations.append(
+                    OverseasRegistrationRelation(
+                        jurisdiction_code=record.jurisdiction_code,
+                        model_name=model,
+                        probe_model=probe,
+                        registration_status=record.registration_status,
+                        address_version=record.address_version,
+                        source_ref=record.source_ref,
+                    )
+                )
+    return tuple(relations)
 
 
 def build_overseas_registration_preview(
