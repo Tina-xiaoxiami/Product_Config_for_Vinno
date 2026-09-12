@@ -1,5 +1,6 @@
 import csv
 import io
+import sqlite3
 
 import httpx
 import pytest
@@ -208,6 +209,74 @@ async def test_importing_again_replaces_the_whole_standard_table(tmp_path):
     assert [entry["cn_name"] for entry in body["standards"]] == ["组织多普勒成像"]
     assert body["source_file"] == "功能名称标准表.tsv"
     assert body["last_imported_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_latin_parenthetical_in_standard_chinese_name_is_not_a_difference(tmp_path):
+    """标准中文名里的英文括号补充（宽景成像（Pview））不算中文名不一致，英文大小写仍要提示。"""
+
+    database_path = tmp_path / "knowledge.db"
+    _create_knowledge_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        INSERT INTO features (id, group_id, name, ipn, sort_order, primary_cn_name, primary_en_name, identity_status)
+        VALUES (40, 1, '宽景成像', '', 9, '宽景成像', 'Pview', 'confirmed')
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO feature_names (feature_id, language, name, normalized_name, name_type, source, review_status)
+        VALUES (?, ?, ?, ?, 'primary', 'feature_management', 'approved')
+        """,
+        [(40, "cn", "宽景成像", "宽景成像"), (40, "en", "Pview", "pview")],
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        await client.post(
+            "/api/features/standards/import",
+            files=_upload(_standard_table_bytes([("宽景成像（Pview）", "", "PView")])),
+        )
+        audit = await client.get("/api/features/standards")
+    await engine.dispose()
+
+    entry = audit.json()["standards"][0]
+    assert entry["feature_id"] == 40
+    assert entry["match_reason"] == "中文名称匹配（忽略括号补充）"
+    assert entry["cn_field"]["status"] == "ok"
+    assert entry["en_field"]["status"] == "style"
+    assert entry["severity"] == "style"
+    # 提示和展示仍使用标准表原文
+    assert entry["cn_field"]["standard_value"] == "宽景成像（Pview）"
+    assert entry["en_field"]["standard_value"] == "PView"
+
+
+@pytest.mark.asyncio
+async def test_chinese_parenthetical_in_standard_name_is_still_compared(tmp_path):
+    """括号里含中文时属于名称的一部分，仍按不一致处理。"""
+
+    database_path = tmp_path / "knowledge.db"
+    _create_knowledge_database(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        await client.post(
+            "/api/features/standards/import",
+            files=_upload(
+                _standard_table_bytes([("组织多普勒成像（含能量图）", "Tissue Doppler Imaging", "TDI")])
+            ),
+        )
+        audit = await client.get("/api/features/standards")
+    await engine.dispose()
+
+    entry = audit.json()["standards"][0]
+    assert entry["feature_id"] == 1
+    assert entry["cn_field"]["status"] == "contained"
+    assert entry["cn_field"]["severity"] == "differs"
+    assert entry["severity"] == "differs"
 
 
 @pytest.mark.asyncio

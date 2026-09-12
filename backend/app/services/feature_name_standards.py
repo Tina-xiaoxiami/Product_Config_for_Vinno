@@ -73,6 +73,23 @@ def loose_feature_name_key(value) -> str:
     return _SOFT_CHARACTER_PATTERN.sub("", normalize_feature_name_key(value))
 
 
+_PARENTHETICAL_PATTERN = re.compile(r"[（(\[【][^（）()\[\]【】]*[）)\]】]")
+
+
+def strip_latin_parentheticals(value: str) -> str:
+    """去掉只含英文/数字/符号的括号补充。
+
+    标准表中文名里的括号内容通常是英文缩写或补充说明（如「宽景成像（Pview）」），
+    不属于中文名称本身；含中文的括号保留，因为它可能是名称的一部分。
+    """
+
+    def _replace(match: re.Match) -> str:
+        inner = match.group(0)[1:-1]
+        return "" if not re.search(r"[\u3400-\u9fff]", inner) else match.group(0)
+
+    return _PARENTHETICAL_PATTERN.sub(_replace, str(value or "")).strip()
+
+
 def _split_lines(value: str) -> tuple[str, str]:
     lines = [line.strip() for line in str(value or "").replace("\r\n", "\n").split("\n")]
     lines = [line for line in lines if line]
@@ -318,13 +335,16 @@ def _standard_row(payload: dict) -> StandardRow:
 def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
     """给「标准定义 ↔ 功能」的候选关系打分：精确命中 2，中文包含 1，英文词元包含 0.5。"""
 
-    cn_keys = {normalize_feature_name_key(value) for value in (standard.cn_name,)}
+    # 中文名比对时忽略只含英文的括号补充（宽景成像（Pview）→ 宽景成像）
+    raw_cn_key = normalize_feature_name_key(standard.cn_name)
+    compare_cn_key = normalize_feature_name_key(strip_latin_parentheticals(standard.cn_name))
+    cn_keys = {compare_cn_key}
     en_keys = {normalize_feature_name_key(value) for value in (standard.en_name, standard.short_en())}
     cn_keys.discard("")
     en_keys.discard("")
 
-    if cn_keys & feature["cn_keys"]:
-        return 2.0, "中文名称精确匹配"
+    if compare_cn_key and compare_cn_key in feature["cn_keys"]:
+        return 2.0, ("中文名称精确匹配" if raw_cn_key == compare_cn_key else "中文名称匹配（忽略括号补充）")
     if en_keys & feature["en_keys"]:
         return 2.0, "英文名称精确匹配"
 
@@ -340,13 +360,13 @@ def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
     if en_loose_keys & feature["en_loose_keys"]:
         return 1.5, "英文名称仅符号差异"
 
-    standard_cn = normalize_feature_name_key(standard.cn_name)
+    standard_cn = compare_cn_key
     if len(standard_cn) >= 2:
         for feature_cn in feature["cn_keys"]:
             if standard_cn and (standard_cn in feature_cn or feature_cn in standard_cn):
                 return 1.0, "中文名称互相包含"
 
-    standard_cn_loose = loose_feature_name_key(standard.cn_name)
+    standard_cn_loose = loose_feature_name_key(strip_latin_parentheticals(standard.cn_name))
     if len(standard_cn_loose) >= 2:
         for feature_cn in feature["cn_loose_keys"]:
             if standard_cn_loose and (
@@ -370,13 +390,15 @@ def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
     return 0.0, ""
 
 
-def _classify(system_value: str, standard_value: str) -> str:
+def _classify(system_value: str, standard_value: str, compare_standard: str | None = None) -> str:
     system = clean_feature_name(system_value)
-    standard = clean_feature_name(standard_value)
-    if not standard:
+    if not clean_feature_name(standard_value):
         return "undefined"
     if not system:
         return "empty"
+    standard = clean_feature_name(
+        compare_standard if compare_standard is not None else standard_value
+    )
     if system == standard:
         return "ok"
     system_key = normalize_feature_name_key(system)
@@ -411,8 +433,10 @@ _SEVERITY_BY_FIELD_STATUS = {
 }
 
 
-def _field_payload(system_value: str, standard_value: str) -> dict:
-    status = _classify(system_value, standard_value)
+def _field_payload(
+    system_value: str, standard_value: str, compare_standard: str | None = None
+) -> dict:
+    status = _classify(system_value, standard_value, compare_standard)
     return {
         "status": status,
         "label": _STATUS_LABELS[status],
@@ -515,7 +539,11 @@ async def audit_feature_names(session: AsyncSession) -> dict:
 
         feature_id, reason = match
         feature = features[feature_id]
-        cn_field = _field_payload(feature["cn_name"], standard.cn_name)
+        cn_field = _field_payload(
+            feature["cn_name"],
+            standard.cn_name,
+            compare_standard=strip_latin_parentheticals(standard.cn_name),
+        )
         en_field = _field_payload(feature["en_name"], standard.en_name or standard.short_en())
         severity = "ok"
         if "differs" in (cn_field["severity"], en_field["severity"]):
