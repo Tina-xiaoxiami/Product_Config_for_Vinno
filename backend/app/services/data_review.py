@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -11,10 +12,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.knowledge_qa import normalize_question
 from app.services.overseas_registration_preview import OverseasRegistrationPreview
 
 
 DATA_TYPE_OVERSEAS_REGISTRATION = "overseas_registration_row"
+DATA_TYPE_KNOWLEDGE_DOCUMENT_CHUNK = "knowledge_document_chunk"
 REVIEW_STATUSES = {"auto_ready", "needs_review", "corrected", "confirmed", "excluded"}
 _OVERSEAS_EDITABLE_FIELDS = {
     "jurisdiction_raw",
@@ -26,6 +29,7 @@ _OVERSEAS_EDITABLE_FIELDS = {
     "model_raw",
     "probe_raw",
 }
+_CHUNK_EDITABLE_FIELDS = {"content"}
 
 
 def _json_dump(value: Any) -> str:
@@ -176,6 +180,70 @@ def stage_overseas_preview_review_items(
             connection.close()
 
 
+def stage_knowledge_document_review_items(
+    database_path: str | Path,
+    *,
+    document_id: int,
+    _connection: sqlite3.Connection | None = None,
+) -> dict[str, int]:
+    """Stage every extracted body chunk of one controlled document for review."""
+
+    database = Path(database_path).expanduser().resolve()
+    if _connection is None:
+        migrate_data_review_schema(database)
+    connection = _connection or sqlite3.connect(database)
+    owns_connection = _connection is None
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        document = connection.execute(
+            "SELECT id FROM knowledge_documents WHERE id = ?", (document_id,)
+        ).fetchone()
+        if document is None:
+            raise ValueError("待审核原件不存在")
+        chunks = connection.execute(
+            """
+            SELECT id, source_ref, content
+            FROM knowledge_document_chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index, id
+            """,
+            (document_id,),
+        ).fetchall()
+        for chunk_id, source_ref, content in chunks:
+            payload = {"content": content}
+            connection.execute(
+                """
+                INSERT INTO data_review_items (
+                    document_id, data_type, batch_id, source_record_key, source_ref,
+                    raw_payload_json, effective_payload_json, issue_codes_json,
+                    review_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(data_type, batch_id, source_record_key) DO NOTHING
+                """,
+                (
+                    document_id,
+                    DATA_TYPE_KNOWLEDGE_DOCUMENT_CHUNK,
+                    document_id,
+                    str(chunk_id),
+                    source_ref,
+                    _json_dump(payload),
+                    _json_dump(payload),
+                    _json_dump([]),
+                    "auto_ready",
+                ),
+            )
+        if owns_connection:
+            connection.commit()
+        return {"item_count": len(chunks), "needs_review_count": 0}
+    except Exception:
+        if owns_connection:
+            connection.rollback()
+        raise
+    finally:
+        if owns_connection:
+            connection.close()
+
+
 def _item_from_mapping(row) -> dict[str, Any]:
     item = dict(row)
     item["raw_payload"] = _json_load(item.pop("raw_payload_json"), {})
@@ -266,6 +334,13 @@ async def list_data_review_items(
 
 
 def _validate_payload(data_type: str, payload: dict[str, Any]) -> None:
+    if data_type == DATA_TYPE_KNOWLEDGE_DOCUMENT_CHUNK:
+        unknown = set(payload) - _CHUNK_EDITABLE_FIELDS
+        if unknown:
+            raise ValueError(f"包含不可编辑字段：{', '.join(sorted(unknown))}")
+        if not str(payload.get("content") or "").strip():
+            raise ValueError("识别正文不能为空")
+        return
     if data_type != DATA_TYPE_OVERSEAS_REGISTRATION:
         raise ValueError("当前材料类型尚未配置可编辑字段")
     unknown = set(payload) - _OVERSEAS_EDITABLE_FIELDS
@@ -349,6 +424,22 @@ def revise_data_review_item(
             """,
             (after_json, review_status, actor, note, item_id),
         )
+        if row["data_type"] == DATA_TYPE_KNOWLEDGE_DOCUMENT_CHUNK:
+            corrected_content = str(effective_payload.get("content") or "")
+            connection.execute(
+                """
+                UPDATE knowledge_document_chunks
+                SET content = ?, normalized_content = ?, content_hash = ?
+                WHERE id = ? AND document_id = ?
+                """,
+                (
+                    corrected_content,
+                    normalize_question(corrected_content),
+                    hashlib.sha256(corrected_content.encode("utf-8")).hexdigest(),
+                    int(row["source_record_key"]),
+                    int(row["document_id"]),
+                ),
+            )
         connection.commit()
         updated = connection.execute(
             """

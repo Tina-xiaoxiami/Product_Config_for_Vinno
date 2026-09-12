@@ -463,7 +463,7 @@
               <el-option
                 v-for="batch in dataReviewBatches"
                 :key="reviewBatchKey(batch)"
-                :label="`${batch.document_title}（${batch.total_count} 行）`"
+                :label="`${batch.document_title}（${batch.total_count} ${reviewBatchUnit(batch)}）`"
                 :value="reviewBatchKey(batch)"
               />
             </el-select>
@@ -492,7 +492,7 @@
           </div>
 
           <div v-if="selectedReviewBatch" class="summary-row review-summary">
-            <span>原表行 <strong>{{ selectedReviewBatch.total_count }}</strong></span>
+            <span>{{ reviewRecordLabel(selectedReviewBatch) }} <strong>{{ selectedReviewBatch.total_count }}</strong></span>
             <span class="danger">待修正 <strong>{{ selectedReviewBatch.needs_review_count }}</strong></span>
             <span>已修正 <strong>{{ selectedReviewBatch.corrected_count }}</strong></span>
             <span>已排除 <strong>{{ selectedReviewBatch.excluded_count }}</strong></span>
@@ -518,7 +518,11 @@
             <el-table-column prop="source_ref" label="原表位置" min-width="155" />
             <el-table-column label="原始识别值" min-width="235">
               <template #default="scope">
-                <div class="source-values">
+                <div v-if="isChunkReviewRow(scope.row)" class="source-values">
+                  <span class="review-type-label">识别正文</span>
+                  <span class="chunk-content">{{ scope.row.raw_payload.content }}</span>
+                </div>
+                <div v-else class="source-values">
                   <span>{{ scope.row.raw_payload.jurisdiction_raw || scope.row.raw_payload.jurisdiction_code }}</span>
                   <strong>{{ scope.row.raw_payload.model_raw }}</strong>
                   <span>{{ scope.row.raw_payload.probe_raw }}</span>
@@ -527,7 +531,11 @@
             </el-table-column>
             <el-table-column label="修正后内容" min-width="235">
               <template #default="scope">
-                <div class="source-values effective-values">
+                <div v-if="isChunkReviewRow(scope.row)" class="source-values effective-values">
+                  <span class="review-type-label">识别正文</span>
+                  <span class="chunk-content">{{ scope.row.effective_payload.content }}</span>
+                </div>
+                <div v-else class="source-values effective-values">
                   <span>{{ scope.row.effective_payload.jurisdiction_code }}</span>
                   <strong>{{ scope.row.effective_payload.model_raw }}</strong>
                   <span>{{ scope.row.effective_payload.probe_raw }}</span>
@@ -572,14 +580,24 @@
       :close-on-click-modal="false"
     >
       <el-alert
-        v-if="editingReviewItem"
+        v-if="editingReviewItem && !isChunkReviewRow(editingReviewItem)"
         :title="`原始识别值：${editingReviewItem.raw_payload.model_raw || '-'} / ${editingReviewItem.raw_payload.probe_raw || '-'}`"
         type="info"
         :closable="false"
         class="dialog-alert"
       />
+      <el-alert
+        v-else-if="editingReviewItem"
+        :title="`原始识别正文：${editingReviewItem.raw_payload.content || '-'}`"
+        type="info"
+        :closable="false"
+        class="dialog-alert"
+      />
       <el-form :model="dataReviewForm" label-width="100px">
-        <div class="form-grid">
+        <el-form-item v-if="isChunkReviewRow(editingReviewItem)" label="识别正文">
+          <el-input v-model="dataReviewForm.content" type="textarea" :rows="6" />
+        </el-form-item>
+        <div v-else class="form-grid">
           <el-form-item label="国家代码">
             <el-input v-model="dataReviewForm.jurisdiction_code" maxlength="2" />
           </el-form-item>
@@ -863,6 +881,9 @@ const differenceModelCount = computed(() => differenceSummary.value.models.filte
   model => model.unregistered_probes.length > 0
 ).length)
 const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
+const isChunkReviewRow = row => row?.data_type === 'knowledge_document_chunk'
+const reviewBatchUnit = batch => isChunkReviewRow(batch) ? '段' : '行'
+const reviewRecordLabel = batch => isChunkReviewRow(batch) ? '原文段落' : '原表行'
 const selectedReviewBatch = computed(() => dataReviewBatches.value.find(
   batch => reviewBatchKey(batch) === selectedReviewBatchKey.value
 ))
@@ -1293,6 +1314,8 @@ onMounted(async () => {
 .source-values { display: grid; gap: 3px; color: #64748b; font-size: 12px; }
 .source-values strong { color: #334155; font-size: 13px; }
 .effective-values strong { color: #1d4ed8; }
+.review-type-label { color: #94a3b8; font-size: 11px; }
+.chunk-content { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
 .issue-list { margin-top: 5px; color: #b45309; font-size: 11px; line-height: 1.45; }
 .review-pagination { justify-content: flex-end; margin-top: 14px; }
 .dialog-alert { margin-bottom: 16px; }
