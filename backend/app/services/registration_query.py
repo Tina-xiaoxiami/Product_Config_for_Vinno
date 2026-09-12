@@ -194,7 +194,7 @@ def _probe_summary(items: list[dict]) -> dict[str, int]:
         "optional": sum(item["effective_status"] == "O" for item in items),
         "tender": sum(item["effective_status"] == "Δ" for item in items),
         "undefined": sum(item["effective_status"] == "未定义" for item in items),
-        "auxiliary": sum(item["status_source"] == "current_config_aux" for item in items),
+        "auxiliary": sum(bool(item["current_config_note"]) for item in items),
         "conflicts": sum(bool(item["conflict"]) for item in items),
     }
 
@@ -338,6 +338,7 @@ async def list_product_registration_probes(
             "effective_status": policy.effective_status,
             "status_source": policy.status_source,
             "strategy_is_formal": policy.is_formal,
+            "current_config_note": policy.current_config_note,
             "conflict": policy.conflict,
             "config_item_id": int(row.config_item_id) if row.config_item_id else None,
             "config_name": row.config_name,

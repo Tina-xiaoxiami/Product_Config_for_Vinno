@@ -90,6 +90,7 @@ class RegistrationProbeStrategyItem(BaseModel):
     effective_status: str
     status_source: str
     strategy_is_formal: bool
+    current_config_note: str | None = None
     conflict: bool
     config_item_id: int | None = None
     config_name: str | None = None
