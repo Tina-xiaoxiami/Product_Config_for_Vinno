@@ -593,3 +593,53 @@ async def test_registration_api_stages_pair_reviews_mapping_and_publishes(tmp_pa
     assert packages.json()["items"][0]["is_enabled"] is False
     assert configured.status_code == 200, configured.text
     assert configured.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_registration_difference_artifact_previews_as_sheets(tmp_path):
+    """xlsx 差异表可在应用内预览；原件下载地址保持不变。"""
+
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    package = _activate_imported_package(database_path, workbook_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        preview = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/difference/sheets"
+        )
+        download = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/difference"
+        )
+        unknown_type = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/unknown/sheets"
+        )
+        missing = await client.get(
+            "/api/registrations/package-versions/999/artifacts/difference/sheets"
+        )
+    await engine.dispose()
+
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["file_name"].endswith(".xlsx")
+    assert [sheet["name"] for sheet in body["sheets"]] == ["0729", "Sheet1"]
+    matrix, probes = body["sheets"]
+    assert matrix["truncated"] is False
+    assert ["序号", "型号", "不支持探头", "通道数"] in matrix["rows"]
+    assert ["2", "VINNO 10E", "F2-5C", "128"] in matrix["rows"]
+    assert probes["rows"][1] == ["F2-5C", "1000530", "1000530"]
+
+    assert download.status_code == 200
+    assert unknown_type.status_code == 404
+    assert missing.status_code == 404
