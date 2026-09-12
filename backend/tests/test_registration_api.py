@@ -160,7 +160,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "optional": 0,
         "tender": 0,
         "undefined": 2,
-        "auxiliary": 0,
+        "auxiliary": 1,
         "conflicts": 0,
     }
     f2 = next(
@@ -177,6 +177,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "effective_status": "#",
         "status_source": "registration_redline",
         "strategy_is_formal": True,
+        "current_config_note": "研发当前配置为 X，仅作备注，不参与判定",
         "conflict": False,
         "config_item_id": 10,
         "config_name": "F2-5C探头",
@@ -234,6 +235,7 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
     assert item["registration_status"] == "unregistered"
     assert item["effective_status"] == "#"
     assert item["current_config"] == "Δ"
+    assert item["current_config_note"] == "研发当前配置为 Δ，仅作备注，不参与判定"
     assert registration_models.status_code == 200
     assert [item["model_name"] for item in registration_models.json()["items"]] == [
         "VINNO 10",
