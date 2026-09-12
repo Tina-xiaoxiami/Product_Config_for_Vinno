@@ -38,6 +38,20 @@ test('knowledge hub exposes search, status filters, identity details and documen
 })
 
 
+test('knowledge hub lets users toggle displayed feature columns', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+
+  assert.match(view, /data-testid="column-settings"/)
+  assert.match(view, /列显示设置/)
+  assert.match(view, /columnOptions/)
+  assert.match(view, /visibleColumns/)
+  assert.match(view, /columnVisible\(/)
+  assert.match(view, /resetColumnSettings/)
+  assert.match(view, /中文曾用名/)
+  assert.match(view, /英文曾用名/)
+})
+
+
 test('frontend API exposes knowledge feature, stats and document endpoints', () => {
   const api = read('../src/api/data.js')
 
@@ -81,6 +95,39 @@ test('knowledge hub reports multiple domestic certificates separately when unspe
   assert.match(view, /registrationGroups/)
   assert.match(view, /registration_number/)
   assert.match(view, /registration_package_name/)
+})
+
+
+test('registration summary tiles filter the strategy table when clicked', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+
+  // 六个分布数字是可点击的筛选入口，而不是纯展示
+  assert.match(view, /registrationSummaryTiles/)
+  assert.match(view, /class="summary-tile"/)
+  assert.match(view, /@click="toggleSummaryTile\(group, tile.key\)"/)
+  assert.match(view, /data-testid="`registration-summary-tile-\$\{tile\.key\}`"/)
+  assert.match(view, /:aria-pressed="activeSummaryTile\(group\) === tile\.key"/)
+  assert.doesNotMatch(view, /<div><strong>\{\{ group\.summary\.registered \}\}/)
+
+  // 表格数据走筛选结果，而不是原始列表
+  assert.match(view, /:data="filteredRegistrationItems\(group\)"/)
+
+  // 筛选维度必须与后端统计口径一致：注册状态 + 最终判定
+  assert.match(view, /dimension: 'registration', status: 'registered'/)
+  assert.match(view, /dimension: 'registration', status: 'unregistered'/)
+  assert.match(view, /dimension: 'effective', status: 'X'/)
+  assert.match(view, /dimension: 'effective', status: 'O'/)
+  assert.match(view, /dimension: 'effective', status: 'Δ'/)
+  assert.match(view, /dimension: 'effective', status: '未定义'/)
+
+  // 再次点击同一个卡片要能取消筛选，并给出可见的清除入口
+  assert.match(view, /if \(next\[id\] === key\) delete next\[id\]/)
+  assert.match(view, /clearSummaryTile/)
+  assert.match(view, /closable @close="clearSummaryTile\(group\)"/)
+
+  // 客户端筛选：分布数字保持整体口径，不因点击而重新请求后端
+  assert.match(view, /点击即在当前注册证内筛选表格/)
+  assert.doesNotMatch(view, /toggleSummaryTile[\s\S]{0,200}loadRegistrationProbes/)
 })
 
 
