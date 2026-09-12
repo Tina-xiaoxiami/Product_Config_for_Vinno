@@ -76,15 +76,23 @@ def loose_feature_name_key(value) -> str:
 _PARENTHETICAL_PATTERN = re.compile(r"[（(\[【][^（）()\[\]【】]*[）)\]】]")
 
 
-def strip_latin_parentheticals(value: str) -> str:
-    """去掉只含英文/数字/符号的括号补充。
+# 白皮书里用来标注选配状态的括号内容，不属于名称
+_NAME_MARKER_WORDS = frozenset({"可选", "选配", "标配", "选装", "选配项", "可选项", "选件"})
 
-    标准表中文名里的括号内容通常是英文缩写或补充说明（如「宽景成像（Pview）」），
-    不属于中文名称本身；含中文的括号保留，因为它可能是名称的一部分。
+
+def strip_name_markers(value: str) -> str:
+    """去掉名称里不影响身份的括号补充。
+
+    两类括号内容不算名称差异：
+    1. 只含英文/数字/符号的补充，如「宽景成像（Pview）」；
+    2. 选配状态标记，如「三维成像（可选）」「集成式小键盘(选配)」——白皮书用括号标注选配。
+    括号里含其它中文内容时保留，因为它可能是名称的一部分（如「组织多普勒成像（含能量图）」）。
     """
 
     def _replace(match: re.Match) -> str:
-        inner = match.group(0)[1:-1]
+        inner = match.group(0)[1:-1].strip()
+        if not inner or inner in _NAME_MARKER_WORDS:
+            return ""
         return "" if not re.search(r"[\u3400-\u9fff]", inner) else match.group(0)
 
     return _PARENTHETICAL_PATTERN.sub(_replace, str(value or "")).strip()
@@ -282,6 +290,9 @@ async def _load_feature_index(session: AsyncSession) -> dict:
             "en_loose_keys": set(),
             "names_cn": [],
             "names_en": [],
+            "config_ipn": "",
+            "config_cn_desc": "",
+            "config_en_desc": "",
         }
         for value in (row.primary_cn_name, row.name):
             if value:
@@ -293,6 +304,27 @@ async def _load_feature_index(session: AsyncSession) -> dict:
             by_feature[feature_id]["en_keys"].add(normalize_feature_name_key(row.primary_en_name))
             by_feature[feature_id]["en_loose_keys"].add(loose_feature_name_key(row.primary_en_name))
             by_feature[feature_id]["names_en"].append(row.primary_en_name)
+
+    link_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT link.feature_id, item.ipn, item.zh_desc, item.en_desc
+                FROM feature_config_item_links link
+                JOIN config_items item ON item.id = link.config_item_id
+                WHERE link.review_status = 'approved' AND link.relation_type = 'primary'
+                ORDER BY link.id
+                """
+            )
+        )
+    ).all()
+    for row in link_rows:
+        feature = by_feature.get(int(row.feature_id))
+        if feature is None or feature["config_ipn"]:
+            continue
+        feature["config_ipn"] = row.ipn or ""
+        feature["config_cn_desc"] = row.zh_desc or ""
+        feature["config_en_desc"] = row.en_desc or ""
 
     for row in name_rows:
         feature_id = int(row.feature_id)
@@ -337,7 +369,7 @@ def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
 
     # 中文名比对时忽略只含英文的括号补充（宽景成像（Pview）→ 宽景成像）
     raw_cn_key = normalize_feature_name_key(standard.cn_name)
-    compare_cn_key = normalize_feature_name_key(strip_latin_parentheticals(standard.cn_name))
+    compare_cn_key = normalize_feature_name_key(strip_name_markers(standard.cn_name))
     cn_keys = {compare_cn_key}
     en_keys = {normalize_feature_name_key(value) for value in (standard.en_name, standard.short_en())}
     cn_keys.discard("")
@@ -366,7 +398,7 @@ def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
             if standard_cn and (standard_cn in feature_cn or feature_cn in standard_cn):
                 return 1.0, "中文名称互相包含"
 
-    standard_cn_loose = loose_feature_name_key(strip_latin_parentheticals(standard.cn_name))
+    standard_cn_loose = loose_feature_name_key(strip_name_markers(standard.cn_name))
     if len(standard_cn_loose) >= 2:
         for feature_cn in feature["cn_loose_keys"]:
             if standard_cn_loose and (
@@ -391,13 +423,16 @@ def _match_score(standard: StandardRow, feature: dict) -> tuple[float, str]:
 
 
 def _classify(system_value: str, standard_value: str, compare_standard: str | None = None) -> str:
-    system = clean_feature_name(system_value)
+    # 两侧都忽略括号补充（英文缩写说明和选配标记都不算名称差异）
+    system = clean_feature_name(strip_name_markers(system_value))
     if not clean_feature_name(standard_value):
         return "undefined"
     if not system:
         return "empty"
     standard = clean_feature_name(
-        compare_standard if compare_standard is not None else standard_value
+        strip_name_markers(compare_standard)
+        if compare_standard is not None
+        else strip_name_markers(standard_value)
     )
     if system == standard:
         return "ok"
@@ -444,6 +479,114 @@ def _field_payload(
         "system_value": system_value,
         "standard_value": standard_value,
     }
+
+
+def _relation_result(
+    pairs: list[tuple[str, str, str]], label: str
+) -> dict:
+    """按 (字段名, 来源值, 对比值) 计算一组关系结论。"""
+
+    fields = []
+    for name, left, right in pairs:
+        if not right:
+            continue
+        field = _field_payload(left, right)
+        # 复用差异分类：left 视为「系统侧」，right 视为「比对基准」
+        field["label"] = _STATUS_LABELS[field["status"]]
+        fields.append((name, left, right, field))
+    if not fields:
+        return {"severity": "ok", "message": f"没有可比较的{label}", "fields": []}
+    severity = "ok"
+    if any(item[3]["severity"] == "differs" for item in fields):
+        severity = "differs"
+    elif any(item[3]["severity"] == "style" for item in fields):
+        severity = "style"
+    messages = [
+        f"{name}{field['label']}：「{left or '空'}」→「{right or '空'}」"
+        for name, left, right, field in fields
+        if field["severity"] != "ok"
+    ]
+    return {
+        "severity": severity,
+        "message": "；".join(messages) if messages else f"{label}一致",
+        "fields": [
+            {
+                "name": name,
+                "left": left,
+                "right": right,
+                "status": field["status"],
+                "label": field["label"],
+                "severity": field["severity"],
+            }
+            for name, left, right, field in fields
+        ],
+    }
+
+
+def _config_check(feature: dict, standard_entry: dict | None) -> dict:
+    """第二个基准：配置管理里该 IPN 的中文/英文描述。
+
+    分别给出两种关系的结论：与功能主名是否一致、与功能名称标准是否一致。
+    """
+
+    check = {
+        "baseline": "config",
+        "label": "配置管理描述",
+        "ipn": feature["config_ipn"],
+        "config_cn_desc": feature["config_cn_desc"],
+        "config_en_desc": feature["config_en_desc"],
+        "feature_relation": None,
+        "standard_relation": None,
+        "severity": "unlinked",
+        "message": "",
+    }
+    if not feature["config_ipn"]:
+        check["message"] = "未关联主IPN，没有配置管理描述可比对"
+        return check
+
+    feature_relation = _relation_result(
+        [
+            ("中文描述", feature["cn_name"], feature["config_cn_desc"]),
+            ("英文描述", feature["en_name"], feature["config_en_desc"]),
+        ],
+        "与功能主名的描述",
+    )
+    check["feature_relation"] = feature_relation
+
+    if standard_entry is not None:
+        standard_en = standard_entry["en_name"] or standard_entry["short_en"]
+        # 标准名里的括号补充不影响比对（宽景成像（Pview）按 宽景成像 比）
+        check["standard_relation"] = _relation_result(
+            [
+                (
+                    "中文描述",
+                    strip_name_markers(standard_entry["cn_name"]),
+                    feature["config_cn_desc"],
+                ),
+                ("英文描述", standard_en, feature["config_en_desc"]),
+            ],
+            "与标准名称的描述",
+        )
+
+    relations = [feature_relation]
+    if check["standard_relation"]:
+        relations.append(check["standard_relation"])
+    severity_rank = {"differs": 2, "style": 1, "ok": 0}
+    check["severity"] = max(
+        (relation["severity"] for relation in relations),
+        key=lambda value: severity_rank.get(value, 0),
+    )
+    parts = []
+    parts.append(
+        "与功能主名一致" if feature_relation["severity"] == "ok" else feature_relation["message"]
+    )
+    if check["standard_relation"]:
+        relation = check["standard_relation"]
+        parts.append(
+            "与标准名称一致" if relation["severity"] == "ok" else relation["message"]
+        )
+    check["message"] = "；".join(parts)
+    return check
 
 
 def _flag_message(cn_field: dict, en_field: dict, label: str, severity: str) -> str:
@@ -542,7 +685,7 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         cn_field = _field_payload(
             feature["cn_name"],
             standard.cn_name,
-            compare_standard=strip_latin_parentheticals(standard.cn_name),
+            compare_standard=strip_name_markers(standard.cn_name),
         )
         en_field = _field_payload(feature["en_name"], standard.en_name or standard.short_en())
         severity = "ok"
@@ -565,32 +708,38 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         )
         entries.append(entry)
 
-    # 4. 生成每个功能的提示标记
+    # 4. 生成每个功能的提示标记：标准表和配置管理描述两个基准分别提醒
     flags_by_feature: dict[str, dict] = {}
+    # 标准定义本身待人工确认（歧义）时，不拿它去比对配置管理描述
+    standard_entry_by_feature = {
+        entry["feature_id"]: entry
+        for entry in entries
+        if entry["feature_id"] is not None and entry["severity"] != "ambiguous"
+    }
+    config_checks = {
+        feature_id: _config_check(feature, standard_entry_by_feature.get(feature_id))
+        for feature_id, feature in features.items()
+    }
     for entry in entries:
         feature_id = entry["feature_id"]
         if feature_id is None or entry["severity"] == "ok":
             continue
         label = entry["cn_name"] or entry["en_name"] or entry["ui_label"]
-        flag = flags_by_feature.setdefault(
-            str(feature_id),
-            {
-                "feature_id": feature_id,
-                "severity": entry["severity"],
-                "standard_cn_name": entry["cn_name"],
-                "standard_en_name": entry["en_name"] or entry["short_en"],
-                "standard_ui_label": entry["ui_label"],
-                "message": "",
-                "details": [],
-            },
-        )
         if entry["severity"] == "ambiguous":
             message = f"标准表里有多条定义同时匹配该功能（如「{label}」），需要人工确认对应关系"
         else:
             message = _flag_message(entry["cn_field"], entry["en_field"], label, entry["severity"])
-        if not flag["message"]:
-            flag["message"] = message
-        flag["details"].append(message)
+        flags_by_feature.setdefault(str(feature_id), {"feature_id": feature_id})[
+            "standard_check"
+        ] = {
+            "baseline": "standard",
+            "label": "功能名称标准表",
+            "severity": entry["severity"],
+            "message": message,
+            "standard_cn_name": entry["cn_name"],
+            "standard_en_name": entry["en_name"] or entry["short_en"],
+            "standard_ui_label": entry["ui_label"],
+        }
 
     uncovered_features: list[dict] = []
     for feature_id, feature in features.items():
@@ -604,21 +753,56 @@ async def audit_feature_names(session: AsyncSession) -> dict:
                 "en_name": feature["en_name"],
             }
         )
-        flags_by_feature.setdefault(
-            str(feature_id),
-            {
-                "feature_id": feature_id,
-                "severity": "uncovered",
-                "standard_cn_name": "",
-                "standard_en_name": "",
-                "standard_ui_label": "",
-                "message": "功能名称标准表未收录该功能，请确认是否需要补充到标准表",
-                "details": [],
-            },
+        flag = flags_by_feature.setdefault(str(feature_id), {"feature_id": feature_id})
+        flag["standard_check"] = {
+            "baseline": "standard",
+            "label": "功能名称标准表",
+            "severity": "uncovered",
+            "message": "功能名称标准表未收录该功能，请确认是否需要补充到标准表",
+            "standard_cn_name": "",
+            "standard_en_name": "",
+            "standard_ui_label": "",
+        }
+        flag["uncovered"] = True
+
+    severity_rank = {"differs": 3, "ambiguous": 2, "style": 1, "uncovered": 0, "ok": 0, "unlinked": 0}
+    # 配置管理描述基准单独不一致时也要能提示
+    for feature_id, config_check in config_checks.items():
+        if config_check["severity"] in {"ok", "unlinked"}:
+            continue
+        flags_by_feature.setdefault(str(feature_id), {"feature_id": feature_id})
+
+    for feature_id, flag in list(flags_by_feature.items()):
+        feature = features[int(feature_id)]
+        flag.setdefault("standard_check", None)
+        checks = [flag["standard_check"]] if flag["standard_check"] else []
+        config_check = config_checks[int(feature_id)]
+        checks.append(config_check)
+        flag["checks"] = checks
+        flag["config_check"] = config_check
+        flag["feature_cn_name"] = feature["cn_name"] or feature["legacy_name"]
+        flag["feature_en_name"] = feature["en_name"]
+        flag["severity"] = max(
+            (
+                check["severity"]
+                for check in checks
+                if check["severity"] not in {"ok", "unlinked"}
+            ),
+            key=lambda value: severity_rank.get(value, 0),
+            default="ok",
         )
+        # 只按标准表未收录提示、配置描述正常的条目保持原有提示语义
+        if flag["severity"] == "ok":
+            flag["severity"] = "uncovered" if flag.get("uncovered") else "ok"
 
     summary = {
         "ok": sum(1 for entry in entries if entry["severity"] == "ok"),
+        "config_differs": sum(
+            1 for check in config_checks.values() if check["severity"] == "differs"
+        ),
+        "config_unlinked": sum(
+            1 for check in config_checks.values() if check["severity"] == "unlinked"
+        ),
         "style": sum(1 for entry in entries if entry["severity"] == "style"),
         "differs": sum(1 for entry in entries if entry["severity"] == "differs"),
         "ambiguous": sum(1 for entry in entries if entry["severity"] == "ambiguous"),

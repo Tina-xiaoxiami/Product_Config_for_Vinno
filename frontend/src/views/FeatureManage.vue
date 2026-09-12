@@ -248,6 +248,12 @@
           <el-tag size="small" type="warning" v-if="standardData.summary.ambiguous">待人工确认 {{ standardData.summary.ambiguous }}</el-tag>
           <el-tag size="small" type="info">标准表有、系统未登记 {{ standardData.summary.missing }}</el-tag>
           <el-tag size="small" type="info">系统有、标准表未收录 {{ standardData.summary.uncovered }}</el-tag>
+          <el-tag size="small" :type="standardData.summary.config_differs ? 'danger' : 'success'">
+            配置管理描述不一致 {{ standardData.summary.config_differs }}
+          </el-tag>
+          <el-tag size="small" type="info" v-if="standardData.summary.config_unlinked">
+            未关联主IPN {{ standardData.summary.config_unlinked }}
+          </el-tag>
         </div>
 
         <el-tabs v-if="standardData" v-model="standardTab">
@@ -291,6 +297,99 @@
             </el-table>
           </el-tab-pane>
 
+          <el-tab-pane label="白皮书正文核对" name="whitepaper" lazy>
+            <div class="import-toolbar">
+              <el-select
+                v-model="whitepaperDocumentId"
+                placeholder="选择白皮书查看逐条差异"
+                clearable
+                style="width:300px"
+                @change="loadWhitepaperAudit"
+              >
+                <el-option
+                  v-for="doc in whitepaperDocuments"
+                  :key="doc.id"
+                  :label="`${doc.title}（差异 ${whitepaperDiffByDoc[doc.id] || 0} 项）`"
+                  :value="doc.id"
+                />
+              </el-select>
+              <el-checkbox v-model="whitepaperIncludeMatched" @change="loadWhitepaperAudit">同时显示一致的条目</el-checkbox>
+              <span v-if="whitepaperReport" class="import-file-name">
+                {{ whitepaperReport.documents }} 份白皮书，累计差异 {{ whitepaperReport.summary.entries }} 条；白皮书正文里的选配标记（可选/选配）不参与名称比对
+              </span>
+            </div>
+
+            <el-table v-if="!whitepaperDocumentId" :data="whitepaperDocumentSummaries" size="small" border max-height="340">
+              <el-table-column prop="document_title" label="白皮书" min-width="240" />
+              <el-table-column prop="version" label="版本" width="110">
+                <template #default="{ row }">{{ row.document_version || '-' }}</template>
+              </el-table-column>
+              <el-table-column prop="mentioned_features" label="提及功能" width="100" />
+              <el-table-column prop="mismatched_features" label="名称有差异" width="110" />
+              <el-table-column label="" width="90">
+                <template #default="{ row }">
+                  <el-button size="small" text type="primary" @click="whitepaperDocumentId = row.document_id; loadWhitepaperAudit()">查看差异</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <el-table v-else :data="whitepaperReport?.entries || []" size="small" border max-height="340">
+              <el-table-column label="功能" min-width="150">
+                <template #default="{ row }">
+                  <div class="import-cn">{{ row.feature_cn_name || '（空）' }}</div>
+                  <div class="import-en">{{ row.group_name }} · ID {{ row.feature_id }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="白皮书里的写法" min-width="170">
+                <template #default="{ row }">
+                  <el-tag v-for="name in row.used_names" :key="name" size="small" class="wb-used">{{ name }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="功能名称标准表" min-width="230">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="baselineTagType(row.standard?.severity)">{{ severityLabel(row.standard?.severity) }}</el-tag>
+                  <div class="std-before" v-if="row.standard && row.standard.severity !== 'ok'">{{ row.standard.message }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="配置管理描述" min-width="230">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="baselineTagType(row.config?.severity)">{{ severityLabel(row.config?.severity) }}</el-tag>
+                  <div class="std-before" v-if="row.config && row.config.severity !== 'ok'">{{ row.config.message }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="正文出处" min-width="240">
+                <template #default="{ row }">
+                  <div class="wb-snippet" v-for="(snippet, index) in row.snippets" :key="index">{{ snippet }}</div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="两个基准逐条核对" name="baselines">
+            <el-table :data="baselineRows" size="small" border max-height="380">
+              <el-table-column label="功能" min-width="170">
+                <template #default="{ row }">
+                  <div class="import-cn">{{ row.cn_name || '（空）' }}</div>
+                  <div class="import-en">{{ row.en_name }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="功能名称标准表" min-width="250">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="baselineTagType(row.standard.severity)">{{ severityLabel(row.standard.severity) }}</el-tag>
+                  <div class="std-after" v-if="row.standard.standard_cn_name">标准：{{ row.standard.standard_cn_name }}</div>
+                  <div class="std-before" v-if="row.standard.severity === 'differs' || row.standard.severity === 'style'">{{ row.standard.message }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="配置管理描述" min-width="250">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="baselineTagType(row.config.severity)">{{ severityLabel(row.config.severity) }}</el-tag>
+                  <div class="std-after" v-if="row.config.ipn">IPN：{{ row.config.ipn }}</div>
+                  <div class="std-before" v-if="row.config.severity === 'differs' || row.config.severity === 'style'">{{ row.config.message }}</div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
           <el-tab-pane :label="`系统有、标准表未收录（${standardData.summary.uncovered}）`" name="uncovered">
             <el-table :data="standardData.uncovered_features" size="small" border max-height="380">
               <el-table-column prop="cn_name" label="功能" min-width="200" />
@@ -312,7 +411,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { loadFeatureNameStandardFlags } from '../utils/featureNameStandard'
+import { loadFeatureNameStandardFlags, useFeatureNameStandard } from '../utils/featureNameStandard'
 import {
   getFeatureGroups,
   createFeatureGroup,
@@ -327,7 +426,9 @@ import {
   previewFeatureImport,
   applyFeatureImport,
   getFeatureNameStandards,
-  importFeatureNameStandards
+  importFeatureNameStandards,
+  getWhitepaperNameAudit,
+  getWhitepaperDocuments
 } from '../api/data'
 
 const tableData = ref([])
@@ -349,6 +450,22 @@ const standardData = ref(null)
 const standardTab = ref('mismatch')
 const loadingStandard = ref(false)
 const importingStandard = ref(false)
+const whitepaperDocuments = ref([])
+const whitepaperDocumentId = ref(null)
+const whitepaperReport = ref(null)
+const whitepaperIncludeMatched = ref(false)
+const whitepaperDiffByDoc = ref({})
+const whitepaperDocumentSummaries = computed(() =>
+  (whitepaperReport.value?.document_summaries || []).map((row) => ({
+    document_id: row.document_id,
+    document_title: row.document_title,
+    document_version: row.document_version,
+    mentioned_features: row.mentioned_features,
+    mismatched_features: row.mismatched_features
+  }))
+)
+
+const { flags: featureFlags } = useFeatureNameStandard()
 
 const mismatchedStandards = computed(() =>
   (standardData.value?.standards || []).filter(
@@ -358,6 +475,40 @@ const mismatchedStandards = computed(() =>
 const missingStandards = computed(() =>
   (standardData.value?.standards || []).filter((entry) => entry.severity === 'missing')
 )
+const severityLabels = {
+  ok: '一致',
+  style: '写法不同',
+  differs: '不一致',
+  ambiguous: '待人工确认',
+  missing: '标准表有、系统未登记',
+  uncovered: '标准表未收录',
+  unlinked: '未关联主IPN'
+}
+const severityLabel = (severity) => severityLabels[severity] || severity
+const baselineTagType = (severity) => (
+  { differs: 'danger', style: 'warning', ambiguous: 'warning', ok: 'success' }[severity] || 'info'
+)
+// 逐条列出每个功能在两个基准上的结论：标准表（从核对条目取）与配置管理描述（从提示标记取）
+const baselineRows = computed(() => {
+  const byFeature = featureFlags.value?.by_feature || {}
+  const flagOf = (featureId) => byFeature[String(featureId)] || {}
+  return (standardData.value?.standards || [])
+    .filter((entry) => entry.feature_id)
+    .map((entry) => {
+      const flag = flagOf(entry.feature_id)
+      return {
+        feature_id: entry.feature_id,
+        cn_name: entry.feature_cn_name,
+        en_name: entry.feature_en_name,
+        standard: flag.standard_check || {
+          severity: entry.severity,
+          message: '',
+          standard_cn_name: entry.cn_name
+        },
+        config: flag.config_check || { severity: 'unlinked', ipn: '', message: '未关联主IPN' }
+      }
+    })
+})
 const groupForm = reactive({ name: '', sort_order: 0 })
 const featureForm = reactive({
   group_id: null,
@@ -584,17 +735,45 @@ const handleApplyImport = async () => {
   } finally { applying.value = false }
 }
 
+const loadWhitepaperAudit = async () => {
+  try {
+    whitepaperReport.value = await getWhitepaperNameAudit({
+      document_id: whitepaperDocumentId.value || undefined,
+      include_matched: whitepaperIncludeMatched.value
+    })
+    if (!whitepaperDocumentId.value) {
+      whitepaperDiffByDoc.value = Object.fromEntries(
+        (whitepaperReport.value.document_summaries || []).map((row) => [
+          row.document_id,
+          row.mismatched_features
+        ])
+      )
+    }
+  } catch { ElMessage.error('白皮书名称核对失败') }
+}
+
+const loadWhitepaperDocuments = async () => {
+  try {
+    whitepaperDocuments.value = (await getWhitepaperDocuments()).items || []
+  } catch { whitepaperDocuments.value = [] }
+}
+
 // 功能名称标准核对
 const loadStandardAudit = async () => {
   loadingStandard.value = true
   try {
-    standardData.value = await getFeatureNameStandards()
+    const [audit] = await Promise.all([
+      getFeatureNameStandards(),
+      loadFeatureNameStandardFlags({ force: true })
+    ])
+    standardData.value = audit
   } catch { ElMessage.error('标准名称核对结果加载失败') } finally { loadingStandard.value = false }
 }
 
 const openStandardDialog = async () => {
   showStandardDialog.value = true
-  await loadStandardAudit()
+  whitepaperDocumentId.value = null
+  await Promise.all([loadStandardAudit(), loadWhitepaperDocuments(), loadWhitepaperAudit()])
 }
 
 const handleImportStandard = async (file) => {
@@ -776,6 +955,8 @@ onMounted(() => {
 .import-change-after { color: #67c23a; }
 .import-error { font-size: 12px; color: #f56c6c; line-height: 1.5; }
 .std-ok { font-size: 12px; color: #909399; }
+.wb-used { margin: 0 4px 2px 0; }
+.wb-snippet { font-size: 11px; color: #909399; line-height: 1.5; margin-bottom: 2px; }
 .std-before { font-size: 12px; color: #f56c6c; }
 .std-after { font-size: 12px; color: #67c23a; }
 .import-warning { font-size: 12px; color: #e6a23c; line-height: 1.5; }

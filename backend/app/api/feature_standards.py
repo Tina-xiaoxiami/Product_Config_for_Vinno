@@ -1,9 +1,13 @@
 """功能名称标准表 API：导入标准定义、查询核对结果和功能名称提示标记。"""
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.whitepaper_name_audit import (
+    audit_whitepaper_names,
+    list_whitepaper_documents,
+)
 from app.services.feature_name_standards import (
     FeatureNameStandardError,
     audit_feature_names,
@@ -35,6 +39,32 @@ async def feature_name_standards(db: AsyncSession = Depends(get_db)):
         "standards": audit["standards"],
         "uncovered_features": audit["uncovered_features"],
     }
+
+
+@router.get("/whitepaper-documents")
+async def whitepaper_documents(db: AsyncSession = Depends(get_db)):
+    """可用于名称核对的白皮书清单。"""
+
+    return {"items": await list_whitepaper_documents(db)}
+
+
+@router.get("/whitepaper-names")
+async def whitepaper_names(
+    document_id: int | None = Query(default=None),
+    include_matched: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+):
+    """核对白皮书正文里的功能名称：分别与标准表和配置管理描述比对。
+
+    不指定 document_id 时只返回按白皮书汇总的概览；指定时返回该白皮书的逐条差异。
+    """
+
+    report = await audit_whitepaper_names(
+        db, document_id=document_id, include_matched=include_matched
+    )
+    if document_id is None:
+        report = {**report, "entries": []}
+    return report
 
 
 @router.post("/import")

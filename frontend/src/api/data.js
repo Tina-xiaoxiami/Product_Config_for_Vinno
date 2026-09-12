@@ -117,6 +117,8 @@ export const applyFeatureImport = (formData) => api.post('/features/import', for
 export const getFeatureNameStandardFlags = () => api.get('/features/standards/flags')
 export const getFeatureNameStandards = () => api.get('/features/standards')
 export const importFeatureNameStandards = (formData) => api.post('/features/standards/import', formData)
+export const getWhitepaperNameAudit = (params) => api.get('/features/standards/whitepaper-names', { params })
+export const getWhitepaperDocuments = () => api.get('/features/standards/whitepaper-documents')
 
 // 模板配置
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
