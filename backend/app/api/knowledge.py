@@ -1,5 +1,6 @@
 """Unified product knowledge read APIs."""
 
+import asyncio
 from pathlib import Path
 import mimetypes
 
@@ -32,6 +33,7 @@ from app.services.data_review import (
     list_data_review_batches,
     list_data_review_items,
     revise_data_review_item,
+    stage_knowledge_document_review_items,
 )
 from app.services.knowledge_documents import (
     get_registered_document,
@@ -312,7 +314,12 @@ async def extract_document_content(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(status_code=404, detail="资料不存在")
-    return KnowledgeDocumentExtractionItem(**item)
+    review = await asyncio.to_thread(
+        stage_knowledge_document_review_items,
+        _database_path(db),
+        document_id=document_id,
+    )
+    return KnowledgeDocumentExtractionItem(**item, review=review)
 
 
 @router.get("/documents/{document_id}/preview")

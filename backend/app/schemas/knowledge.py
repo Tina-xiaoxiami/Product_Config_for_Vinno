@@ -123,6 +123,11 @@ class KnowledgeQuestionList(BaseModel):
     limit: int
 
 
+class KnowledgeDocumentExtractionReview(BaseModel):
+    item_count: int = 0
+    needs_review_count: int = 0
+
+
 class KnowledgeDocumentExtractionItem(BaseModel):
     document_id: int
     status: str
@@ -130,6 +135,7 @@ class KnowledgeDocumentExtractionItem(BaseModel):
     extracted_at: str | None = None
     extractor_version: str
     reused: bool = False
+    review: KnowledgeDocumentExtractionReview | None = None
 
 
 class KnowledgeCandidateEvidence(BaseModel):
