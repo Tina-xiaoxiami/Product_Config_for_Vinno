@@ -17,6 +17,15 @@ class LocalFileOpenResult(BaseModel):
     file_path: str
 
 
+class KnowledgeDocumentArchiveResult(BaseModel):
+    """退役一份受控资料的结果。"""
+
+    document_id: int
+    status: str
+    removed_chunks: int = 0
+    removed_extractions: int = 0
+
+
 class FeatureKnowledgeName(BaseModel):
     language: str
     name: str

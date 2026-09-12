@@ -20,6 +20,7 @@ from app.schemas.knowledge import (
     KnowledgeAnswerHistory,
     KnowledgeAnswerPublish,
     KnowledgeCandidateEvidenceList,
+    KnowledgeDocumentArchiveResult,
     KnowledgeDocumentList,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
@@ -38,6 +39,8 @@ from app.services.data_review import (
     stage_knowledge_document_review_items,
 )
 from app.services.knowledge_documents import (
+    KnowledgeDocumentInUseError,
+    archive_knowledge_document,
     get_registered_document,
     list_knowledge_documents,
 )
@@ -352,6 +355,25 @@ async def preview_document(
         filename=document["file_name"],
         content_disposition_type="inline",
     )
+
+
+@router.post(
+    "/documents/{document_id}/archive",
+    response_model=KnowledgeDocumentArchiveResult,
+)
+async def archive_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """退役一份受控资料：不再出现在列表与检索中，并清除其派生数据（原件不动）。"""
+
+    try:
+        result = await archive_knowledge_document(db, document_id=document_id)
+    except KnowledgeDocumentInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return KnowledgeDocumentArchiveResult(**result)
 
 
 @router.post("/documents/{document_id}/open-locally", response_model=LocalFileOpenResult)

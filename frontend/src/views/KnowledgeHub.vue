@@ -640,6 +640,7 @@
               >
                 本机打开
               </el-button>
+              <el-button link type="danger" @click="archiveDocument(document)">归档</el-button>
             </div>
           </article>
           <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
@@ -736,7 +737,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
 import {
   askKnowledgeQuestion,
@@ -745,6 +746,7 @@ import {
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
   openKnowledgeDocumentLocally,
+  archiveKnowledgeDocument,
   getKnowledgeFeatures,
   getKnowledgeStats,
   getKnowledgeQuestions,
@@ -1153,6 +1155,29 @@ const searchFeatures = () => {
 const onFeaturePageSizeChange = () => {
   featurePage.value = 1
   loadFeatures()
+}
+
+// 归档：退役一份受控资料。原件文件不动（受控目录由人工管理），
+// 但派生数据要被清除，且不再参与列表与检索。
+const archiveDocument = async (document) => {
+  try {
+    await ElMessageBox.confirm(
+      `归档后「${document.title}」不再出现在资料列表与问答检索中，已提取的正文片段会被清除；受控目录里的原件文件不会被删除。`,
+      '归档资料',
+      { type: 'warning', confirmButtonText: '归档', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await archiveKnowledgeDocument(document.id)
+    ElMessage.success(
+      `已归档「${document.title}」，清除正文片段 ${result.removed_chunks} 条`
+    )
+    await loadDocuments()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '归档失败')
+  }
 }
 
 const loadDocuments = async () => {

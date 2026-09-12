@@ -208,3 +208,4 @@ export const openKnowledgeDocumentLocally = (id, mode = 'open') =>
   api.post(`/knowledge/documents/${id}/open-locally`, { mode })
 export const openRegistrationArtifactLocally = (versionId, artifactType, mode = 'open') =>
   api.post(`/registrations/package-versions/${versionId}/artifacts/${artifactType}/open-locally`, { mode })
+export const archiveKnowledgeDocument = (id) => api.post(`/knowledge/documents/${id}/archive`)
