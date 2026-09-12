@@ -76,6 +76,8 @@ class RegistrationDifferenceSummary(BaseModel):
     version_id: int
     total_models: int
     total_probes: int
+    all_applicable_probes: int = 0
+    different_probes: int = 0
     models: list[RegistrationDifferenceModel] = Field(default_factory=list)
 
 

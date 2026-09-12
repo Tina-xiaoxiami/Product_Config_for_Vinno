@@ -221,8 +221,8 @@
           <div class="summary-row difference-metrics">
             <span>注册型号 <strong>{{ differenceSummary.total_models }}</strong></span>
             <span>探头范围 <strong>{{ differenceSummary.total_probes }}</strong></span>
-            <span>全部适用 <strong>{{ allApplicableCount }}</strong></span>
-            <span class="danger">存在差异 <strong>{{ differenceModelCount }}</strong></span>
+            <span>全部适用探头 <strong>{{ allApplicableProbeCount }}</strong></span>
+            <span class="danger">存在差异探头 <strong>{{ differenceProbeCount }}</strong></span>
           </div>
 
           <div class="difference-section-title">不适用/未注册探头差异（按原表格式）</div>
@@ -808,7 +808,7 @@ const packageGroups = ref([])
 const historyExpanded = ref(false)
 const registrationView = ref('summary')
 const selectedPackageVersionId = ref(null)
-const differenceSummary = ref({ total_models: 0, total_probes: 0, models: [] })
+const differenceSummary = ref({ total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] })
 const differenceQuery = ref('')
 const differenceLoading = ref(false)
 const packageDialogVisible = ref(false)
@@ -874,12 +874,9 @@ const differenceTableGroups = computed(() => {
   }
   return groups
 })
-const allApplicableCount = computed(() => differenceSummary.value.models.filter(
-  model => model.unregistered_probes.length === 0
-).length)
-const differenceModelCount = computed(() => differenceSummary.value.models.filter(
-  model => model.unregistered_probes.length > 0
-).length)
+// 全部适用/存在差异以差异对象（探头）为准：所有机型必然有差异，按机型统计没有信息量。
+const allApplicableProbeCount = computed(() => differenceSummary.value.all_applicable_probes)
+const differenceProbeCount = computed(() => differenceSummary.value.different_probes)
 const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
 const isChunkReviewRow = row => row?.data_type === 'knowledge_document_chunk'
 const reviewBatchUnit = batch => isChunkReviewRow(batch) ? '段' : '行'
@@ -1072,14 +1069,14 @@ const selectModel = async (modelId) => {
 
 const loadDifferenceSummary = async () => {
   if (!selectedPackageVersionId.value) {
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     return
   }
   differenceLoading.value = true
   try {
     differenceSummary.value = await getRegistrationDifferenceSummary(selectedPackageVersionId.value)
   } catch {
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     ElMessage.error('注册差异汇总加载失败')
   } finally {
     differenceLoading.value = false
@@ -1107,7 +1104,7 @@ const loadPackageHistory = async () => {
   } catch {
     packageGroups.value = []
     selectedPackageVersionId.value = null
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     ElMessage.error('注册资料版本加载失败')
   } finally {
     packageLoading.value = false

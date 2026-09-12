@@ -256,10 +256,26 @@ async def get_registration_difference_summary(
     ]
     models_by_id = {item["registration_model_id"]: item for item in models}
 
+    probe_result = await session.execute(
+        text(
+            """
+            SELECT id, probe_model, ipn
+            FROM registration_package_version_probes
+            WHERE version_id = :version_id
+            ORDER BY id
+            """
+        ),
+        {"version_id": version_id},
+    )
+    different_models_by_probe: dict[int, list[str]] = {
+        int(row.id): [] for row in probe_result
+    }
+
     matrix_result = await session.execute(
         text(
             """
-            SELECT matrix.version_model_id, matrix.registration_status,
+            SELECT matrix.version_model_id, matrix.version_probe_id,
+                   matrix.registration_status,
                    probe.probe_model, probe.ipn
             FROM registration_package_version_model_probes matrix
             JOIN registration_package_version_probes probe
@@ -280,13 +296,22 @@ async def get_registration_difference_summary(
             model["unregistered_probes"].append(
                 {"probe_model": row.probe_model, "ipn": row.ipn}
             )
+            excluded_by = different_models_by_probe.get(int(row.version_probe_id))
+            if excluded_by is not None:
+                excluded_by.append(model["model_name"])
         else:
             model["registered_count"] += 1
 
+    # 全部适用/存在差异以差异对象（探头）为准：所有机型必然有差异，按机型统计没有信息量。
+    different_probes = sum(
+        1 for excluded_by in different_models_by_probe.values() if excluded_by
+    )
     return {
         "version_id": int(version.id),
         "total_models": int(version.model_count),
         "total_probes": int(version.probe_count),
+        "all_applicable_probes": len(different_models_by_probe) - different_probes,
+        "different_probes": different_probes,
         "models": models,
     }
 
