@@ -414,7 +414,7 @@ async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
         )
     await engine.dispose()
 
-    assert staged.status_code == 200
+    assert staged.status_code == 200, staged.text
     assert staged.json()["status"] == "draft"
     assert hidden.json()["total"] == 0
     # 草稿快照必须出现在快照列表里，否则界面无从发现「有待发布的草稿」
@@ -427,3 +427,53 @@ async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
     assert visible.status_code == 200
     assert visible.json()["total"] == 1
     assert visible.json()["items"][0]["visible_in_current_config"] is False
+
+
+@pytest.mark.asyncio
+async def test_overseas_name_mapping_api_round_trip(tmp_path):
+    """确认映射可增、可查、可删：登记一次以后导入自动沿用。"""
+
+    controlled_file = tmp_path / "controlled.xls"
+    controlled_file.write_bytes(b"controlled overseas registration")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_overseas_registration_history_schema(database_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        created = await client.post(
+            "/api/registrations/overseas/name-mappings",
+            json={
+                "entity_type": "probe",
+                "source_name": "X4-12",
+                "target_name": "X4-12L",
+                "confirmed_by": "product_owner",
+                "change_note": "与研发确认是同一把",
+            },
+        )
+        listed = await client.get("/api/registrations/overseas/name-mappings")
+        invalid = await client.post(
+            "/api/registrations/overseas/name-mappings",
+            json={
+                "entity_type": "unknown",
+                "source_name": "X",
+                "target_name": "Y",
+                "confirmed_by": "owner",
+            },
+        )
+        deleted = await client.delete(
+            "/api/registrations/overseas/name-mappings",
+            params={"entity_type": "probe", "source_name": "X4-12"},
+        )
+        after = await client.get("/api/registrations/overseas/name-mappings")
+    await engine.dispose()
+
+    assert created.status_code == 200, created.text
+    assert created.json()["target_name"] == "X4-12L"
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["change_note"] == "与研发确认是同一把"
+    assert invalid.status_code == 422
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert after.json()["total"] == 0
