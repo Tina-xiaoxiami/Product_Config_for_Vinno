@@ -61,6 +61,52 @@ async def test_document_extraction_is_idempotent_and_feeds_pending_question_cand
 
 
 @pytest.mark.asyncio
+async def test_document_extraction_stages_chunks_into_the_review_center(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    source_path = tmp_path / "whitepaper.txt"
+    source_path.write_text(
+        "显示器功能\n环境光自动亮度调节在V10系列为标配。",
+        encoding="utf-8",
+    )
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        UPDATE knowledge_documents
+        SET file_path = ?, file_name = 'whitepaper.txt', mime_type = 'text/plain',
+            sha256 = ?
+        WHERE id = 1
+        """,
+        (str(source_path), hashlib.sha256(source_path.read_bytes()).hexdigest()),
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        extracted = await client.post("/api/knowledge/documents/1/extract")
+        items = await client.get(
+            "/api/knowledge/review-items",
+            params={"data_type": "knowledge_document_chunk", "batch_id": 1},
+        )
+    await engine.dispose()
+
+    assert extracted.status_code == 200
+    chunk_count = extracted.json()["chunk_count"]
+    assert chunk_count >= 1
+    assert extracted.json()["review"] == {
+        "item_count": chunk_count,
+        "needs_review_count": 0,
+    }
+    assert items.status_code == 200
+    assert items.json()["total"] == chunk_count
+    staged = items.json()["items"][0]
+    assert staged["data_type"] == "knowledge_document_chunk"
+    assert staged["raw_payload"]["content"]
+    assert staged["source_ref"]
+
+
+@pytest.mark.asyncio
 async def test_extraction_preserves_page_or_section_reference_and_rejects_missing_file(
     tmp_path,
 ):
