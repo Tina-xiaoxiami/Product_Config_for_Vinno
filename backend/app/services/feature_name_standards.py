@@ -482,9 +482,13 @@ def _field_payload(
 
 
 def _relation_result(
-    pairs: list[tuple[str, str, str]], label: str
+    pairs: list[tuple[str, str, str]],
+    label: str,
+    *,
+    left_label: str,
+    right_label: str,
 ) -> dict:
-    """按 (字段名, 来源值, 对比值) 计算一组关系结论。"""
+    """按 (字段名, 左侧值, 右侧值) 计算一组关系结论，提示里写清两侧来源。"""
 
     fields = []
     for name, left, right in pairs:
@@ -502,7 +506,7 @@ def _relation_result(
     elif any(item[3]["severity"] == "style" for item in fields):
         severity = "style"
     messages = [
-        f"{name}{field['label']}：「{left or '空'}」→「{right or '空'}」"
+        f"{name}{field['label']}：{left_label}「{left or '空'}」→ {right_label}「{right or '空'}」"
         for name, left, right, field in fields
         if field["severity"] != "ok"
     ]
@@ -550,6 +554,8 @@ def _config_check(feature: dict, standard_entry: dict | None) -> dict:
             ("英文描述", feature["en_name"], feature["config_en_desc"]),
         ],
         "与功能主名的描述",
+        left_label="功能主名",
+        right_label="配置管理描述",
     )
     check["feature_relation"] = feature_relation
 
@@ -566,6 +572,8 @@ def _config_check(feature: dict, standard_entry: dict | None) -> dict:
                 ("英文描述", standard_en, feature["config_en_desc"]),
             ],
             "与标准名称的描述",
+            left_label="标准名称",
+            right_label="配置管理描述",
         )
 
     relations = [feature_relation]
@@ -585,6 +593,8 @@ def _config_check(feature: dict, standard_entry: dict | None) -> dict:
         parts.append(
             "与标准名称一致" if relation["severity"] == "ok" else relation["message"]
         )
+    else:
+        parts.append("标准表未收录该功能，未与标准名称比对")
     check["message"] = "；".join(parts)
     return check
 
