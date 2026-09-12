@@ -9,6 +9,7 @@ from app.database import init_db
 from app.api import series, models, config, versions, drafts, import_export, enums, version_cleanup
 from app.api import probe_categories, probe_models as probe_models_api, applications, features, template_features, probe_config, probe_import
 from app.api import knowledge
+from app.api import feature_import
 from app.api import registration
 
 app = FastAPI(
@@ -41,6 +42,7 @@ app.include_router(probe_categories.router, prefix="/api/probe-categories", tags
 app.include_router(probe_models_api.router, prefix="/api/probe-models", tags=["探头型号"])
 app.include_router(applications.router, prefix="/api/applications", tags=["应用定义"])
 app.include_router(features.router, prefix="/api/features", tags=["功能管理"])
+app.include_router(feature_import.router, prefix="/api/features/import", tags=["功能主数据导入"])
 app.include_router(template_features.router, prefix="/api/template-features", tags=["模板配置"])
 app.include_router(probe_config.router, prefix="/api/probes/config", tags=["探头配置"])
 app.include_router(probe_import.router, prefix="/api/probes", tags=["探头导入"])

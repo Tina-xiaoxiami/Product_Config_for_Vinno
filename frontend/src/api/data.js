@@ -111,6 +111,9 @@ export const deleteFeature = (id) => api.delete(`/features/${id}`)
 export const getFeatureMasterData = (id) => api.get(`/features/${id}/master-data`)
 export const createFeatureMasterData = (data) => api.post('/features/master-data', data)
 export const updateFeatureMasterData = (id, data) => api.put(`/features/${id}/master-data`, data)
+export const downloadFeatureTemplate = () => api.get('/features/import/template', { responseType: 'blob' })
+export const previewFeatureImport = (formData) => api.post('/features/import/preview', formData)
+export const applyFeatureImport = (formData) => api.post('/features/import', formData)
 
 // 模板配置
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
