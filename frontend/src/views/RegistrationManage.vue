@@ -194,6 +194,19 @@
               placeholder="在当前注册证内搜索型号"
               :prefix-icon="Search"
             />
+            <el-select
+              v-model="differenceProbeFilter"
+              clearable
+              aria-label="按差异探头筛选"
+              placeholder="按差异探头筛选影响的机型"
+            >
+              <el-option
+                v-for="option in differenceProbeOptions"
+                :key="option.probe_model"
+                :label="differenceProbeOptionLabel(option)"
+                :value="option.probe_model"
+              />
+            </el-select>
             <div class="difference-actions">
               <el-button
                 v-if="selectedPackageGroup?.current_version"
@@ -225,7 +238,19 @@
             <span class="danger">存在差异探头 <strong>{{ differenceProbeCount }}</strong></span>
           </div>
 
-          <div class="difference-section-title">不适用/未注册探头差异（按原表格式）</div>
+          <div class="difference-section-title">
+            <span>不适用/未注册探头差异（按原表格式）</span>
+            <el-tag
+              v-if="differenceProbeFilter"
+              type="warning"
+              effect="light"
+              closable
+              class="difference-filter-tag"
+              @close="differenceProbeFilter = ''"
+            >
+              {{ differenceProbeFilter }} 影响 {{ filteredDifferenceModels.length }} 个机型
+            </el-tag>
+          </div>
           <el-empty
             v-if="differenceTableGroups.length === 0"
             description="当前注册资料包暂无型号差异数据"
@@ -252,7 +277,11 @@
                       探头全适用
                     </span>
                     <span v-else class="not-applicable">
-                      {{ model.unregistered_probes.map(probe => probe.probe_model).join('、') }}不适用
+                      <span
+                        v-for="(probe, index) in model.unregistered_probes"
+                        :key="probe.probe_model"
+                        :class="{ 'probe-hit': probe.probe_model === differenceProbeFilter }"
+                      >{{ probe.probe_model }}{{ isLastProbe(model.unregistered_probes, index) ? '' : '、' }}</span>不适用
                     </span>
                   </td>
                 </tr>
@@ -810,6 +839,7 @@ const registrationView = ref('summary')
 const selectedPackageVersionId = ref(null)
 const differenceSummary = ref({ total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] })
 const differenceQuery = ref('')
+const differenceProbeFilter = ref('')
 const differenceLoading = ref(false)
 const packageDialogVisible = ref(false)
 const certificateFile = ref(null)
@@ -862,10 +892,37 @@ const currentPackageGroups = computed(() => packageGroups.value.filter(group => 
 const selectedPackageGroup = computed(() => currentPackageGroups.value.find(
   group => group.current_version.id === selectedPackageVersionId.value
 ))
+// 差异探头反查：从各机型的「不适用探头」汇总出 探头 → 受影响机型。
+const differenceProbeOptions = computed(() => {
+  const byProbe = new Map()
+  for (const model of differenceSummary.value.models) {
+    for (const probe of model.unregistered_probes) {
+      if (!byProbe.has(probe.probe_model)) {
+        byProbe.set(probe.probe_model, { probe_model: probe.probe_model, ipn: probe.ipn, models: [] })
+      }
+      byProbe.get(probe.probe_model).models.push(model.model_name)
+    }
+  }
+  return [...byProbe.values()].sort(
+    (left, right) => right.models.length - left.models.length
+      || left.probe_model.localeCompare(right.probe_model)
+  )
+})
+const differenceProbeOptionLabel = option => (
+  `${option.probe_model}${option.ipn ? ` · ${option.ipn}` : ''}（影响 ${option.models.length} 个机型）`
+)
+const isLastProbe = (probes, index) => index === probes.length - 1
 const filteredDifferenceModels = computed(() => {
   const query = differenceQuery.value.trim().toLowerCase()
-  if (!query) return differenceSummary.value.models
-  return differenceSummary.value.models.filter(model => model.model_name.toLowerCase().includes(query))
+  const probeFilter = differenceProbeFilter.value
+  return differenceSummary.value.models.filter((model) => {
+    if (probeFilter
+      && !model.unregistered_probes.some(probe => probe.probe_model === probeFilter)) {
+      return false
+    }
+    if (query && !model.model_name.toLowerCase().includes(query)) return false
+    return true
+  })
 })
 // 每行 6 个机型、合并成一个块：原表截图是一块 3 个机型，页面再把两块并排，
 // 结果一行出现两套"型号/差异"行标签、还多一条块间距。合并后行标签只留一套，
@@ -1072,6 +1129,7 @@ const selectModel = async (modelId) => {
 }
 
 const loadDifferenceSummary = async () => {
+  differenceProbeFilter.value = ''
   if (!selectedPackageVersionId.value) {
     differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     return
@@ -1273,10 +1331,11 @@ onMounted(async () => {
 .change-table { margin-top: 10px; }
 .registration-data-tabs { margin-top: 4px; }
 .difference-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
-.difference-toolbar { display: grid; grid-template-columns: minmax(280px, 0.8fr) minmax(260px, 1fr) auto; gap: 10px; align-items: center; }
+.difference-toolbar { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) auto; gap: 10px; align-items: center; }
 .difference-actions { display: flex; gap: 8px; }
 .difference-metrics { margin-bottom: 12px; }
-.difference-section-title { margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
+.difference-section-title { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
+.difference-filter-tag { font-weight: 400; }
 /* 一块 6 个机型占满整行：行标签只出现一次，机型列拿到全部剩余宽度 */
 .difference-original-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .difference-original-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #334155; font-size: 13px; }
@@ -1287,6 +1346,7 @@ onMounted(async () => {
 .difference-original-table td small { margin-top: 3px; color: #94a3b8; font-weight: 400; }
 .all-applicable { color: #15803d; }
 .not-applicable { color: #b91c1c; }
+.not-applicable .probe-hit { padding: 0 4px; border-radius: 4px; background: #fee2e2; font-weight: 700; }
 .toolbar { display: grid; grid-template-columns: 180px minmax(280px, 1fr) auto; gap: 10px; margin-bottom: 14px; }
 .content-grid { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 14px; align-items: start; }
 .model-panel, .probe-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }
