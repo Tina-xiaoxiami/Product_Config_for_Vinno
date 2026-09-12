@@ -249,16 +249,6 @@
 
           <div class="difference-section-title">
             <span>不适用/未注册探头差异</span>
-            <el-tag
-              v-if="differenceProbeFilter"
-              type="warning"
-              effect="light"
-              closable
-              class="difference-filter-tag"
-              @close="differenceProbeFilter = ''"
-            >
-              {{ differenceProbeFilter }} 影响 {{ filteredDifferenceModels.length }} 个机型
-            </el-tag>
           </div>
           <el-empty
             v-if="differenceTableGroups.length === 0"
@@ -654,6 +644,12 @@
       <template #footer>
         <span class="artifact-preview-name">{{ artifactPreview.file_name }}</span>
         <el-button @click="artifactPreviewVisible = false">关闭</el-button>
+        <el-button link type="primary" @click="openArtifactLocally('reveal')">
+          在访达中显示
+        </el-button>
+        <el-button link type="primary" @click="openArtifactLocally('open')">
+          本机打开
+        </el-button>
         <el-button
           type="primary"
           tag="a"
@@ -973,9 +969,10 @@ const differenceProbeOptions = computed(() => {
       || left.probe_model.localeCompare(right.probe_model)
   )
 })
-// 下拉只给探头型号：IPN 在这里没有决策价值，留着只会把标签撑长、挤压"影响 N 个机型"
+// 下拉只给「型号（受影响机型数）」：IPN 没有决策价值，
+// "影响 N 个机型"这类说明也不必写在每一项里，标题与筛选控件本身已交代口径
 const differenceProbeOptionLabel = option => (
-  `${option.probe_model}（影响 ${option.models.length} 个机型）`
+  `${option.probe_model}（${option.models.length}）`
 )
 const isLastProbe = (probes, index) => index === probes.length - 1
 const filteredDifferenceModels = computed(() => {
@@ -1013,12 +1010,14 @@ const artifactPreviewTitle = ref('原件预览')
 const artifactPreviewDownloadUrl = ref('')
 const artifactPreviewSheet = ref('')
 const artifactPreview = ref({ file_name: '', sheets: [] })
+const artifactPreviewTarget = ref({ versionId: null, artifactType: '' })
 
 const openArtifactPreview = async (version, artifactType) => {
   const artifact = artifactType === 'certificate' ? version?.certificate : version?.difference
   if (!artifact) return
   artifactPreviewTitle.value = `${ARTIFACT_PREVIEW_LABEL[artifactType] || '原件'}预览`
   artifactPreviewDownloadUrl.value = artifact.preview_url
+  artifactPreviewTarget.value = { versionId: version.id, artifactType }
   artifactPreviewVisible.value = true
   artifactPreviewLoading.value = true
   artifactPreview.value = { file_name: '', sheets: [] }
@@ -1032,6 +1031,22 @@ const openArtifactPreview = async (version, artifactType) => {
     ElMessage.error(error?.response?.data?.detail || '原件在线预览失败，请下载原件查看')
   } finally {
     artifactPreviewLoading.value = false
+  }
+}
+
+// 后端就跑在本机，因此可直接调用系统默认程序打开原件（仅本机请求有效）。
+const openArtifactLocally = async (mode) => {
+  const { versionId, artifactType } = artifactPreviewTarget.value
+  if (!versionId || !artifactType) return
+  try {
+    const result = await openRegistrationArtifactLocally(versionId, artifactType, mode)
+    ElMessage.success(
+      mode === 'reveal'
+        ? `已在访达中定位 ${result.file_name}`
+        : `已在本机打开 ${result.file_name}`
+    )
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '本机打开失败')
   }
 }
 const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
@@ -1437,7 +1452,6 @@ onMounted(async () => {
 .difference-metrics { align-items: center; margin-bottom: 12px; }
 .difference-probe-filter { flex: 0 0 240px; width: 240px; }
 .difference-section-title { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
-.difference-filter-tag { font-weight: 400; }
 /* 一块 6 个机型占满整行：行标签只出现一次，机型列拿到全部剩余宽度 */
 .difference-original-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .difference-original-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #334155; font-size: 13px; }

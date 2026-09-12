@@ -16,10 +16,11 @@ test('difference summary filters affected models by difference probe', () => {
   assert.match(view, /option\.models\.length/)
   assert.match(view, /for \(const probe of model\.unregistered_probes\)/)
 
-  // 选中后只保留受影响机型，提示条可关闭
+  // 选中后只保留受影响机型；筛选状态由下拉自身承载（clearable），不再另挂提示条
   assert.match(view, /probe\.probe_model === probeFilter/)
-  assert.match(view, /filteredDifferenceModels\.length/)
-  assert.match(view, /@close="differenceProbeFilter = ''"/)
+  assert.match(view, /for \(let index = 0; index < filteredDifferenceModels\.value\.length/)
+  assert.match(view, /v-model="differenceProbeFilter"[\s\S]{0,400}clearable/)
+  assert.doesNotMatch(view, /difference-filter-tag/)
 
   // 命中的探头在单元格内高亮，原有「不适用」口径保持不变
   assert.match(view, /'probe-hit': probe\.probe_model === differenceProbeFilter/)
@@ -29,9 +30,10 @@ test('difference summary filters affected models by difference probe', () => {
   // 切换注册资料包时清空该筛选
   assert.match(view, /differenceProbeFilter\.value = ''/)
 
-  // 下拉项只给探头型号：不体现 IPN
-  assert.match(view, /`\$\{option\.probe_model\}（影响 \$\{option\.models\.length\} 个机型）`/)
+  // 下拉项精简成「型号（受影响机型数）」：不体现 IPN，也不再写"影响…个机型"的说明
+  assert.match(view, /`\$\{option\.probe_model\}（\$\{option\.models\.length\}）`/)
   assert.doesNotMatch(view, /option\.ipn/)
+  assert.doesNotMatch(view, /影响 \$\{option\.models\.length\} 个机型/)
 
   // 筛选控件排在「存在差异探头」这个数字之后，不再占顶部工具栏的轨道
   const metricsIndex = view.indexOf('存在差异探头')
