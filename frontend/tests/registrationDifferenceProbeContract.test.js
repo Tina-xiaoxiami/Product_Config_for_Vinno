@@ -28,4 +28,15 @@ test('difference summary filters affected models by difference probe', () => {
 
   // 切换注册资料包时清空该筛选
   assert.match(view, /differenceProbeFilter\.value = ''/)
+
+  // 下拉项只给探头型号：不体现 IPN
+  assert.match(view, /`\$\{option\.probe_model\}（影响 \$\{option\.models\.length\} 个机型）`/)
+  assert.doesNotMatch(view, /option\.ipn/)
+
+  // 筛选控件排在「存在差异探头」这个数字之后，不再占顶部工具栏的轨道
+  const metricsIndex = view.indexOf('存在差异探头')
+  const filterIndex = view.indexOf('v-model="differenceProbeFilter"')
+  assert.ok(metricsIndex > 0 && filterIndex > metricsIndex, '按差异探头筛选应排在「存在差异探头」之后')
+  assert.match(view, /grid-template-columns: minmax\(240px, 0\.8fr\) minmax\(220px, 1fr\) auto;/)
+  assert.match(view, /\.difference-probe-filter \{ flex: 0 0 240px; width: 240px; \}/)
 })

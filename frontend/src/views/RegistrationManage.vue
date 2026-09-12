@@ -191,19 +191,6 @@
               placeholder="在当前注册证内搜索型号"
               :prefix-icon="Search"
             />
-            <el-select
-              v-model="differenceProbeFilter"
-              clearable
-              aria-label="按差异探头筛选"
-              placeholder="按差异探头筛选影响的机型"
-            >
-              <el-option
-                v-for="option in differenceProbeOptions"
-                :key="option.probe_model"
-                :label="differenceProbeOptionLabel(option)"
-                :value="option.probe_model"
-              />
-            </el-select>
             <div class="difference-actions">
               <el-button
                 v-if="selectedPackageGroup?.current_version"
@@ -241,6 +228,23 @@
             <span>探头范围 <strong>{{ differenceSummary.total_probes }}</strong></span>
             <span>全部适用探头 <strong>{{ allApplicableProbeCount }}</strong></span>
             <span class="danger">存在差异探头 <strong>{{ differenceProbeCount }}</strong></span>
+            <!-- 紧跟在它筛选的那个数字之后，而不是跟资料包/搜索框挤在顶部工具栏 -->
+            <el-select
+              v-model="differenceProbeFilter"
+              class="difference-probe-filter"
+              data-testid="difference-probe-filter"
+              size="small"
+              clearable
+              aria-label="按差异探头筛选"
+              placeholder="按差异探头筛选影响的机型"
+            >
+              <el-option
+                v-for="option in differenceProbeOptions"
+                :key="option.probe_model"
+                :label="differenceProbeOptionLabel(option)"
+                :value="option.probe_model"
+              />
+            </el-select>
           </div>
 
           <div class="difference-section-title">
@@ -959,7 +963,7 @@ const differenceProbeOptions = computed(() => {
   for (const model of differenceSummary.value.models) {
     for (const probe of model.unregistered_probes) {
       if (!byProbe.has(probe.probe_model)) {
-        byProbe.set(probe.probe_model, { probe_model: probe.probe_model, ipn: probe.ipn, models: [] })
+        byProbe.set(probe.probe_model, { probe_model: probe.probe_model, models: [] })
       }
       byProbe.get(probe.probe_model).models.push(model.model_name)
     }
@@ -969,8 +973,9 @@ const differenceProbeOptions = computed(() => {
       || left.probe_model.localeCompare(right.probe_model)
   )
 })
+// 下拉只给探头型号：IPN 在这里没有决策价值，留着只会把标签撑长、挤压"影响 N 个机型"
 const differenceProbeOptionLabel = option => (
-  `${option.probe_model}${option.ipn ? ` · ${option.ipn}` : ''}（影响 ${option.models.length} 个机型）`
+  `${option.probe_model}（影响 ${option.models.length} 个机型）`
 )
 const isLastProbe = (probes, index) => index === probes.length - 1
 const filteredDifferenceModels = computed(() => {
@@ -1427,9 +1432,10 @@ onMounted(async () => {
 .artifact-preview-table th, .artifact-preview-table td { padding: 5px 8px; border: 1px solid #e2e8f0; text-align: left; white-space: nowrap; }
 .artifact-preview-table th { position: sticky; left: 0; background: #f8fafc; color: #94a3b8; font-weight: 400; text-align: right; }
 .artifact-preview-name { float: left; color: #94a3b8; font-size: 12px; line-height: 32px; }
-.difference-toolbar { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) auto; gap: 10px; align-items: center; }
+.difference-toolbar { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) auto; gap: 10px; align-items: center; }
 .difference-actions { display: flex; gap: 8px; }
-.difference-metrics { margin-bottom: 12px; }
+.difference-metrics { align-items: center; margin-bottom: 12px; }
+.difference-probe-filter { flex: 0 0 240px; width: 240px; }
 .difference-section-title { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
 .difference-filter-tag { font-weight: 400; }
 /* 一块 6 个机型占满整行：行标签只出现一次，机型列拿到全部剩余宽度 */
