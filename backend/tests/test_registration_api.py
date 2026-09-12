@@ -323,6 +323,10 @@ async def test_registration_difference_summary_matches_original_compact_table(tm
     assert body["version_id"] == package["id"]
     assert body["total_models"] == 3
     assert body["total_probes"] == 3
+    # 差异对象口径：全部适用/存在差异按探头统计，而不是按机型
+    # （F2-5C 被 VINNO 10E 排除、G1-4P 与 F4-9E 被 VINNO 9 排除，三把探头均有差异）
+    assert body["all_applicable_probes"] == 0
+    assert body["different_probes"] == 3
     assert body["models"] == [
         {
             "registration_model_id": body["models"][0]["registration_model_id"],
