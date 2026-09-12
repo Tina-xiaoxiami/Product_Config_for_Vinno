@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from app.database import get_db
 from app.models import ConfigVersion, ProductSeries
+from app.utils.time import utcnow
 
 router = APIRouter()
 
@@ -65,7 +66,7 @@ async def check_version_policy(
     - 近1个月（30天）：全部保留
     - 超过1个月：每半个月（15天）保留1个版本
     """
-    now = datetime.utcnow()
+    now = utcnow()
     one_month_ago = now - timedelta(days=30)
 
     # 获取所有版本，按系列分组

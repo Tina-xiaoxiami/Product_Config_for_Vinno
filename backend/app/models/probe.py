@@ -2,6 +2,7 @@
 from sqlalchemy import Column, Integer, String, Text, Boolean, Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class ProbeCategory(Base):
@@ -182,7 +183,7 @@ class ProbeConfigDraft(Base):
     new_current = Column(String(20))
     old_excludes = Column(Text)
     new_excludes = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
 
 
 class ProbeConfigVersion(Base):
@@ -193,7 +194,7 @@ class ProbeConfigVersion(Base):
     version_number = Column(String(50), nullable=False)
     snapshot_data = Column(Text, nullable=False)  # JSON: full config state
     description = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
     __table_args__ = (UniqueConstraint("product_model_id", "version_number", name="uq_probe_version"),)
 
 
@@ -207,7 +208,7 @@ class TemplateDraft(Base):
     new_support = Column(String(20))
     old_excludes = Column(Text)
     new_excludes = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
 
 
 class TemplateVersion(Base):
@@ -217,7 +218,7 @@ class TemplateVersion(Base):
     version_number = Column(String(50), nullable=False)
     snapshot_data = Column(Text, nullable=False)
     description = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
 
 
 class ApplicationVersion(Base):
@@ -227,7 +228,7 @@ class ApplicationVersion(Base):
     version_number = Column(String(50), nullable=False)
     snapshot_data = Column(Text, nullable=False)  # JSON: category-application associations
     description = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
 
 
 class SeriesProbeConfigVersion(Base):
@@ -239,4 +240,4 @@ class SeriesProbeConfigVersion(Base):
     version_number = Column(String(50), nullable=False)
     snapshot_data = Column(Text, nullable=False)  # JSON: full merged matrix
     description = Column(Text)
-    created_at = Column(String(30), default=lambda: __import__('datetime').datetime.utcnow().isoformat())
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())

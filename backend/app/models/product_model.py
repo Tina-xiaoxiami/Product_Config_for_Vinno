@@ -1,11 +1,11 @@
 """
 产品型号模型
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class ProductModel(Base):
@@ -21,8 +21,8 @@ class ProductModel(Base):
     column_end = Column(Integer)
     sort_order = Column(Integer, default=0)
     config_group = Column(String(200), nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # 关系
     series = relationship("ProductSeries", back_populates="product_models")

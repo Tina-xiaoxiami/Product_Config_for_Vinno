@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import json
 from app.database import get_db
+from app.utils.time import utcnow
 from app.models.probe import TemplateFeature, TemplateDraft, TemplateVersion, FeatureGroup, Feature, ProbeCategory
 from app.schemas.probe import TemplateFeatureCreate, TemplateFeatureUpdate, TemplateFeatureResponse
 
@@ -86,7 +87,7 @@ async def submit_drafts(data: dict = None, db: AsyncSession = Depends(get_db)):
     # Create version snapshot
     all_tpl = await db.execute(select(TemplateFeature))
     snap = [{"category_id": t.category_id, "feature_id": t.feature_id, "default_support": t.default_support, "default_excludes": t.default_excludes} for t in all_tpl.scalars().all()]
-    ver_num = (data or {}).get("version_number") or f"v{__import__('datetime').datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    ver_num = (data or {}).get("version_number") or f"v{utcnow().strftime('%Y%m%d%H%M%S')}"
     db.add(TemplateVersion(version_number=ver_num, snapshot_data=json.dumps(snap, ensure_ascii=False)))
     await db.commit()
     return {"message": f"提交成功，版本 {ver_num}，应用 {applied} 项变更"}

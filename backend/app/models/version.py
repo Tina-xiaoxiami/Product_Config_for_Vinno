@@ -2,11 +2,11 @@
 版本控制模型
 """
 import json
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class ConfigVersion(Base):
@@ -25,8 +25,8 @@ class ConfigVersion(Base):
     changes_summary = Column(Text)  # JSON格式变更摘要
 
     published_by = Column(String(100))
-    published_at = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    published_at = Column(DateTime, default=utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     # 关系
     series = relationship("ProductSeries", back_populates="config_versions")
@@ -64,7 +64,7 @@ class ChangeLog(Base):
     old_value = Column(Text)
     new_value = Column(Text)
     changed_by = Column(String(100))
-    changed_at = Column(DateTime, default=datetime.utcnow, index=True)
+    changed_at = Column(DateTime, default=utcnow, index=True)
 
     # 关系
     series = relationship("ProductSeries", back_populates="change_logs")
