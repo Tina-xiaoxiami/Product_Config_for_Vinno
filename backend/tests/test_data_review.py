@@ -321,3 +321,109 @@ async def test_review_center_api_lists_and_edits_one_source_row(tmp_path):
     assert updated.status_code == 200
     assert updated.json()["effective_payload"]["model_raw"] == "VINNO 10"
     assert history.json()["items"][0]["change_note"] == "OCR 修正"
+
+
+def _status_preview(
+    controlled_file: Path,
+    *,
+    status: str,
+    ready: bool,
+    codes: tuple[str, ...],
+) -> OverseasRegistrationPreview:
+    """构造一行指定注册状态的预览，用于验证审核口径。"""
+
+    digest = hashlib.sha256(controlled_file.read_bytes()).hexdigest()
+    return OverseasRegistrationPreview(
+        source_file=str(controlled_file),
+        source_sha256=digest,
+        snapshot_date="2026-08-19",
+        records=(
+            OverseasRegistrationRecord(
+                sheet_name="进行中-暂未收到销售反馈",
+                source_row=2,
+                source_ref="进行中-暂未收到销售反馈!A2:C2",
+                jurisdiction_raw="泰国",
+                jurisdiction_name="泰国",
+                jurisdiction_code="TH",
+                authority=None,
+                registration_status=status,
+                address_version="unspecified",
+                model_raw="VINNO10",
+                probe_raw="S2-9C",
+                models=("VINNO10",),
+                probes=("S2-9C",),
+                ready_for_import=ready,
+                issue_codes=codes,
+            ),
+        ),
+        relations=(),
+        summary={
+            "source_rows": 1,
+            "ready_rows": int(ready),
+            "review_rows": int(not ready),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_completed_rows_are_kept_as_excluded_records(tmp_path):
+    """注册状态非「已完成」的行只作记录保留：不进待确认队列，也不算可用数据。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+
+    staged = stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_status_preview(
+            controlled_file,
+            status="in_progress",
+            ready=False,
+            codes=("non_final_status",),
+        ),
+    )
+
+    assert staged == {"item_count": 1, "needs_review_count": 0}
+
+    connection = sqlite3.connect(database_path)
+    row = connection.execute(
+        """
+        SELECT review_status, issue_codes_json, change_note
+        FROM data_review_items WHERE batch_id = 7
+        """
+    ).fetchone()
+    connection.close()
+
+    assert row is not None
+    assert row[0] == "excluded"
+    assert "non_final_status" in row[1]
+    assert "非已完成" in (row[2] or "")
+
+
+@pytest.mark.asyncio
+async def test_completed_rows_with_writing_issues_still_need_review(tmp_path):
+    """状态是已完成、但写法有疑问的行仍然必须进待确认队列。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+
+    staged = stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_status_preview(
+            controlled_file,
+            status="completed",
+            ready=False,
+            codes=("model_scope_requires_expansion",),
+        ),
+    )
+
+    assert staged == {"item_count": 1, "needs_review_count": 1}
