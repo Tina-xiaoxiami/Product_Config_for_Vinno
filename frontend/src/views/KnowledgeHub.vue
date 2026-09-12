@@ -367,7 +367,40 @@
             <el-option label="# 未注册" value="#" />
             <el-option label="未定义" value="未定义" />
           </el-select>
-          <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
+          <div class="registration-toolbar-actions">
+            <el-popover
+              v-model:visible="registrationColumnSettingsVisible"
+              data-testid="registration-column-settings"
+              trigger="click"
+              placement="bottom-end"
+              :width="230"
+            >
+              <template #reference>
+                <el-button :icon="Operation">列显示</el-button>
+              </template>
+              <div class="column-settings">
+                <div class="column-settings-head">
+                  <span class="column-settings-title">附件列</span>
+                  <el-button link size="small" @click="resetRegistrationExtraColumns">重置</el-button>
+                </div>
+                <div class="column-settings-list single-column">
+                  <el-checkbox
+                    v-for="option in registrationExtraColumnOptions"
+                    :key="option.key"
+                    :model-value="registrationExtraColumns[option.key]"
+                    :data-testid="`registration-extra-column-${option.key}`"
+                    @update:model-value="setRegistrationExtraColumn(option.key, $event)"
+                  >
+                    {{ option.label }}
+                  </el-checkbox>
+                </div>
+                <p class="column-settings-note">
+                  「选型类别（正式）」「当前配置（备注）」默认不显示：判定依据列已写明这两项的取值与结论。
+                </p>
+              </div>
+            </el-popover>
+            <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
+          </div>
         </section>
 
         <div v-loading="registrationLoading" class="registration-groups">
@@ -390,16 +423,26 @@
                   </el-tag>
                 </div>
               </div>
-              <el-button
-                tag="a"
-                :icon="View"
-                :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
-                target="_blank"
-                rel="noopener"
-                :disabled="!group.source_document_id"
-              >
-                本证注册差异表原文
-              </el-button>
+              <div class="registration-header-actions">
+                <el-button
+                  v-if="registrationColumnWidthsCustomized"
+                  link
+                  size="small"
+                  @click="resetRegistrationColumnWidths"
+                >
+                  重置列宽
+                </el-button>
+                <el-button
+                  tag="a"
+                  :icon="View"
+                  :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
+                  target="_blank"
+                  rel="noopener"
+                  :disabled="!group.source_document_id"
+                >
+                  本证注册差异表原文
+                </el-button>
+              </div>
             </header>
 
             <section class="registration-summary" aria-label="本注册证判定分布">
@@ -419,41 +462,74 @@
               </button>
             </section>
 
-            <div v-if="activeSummaryTile(group)" class="registration-filter-hint">
-              <el-tag type="primary" effect="light" closable @close="clearSummaryTile(group)">
-                已按「{{ summaryTileLabel(activeSummaryTile(group)) }}」筛选 · 显示
-                {{ filteredRegistrationItems(group).length }} / {{ (group.items || []).length }} 条
+            <div v-if="activeSummaryTile(group) || hasColumnFilter(group)" class="registration-filter-hint">
+              <el-tag type="primary" effect="light" closable @close="clearRegistrationFilters(group)">
+                <template v-if="activeSummaryTile(group)">
+                  已按「{{ summaryTileLabel(activeSummaryTile(group)) }}」筛选
+                </template>
+                <template v-else>已按表头列筛选</template>
+                <template v-if="activeSummaryTile(group) && hasColumnFilter(group)"> + 列筛选</template>
+                · 显示 {{ registrationFilterCount(group) }}
               </el-tag>
             </div>
 
             <el-table
               data-testid="registration-strategy-table"
               :data="filteredRegistrationItems(group)"
+              :ref="(element) => setRegistrationTableRef(group, element)"
               border
               stripe
               max-height="min(58vh, 520px)"
-              :empty-text="activeSummaryTile(group) ? '本注册证下没有该判定结果的探头' : '本注册证下没有符合筛选条件的探头'"
+              :empty-text="registrationEmptyText(group)"
               class="registration-table"
+              @filter-change="(filters) => onColumnFilterChange(group, filters)"
+              @header-dragend="(newWidth, oldWidth, column, source) => onRegistrationHeaderDragend(group, newWidth, oldWidth, column, source)"
             >
-              <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
-              <el-table-column prop="ipn" label="IPN" min-width="115" />
-              <el-table-column prop="config_name" label="配置名称" min-width="180">
+              <el-table-column prop="probe_model" label="探头型号" :min-width="registrationColumnWidths.probe_model" fixed="left" />
+              <el-table-column prop="ipn" label="IPN" :min-width="registrationColumnWidths.ipn" />
+              <el-table-column prop="config_name" label="配置名称" :min-width="registrationColumnWidths.config_name">
                 <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
               </el-table-column>
-              <el-table-column label="注册状态" min-width="105" align="center">
+              <el-table-column
+                column-key="registration_status"
+                label="注册状态"
+                :min-width="registrationColumnWidths.registration_status"
+                align="center"
+                :filters="registrationStatusColumnFilters"
+                :filter-method="filterRegistrationStatus"
+                filter-placement="bottom-end"
+              >
                 <template #default="scope">
                   <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
                     {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="选型类别（正式）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
+              <!-- 最终判定不设 fixed="right"：它排在中部，钉右侧会让"判定依据"在横向滚动时
+                   跑到它左边，与要求的列顺序相反。 -->
+              <el-table-column
+                column-key="effective_status"
+                label="最终判定"
+                :min-width="registrationColumnWidths.effective_status"
+                align="center"
+                :filters="effectiveStatusColumnFilters"
+                :filter-method="filterEffectiveStatus"
+                filter-placement="bottom-end"
+              >
+                <template #default="scope">
+                  <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
+                    {{ displayConfigStatus(scope.row.effective_status) }}
+                  </el-tag>
+                </template>
               </el-table-column>
-              <el-table-column label="当前配置（备注）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
-              </el-table-column>
-              <el-table-column label="判定依据" min-width="205">
+              <el-table-column
+                column-key="status_source"
+                label="判定依据"
+                :min-width="registrationColumnWidths.status_source"
+                :filters="statusSourceColumnFilters"
+                :filter-method="filterStatusSource"
+                filter-placement="bottom-end"
+              >
                 <template #default="scope">
                   <span>{{ statusSourceLabel(scope.row.status_source) }}</span>
                   <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
@@ -462,14 +538,25 @@
                   </div>
                 </template>
               </el-table-column>
-              <!-- 最终判定声明在最后：窄窗口时 fixed="right" 把它钉在右侧，
-                   宽窗口不产生横向滚动时它依然是最后一列，两种宽度下列顺序一致。 -->
-              <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
-                <template #default="scope">
-                  <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
-                    {{ displayConfigStatus(scope.row.effective_status) }}
-                  </el-tag>
-                </template>
+              <!-- 附件列：默认不显示（工具栏「列显示」可打开，选择被记住）；
+                   放在判定链之后，打开时不打乱 注册状态 → 最终判定 → 判定依据 的阅读顺序。 -->
+              <el-table-column
+                v-if="registrationExtraColumns.selection_config"
+                column-key="selection_config"
+                label="选型类别（正式）"
+                :min-width="registrationColumnWidths.selection_config"
+                align="center"
+              >
+                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
+              </el-table-column>
+              <el-table-column
+                v-if="registrationExtraColumns.current_config"
+                column-key="current_config"
+                label="当前配置（备注）"
+                :min-width="registrationColumnWidths.current_config"
+                align="center"
+              >
+                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
               </el-table-column>
             </el-table>
           </article>
@@ -632,7 +719,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Document, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
 import {
@@ -799,26 +886,183 @@ const statusSourceLabel = (source) => ({
 // 判定分布卡片：点击即在当前注册证内筛选表格。
 // 只筛选已加载的数据、不重新请求后端——后端 summary 是对"筛选后数据"再统计的，
 // 走服务端筛选会把分布数字自己塌成 0，卡片就失去"看分布"的意义。
+// 顺序即渲染顺序：已注册 → 策略分布（标配/选配/招标支持/未定义）→ 例外态未注册。
 const registrationSummaryTiles = [
   { key: 'registered', label: '已注册', field: 'registered', dimension: 'registration', status: 'registered' },
-  { key: 'unregistered', label: '未注册', field: 'unregistered', dimension: 'registration', status: 'unregistered', tone: 'danger' },
   { key: 'standard', label: '标配', field: 'standard', dimension: 'effective', status: 'X' },
   { key: 'optional', label: '选配', field: 'optional', dimension: 'effective', status: 'O' },
   { key: 'tender', label: '招标支持', field: 'tender', dimension: 'effective', status: 'Δ' },
-  { key: 'undefined', label: '策略未定义', field: 'undefined', dimension: 'effective', status: '未定义' }
+  { key: 'undefined', label: '策略未定义', field: 'undefined', dimension: 'effective', status: '未定义' },
+  { key: 'unregistered', label: '未注册', field: 'unregistered', dimension: 'registration', status: 'unregistered', tone: 'danger' }
 ]
 const summaryTileFilters = ref({})
 
 const activeSummaryTile = (group) => summaryTileFilters.value[group.registration_package_id] || ''
 const summaryTileLabel = (key) => registrationSummaryTiles.find(tile => tile.key === key)?.label || ''
 const summaryTile = (group) => registrationSummaryTiles.find(tile => tile.key === activeSummaryTile(group))
+
+// 列筛选：表头的漏斗按列取值筛选，同样只作用于已加载数据，和卡片筛选叠加生效。
+// column-key 必须显式给，Element Plus 的 filter-change 用它作为键，
+// 卡片筛选与列筛选共用同一个过滤函数，提示条上的条数才和表格实际行数一致。
+const registrationStatusColumnFilters = [
+  { text: '已注册', value: 'registered' },
+  { text: '# 未注册', value: 'unregistered' }
+]
+const effectiveStatusColumnFilters = [
+  { text: 'X 标配', value: 'X' },
+  { text: 'O 选配', value: 'O' },
+  { text: 'Δ 招标支持', value: 'Δ' },
+  { text: '# 未注册', value: '#' },
+  { text: '未定义', value: '未定义' }
+]
+const statusSourceColumnFilters = [
+  { text: '注册红线', value: 'registration_redline' },
+  { text: '正式选型类别', value: 'selection_config' },
+  { text: '选型类别未定义', value: 'missing' }
+]
+const filterRegistrationStatus = (value, row) => row.registration_status === value
+const filterEffectiveStatus = (value, row) => row.effective_status === value
+const filterStatusSource = (value, row) => row.status_source === value
+const registrationColumnFilterMethods = {
+  registration_status: filterRegistrationStatus,
+  effective_status: filterEffectiveStatus,
+  status_source: filterStatusSource
+}
+const columnFilters = ref({})
+const registrationTableRefs = {}
+
+// 列宽：默认值按"窄窗口也不出横向滚动条、超长内容自适应换行"给，
+// 合计 750px，在 1074 窗口（表格可用约 764px）下正好装得下。
+// 用户拖拽表头边框调过的宽度写入 localStorage，下次进入沿用；重置列宽恢复默认。
+const REGISTRATION_COLUMN_WIDTH_KEY = 'knowledge_registration_column_widths'
+const registrationColumnDefaults = {
+  probe_model: 110,
+  ipn: 95,
+  config_name: 150,
+  registration_status: 105,
+  effective_status: 110,
+  status_source: 180,
+  // 附件列默认不显示，宽度只在使用者打开后参与布局，不影响默认不出现滚动条
+  selection_config: 130,
+  current_config: 130
+}
+// 默认显示的列：合计 750px，在 1074 窗口（表格可用约 764px）下正好装得下
+const REGISTRATION_DEFAULT_VISIBLE_COLUMNS = [
+  'probe_model',
+  'ipn',
+  'config_name',
+  'registration_status',
+  'effective_status',
+  'status_source'
+]
+// 附件列：默认不显示，可由工具栏「列显示」打开，选择写入 localStorage
+const REGISTRATION_EXTRA_COLUMN_KEY = 'knowledge_registration_extra_columns'
+const registrationExtraColumnOptions = [
+  { key: 'selection_config', label: '选型类别（正式）' },
+  { key: 'current_config', label: '当前配置（备注）' }
+]
+const registrationExtraColumns = reactive((() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REGISTRATION_EXTRA_COLUMN_KEY) || 'null')
+    return {
+      selection_config: saved?.selection_config === true,
+      current_config: saved?.current_config === true
+    }
+  } catch {
+    return { selection_config: false, current_config: false }
+  }
+})())
+const registrationColumnSettingsVisible = ref(false)
+const setRegistrationExtraColumn = (key, visible) => {
+  if (!(key in registrationExtraColumns)) return
+  registrationExtraColumns[key] = visible === true
+  try {
+    localStorage.setItem(REGISTRATION_EXTRA_COLUMN_KEY, JSON.stringify(registrationExtraColumns))
+  } catch {
+    // 存储不可用（隐私模式等）时保持本次会话内的选择
+  }
+}
+const resetRegistrationExtraColumns = () => {
+  registrationExtraColumns.selection_config = false
+  registrationExtraColumns.current_config = false
+  try {
+    localStorage.removeItem(REGISTRATION_EXTRA_COLUMN_KEY)
+  } catch {
+    // 同上
+  }
+}
+const registrationColumnWidths = reactive((() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REGISTRATION_COLUMN_WIDTH_KEY) || 'null')
+    return { ...registrationColumnDefaults, ...(saved && typeof saved === 'object' ? saved : {}) }
+  } catch {
+    return { ...registrationColumnDefaults }
+  }
+})())
+const registrationColumnWidthsCustomized = computed(() => Object.keys(registrationColumnDefaults)
+  .some(key => registrationColumnWidths[key] !== registrationColumnDefaults[key]))
+const onRegistrationHeaderDragend = (group, newWidth, oldWidth, column) => {
+  const key = column?.columnKey || column?.property || ''
+  if (!(key in registrationColumnWidths) || !(newWidth > 0)) return
+  // 保底 80px（Element Plus 自身的列宽下限），避免把列拖成一条缝、表头整行折行
+  registrationColumnWidths[key] = Math.max(80, Math.round(newWidth))
+  try {
+    localStorage.setItem(REGISTRATION_COLUMN_WIDTH_KEY, JSON.stringify(registrationColumnWidths))
+  } catch {
+    // 存储不可用（隐私模式等）时保持本次会话内的调整
+  }
+  // Element Plus 拖动不做下限钳制，且会把宽度写成内部固定宽度；留着这个固定宽度，
+  // "重置列宽"和后续对该列的调整都会被它压住。这里统一清掉，让布局回到 min-width 驱动
+  // （也就是上面刚写入的值），钳制与重置因此都能立即生效。
+  column.width = undefined
+  column.realWidth = undefined
+  registrationTableRefs[group.registration_package_id]?.doLayout?.()
+}
+const resetRegistrationColumnWidths = () => {
+  Object.assign(registrationColumnWidths, registrationColumnDefaults)
+  try {
+    localStorage.removeItem(REGISTRATION_COLUMN_WIDTH_KEY)
+  } catch {
+    // 同上
+  }
+}
+
+const setRegistrationTableRef = (group, element) => {
+  const id = group.registration_package_id
+  if (element) registrationTableRefs[id] = element
+  else delete registrationTableRefs[id]
+}
+const activeColumnFilters = (group) => Object.entries(columnFilters.value[group.registration_package_id] || {})
+  .filter(([, values]) => (values || []).length > 0)
+const hasColumnFilter = (group) => activeColumnFilters(group).length > 0
+const onColumnFilterChange = (group, filters) => {
+  const id = group.registration_package_id
+  columnFilters.value = {
+    ...columnFilters.value,
+    [id]: { ...(columnFilters.value[id] || {}), ...filters }
+  }
+}
 const filteredRegistrationItems = (group) => {
   const items = group.items || []
   const tile = summaryTile(group)
-  if (!tile) return items
-  return items.filter(item => (tile.dimension === 'registration'
-    ? item.registration_status === tile.status
-    : item.effective_status === tile.status))
+  const activeFilters = activeColumnFilters(group)
+  if (!tile && activeFilters.length === 0) return items
+  return items.filter(item => {
+    if (tile) {
+      const matched = tile.dimension === 'registration'
+        ? item.registration_status === tile.status
+        : item.effective_status === tile.status
+      if (!matched) return false
+    }
+    return activeFilters.every(([key, values]) => values.some(
+      value => registrationColumnFilterMethods[key]?.(value, item)
+    ))
+  })
+}
+const registrationEmptyText = (group) => {
+  if (activeSummaryTile(group)) return '本注册证下没有该判定结果的探头'
+  if (hasColumnFilter(group)) return '本注册证下没有符合列筛选条件的探头'
+  return '本注册证下没有符合筛选条件的探头'
 }
 const toggleSummaryTile = (group, key) => {
   const id = group.registration_package_id
@@ -832,6 +1076,15 @@ const clearSummaryTile = (group) => {
   delete next[group.registration_package_id]
   summaryTileFilters.value = next
 }
+const clearRegistrationFilters = (group) => {
+  // clearFilter() 静默重置 Element Plus 内部筛选，不会再触发 filter-change，本地状态要一起清
+  registrationTableRefs[group.registration_package_id]?.clearFilter?.()
+  clearSummaryTile(group)
+  const next = { ...columnFilters.value }
+  delete next[group.registration_package_id]
+  columnFilters.value = next
+}
+const registrationFilterCount = (group) => `${filteredRegistrationItems(group).length} / ${(group.items || []).length} 条`
 
 const aliasesByLanguage = (feature, language) => (feature.names || []).filter(
   name => name.name_type === 'alias' && name.language === language
@@ -941,6 +1194,7 @@ const loadRegistrationProbes = async () => {
     registrationGroups.value = result.registrations || []
     registrationProductModelName.value = result.product_model_name || ''
     summaryTileFilters.value = {}
+    columnFilters.value = {}
   } catch {
     ElMessage.error('注册与策略数据加载失败')
   } finally {
@@ -1187,6 +1441,8 @@ onMounted(() => {
 .column-settings-head { display: flex; align-items: center; justify-content: space-between; }
 .column-settings-title { font-weight: 600; color: #1f2937; }
 .column-settings-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.column-settings-list.single-column { grid-template-columns: 1fr; }
+.column-settings-note { margin: 0; color: #6b7280; font-size: 12px; line-height: 1.5; }
 .column-settings-list :deep(.el-checkbox) { margin-right: 0; }
 .feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
 .feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; background: #fff; }
@@ -1227,11 +1483,13 @@ onMounted(() => {
 .status-tender { background: #92400e; }
 .status-blocked { background: #dc2626; }
 .registration-toolbar { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 150px) minmax(0, 150px) auto; gap: 9px; margin-bottom: 12px; }
+.registration-toolbar-actions { display: flex; align-items: center; gap: 9px; }
 /* min-width: 0 让卡片可以被网格轨道收缩；否则卡片会被表格的 min-content 宽度撑开，
    超出 .el-tabs__content 的 overflow: hidden 后被裁掉，表格自身也就不会出现横向滚动条。 */
 .registration-groups { display: grid; gap: 18px; min-height: 80px; min-width: 0; }
 .registration-group-card { min-width: 0; padding: 15px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .registration-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.registration-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .registration-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .registration-group-title h4 { margin: 0; color: #1f2937; font-size: 15px; }
 .registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 8px; color: #64748b; font-size: 12px; }
