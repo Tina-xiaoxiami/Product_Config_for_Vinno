@@ -45,6 +45,10 @@ from app.schemas.registration import (
     OverseasRegistrationRelationList,
     OverseasRegistrationSnapshotList,
     OverseasRegistrationDraftRequest,
+    OverseasNameMappingCreate,
+    OverseasNameMappingDeleteResult,
+    OverseasNameMappingItem,
+    OverseasNameMappingList,
 )
 from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
@@ -82,6 +86,13 @@ from app.services.overseas_registration_history import (
 from app.services.overseas_registration_preview import (
     build_overseas_registration_preview,
     match_overseas_registration_master_data,
+    overseas_master_names,
+)
+from app.services.overseas_name_corrections import (
+    apply_overseas_name_corrections,
+    delete_overseas_name_mapping,
+    list_overseas_name_mappings,
+    save_overseas_name_mapping,
 )
 from app.services.workbook_preview import (
     WorkbookPreviewError,
@@ -149,6 +160,15 @@ async def create_overseas_registration_snapshot_draft(
 
     def _stage_draft():
         preview = build_overseas_registration_preview(row[0])
+        # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
+        # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。
+        model_names, probe_names = overseas_master_names(database)
+        preview = apply_overseas_name_corrections(
+            preview,
+            mappings=list_overseas_name_mappings(database),
+            known_model_names=model_names,
+            known_probe_names=probe_names,
+        ).preview
         matches = match_overseas_registration_master_data(preview, database)
         return stage_overseas_registration_snapshot(
             database,
@@ -161,6 +181,61 @@ async def create_overseas_registration_snapshot_draft(
         return await asyncio.to_thread(_stage_draft)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingList,
+)
+async def overseas_name_mappings(db: AsyncSession = Depends(get_db)):
+    """人工确认过的「原表写法 → 系统名称」映射；导入时自动套用。"""
+
+    items = await asyncio.to_thread(list_overseas_name_mappings, _database_path(db))
+    return OverseasNameMappingList(
+        items=[OverseasNameMappingItem(**item.__dict__) for item in items],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingItem,
+)
+async def save_overseas_name_mapping_api(
+    payload: OverseasNameMappingCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        saved = await asyncio.to_thread(
+            save_overseas_name_mapping,
+            _database_path(db),
+            entity_type=payload.entity_type,
+            source_name=payload.source_name,
+            target_name=payload.target_name,
+            confirmed_by=payload.confirmed_by,
+            change_note=payload.change_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return OverseasNameMappingItem(**saved.__dict__)
+
+
+@router.delete(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingDeleteResult,
+)
+async def delete_overseas_name_mapping_api(
+    entity_type: str = Query(pattern="^(model|probe)$"),
+    source_name: str = Query(min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await asyncio.to_thread(
+        delete_overseas_name_mapping,
+        _database_path(db),
+        entity_type=entity_type,
+        source_name=source_name,
+    )
+    return OverseasNameMappingDeleteResult(deleted=deleted)
 
 
 @router.post("/overseas/snapshots/{snapshot_id}/publish")

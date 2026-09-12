@@ -235,6 +235,33 @@ class OverseasRegistrationSnapshotItem(BaseModel):
     confirmed_by: str | None = None
 
 
+class OverseasNameMappingItem(BaseModel):
+    """人工确认的「原表写法 → 系统名称」映射。"""
+
+    entity_type: str
+    source_name: str
+    target_name: str
+    confirmed_by: str
+    change_note: str | None = None
+
+
+class OverseasNameMappingList(BaseModel):
+    items: list[OverseasNameMappingItem] = Field(default_factory=list)
+    total: int
+
+
+class OverseasNameMappingCreate(BaseModel):
+    entity_type: str = Field(pattern="^(model|probe)$")
+    source_name: str = Field(min_length=1, max_length=200)
+    target_name: str = Field(min_length=1, max_length=200)
+    confirmed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=500)
+
+
+class OverseasNameMappingDeleteResult(BaseModel):
+    deleted: bool
+
+
 class OverseasRegistrationSnapshotList(BaseModel):
     items: list[OverseasRegistrationSnapshotItem] = Field(default_factory=list)
     total: int

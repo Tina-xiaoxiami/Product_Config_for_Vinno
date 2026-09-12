@@ -445,11 +445,8 @@ def build_overseas_registration_preview(
     )
 
 
-def match_overseas_registration_master_data(
-    preview: OverseasRegistrationPreview,
-    database_path: str | Path,
-) -> OverseasMasterDataMatchPreview:
-    """Compare preview names with overseas master data without changing the DB."""
+def _master_catalog(database_path: str | Path) -> tuple[list, list]:
+    """只读读取海外系列机型与探头主数据。"""
 
     connection = sqlite3.connect(Path(database_path).expanduser().resolve())
     try:
@@ -468,6 +465,28 @@ def match_overseas_registration_master_data(
         ).fetchall()
     finally:
         connection.close()
+    return product_rows, probe_rows
+
+
+def overseas_master_names(
+    database_path: str | Path,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """（海外系列机型名, 探头型号名），供名称纠正判断「系统里已有」用。"""
+
+    product_rows, probe_rows = _master_catalog(database_path)
+    return (
+        tuple(str(row[1]) for row in product_rows),
+        tuple(str(row[1]) for row in probe_rows),
+    )
+
+
+def match_overseas_registration_master_data(
+    preview: OverseasRegistrationPreview,
+    database_path: str | Path,
+) -> OverseasMasterDataMatchPreview:
+    """Compare preview names with overseas master data without changing the DB."""
+
+    product_rows, probe_rows = _master_catalog(database_path)
 
     products_by_name: dict[str, list[tuple[int, str]]] = {}
     products_by_group: dict[str, list[tuple[int, str]]] = {}

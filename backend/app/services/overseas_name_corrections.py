@@ -243,10 +243,31 @@ def apply_overseas_name_corrections(
         "ready_rows": sum(1 for record in records if record.ready_for_import),
         "review_rows": sum(1 for record in records if not record.ready_for_import),
     }
+    if records:
+        relations = build_overseas_relations(records)
+    else:
+        # 外部构造的预览可能只带关系、没有逐行记录（解析器之外调用）：
+        # 这类就地按同一套纠正重命名，不能凭空重建。
+        rename = {
+            (item.entity_type, _mapping_key(item.source_name)): item.target_name
+            for item in corrections
+        }
+        relations = tuple(
+            replace(
+                relation,
+                model_name=rename.get(
+                    ("model", _mapping_key(relation.model_name)), relation.model_name
+                ),
+                probe_model=rename.get(
+                    ("probe", _mapping_key(relation.probe_model)), relation.probe_model
+                ),
+            )
+            for relation in preview.relations
+        )
     corrected_preview = replace(
         preview,
         records=tuple(records),
-        relations=build_overseas_relations(records),
+        relations=relations,
         summary=summary,
     )
     return OverseasCorrectionResult(
