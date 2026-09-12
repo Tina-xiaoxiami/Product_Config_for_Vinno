@@ -314,11 +314,14 @@ async def extract_document_content(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(status_code=404, detail="资料不存在")
-    review = await asyncio.to_thread(
-        stage_knowledge_document_review_items,
-        _database_path(db),
-        document_id=document_id,
-    )
+    try:
+        review = await asyncio.to_thread(
+            stage_knowledge_document_review_items,
+            _database_path(db),
+            document_id=document_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return KnowledgeDocumentExtractionItem(**item, review=review)
 
 

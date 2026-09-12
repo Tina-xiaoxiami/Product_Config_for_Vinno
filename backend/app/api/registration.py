@@ -1,5 +1,6 @@
 """国内注册红线与产品策略查询 API。"""
 
+import asyncio
 import hashlib
 import json
 import mimetypes
@@ -112,7 +113,8 @@ async def create_overseas_registration_snapshot_draft(
         connection.close()
     if row is None:
         raise HTTPException(status_code=404, detail="受控海外注册材料不存在")
-    try:
+
+    def _stage_draft():
         preview = build_overseas_registration_preview(row[0])
         matches = match_overseas_registration_master_data(preview, database)
         return stage_overseas_registration_snapshot(
@@ -121,6 +123,9 @@ async def create_overseas_registration_snapshot_draft(
             matches=matches,
             source_document_id=payload.source_document_id,
         )
+
+    try:
+        return await asyncio.to_thread(_stage_draft)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -132,7 +137,8 @@ async def publish_overseas_registration_snapshot_api(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return publish_overseas_registration_snapshot(
+        return await asyncio.to_thread(
+            publish_overseas_registration_snapshot,
             _database_path(db),
             snapshot_id=snapshot_id,
             confirmed_by=payload.confirmed_by,
@@ -188,7 +194,8 @@ async def update_registration_package_enabled(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return set_registration_package_enabled(
+        return await asyncio.to_thread(
+            set_registration_package_enabled,
             _database_path(db),
             package_id=package_id,
             is_enabled=payload.is_enabled,
@@ -228,7 +235,8 @@ async def create_registration_package_draft(
             difference_path = await _save_upload(
                 difference, directory, "difference.xlsx"
             )
-            return stage_registration_package_draft(
+            return await asyncio.to_thread(
+                stage_registration_package_draft,
                 _database_path(db),
                 country_code=country_code,
                 unit_code=unit_code,
@@ -255,7 +263,8 @@ async def update_registration_package_mappings(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return update_registration_package_version_mappings(
+        return await asyncio.to_thread(
+            update_registration_package_version_mappings,
             _database_path(db),
             version_id=version_id,
             product_model_mappings=payload.mappings,
@@ -270,8 +279,10 @@ async def registration_package_mappings(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return get_registration_package_version_mapping_review(
-            _database_path(db), version_id=version_id
+        return await asyncio.to_thread(
+            get_registration_package_version_mapping_review,
+            _database_path(db),
+            version_id=version_id,
         )
     except RegistrationPackageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -284,7 +295,8 @@ async def publish_registration_package(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return publish_registration_package_version(
+        return await asyncio.to_thread(
+            publish_registration_package_version,
             _database_path(db),
             version_id=version_id,
             confirmed_by=payload.confirmed_by,
