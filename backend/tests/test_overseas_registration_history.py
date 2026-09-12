@@ -402,10 +402,12 @@ async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
             json={"source_document_id": 1},
         )
         hidden = await client.get("/api/registrations/overseas/relations")
+        snapshots_draft = await client.get("/api/registrations/overseas/snapshots")
         published = await client.post(
             "/api/registrations/overseas/snapshots/1/publish",
             json={"confirmed_by": "owner"},
         )
+        snapshots_active = await client.get("/api/registrations/overseas/snapshots")
         visible = await client.get(
             "/api/registrations/overseas/relations",
             params={"country_code": "TH", "q": "V10"},
@@ -415,8 +417,13 @@ async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
     assert staged.status_code == 200
     assert staged.json()["status"] == "draft"
     assert hidden.json()["total"] == 0
+    # 草稿快照必须出现在快照列表里，否则界面无从发现「有待发布的草稿」
+    assert snapshots_draft.status_code == 200
+    assert snapshots_draft.json()["items"][0]["status"] == "draft"
+    assert snapshots_draft.json()["items"][0]["relation_count"] > 0
     assert published.status_code == 200
     assert published.json() == {"snapshot_id": 1, "status": "active"}
+    assert snapshots_active.json()["items"][0]["status"] == "active"
     assert visible.status_code == 200
     assert visible.json()["total"] == 1
     assert visible.json()["items"][0]["visible_in_current_config"] is False
