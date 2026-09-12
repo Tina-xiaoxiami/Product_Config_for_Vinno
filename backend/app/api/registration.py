@@ -43,6 +43,7 @@ from app.schemas.registration import (
     RegistrationProbeStrategyList,
     OverseasRegistrationCountryList,
     OverseasRegistrationRelationList,
+    OverseasRegistrationSnapshotList,
     OverseasRegistrationDraftRequest,
 )
 from app.services.registration_packages import (
@@ -74,6 +75,7 @@ from app.services.local_file_actions import (
 from app.services.overseas_registration_history import (
     list_overseas_registration_countries,
     list_overseas_registration_relations,
+    list_overseas_registration_snapshots,
     publish_overseas_registration_snapshot,
     stage_overseas_registration_snapshot,
 )
@@ -114,6 +116,17 @@ async def overseas_registration_relations(
     return OverseasRegistrationRelationList(
         items=items, total=total, skip=skip, limit=limit
     )
+
+
+@router.get(
+    "/overseas/snapshots",
+    response_model=OverseasRegistrationSnapshotList,
+)
+async def overseas_registration_snapshots(db: AsyncSession = Depends(get_db)):
+    """列出海外注册快照（含草稿）：关系查询只认已发布快照，界面靠这里发现待发布草稿。"""
+
+    items = await list_overseas_registration_snapshots(db)
+    return OverseasRegistrationSnapshotList(items=items, total=len(items))
 
 
 @router.post("/overseas/snapshots/drafts")

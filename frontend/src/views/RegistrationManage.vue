@@ -401,6 +401,31 @@
             show-icon
             class="source-alert"
           />
+          <el-alert
+            v-if="overseasDraftSnapshot"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          >
+            <template #title>
+              有 1 份海外注册草稿快照尚未发布（{{ overseasDraftSnapshot.source_file_name }} ·
+              {{ overseasDraftSnapshot.relation_count }} 条关系），草稿不参与查询，因此下面结果为空。
+            </template>
+            <el-button
+              type="warning"
+              size="small"
+              class="overseas-publish-button"
+              @click="publishOverseasDraft"
+            >
+              发布此快照
+            </el-button>
+          </el-alert>
+          <div v-else-if="overseasActiveSnapshot" class="summary-row overseas-snapshot-row">
+            <span>当前生效快照 <strong>#{{ overseasActiveSnapshot.id }}</strong></span>
+            <span>快照日期 <strong>{{ overseasActiveSnapshot.snapshot_date || '—' }}</strong></span>
+            <span>发布人 <strong>{{ overseasActiveSnapshot.confirmed_by || '—' }}</strong></span>
+          </div>
           <div class="toolbar overseas-toolbar">
             <el-select
               v-model="overseasCountryCode"
@@ -879,6 +904,8 @@ import {
   openRegistrationArtifactLocally,
   getOverseasRegistrationCountries,
   getOverseasRegistrationRelations,
+  getOverseasRegistrationSnapshots,
+  publishOverseasRegistrationSnapshot,
   updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
@@ -1084,6 +1111,54 @@ const issueLabel = issue => ({
 
 const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
 const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
+
+// 海外快照有「草稿 / 生效 / 历史」三态；关系查询只认生效快照，
+// 所以界面必须把草稿暴露出来，否则导入完就查不到东西、也不知道为什么。
+const overseasSnapshots = ref([])
+const overseasDraftSnapshot = computed(
+  () => overseasSnapshots.value.find(snapshot => snapshot.status === 'draft') || null
+)
+const overseasActiveSnapshot = computed(
+  () => overseasSnapshots.value.find(snapshot => snapshot.status === 'active') || null
+)
+
+const loadOverseasSnapshots = async () => {
+  try {
+    const result = await getOverseasRegistrationSnapshots()
+    overseasSnapshots.value = result.items || []
+  } catch {
+    overseasSnapshots.value = []
+  }
+}
+
+const publishOverseasDraft = async () => {
+  const draft = overseasDraftSnapshot.value
+  if (!draft) return
+  let confirmedBy = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `发布后该快照（${draft.relation_count} 条关系）才可被海外注册查询使用；原先生效的快照会转为历史。请填写发布人。`,
+      '发布海外注册快照',
+      { confirmButtonText: '发布', cancelButtonText: '取消', inputPlaceholder: '姓名或工号' }
+    )
+    confirmedBy = (value || '').trim()
+  } catch {
+    return
+  }
+  if (!confirmedBy) {
+    ElMessage.warning('请填写发布人')
+    return
+  }
+  try {
+    await publishOverseasRegistrationSnapshot(draft.id, confirmedBy)
+    ElMessage.success('已发布，海外注册查询现在可以查到这批数据')
+    await loadOverseasSnapshots()
+    await loadOverseasCountries()
+    await loadOverseasRelations()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '发布失败')
+  }
+}
 
 const loadOverseasRelations = async () => {
   overseasLoading.value = true
@@ -1405,6 +1480,7 @@ onMounted(async () => {
       loadModels(),
       loadPackageHistory(),
       loadOverseasCountries(),
+      loadOverseasSnapshots(),
       loadOverseasRelations(),
       loadDataReviewBatches()
     ])
@@ -1484,6 +1560,8 @@ onMounted(async () => {
 .probe-table { width: 100%; }
 .overseas-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .overseas-toolbar { margin-bottom: 0; }
+.overseas-snapshot-row { margin-top: 10px; }
+.overseas-publish-button { margin-top: 6px; }
 .master-link-note { display: block; margin-top: 4px; color: #64748b; }
 .review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .review-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 150px minmax(260px, 1.3fr) auto; gap: 10px; }

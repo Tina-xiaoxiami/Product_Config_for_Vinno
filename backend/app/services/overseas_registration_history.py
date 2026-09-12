@@ -512,3 +512,26 @@ async def list_overseas_registration_relations(
         item["visible_in_current_config"] = bool(item["visible_in_current_config"])
         items.append(item)
     return items, int(total_result.scalar_one())
+
+
+async def list_overseas_registration_snapshots(
+    session: AsyncSession,
+) -> list[dict]:
+    """列出全部快照（含草稿）。
+
+    关系查询只认 ``status='active'``，因此界面必须先能看到草稿快照，
+    否则导入完成后无从发现「还有一份没发布」。
+    """
+
+    result = await session.execute(
+        text(
+            """
+            SELECT id, source_document_id, source_file_name, snapshot_date, status,
+                   relation_count, country_count, model_count, probe_count,
+                   created_at, published_at, confirmed_by
+            FROM overseas_registration_snapshots
+            ORDER BY id DESC
+            """
+        )
+    )
+    return [dict(row._mapping) for row in result]

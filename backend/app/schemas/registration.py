@@ -218,6 +218,28 @@ class OverseasRegistrationCountryList(BaseModel):
     total: int
 
 
+class OverseasRegistrationSnapshotItem(BaseModel):
+    """海外注册快照（含未发布的草稿）。"""
+
+    id: int
+    source_document_id: int
+    source_file_name: str
+    snapshot_date: str | None = None
+    status: str
+    relation_count: int = 0
+    country_count: int = 0
+    model_count: int = 0
+    probe_count: int = 0
+    created_at: str | None = None
+    published_at: str | None = None
+    confirmed_by: str | None = None
+
+
+class OverseasRegistrationSnapshotList(BaseModel):
+    items: list[OverseasRegistrationSnapshotItem] = Field(default_factory=list)
+    total: int
+
+
 class OverseasRegistrationRelationItem(BaseModel):
     id: int
     country_code: str

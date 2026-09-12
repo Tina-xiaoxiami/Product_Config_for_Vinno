@@ -190,6 +190,8 @@ export const getOverseasRegistrationCountries = () =>
   api.get('/registrations/overseas/countries')
 export const getOverseasRegistrationRelations = (params) =>
   api.get('/registrations/overseas/relations', { params })
+export const getOverseasRegistrationSnapshots = () =>
+  api.get('/registrations/overseas/snapshots')
 export const stageOverseasRegistrationSnapshot = (sourceDocumentId) =>
   api.post('/registrations/overseas/snapshots/drafts', { source_document_id: sourceDocumentId })
 export const publishOverseasRegistrationSnapshot = (snapshotId, confirmedBy) =>
