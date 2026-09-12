@@ -163,7 +163,7 @@ async def _save_upload(upload: UploadFile, directory: Path, fallback_name: str) 
         raise HTTPException(status_code=413, detail=f"{fallback_name}不能超过100MB")
     name = Path(upload.filename or fallback_name).name
     target = directory / name
-    target.write_bytes(content)
+    await asyncio.to_thread(target.write_bytes, content)
     return target
 
 
@@ -365,7 +365,7 @@ async def registration_package_artifact(
     path = Path(str(artifact["file_path"] or ""))
     if not path.is_absolute() or not path.is_file():
         raise HTTPException(status_code=410, detail="受控注册原件不存在")
-    digest = _file_sha256(path)
+    digest = await asyncio.to_thread(_file_sha256, path)
     if digest != artifact["sha256"]:
         raise HTTPException(status_code=409, detail="受控注册原件哈希校验失败")
     media_type = artifact["mime_type"] or mimetypes.guess_type(path.name)[0]
