@@ -202,3 +202,5 @@ export const updateRegistrationPackageMappings = (versionId, mappings) =>
   api.put(`/registrations/package-versions/${versionId}/mappings`, { mappings })
 export const publishRegistrationPackageVersion = (versionId, confirmedBy) =>
   api.post(`/registrations/package-versions/${versionId}/publish`, { confirmed_by: confirmedBy })
+export const getRegistrationArtifactSheets = (versionId, artifactType) =>
+  api.get(`/registrations/package-versions/${versionId}/artifacts/${artifactType}/sheets`)

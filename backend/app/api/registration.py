@@ -19,6 +19,7 @@ from app.models.registration import (  # Ensure startup metadata includes histor
 )
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
+    RegistrationArtifactWorkbook,
     RegistrationMasterProbeList,
     RegistrationDifferenceSummary,
     RegistrationModelList,
@@ -64,6 +65,10 @@ from app.services.overseas_registration_history import (
 from app.services.overseas_registration_preview import (
     build_overseas_registration_preview,
     match_overseas_registration_master_data,
+)
+from app.services.workbook_preview import (
+    WorkbookPreviewError,
+    read_workbook_preview,
 )
 
 
@@ -347,12 +352,9 @@ async def registration_difference_summary(
     return RegistrationDifferenceSummary(**result)
 
 
-@router.get("/package-versions/{version_id}/artifacts/{artifact_type}")
-async def registration_package_artifact(
-    version_id: int,
-    artifact_type: str,
-    db: AsyncSession = Depends(get_db),
-):
+async def _resolve_registration_artifact(
+    db: AsyncSession, version_id: int, artifact_type: str
+) -> tuple[dict, Path]:
     if artifact_type not in {"certificate", "difference"}:
         raise HTTPException(status_code=404, detail="注册原件类型不存在")
     artifact = await get_registration_package_artifact(
@@ -365,6 +367,16 @@ async def registration_package_artifact(
     path = Path(str(artifact["file_path"] or ""))
     if not path.is_absolute() or not path.is_file():
         raise HTTPException(status_code=410, detail="受控注册原件不存在")
+    return artifact, path
+
+
+@router.get("/package-versions/{version_id}/artifacts/{artifact_type}")
+async def registration_package_artifact(
+    version_id: int,
+    artifact_type: str,
+    db: AsyncSession = Depends(get_db),
+):
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
     digest = await asyncio.to_thread(_file_sha256, path)
     if digest != artifact["sha256"]:
         raise HTTPException(status_code=409, detail="受控注册原件哈希校验失败")
@@ -374,6 +386,28 @@ async def registration_package_artifact(
         media_type=media_type or "application/octet-stream",
         filename=artifact["file_name"] or path.name,
         content_disposition_type="inline",
+    )
+
+
+@router.get(
+    "/package-versions/{version_id}/artifacts/{artifact_type}/sheets",
+    response_model=RegistrationArtifactWorkbook,
+)
+async def registration_artifact_sheets(
+    version_id: int,
+    artifact_type: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """xlsx 原件的工作表预览：浏览器无法内嵌渲染 xlsx，改由应用读取后画表。"""
+
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
+    try:
+        preview = await asyncio.to_thread(read_workbook_preview, path)
+    except WorkbookPreviewError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    return RegistrationArtifactWorkbook(
+        file_name=artifact["file_name"] or path.name,
+        **preview,
     )
 
 

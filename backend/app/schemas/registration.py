@@ -246,3 +246,14 @@ class OverseasRegistrationRelationList(BaseModel):
 
 class OverseasRegistrationDraftRequest(BaseModel):
     source_document_id: int = Field(ge=1)
+
+
+class RegistrationArtifactSheet(BaseModel):
+    name: str
+    rows: list[list[str]] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class RegistrationArtifactWorkbook(BaseModel):
+    file_name: str
+    sheets: list[RegistrationArtifactSheet] = Field(default_factory=list)

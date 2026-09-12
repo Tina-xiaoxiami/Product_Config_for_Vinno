@@ -114,11 +114,8 @@
                   {{ supportingDocumentLabel(document.role) }}
                 </el-button>
                 <el-button
-                  tag="a"
-                  :href="version.difference.preview_url"
-                  target="_blank"
-                  rel="noopener"
                   :icon="View"
+                  @click="openArtifactPreview(version, 'difference')"
                 >
                   查看差异表
                 </el-button>
@@ -220,13 +217,21 @@
               </el-button>
               <el-button
                 v-if="selectedPackageGroup?.current_version"
+                :icon="View"
+                @click="openArtifactPreview(selectedPackageGroup.current_version, 'difference')"
+              >
+                查看差异表
+              </el-button>
+              <el-button
+                v-if="selectedPackageGroup?.current_version"
+                link
+                type="primary"
                 tag="a"
                 :href="selectedPackageGroup.current_version.difference.preview_url"
                 target="_blank"
                 rel="noopener"
-                :icon="View"
               >
-                查看差异表
+                下载原件
               </el-button>
             </div>
           </div>
@@ -603,6 +608,61 @@
     </el-tabs>
 
     <el-dialog
+      v-model="artifactPreviewVisible"
+      :title="artifactPreviewTitle"
+      width="86%"
+      top="5vh"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="artifactPreviewLoading" class="artifact-preview">
+        <el-tabs v-if="artifactPreview.sheets.length" v-model="artifactPreviewSheet">
+          <el-tab-pane
+            v-for="sheet in artifactPreview.sheets"
+            :key="sheet.name"
+            :label="`${sheet.name}（${sheet.rows.length} 行）`"
+            :name="sheet.name"
+          >
+            <el-alert
+              v-if="sheet.truncated"
+              title="表格过大，此处仅显示前面部分内容；完整内容请下载原件。"
+              type="warning"
+              :closable="false"
+              class="dialog-alert"
+            />
+            <div class="artifact-preview-scroll">
+              <table class="artifact-preview-table">
+                <tbody>
+                  <tr v-for="(row, rowIndex) in sheet.rows" :key="rowIndex">
+                    <th scope="row">{{ rowIndex + 1 }}</th>
+                    <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+        <el-empty
+          v-else-if="!artifactPreviewLoading"
+          description="该原件没有可预览的工作表"
+          :image-size="56"
+        />
+      </div>
+      <template #footer>
+        <span class="artifact-preview-name">{{ artifactPreview.file_name }}</span>
+        <el-button @click="artifactPreviewVisible = false">关闭</el-button>
+        <el-button
+          type="primary"
+          tag="a"
+          :href="artifactPreviewDownloadUrl"
+          target="_blank"
+          rel="noopener"
+        >
+          下载原件
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="dataReviewDialogVisible"
       title="审核与修正提取结果"
       width="680px"
@@ -812,6 +872,7 @@ import {
   getRegistrationModelProbes,
   getRegistrationModels,
   getRegistrationDifferenceSummary,
+  getRegistrationArtifactSheets,
   getRegistrationPackageMappings,
   getRegistrationPackages,
   getRegistrationPackageVersions,
@@ -938,6 +999,36 @@ const differenceTableGroups = computed(() => {
 // 全部适用/存在差异以差异对象（探头）为准：所有机型必然有差异，按机型统计没有信息量。
 const allApplicableProbeCount = computed(() => differenceSummary.value.all_applicable_probes)
 const differenceProbeCount = computed(() => differenceSummary.value.different_probes)
+
+// 原件在线预览：浏览器无法内嵌渲染 xlsx，改为应用内读取工作表后自行画表；下载地址保持不变。
+const ARTIFACT_PREVIEW_LABEL = { certificate: '注册证', difference: '差异表' }
+const artifactPreviewVisible = ref(false)
+const artifactPreviewLoading = ref(false)
+const artifactPreviewTitle = ref('原件预览')
+const artifactPreviewDownloadUrl = ref('')
+const artifactPreviewSheet = ref('')
+const artifactPreview = ref({ file_name: '', sheets: [] })
+
+const openArtifactPreview = async (version, artifactType) => {
+  const artifact = artifactType === 'certificate' ? version?.certificate : version?.difference
+  if (!artifact) return
+  artifactPreviewTitle.value = `${ARTIFACT_PREVIEW_LABEL[artifactType] || '原件'}预览`
+  artifactPreviewDownloadUrl.value = artifact.preview_url
+  artifactPreviewVisible.value = true
+  artifactPreviewLoading.value = true
+  artifactPreview.value = { file_name: '', sheets: [] }
+  artifactPreviewSheet.value = ''
+  try {
+    const result = await getRegistrationArtifactSheets(version.id, artifactType)
+    artifactPreview.value = result
+    artifactPreviewSheet.value = result.sheets?.[0]?.name || ''
+  } catch (error) {
+    artifactPreviewVisible.value = false
+    ElMessage.error(error?.response?.data?.detail || '原件在线预览失败，请下载原件查看')
+  } finally {
+    artifactPreviewLoading.value = false
+  }
+}
 const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
 const isChunkReviewRow = row => row?.data_type === 'knowledge_document_chunk'
 const reviewBatchUnit = batch => isChunkReviewRow(batch) ? '段' : '行'
@@ -1331,6 +1422,11 @@ onMounted(async () => {
 .change-table { margin-top: 10px; }
 .registration-data-tabs { margin-top: 4px; }
 .difference-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.artifact-preview-scroll { max-height: 62vh; overflow: auto; }
+.artifact-preview-table { border-collapse: collapse; color: #334155; font-size: 12px; }
+.artifact-preview-table th, .artifact-preview-table td { padding: 5px 8px; border: 1px solid #e2e8f0; text-align: left; white-space: nowrap; }
+.artifact-preview-table th { position: sticky; left: 0; background: #f8fafc; color: #94a3b8; font-weight: 400; text-align: right; }
+.artifact-preview-name { float: left; color: #94a3b8; font-size: 12px; line-height: 32px; }
 .difference-toolbar { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) auto; gap: 10px; align-items: center; }
 .difference-actions { display: flex; gap: 8px; }
 .difference-metrics { margin-bottom: 12px; }
