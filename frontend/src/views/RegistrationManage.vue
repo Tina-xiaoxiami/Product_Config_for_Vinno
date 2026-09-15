@@ -550,6 +550,14 @@
             <span class="danger">待修正 <strong>{{ selectedReviewBatch.needs_review_count }}</strong></span>
             <span>已修正 <strong>{{ selectedReviewBatch.corrected_count }}</strong></span>
             <span>已排除 <strong>{{ selectedReviewBatch.excluded_count }}</strong></span>
+            <el-tag
+              v-if="selectedReviewBatch.batch_status"
+              :type="reviewBatchEditable ? 'warning' : 'success'"
+              size="small"
+              effect="plain"
+            >
+              {{ reviewBatchEditable ? '草稿 · 可审核修正' : '已发布 · 不可修改' }}
+            </el-tag>
             <el-button
               link
               type="primary"
@@ -606,11 +614,17 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="145" align="center" fixed="right">
+            <el-table-column label="操作" width="165" align="center" fixed="right">
               <template #default="scope">
-                <el-button link type="primary" @click="openDataReviewEditor(scope.row)">
+                <el-button
+                  v-if="reviewBatchEditable"
+                  link
+                  type="primary"
+                  @click="openDataReviewEditor(scope.row)"
+                >
                   审核/修正
                 </el-button>
+                <span v-else class="review-locked">已发布，需走修订</span>
               </template>
             </el-table-column>
           </el-table>
@@ -1140,6 +1154,12 @@ const reviewRecordLabel = batch => isChunkReviewRow(batch) ? '原文段落' : '�
 const selectedReviewBatch = computed(() => dataReviewBatches.value.find(
   batch => reviewBatchKey(batch) === selectedReviewBatchKey.value
 ))
+// 已发布的快照是冻结的正式版本，后端会拒绝修改（"已发布数据需先创建新修订草稿"），
+// 所以界面必须先把这件事说清楚，而不是让用户点了才报错。
+const reviewBatchEditable = computed(() => {
+  const status = selectedReviewBatch.value?.batch_status
+  return !status || status === 'draft'
+})
 const reviewStatusLabel = status => ({
   auto_ready: '自动可用',
   needs_review: '待修正',
@@ -1369,6 +1389,10 @@ const handleReviewBatchChange = async () => {
 }
 
 const openDataReviewEditor = (item) => {
+  if (!reviewBatchEditable.value) {
+    ElMessage.warning('这一批已发布，正式版本不可修改；如需修订请更新源表后重新导入并发布新版本')
+    return
+  }
   editingReviewItem.value = item
   dataReviewForm.value = { ...item.effective_payload }
   dataReviewChangeNote.value = item.change_note || ''
@@ -1698,6 +1722,7 @@ onMounted(async () => {
 .review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .review-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 150px minmax(260px, 1.3fr) auto; gap: 10px; }
 .review-summary { align-items: center; }
+.review-locked { color: #94a3b8; font-size: 12px; }
 .review-summary .el-button { margin-left: auto; }
 .review-table { width: 100%; }
 .source-values { display: grid; gap: 3px; color: #64748b; font-size: 12px; }
