@@ -119,14 +119,44 @@ def test_slash_inside_the_notation_means_that_model_has_no_probes():
     assert pairs["P5"] == ()
 
 
-def test_colon_notation_pointing_at_models_outside_the_row_stays_for_a_human():
-    """菲律宾 A53：机型列只有 X2，探头列却写 A5/A6:…，这种不一致必须留给人。"""
+def test_colon_notation_adds_models_named_only_in_the_probe_cell():
+    """菲律宾 A53：机型列只有 X2，探头列写 A5/A6:…（用户裁定：自动处理）。
+
+    第一个标记之前的探头清单归"没有被标记点名的机型"（这里就是 X2）；
+    标记点到的机型即使不在机型列里也补进来。
+    """
 
     resolved = resolve_overseas_row_cells(
         "X2", "F2-5C, G2-5C E3-8T A5/A6:A2-5C, A4-9E"
     )
 
-    assert "notation" in resolved.unresolved_rules
+    assert resolved.unresolved_rules == ()
+    assert resolved.models == ("X2", "A5", "A6")
+    pairs = _models_pairs(resolved)
+    assert pairs["X2"] == ("F2-5C", "G2-5C", "E3-8T")
+    assert pairs["A5"] == ("A2-5C", "A4-9E")
+    assert pairs["A6"] == ("A2-5C", "A4-9E")
+
+
+def test_colon_notation_matches_a_marker_by_family_when_the_row_has_that_family():
+    """越南 A172：「E20:」对机型列里的 E10、E35（用户裁定：E20 同 E10、E35），
+    「R:」对 R300、R700；没有被点名的机型本行不给探头（同国别的行已覆盖）。"""
+
+    resolved = resolve_overseas_row_cells(
+        "VINNO X1, E10, E35, G65, R300, R700, S100, S200, S300",
+        "R:G1-4P、G2-5C E20:F2-5C、D3-6C G65:S1-8C、S2-9C",
+    )
+
+    assert resolved.unresolved_rules == ()
+    pairs = _models_pairs(resolved)
+    assert pairs["R300"] == ("G1-4P", "G2-5C")
+    assert pairs["R700"] == ("G1-4P", "G2-5C")
+    assert pairs["E10"] == ("F2-5C", "D3-6C")
+    assert pairs["E35"] == ("F2-5C", "D3-6C")
+    assert pairs["G65"] == ("S1-8C", "S2-9C")
+    for uncovered in ("VINNO X1", "S100", "S200", "S300"):
+        assert pairs[uncovered] == ()
+    assert "notation:partial" in resolved.applied_rules
 
 
 def test_slash_means_no_probe_relation_but_an_empty_cell_does_not():
@@ -140,6 +170,48 @@ def test_slash_means_no_probe_relation_but_an_empty_cell_does_not():
 
     blank = resolve_overseas_row_cells("V8", "")
     assert blank.unresolved_rules == ("probe_blank",)
+
+
+def test_a_bare_number_inherits_the_prefix_of_the_previous_model():
+    """用户裁定：缩写续写一律展开，含埃及的 75 → G75。"""
+
+    cases = {
+        "Ultimus 7P,7E,8P,8E,9P,9E": (
+            "Ultimus 7P",
+            "Ultimus 7E",
+            "Ultimus 8P",
+            "Ultimus 8E",
+            "Ultimus 9P",
+            "Ultimus 9E",
+        ),
+        "ULTIMUS 9E,9": ("ULTIMUS 9E", "ULTIMUS 9"),
+        "G65, 75, M86, G86": ("G65", "G75", "M86", "G86"),
+        "R300,500,700": ("R300", "R500", "R700"),
+    }
+    for raw, expected in cases.items():
+        resolved = resolve_overseas_row_cells(raw, "S1-8C")
+        assert resolved.models == expected, raw
+        assert resolved.unresolved_rules == (), raw
+        assert any(rule.startswith("prefix:") for rule in resolved.applied_rules), raw
+
+
+def test_probe_aliases_and_typo_separators_are_split_not_dropped():
+    """用户裁定：斜杠两边都登记；`.` 和 `and` 按分隔符处理。"""
+
+    resolved = resolve_overseas_row_cells(
+        "V5, V6",
+        "X6-16LG/X6-16L, D2-7C.S1-6PS, S1-8C and S2-9C",
+    )
+
+    assert resolved.probes == (
+        "X6-16LG",
+        "X6-16L",
+        "D2-7C",
+        "S1-6PS",
+        "S1-8C",
+        "S2-9C",
+    )
+    assert resolved.unresolved_rules == ()
 
 
 def test_series_mapping_round_trips_through_the_database(tmp_path):
