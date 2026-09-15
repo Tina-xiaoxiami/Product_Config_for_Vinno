@@ -62,7 +62,8 @@ def test_series_is_expanded_once_through_the_mapping():
 def test_unmapped_series_still_needs_a_human():
     resolved = resolve_overseas_row_cells("R series", "G1-4P")
 
-    assert resolved.models == ()
+    # 没展开的原写法原样留着，界面要让人看见「R series 还没展开」
+    assert resolved.models == ("R series",)
     assert resolved.unresolved_rules == ("series",)
 
 
@@ -85,18 +86,37 @@ def test_colon_notation_keeps_each_models_own_probe_list():
 def test_colon_notation_supports_comma_separated_and_missing_slash_markers():
     resolved = resolve_overseas_row_cells(
         "E35, G55, G65, M86, G86",
-        "E35/G55:G1-4P, G2-5C S1-6PX G65, M86, G86:F2-5C, S1-8C D2-7C P:/",
+        "E35/G55:G1-4P, G2-5C S1-6PX G65, M86, G86:F2-5C, S1-8C",
     )
 
     assert resolved.unresolved_rules == ()
     pairs = _models_pairs(resolved)
-    assert pairs["E35"] == ("G1-4P", "G2-5C")
-    assert pairs["G55"] == ("G1-4P", "G2-5C")
+    # 「S1-6PX」紧跟在下一个标记前，属于前一组（A57 原文就是这样）
+    assert pairs["E35"] == ("G1-4P", "G2-5C", "S1-6PX")
+    assert pairs["G55"] == ("G1-4P", "G2-5C", "S1-6PX")
     assert pairs["G65"] == ("F2-5C", "S1-8C")
     assert pairs["M86"] == ("F2-5C", "S1-8C")
     assert pairs["G86"] == ("F2-5C", "S1-8C")
-    # 写法里写的是「P:/」——同一写法内部再次印证「/」表示没有探头
-    assert pairs["P"] == ()
+
+
+def test_slash_inside_the_notation_means_that_model_has_no_probes():
+    """哥伦比亚 A56 原文末尾就是「P:/」——同一写法内部印证「/」= 没有探头。"""
+
+    resolved = resolve_overseas_row_cells(
+        "P series, R series, 9E, V10",
+        "9E:S1-8C V10:S2-9C R:G1-4P P:/",
+        series_mappings={"p series": ("P3", "P5"), "r series": ("R300", "R500")},
+    )
+
+    assert resolved.unresolved_rules == ()
+    pairs = _models_pairs(resolved)
+    assert pairs["9E"] == ("S1-8C",)
+    assert pairs["V10"] == ("S2-9C",)
+    # 「R:」「P:」指的是本行的系列写法
+    assert pairs["R300"] == ("G1-4P",)
+    assert pairs["R500"] == ("G1-4P",)
+    assert pairs["P3"] == ()
+    assert pairs["P5"] == ()
 
 
 def test_colon_notation_pointing_at_models_outside_the_row_stays_for_a_human():
@@ -106,7 +126,7 @@ def test_colon_notation_pointing_at_models_outside_the_row_stays_for_a_human():
         "X2", "F2-5C, G2-5C E3-8T A5/A6:A2-5C, A4-9E"
     )
 
-    assert resolved.unresolved_rules == ("notation",)
+    assert "notation" in resolved.unresolved_rules
 
 
 def test_slash_means_no_probe_relation_but_an_empty_cell_does_not():

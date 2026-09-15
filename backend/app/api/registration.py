@@ -49,6 +49,10 @@ from app.schemas.registration import (
     OverseasNameMappingDeleteResult,
     OverseasNameMappingItem,
     OverseasNameMappingList,
+    OverseasSeriesMappingCreate,
+    OverseasSeriesMappingDeleteResult,
+    OverseasSeriesMappingItem,
+    OverseasSeriesMappingList,
 )
 from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
@@ -95,6 +99,12 @@ from app.services.overseas_name_corrections import (
     delete_overseas_name_mapping,
     list_overseas_name_mappings,
     save_overseas_name_mapping,
+)
+from app.services.overseas_series_mappings import (
+    delete_overseas_series_mapping,
+    list_overseas_series_mappings,
+    overseas_series_index,
+    save_overseas_series_mapping,
 )
 from app.services.workbook_preview import (
     WorkbookPreviewError,
@@ -143,9 +153,11 @@ async def overseas_registration_snapshots(db: AsyncSession = Depends(get_db)):
 
 
 def _prepare_overseas_draft(database: Path, file_path: str):
-    """解析原件 → 套用名称映射 → 匹配主数据；导入与重建草稿共用同一条链。"""
+    """解析原件 → 套用名称/系列映射 → 匹配主数据；导入与重建草稿共用同一条链。"""
 
-    preview = build_overseas_registration_preview(file_path)
+    preview = build_overseas_registration_preview(
+        file_path, series_mappings=overseas_series_index(database)
+    )
     # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
     # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。
     model_names, probe_names = overseas_master_names(database)
@@ -296,6 +308,71 @@ async def delete_overseas_name_mapping_api(
         source_name=source_name,
     )
     return OverseasNameMappingDeleteResult(deleted=deleted)
+
+
+@router.get(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingList,
+)
+async def overseas_series_mappings(db: AsyncSession = Depends(get_db)):
+    """人工确认过的「系列 → 机型清单」；导入时自动展开。"""
+
+    items = await asyncio.to_thread(list_overseas_series_mappings, _database_path(db))
+    return OverseasSeriesMappingList(
+        items=[
+            OverseasSeriesMappingItem(
+                source_name=item.source_name,
+                target_models=list(item.target_models),
+                confirmed_by=item.confirmed_by,
+                change_note=item.change_note,
+            )
+            for item in items
+        ],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingItem,
+)
+async def save_overseas_series_mapping_api(
+    payload: OverseasSeriesMappingCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        saved = await asyncio.to_thread(
+            save_overseas_series_mapping,
+            _database_path(db),
+            source_name=payload.source_name,
+            target_models=payload.target_models,
+            confirmed_by=payload.confirmed_by,
+            change_note=payload.change_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return OverseasSeriesMappingItem(
+        source_name=saved.source_name,
+        target_models=list(saved.target_models),
+        confirmed_by=saved.confirmed_by,
+        change_note=saved.change_note,
+    )
+
+
+@router.delete(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingDeleteResult,
+)
+async def delete_overseas_series_mapping_api(
+    source_name: str = Query(min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await asyncio.to_thread(
+        delete_overseas_series_mapping,
+        _database_path(db),
+        source_name=source_name,
+    )
+    return OverseasSeriesMappingDeleteResult(deleted=deleted)
 
 
 @router.post("/overseas/snapshots/{snapshot_id}/publish")

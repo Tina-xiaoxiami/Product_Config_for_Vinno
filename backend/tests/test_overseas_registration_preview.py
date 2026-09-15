@@ -69,7 +69,11 @@ def test_preview_keeps_registration_status_and_address_version_separate(tmp_path
     assert "model_scope_requires_expansion" in mexico.issue_codes
 
     panama = next(record for record in preview.records if record.jurisdiction_code == "PA")
-    assert "probe_scope_not_explicit" in panama.issue_codes
+    # 探头列的「/」= 不适用（同一写法里作者自己写了「P:/」），不再算"探头范围不明确"；
+    # 这行仍要人工确认，因为「P series」还没展开成具体机型。
+    assert "probe_scope_not_explicit" not in panama.issue_codes
+    assert panama.probes == ()
+    assert "model_scope_requires_expansion" in panama.issue_codes
     assert panama.ready_for_import is False
 
 

@@ -266,6 +266,31 @@ class OverseasNameMappingDeleteResult(BaseModel):
     deleted: bool
 
 
+class OverseasSeriesMappingItem(BaseModel):
+    """人工确认的「系列 → 机型清单」；导入/重建时自动展开。"""
+
+    source_name: str
+    target_models: list[str] = Field(default_factory=list)
+    confirmed_by: str
+    change_note: str | None = None
+
+
+class OverseasSeriesMappingList(BaseModel):
+    items: list[OverseasSeriesMappingItem] = Field(default_factory=list)
+    total: int
+
+
+class OverseasSeriesMappingCreate(BaseModel):
+    source_name: str = Field(min_length=1, max_length=200)
+    target_models: list[str] = Field(min_length=1)
+    confirmed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=500)
+
+
+class OverseasSeriesMappingDeleteResult(BaseModel):
+    deleted: bool
+
+
 class OverseasRegistrationSnapshotList(BaseModel):
     items: list[OverseasRegistrationSnapshotItem] = Field(default_factory=list)
     total: int

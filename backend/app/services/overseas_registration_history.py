@@ -293,6 +293,19 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (entity_type, normalized_source)
             );
+
+            -- 人工确认的「系列 → 机型清单」：表里大量行写的是系列而不是机型，
+            -- 确认一次就能全国复用，不必逐行问人。
+            CREATE TABLE IF NOT EXISTS overseas_series_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_name TEXT NOT NULL,
+                target_models_json TEXT NOT NULL,
+                normalized_source TEXT NOT NULL UNIQUE,
+                confirmed_by TEXT NOT NULL,
+                change_note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             COMMIT;
             """
         )

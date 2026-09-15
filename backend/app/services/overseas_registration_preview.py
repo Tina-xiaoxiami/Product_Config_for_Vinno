@@ -99,6 +99,12 @@ class OverseasRegistrationRecord:
     probes: tuple[str, ...]
     ready_for_import: bool
     issue_codes: tuple[str, ...]
+    # 清洗/展开后的文本与「机型 → 探头」对应关系；原始文本仍是证据。
+    model_text: str = ""
+    probe_text: str = ""
+    model_probes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    applied_rules: tuple[str, ...] = ()
+    unresolved_rules: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -399,6 +405,266 @@ def _edit_distance_at_most_one(left: str, right: str) -> bool:
     return True
 
 
+_SERIES_PATTERN = re.compile(r"(?i)\bseries\b|系列|全系列")
+# 表格自己的注解：与工作表名同源（「新地址注册」）、渠道与认证标记。
+_ANNOTATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"[-—–_/]?\s*新地址\s*$"), "新地址"),
+    (re.compile(r"[:：]\s*OEM\s*$", re.IGNORECASE), "OEM"),
+    (re.compile(r"[-—–_/]?\s*OEM\s*$", re.IGNORECASE), "OEM"),
+    (re.compile(r"\+\s*无线认证\s*$"), "无线认证"),
+    (re.compile(r"[（(]\s*补充注册\s*[）)]\s*$"), "补充注册"),
+)
+# 探头列的「/」= 不适用（同一写法里作者自己写了「P:/」），不是"忘了填"。
+_PROBE_NONE = {"/", "／"}
+_SERIES_BRACKET = re.compile(r"^(?P<name>.+?)\s*[（(](?P<list>[^（()）]*)[)）]\s*$")
+_NOTATION_MARKER = re.compile(r"[^\s,、;；/]+")
+
+
+def series_key(value: object) -> str:
+    """系列名的比较键：大小写、空格与全角空格都不算差异。"""
+
+    return re.sub(r"\s+", "", normalize_business_name(value)).casefold()
+
+
+@dataclass(frozen=True)
+class ResolvedRowCells:
+    """一行单元格按口径处理之后的结果。
+
+    ``model_text`` / ``probe_text`` 是清洗后的文本（原始文本仍留在记录里作证据）；
+    ``applied_rules`` 记录用过哪些口径，``unresolved_rules`` 记录还没解决的部分，
+    两者都会写进审核条目，让人看得出系统做了什么、还剩什么。
+    """
+
+    model_text: str
+    probe_text: str
+    models: tuple[str, ...]
+    probes: tuple[str, ...]
+    model_probes: tuple[tuple[str, tuple[str, ...]], ...]
+    applied_rules: tuple[str, ...] = ()
+    unresolved_rules: tuple[str, ...] = ()
+
+
+def _strip_annotations(value: str) -> tuple[str, tuple[str, ...]]:
+    text = str(value or "").strip()
+    applied: list[str] = []
+    changed = True
+    while changed:
+        changed = False
+        for pattern, name in _ANNOTATIONS:
+            updated = pattern.sub("", text).strip()
+            if updated != text:
+                text = updated.rstrip(" ,，、;；-—–_/").strip()
+                if name not in applied:
+                    applied.append(name)
+                changed = True
+    return text, tuple(applied)
+
+
+def _split_model_parts(text: str) -> tuple[str, ...]:
+    """按分隔符切开机型写法；括号里的内容算一个整体。
+
+    ``Q series(Q5-2P,Q5-3C,Q5-7L)`` 的括号是表格自己写的展开清单，
+    括号里的逗号不能当分隔符，否则这份清单会被切碎。
+    """
+
+    guarded = re.sub(
+        r"[（(][^（()）]*[)）]",
+        lambda match: re.sub(r"[,，、;；]", "\x00", match.group(0)),
+        str(text or ""),
+    )
+    return tuple(
+        part.replace("\x00", ",").strip()
+        for part in _MODEL_SPLIT.split(guarded)
+        if part.strip()
+    )
+
+
+def _expand_model_series(
+    model_text: str, series_index: dict[str, tuple[str, ...]]
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    dict[str, tuple[str, ...]],
+]:
+    """把系列写法换成一串机型；返回机型、未展开的原写法、套用/未解决的规则、系列名索引。"""
+
+    models: list[str] = []
+    unresolved_parts: list[str] = []
+    applied: list[str] = []
+    unresolved: list[str] = []
+    by_name: dict[str, tuple[str, ...]] = {}
+    for part in _split_model_parts(model_text):
+        bracket = _SERIES_BRACKET.match(part)
+        if bracket is not None and _SERIES_PATTERN.search(bracket.group("name")):
+            listed = _split_model_parts(bracket.group("list"))
+            if listed:
+                name = bracket.group("name").strip()
+                models.extend(listed)
+                by_name[series_key(name)] = listed
+                applied.append(f"series:{name}")
+                continue
+        if _SERIES_PATTERN.search(part):
+            target = series_index.get(series_key(part))
+            if target:
+                models.extend(target)
+                by_name[series_key(part)] = target
+                nickname = _SERIES_PATTERN.sub("", part).strip(" -—–_/")
+                if nickname:
+                    by_name[series_key(nickname)] = target
+                applied.append(f"series:{part}")
+            else:
+                unresolved.append("series")
+                # 没展开的原写法照原样留着：界面要让人看见「R series 还没展开」。
+                unresolved_parts.append(part)
+            continue
+        models.extend(_split_models(part))
+    return (
+        tuple(dict.fromkeys(models)),
+        tuple(dict.fromkeys(unresolved_parts)),
+        tuple(dict.fromkeys(applied)),
+        tuple(dict.fromkeys(unresolved)),
+        by_name,
+    )
+
+
+def _notation_groups(
+    probe_text: str,
+    model_lookup: dict[str, str],
+    alias_lookup: dict[str, str],
+    series_models: dict[str, tuple[str, ...]],
+) -> dict[str, list[str]] | None:
+    """解析「机型:探头列表」写法；标记可以是精确机型、别名，或本行出现的系列名。"""
+
+    spans: list[tuple[int, int, tuple[str, ...]]] = []
+    for hit in re.finditer(r"[:：]", probe_text):
+        head = probe_text[: hit.start()]
+        picked: list[tuple[str, int]] = []
+        for token in reversed(list(re.finditer(_NOTATION_MARKER, head))):
+            value = token.group(0)
+            # 精确 → 别名（``E20`` ↔ ``VINNO E20``）→ 本行的系列写法
+            canonical = model_lookup.get(value.casefold()) or alias_lookup.get(
+                _model_alias_identity(value)
+            )
+            if canonical is not None:
+                picked.insert(0, (canonical, token.start()))
+                continue
+            series = series_models.get(series_key(value))
+            if series is not None:
+                picked = [
+                    (name, token.start()) for name in series
+                ] + picked
+                break
+            break
+        if picked:
+            spans.append((picked[0][1], hit.end(), tuple(name for name, _ in picked)))
+    if not spans or len(spans) != len(re.findall(r"[:：]", probe_text)):
+        # 有冒号没能认出机型（例如机型列写 X2、探头列却写 A5/A6:…）：留给人。
+        return None
+    groups: dict[str, list[str]] = {}
+    for index, (_, end, models) in enumerate(spans):
+        stop = spans[index + 1][0] if index + 1 < len(spans) else len(probe_text)
+        body = re.split(r"[，、,;；/\s]+", probe_text[end:stop])
+        probes = [token for token in body if token]
+        for model in models:
+            groups.setdefault(model, []).extend(probes)
+    return groups
+
+
+def resolve_overseas_row_cells(
+    model_raw: str,
+    probe_raw: str,
+    *,
+    series_mappings: dict[str, tuple[str, ...]] | None = None,
+) -> ResolvedRowCells:
+    """按确认过的口径处理一行的机型/探头单元格。
+
+    顺序：清洗表内注解 → 展开系列写法 → 解析「机型:探头」→ 处理探头列的「/」。
+    处理不了的部分留在 ``unresolved_rules``，由调用方继续标成待确认。
+    """
+
+    series_index = {
+        series_key(key): tuple(value) for key, value in (series_mappings or {}).items()
+    }
+    model_text, annotation_rules = _strip_annotations(model_raw)
+    probe_text = str(probe_raw or "").strip()
+    applied = [f"annotation:{name}" for name in annotation_rules]
+    unresolved: list[str] = []
+
+    models, unresolved_parts, series_rules, series_unresolved, series_models = (
+        _expand_model_series(model_text, series_index)
+    )
+    applied.extend(series_rules)
+    unresolved.extend(series_unresolved)
+
+    probe_none = probe_text in _PROBE_NONE
+    if probe_none:
+        applied.append("probe:none")
+        probes: tuple[str, ...] = ()
+        groups: dict[str, list[str]] | None = None
+    elif not probe_text:
+        probes = ()
+        groups = None
+        unresolved.append("probe_blank")
+    else:
+        probes = _split_probes(probe_text)
+        groups = None
+        if re.search(r"[:：]", probe_text):
+            lookup = {model.casefold(): model for model in models}
+            # 别名只收唯一候选：``E20`` 对上 ``VINNO E20`` 是确定的，
+            # 一对多就是猜，仍旧交给人。
+            candidates: dict[str, list[str]] = {}
+            for model in models:
+                candidates.setdefault(_model_alias_identity(model), []).append(model)
+            aliases = {
+                identity: names[0]
+                for identity, names in candidates.items()
+                if len(names) == 1
+            }
+            candidate = _notation_groups(probe_text, lookup, aliases, series_models)
+            if candidate is None or set(candidate) != set(models):
+                unresolved.append("notation")
+            else:
+                groups = candidate
+                applied.append("notation:model_probe")
+                flattened = [probe for values in groups.values() for probe in values]
+                probes = tuple(dict.fromkeys(flattened))
+                if any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes):
+                    groups = None
+                    unresolved.append("notation")
+
+    if any(not _MODEL_TOKEN.fullmatch(model) for model in models) or (
+        models and _has_abbreviated_model_tokens(models)
+    ):
+        unresolved.append("model")
+    # 连写的短横线（``Sg12--- S300``）是把两个东西粘在一起，拆开就是猜，交给人。
+    if re.search(r"[-—–]{2,}", model_text):
+        unresolved.append("model")
+    if probes and any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes):
+        unresolved.append("probe")
+
+    if groups is not None:
+        model_probes = tuple(
+            (model, tuple(dict.fromkeys(groups.get(model, ())))) for model in models
+        )
+    elif probe_none:
+        model_probes = tuple((model, ()) for model in models)
+    else:
+        model_probes = tuple((model, probes) for model in models)
+
+    return ResolvedRowCells(
+        model_text=model_text,
+        probe_text=probe_text if not probe_none else "/",
+        # 没展开的原写法附在后面：既不静默丢掉，也不会生成关系（有未解决项的行不生成）。
+        models=tuple(dict.fromkeys(models + unresolved_parts)),
+        probes=probes,
+        model_probes=model_probes,
+        applied_rules=tuple(applied),
+        unresolved_rules=tuple(dict.fromkeys(unresolved)),
+    )
+
+
 def evaluate_overseas_row_issues(
     *,
     jurisdiction_code: str | None,
@@ -407,7 +673,14 @@ def evaluate_overseas_row_issues(
     probe_raw: str,
     models: tuple[str, ...],
     probes: tuple[str, ...],
+    unresolved_rules: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
+    """判定一行是否还需要人工确认。
+
+    ``model_raw`` / ``probe_raw`` 传清洗展开后的文本：注解和系列都已经处理掉的
+    行不该再因为"写法"被拦下；``unresolved_rules`` 说明还有哪些写法没解决。
+    """
+
     issues: list[str] = []
     combined = f"{model_raw} {probe_raw}"
     if jurisdiction_code is None:
@@ -416,30 +689,33 @@ def evaluate_overseas_row_issues(
         issues.append("non_final_status")
     if re.search(r"销售反馈|证书|可直接销售|不需要注册|不需注册", combined):
         issues.append("narrative_rule_requires_review")
-    if re.search(r"(?i)\bseries\b|系列|全系列", model_raw):
+    if "series" in unresolved_rules:
         issues.append("model_scope_requires_expansion")
+    if "notation" in unresolved_rules:
+        issues.append("complex_probe_mapping")
+    if "probe_blank" in unresolved_rules:
+        issues.append("probe_scope_not_explicit")
     if model_raw and (
         not models
+        or "model" in unresolved_rules
         or any(not _MODEL_TOKEN.fullmatch(model) for model in models)
         or _has_abbreviated_model_tokens(models)
         or re.search(r"(?i)VINNNO|\bsere?is\b|\bsries\b", model_raw)
     ):
         issues.append("model_name_requires_review")
-    if probe_raw.strip() in {"", "/"}:
-        issues.append("probe_scope_not_explicit")
-    elif (
-        ":" in probe_raw
-        or "：" in probe_raw
-        or "/" in probe_raw
-        or re.search(r"\band\b", probe_raw, flags=re.IGNORECASE)
+    if probes and (
+        "probe" in unresolved_rules
+        or any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes)
     ):
-        issues.append("complex_probe_mapping")
-    if probes and any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes):
         issues.append("probe_name_requires_review")
     return tuple(dict.fromkeys(issues))
 
 
-def _parse_workbook(path: Path) -> tuple[tuple[OverseasRegistrationRecord, ...], tuple[OverseasRegistrationRelation, ...]]:
+def _parse_workbook(
+    path: Path,
+    *,
+    series_mappings: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[tuple[OverseasRegistrationRecord, ...], tuple[OverseasRegistrationRelation, ...]]:
     workbook = load_workbook(path, read_only=False, data_only=True)
     try:
         available = [name for name in _SHEET_DEFAULTS if name in workbook.sheetnames]
@@ -475,15 +751,19 @@ def _parse_workbook(path: Path) -> tuple[tuple[OverseasRegistrationRecord, ...],
                     if sheet_name == "新地址注册" or "新地址" in row_text
                     else default_address_version
                 )
-                models = _split_models(model_raw)
-                probes = _split_probes(probe_raw)
+                resolved = resolve_overseas_row_cells(
+                    model_raw, probe_raw, series_mappings=series_mappings
+                )
+                models = resolved.models
+                probes = resolved.probes
                 issue_codes = evaluate_overseas_row_issues(
                     jurisdiction_code=jurisdiction_code,
                     status=registration_status,
-                    model_raw=model_raw,
-                    probe_raw=probe_raw,
+                    model_raw=resolved.model_text,
+                    probe_raw=resolved.probe_text,
                     models=models,
                     probes=probes,
+                    unresolved_rules=resolved.unresolved_rules,
                 )
                 ready = not issue_codes
                 source_ref = f"{sheet_name}!A{row}:C{row}"
@@ -503,6 +783,11 @@ def _parse_workbook(path: Path) -> tuple[tuple[OverseasRegistrationRecord, ...],
                     probes=probes,
                     ready_for_import=ready,
                     issue_codes=issue_codes,
+                    model_text=resolved.model_text,
+                    probe_text=resolved.probe_text,
+                    model_probes=resolved.model_probes,
+                    applied_rules=resolved.applied_rules,
+                    unresolved_rules=resolved.unresolved_rules,
                 )
                 records.append(record)
         return tuple(records), build_overseas_relations(records)
@@ -516,31 +801,47 @@ def build_overseas_relations(
     """从已定稿的记录构建「国家－型号－探头」关系。
 
     只有 ``ready_for_import`` 的记录才生成关系；重复由暂存阶段的唯一约束收敛。
+    「机型:探头」写法按每个机型各自的探头清单生成，探头列为「/」的行不生成关系。
     """
 
     relations: list[OverseasRegistrationRelation] = []
     for record in records:
         if not record.ready_for_import or record.jurisdiction_code is None:
             continue
-        for model in record.models:
-            for probe in record.probes:
-                relations.append(
-                    OverseasRegistrationRelation(
-                        jurisdiction_code=record.jurisdiction_code,
-                        model_name=model,
-                        probe_model=probe,
-                        registration_status=record.registration_status,
-                        address_version=record.address_version,
-                        source_ref=record.source_ref,
-                    )
+        if record.model_probes:
+            pairs = (
+                (model, probe)
+                for model, probes in record.model_probes
+                for probe in probes
+            )
+        else:
+            pairs = (
+                (model, probe) for model in record.models for probe in record.probes
+            )
+        for model, probe in pairs:
+            relations.append(
+                OverseasRegistrationRelation(
+                    jurisdiction_code=record.jurisdiction_code,
+                    model_name=model,
+                    probe_model=probe,
+                    registration_status=record.registration_status,
+                    address_version=record.address_version,
+                    source_ref=record.source_ref,
                 )
+            )
     return tuple(relations)
 
 
 def build_overseas_registration_preview(
     workbook_path: str | Path,
+    *,
+    series_mappings: dict[str, tuple[str, ...]] | None = None,
 ) -> OverseasRegistrationPreview:
-    """Parse an overseas tracking workbook without writing registration tables."""
+    """Parse an overseas tracking workbook without writing registration tables.
+
+    ``series_mappings`` 是人工确认过的「系列 → 机型清单」；不传就按未展开处理，
+    这些行会继续留在待确认里。
+    """
 
     source = Path(workbook_path).expanduser().resolve()
     if not source.is_file():
@@ -550,7 +851,9 @@ def build_overseas_registration_preview(
         parse_path = source
         if source.suffix.casefold() == ".xls":
             parse_path = _resolve_parseable_workbook(source, Path(temp))
-        records, relations = _parse_workbook(parse_path)
+        records, relations = _parse_workbook(
+            parse_path, series_mappings=series_mappings
+        )
 
     status_counts = Counter(record.registration_status for record in records)
     issue_counts = Counter(

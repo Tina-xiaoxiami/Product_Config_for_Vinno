@@ -389,7 +389,9 @@ async def test_overseas_snapshot_api_stages_then_explicitly_publishes(
     _create_database(database_path, controlled_file)
     migrate_overseas_registration_history_schema(database_path)
     monkeypatch.setattr(
-        registration, "build_overseas_registration_preview", lambda _: _preview(controlled_file)
+        registration,
+        "build_overseas_registration_preview",
+        lambda _, **_kwargs: _preview(controlled_file),
     )
     monkeypatch.setattr(
         registration,

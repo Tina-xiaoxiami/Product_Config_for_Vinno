@@ -193,6 +193,7 @@ def apply_overseas_name_corrections(
     def _correct(names, entity_type: str):
         corrected: list[str] = []
         corrections: list[OverseasNameCorrection] = []
+        resolved: dict[str, str] = {}
         for name in names:
             target = mapping_index.get((entity_type, _mapping_key(name)))
             reason = "mapping"
@@ -209,30 +210,51 @@ def apply_overseas_name_corrections(
                     OverseasNameCorrection(entity_type, name, target, reason)
                 )
                 corrected.append(target)
+                resolved[name] = target
             else:
                 corrected.append(name)
-        return tuple(dict.fromkeys(corrected)), corrections
+                resolved[name] = name
+        return tuple(dict.fromkeys(corrected)), corrections, resolved
 
     records = []
     corrections: list[OverseasNameCorrection] = []
     for record in preview.records:
-        models, model_corrections = _correct(record.models, "model")
-        probes, probe_corrections = _correct(record.probes, "probe")
+        models, model_corrections, model_names = _correct(record.models, "model")
+        probes, probe_corrections, probe_names = _correct(record.probes, "probe")
         corrections.extend(model_corrections)
         corrections.extend(probe_corrections)
+        # 「机型:探头」写法要按每个机型各自的清单纠正，不能拉平
+        model_probes = tuple(
+            (
+                model_names.get(model, model),
+                tuple(
+                    dict.fromkeys(probe_names.get(probe, probe) for probe in probes_)
+                ),
+            )
+            for model, probes_ in record.model_probes
+        )
         issue_codes = evaluate_overseas_row_issues(
+            # 判定用清洗展开后的文本：注解与系列已经处理掉的行不该再因为写法被拦下。
             jurisdiction_code=record.jurisdiction_code,
             status=record.registration_status,
-            model_raw=record.model_raw,
-            probe_raw=record.probe_raw,
+            model_raw=record.model_text or record.model_raw,
+            probe_raw=record.probe_text or record.probe_raw,
             models=models,
             probes=probes,
+            # 只继承结构性的未解决项（系列没展开、写法没解析、探头列空白）；
+            # 名称本身是否合法由纠正后的 token 重新判定——映射修好了就不该再拦。
+            unresolved_rules=tuple(
+                rule
+                for rule in record.unresolved_rules
+                if rule in {"series", "notation", "probe_blank"}
+            ),
         )
         records.append(
             replace(
                 record,
                 models=models,
                 probes=probes,
+                model_probes=model_probes,
                 issue_codes=issue_codes,
                 ready_for_import=not issue_codes,
             )
