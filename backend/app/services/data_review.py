@@ -119,6 +119,10 @@ def _overseas_payload(record) -> dict[str, Any]:
 _NON_FORMAL_NOTE = "注册状态非「已完成注册」，自动排除：仅保留记录，不作为正式数据"
 # 逐状态的排除原因：把「该国无需注册」和「进行中」写成同一句话，
 # 会让人误以为无需注册还是个待办事项。
+_NARRATIVE_CONCLUSION_NOTE = (
+    "整行是结论性说明（如「有证书即可销售，所有机型适用」），"
+    "自动排除：仅保留记录，不作为正式数据"
+)
 _NON_FORMAL_NOTES = {
     "not_required": "该国无需注册，自动排除：仅保留记录，不作为正式数据",
     "failed": "注册未成功，自动排除：仅保留记录，不作为正式数据",
@@ -128,7 +132,9 @@ _NON_FORMAL_NOTES = {
 }
 
 
-def _non_formal_note(status: object) -> str:
+def _non_formal_note(status: object, issue_codes=()) -> str:
+    if "narrative_conclusion" in tuple(issue_codes or ()):
+        return _NARRATIVE_CONCLUSION_NOTE
     return _NON_FORMAL_NOTES.get(str(status or ""), _NON_FORMAL_NOTE)
 
 
@@ -136,9 +142,12 @@ def _overseas_review_status(record) -> str:
     """非「已完成注册」的行只作记录保留，不进待确认队列。
 
     这类行本来就不生成正式数据（关系数据只在 ``ready_for_import`` 时构建），
-    再要求人工逐条确认没有意义，只会把待确认队列淹没。
+    再要求人工逐条确认没有意义，只会把待确认队列淹没。整行是结论性说明
+    （如「有证书即可销售，所有机型适用」）的行同理。
     """
 
+    if "narrative_conclusion" in tuple(getattr(record, "issue_codes", ()) or ()):
+        return "excluded"
     if str(getattr(record, "registration_status", "") or "") != "completed":
         return "excluded"
     return "auto_ready" if record.ready_for_import else "needs_review"
@@ -193,7 +202,9 @@ def stage_overseas_preview_review_items(
                     _json_dump(list(record.issue_codes)),
                     review_status,
                     (
-                        _non_formal_note(record.registration_status)
+                        _non_formal_note(
+                            record.registration_status, record.issue_codes
+                        )
                         if review_status == "excluded"
                         else None
                     ),

@@ -797,11 +797,17 @@ def evaluate_overseas_row_issues(
 
     issues: list[str] = []
     combined = f"{model_raw} {probe_raw}"
+    narrative = bool(re.search(r"销售反馈|证书|可直接销售", combined))
+    valid_models = [model for model in models if _MODEL_TOKEN.fullmatch(model)]
+    if narrative and not valid_models and not probes:
+        # 整行是结论性说明（「有证书即可销售，所有机型适用」）而不是机型清单：
+        # 只留记录，不产生关系，也不必再问人。
+        return ("narrative_conclusion",)
     if jurisdiction_code is None:
         issues.append("jurisdiction_requires_mapping")
     if status != "completed":
         issues.append("non_final_status")
-    if re.search(r"销售反馈|证书|可直接销售", combined):
+    if narrative:
         issues.append("narrative_rule_requires_review")
     if "series" in unresolved_rules:
         issues.append("model_scope_requires_expansion")
@@ -829,6 +835,8 @@ def _parse_workbook(
     path: Path,
     *,
     series_mappings: dict[str, tuple[str, ...]] | None = None,
+    probe_overrides: dict[str, dict[str, tuple[str, ...]]] | None = None,
+    override_note: str = "",
 ) -> tuple[tuple[OverseasRegistrationRecord, ...], tuple[OverseasRegistrationRelation, ...]]:
     workbook = load_workbook(path, read_only=False, data_only=True)
     try:
@@ -904,10 +912,89 @@ def _parse_workbook(
                     unresolved_rules=resolved.unresolved_rules,
                 )
                 records.append(record)
+        if probe_overrides:
+            records = list(
+                apply_row_probe_overrides(
+                    records, probe_overrides, source_note=override_note or "受控文档"
+                )
+            )
         resolved_records = _resolve_cross_row_probes(records)
         return resolved_records, build_overseas_relations(resolved_records)
     finally:
         workbook.close()
+
+
+def apply_row_probe_overrides(
+    records,
+    overrides: dict[str, dict[str, tuple[str, ...]]],
+    *,
+    source_note: str,
+) -> tuple:
+    """把按受控文档登记的探头清单套到对应行上。
+
+    只覆盖登记过清单的机型，其余机型保持原样；补录过的行会留下
+    ``override:<依据>`` 痕迹，撤销登记后痕迹与数据一并消失。
+    """
+
+    if not overrides:
+        return tuple(records)
+    resolved = []
+    for record in records:
+        replacement = overrides.get(record.source_ref)
+        if not replacement:
+            resolved.append(record)
+            continue
+        pairs: list[tuple[str, tuple[str, ...]]] = []
+        seen: set[str] = set()
+        for model, probes in record.model_probes:
+            target = replacement.get(model) or replacement.get(
+                _probe_lookup_key(model)
+            )
+            if target is None:
+                target = next(
+                    (
+                        probes_
+                        for name, probes_ in replacement.items()
+                        if _probe_lookup_key(name) == _probe_lookup_key(model)
+                    ),
+                    None,
+                )
+            seen.add(model)
+            pairs.append((model, tuple(target) if target is not None else probes))
+        for name, probes in replacement.items():
+            if not any(_probe_lookup_key(item) == _probe_lookup_key(name) for item in seen):
+                pairs.append((name, tuple(probes)))
+        flattened = tuple(
+            dict.fromkeys(probe for _, probes in pairs for probe in probes)
+        )
+        unresolved = [
+            rule
+            for rule in record.unresolved_rules
+            if rule not in {"probe_blank", "probe", "notation"}
+        ]
+        issue_codes = evaluate_overseas_row_issues(
+            jurisdiction_code=record.jurisdiction_code,
+            status=record.registration_status,
+            model_raw=record.model_text or record.model_raw,
+            probe_raw=" ".join(flattened),
+            models=record.models,
+            probes=flattened,
+            unresolved_rules=tuple(unresolved),
+        )
+        resolved.append(
+            replace(
+                record,
+                probes=flattened,
+                model_probes=tuple(pairs),
+                applied_rules=tuple(
+                    dict.fromkeys((*record.applied_rules, f"override:{source_note}"))
+                ),
+                unresolved_rules=tuple(dict.fromkeys(unresolved)),
+                issue_codes=issue_codes,
+                ready_for_import=not issue_codes,
+            )
+        )
+    return tuple(resolved)
 
 
 def _probe_lookup_key(model: object) -> str:
@@ -1060,11 +1147,14 @@ def build_overseas_registration_preview(
     workbook_path: str | Path,
     *,
     series_mappings: dict[str, tuple[str, ...]] | None = None,
+    probe_overrides: dict[str, dict[str, tuple[str, ...]]] | None = None,
+    override_note: str = "",
 ) -> OverseasRegistrationPreview:
     """Parse an overseas tracking workbook without writing registration tables.
 
     ``series_mappings`` 是人工确认过的「系列 → 机型清单」；不传就按未展开处理，
-    这些行会继续留在待确认里。
+    这些行会继续留在待确认里。``probe_overrides`` 是按受控文档登记的
+    「来源行 → 机型 → 探头清单」，键是 source_ref。
     """
 
     source = Path(workbook_path).expanduser().resolve()
@@ -1076,7 +1166,10 @@ def build_overseas_registration_preview(
         if source.suffix.casefold() == ".xls":
             parse_path = _resolve_parseable_workbook(source, Path(temp))
         records, relations = _parse_workbook(
-            parse_path, series_mappings=series_mappings
+            parse_path,
+            series_mappings=series_mappings,
+            probe_overrides=probe_overrides,
+            override_note=override_note,
         )
 
     status_counts = Counter(record.registration_status for record in records)

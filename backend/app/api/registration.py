@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import mimetypes
+import re
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -100,6 +101,11 @@ from app.services.overseas_name_corrections import (
     list_overseas_name_mappings,
     save_overseas_name_mapping,
 )
+from app.services.overseas_row_overrides import (
+    document_sha256,
+    list_row_probe_overrides,
+    row_probe_overrides_by_source,
+)
 from app.services.overseas_series_mappings import (
     delete_overseas_series_mapping,
     list_overseas_series_mappings,
@@ -153,10 +159,21 @@ async def overseas_registration_snapshots(db: AsyncSession = Depends(get_db)):
 
 
 def _prepare_overseas_draft(database: Path, file_path: str):
-    """解析原件 → 套用名称/系列映射 → 匹配主数据；导入与重建草稿共用同一条链。"""
+    """解析原件 → 套用名称/系列映射与文档补录 → 匹配主数据；导入与重建共用同一条链。"""
 
+    digest = document_sha256(file_path)
+    override_items = list_row_probe_overrides(database, document_sha256=digest)
     preview = build_overseas_registration_preview(
-        file_path, series_mappings=overseas_series_index(database)
+        file_path,
+        series_mappings=overseas_series_index(database),
+        probe_overrides=row_probe_overrides_by_source(database, digest),
+        # 留痕只写文档名（页码与机型族明细留在登记表里），免得痕迹长得没法看
+        override_note="；".join(
+            dict.fromkeys(
+                re.split(r"第\s*\d+\s*页", item.source_note)[0].strip("：: （(")
+                for item in override_items
+            )
+        ),
     )
     # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
     # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。

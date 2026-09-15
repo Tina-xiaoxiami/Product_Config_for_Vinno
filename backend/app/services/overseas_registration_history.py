@@ -296,6 +296,21 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
 
             -- 人工确认的「系列 → 机型清单」：表里大量行写的是系列而不是机型，
             -- 确认一次就能全国复用，不必逐行问人。
+            -- 按受控文档补录的某一行探头清单（表里写「探头见某某文档」时用）。
+            -- 键里带原件 sha：换一份跟踪表不会误套用别的文件登记的清单。
+            CREATE TABLE IF NOT EXISTS overseas_row_probe_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_sha256 TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                probes_json TEXT NOT NULL,
+                source_note TEXT NOT NULL,
+                confirmed_by TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (document_sha256, source_ref, model_name)
+            );
+
             CREATE TABLE IF NOT EXISTS overseas_series_mappings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_name TEXT NOT NULL,
