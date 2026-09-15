@@ -213,6 +213,9 @@ export const publishOverseasRegistrationSnapshot = (snapshotId, confirmedBy) =>
 // 原件没变、但解析规则或名称映射更新了：基于已发布快照重新解析出一版草稿。
 export const rebuildOverseasRegistrationDraft = (snapshotId) =>
   api.post(`/registrations/overseas/snapshots/${snapshotId}/rebuild-draft`)
+// 放弃一版未发布的草稿：关系、审核条目与修订记录一并删除。
+export const discardOverseasRegistrationDraft = (snapshotId) =>
+  api.delete(`/registrations/overseas/snapshots/${snapshotId}`)
 export const stageRegistrationPackageDraft = (formData) =>
   api.post('/registrations/packages/drafts', formData)
 export const getRegistrationPackageMappings = (versionId) =>

@@ -428,6 +428,9 @@
             >
               发布此快照
             </el-button>
+            <el-button size="small" class="overseas-discard-button" @click="discardOverseasDraft">
+              放弃草稿
+            </el-button>
           </el-alert>
           <div v-if="overseasActiveSnapshot" class="summary-row overseas-snapshot-row">
             <span>当前生效快照 <strong>#{{ overseasActiveSnapshot.id }}</strong></span>
@@ -995,6 +998,7 @@ import {
   deleteOverseasNameMapping,
   publishOverseasRegistrationSnapshot,
   rebuildOverseasRegistrationDraft,
+  discardOverseasRegistrationDraft,
   updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
@@ -1337,6 +1341,33 @@ const rebuildOverseasDraft = async () => {
     ElMessage.error(error?.response?.data?.detail || '重建草稿失败')
   } finally {
     overseasRebuilding.value = false
+  }
+}
+
+const discardOverseasDraft = async () => {
+  const draft = overseasDraftSnapshot.value
+  if (!draft) return
+  try {
+    await ElMessageBox.confirm(
+      `将删除草稿快照 #${draft.id}（第 ${(draft.revision || 0) + 1} 版 · ${draft.relation_count} 条关系）、` +
+        '这批关系、以及它的审核条目和修订记录，且不可撤销。' +
+        '已发布快照与当前查询不受影响；需要时可以从已发布快照重新重建。',
+      '放弃这份草稿',
+      { confirmButtonText: '放弃草稿', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await discardOverseasRegistrationDraft(draft.id)
+    ElMessage.success(
+      `已放弃草稿快照 #${result.snapshot_id}（${result.relation_count} 条关系），当前查询仍是已发布那一版`
+    )
+    await loadOverseasSnapshots()
+    await loadOverseasCountries()
+    await loadOverseasRelations()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '放弃草稿失败')
   }
 }
 
@@ -1776,6 +1807,7 @@ onMounted(async () => {
 .overseas-snapshot-row { margin-top: 10px; align-items: center; }
 .overseas-snapshot-row .el-button { margin-left: auto; }
 .overseas-publish-button { margin-top: 6px; }
+.overseas-discard-button { margin-top: 6px; margin-left: 8px; }
 .mapping-form { display: grid; grid-template-columns: 110px 1fr 1fr 150px auto; gap: 8px; margin-bottom: 12px; }
 .master-link-note { display: block; margin-top: 4px; color: #64748b; }
 .review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
