@@ -209,8 +209,53 @@ def _status(default_status: str, text: str) -> str:
     return default_status
 
 
+_MODEL_VARIANT_SUFFIXES = {
+    "SUPER",
+    "ELITE",
+    "PRO",
+    "PLUS",
+    "MAX",
+    "EXPERT",
+    "PREMIUM",
+    "FLAGSHIP",
+}
+
+
+def _split_model_token(part: str) -> tuple[str, ...]:
+    """把空格分隔的型号清单再切一刀：``A3 A5 A6`` → 三个型号。
+
+    判据刻意保守，只有同时满足下列条件才切，避免切坏带空格的真实型号名：
+
+    - 至少两段；
+    - **每段都含数字** —— 品牌词（``VINNO``、``ULTIMUS``、拼错的 ``Utimus``）没有数字，
+      ``VINNO S300`` / ``ULTIMUS 9E`` 因此保持整体；
+    - 没有版本后缀词 —— 挡住 ``V10 Super`` 这类；
+    - 每段都是合法型号写法 —— 挡住 ``Sg12--- S300:OEM`` 这类混乱单元格。
+    """
+
+    parts = [piece for piece in part.split() if piece]
+    if len(parts) < 2:
+        return (part,)
+    if any(not any(character.isdigit() for character in piece) for piece in parts):
+        return (part,)
+    if any(piece.isdigit() for piece in parts):
+        # 段里出现裸数字（如 ``9URM-Ultimus 9``）说明整串是一条乱写记录而不是清单，
+        # 宁可不切，留给人工确认。
+        return (part,)
+    if any(piece.upper() in _MODEL_VARIANT_SUFFIXES for piece in parts):
+        return (part,)
+    if any(_MODEL_TOKEN.fullmatch(piece) is None for piece in parts):
+        return (part,)
+    return tuple(parts)
+
+
 def _split_models(value: str) -> tuple[str, ...]:
-    return tuple(part.strip() for part in _MODEL_SPLIT.split(value) if part.strip())
+    tokens: list[str] = []
+    for part in _MODEL_SPLIT.split(value):
+        cleaned = part.strip()
+        if cleaned:
+            tokens.extend(_split_model_token(cleaned))
+    return tuple(tokens)
 
 
 def _split_probes(value: str) -> tuple[str, ...]:
