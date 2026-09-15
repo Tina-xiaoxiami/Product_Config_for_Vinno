@@ -163,6 +163,90 @@ def _snapshot_date(path: Path) -> str | None:
         return None
 
 
+def _xlrd_cell_value(cell, book):
+    """把 xlrd 单元格还原成 openpyxl 写入时合适的 Python 值。"""
+
+    import xlrd
+
+    value = cell.value
+    if value in ("", None):
+        return None
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(float(value), book.datemode)
+        except (ValueError, TypeError):
+            return value
+    if cell.ctype == xlrd.XL_CELL_NUMBER and float(value).is_integer():
+        return int(value)
+    return value
+
+
+_ILLEGAL_SHEET_TITLE = re.compile(r"[\[\]:*?/\\]")
+
+
+def _safe_sheet_title(name: str, index: int) -> str:
+    """把 .xls 的工作表名收敛成 openpyxl 能接受的名字。
+
+    .xls 允许的字符比 .xlsx 多，名字里的 ``[]:*?/\\`` 会让 openpyxl 直接报错，
+    这里替换掉；重名和超长交给 openpyxl 自己处理。
+    """
+
+    cleaned = _ILLEGAL_SHEET_TITLE.sub("_", name).strip().strip("'")[:31]
+    return cleaned or f"Sheet{index + 1}"
+
+
+def _convert_legacy_xls_with_xlrd(path: Path, directory: Path) -> Path:
+    """用 xlrd 读旧版 .xls 并另存成 .xlsx（xlrd 只能读，写由 openpyxl 负责）。"""
+
+    import xlrd
+    from openpyxl import Workbook
+
+    book = xlrd.open_workbook(str(path))
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for index, sheet in enumerate(book.sheets()):
+        target = workbook.create_sheet(title=_safe_sheet_title(sheet.name, index))
+        for row_index in range(sheet.nrows):
+            for column_index in range(sheet.ncols):
+                value = _xlrd_cell_value(
+                    sheet.cell(row_index, column_index), book
+                )
+                if value is not None:
+                    target.cell(
+                        row=row_index + 1, column=column_index + 1, value=value
+                    )
+    converted = directory / f"{path.stem}.xlsx"
+    workbook.save(converted)
+    return converted
+
+
+def _resolve_parseable_workbook(path: Path, directory: Path) -> Path:
+    """返回 openpyxl 能读的工作簿路径。
+
+    ``.xlsx`` 原样返回；``.xls`` 按「xlrd → LibreOffice」的顺序转换到临时目录。
+    首选 xlrd：它是几十 KB 的纯 Python 包，不会像 700MB 的桌面套件那样
+    「装过又不在 PATH 上」导致整条导入链悄悄断掉。
+    """
+
+    if path.suffix.casefold() != ".xls":
+        return path
+    reasons: list[str] = []
+    try:
+        return _convert_legacy_xls_with_xlrd(path, directory)
+    except ImportError as exc:
+        reasons.append(f"xlrd 未安装（{exc}）")
+    except Exception as exc:  # 损坏文件等：明确记下来再试下一条路
+        reasons.append(f"xlrd 读取失败（{exc}）")
+    try:
+        return _convert_legacy_xls(path, directory)
+    except ValueError as exc:
+        reasons.append(str(exc))
+    raise ValueError(
+        "无法读取 .xls：" + "；".join(reasons)
+        + "。请安装 xlrd（推荐：pip install xlrd）或 LibreOffice"
+    )
+
+
 def _convert_legacy_xls(path: Path, directory: Path) -> Path:
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     if executable is None:
@@ -465,7 +549,7 @@ def build_overseas_registration_preview(
     with tempfile.TemporaryDirectory(prefix="overseas-registration-preview-") as temp:
         parse_path = source
         if source.suffix.casefold() == ".xls":
-            parse_path = _convert_legacy_xls(source, Path(temp))
+            parse_path = _resolve_parseable_workbook(source, Path(temp))
         records, relations = _parse_workbook(parse_path)
 
     status_counts = Counter(record.registration_status for record in records)
@@ -771,7 +855,7 @@ def write_overseas_corrected_copy(
     with tempfile.TemporaryDirectory(prefix="overseas-corrected-") as temp:
         parse_path = source
         if source.suffix.casefold() == ".xls":
-            parse_path = _convert_legacy_xls(source, Path(temp))
+            parse_path = _resolve_parseable_workbook(source, Path(temp))
         workbook = load_workbook(parse_path)
         try:
             fill = PatternFill("solid", fgColor=_CORRECTED_FILL) if rename else None
