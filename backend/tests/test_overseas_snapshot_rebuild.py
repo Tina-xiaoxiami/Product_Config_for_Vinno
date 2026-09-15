@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
@@ -430,16 +431,16 @@ def test_discard_removes_only_the_draft(tmp_path):
     )
     connection = sqlite3.connect(database_path)
     try:
-        item_id = connection.execute(
-            "SELECT id FROM data_review_items WHERE batch_id = ?",
+        item_id, payload_json = connection.execute(
+            "SELECT id, effective_payload_json FROM data_review_items WHERE batch_id = ?",
             (rebuilt["snapshot_id"],),
-        ).fetchone()[0]
+        ).fetchone()
     finally:
         connection.close()
     revise_data_review_item(
         database_path,
         item_id=item_id,
-        effective_payload={"country_code": "TH"},
+        effective_payload=json.loads(payload_json),
         review_status="confirmed",
         changed_by="复核人",
         change_note="重建后确认",
