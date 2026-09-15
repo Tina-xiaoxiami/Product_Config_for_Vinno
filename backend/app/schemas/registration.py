@@ -230,6 +230,10 @@ class OverseasRegistrationSnapshotItem(BaseModel):
     country_count: int = 0
     model_count: int = 0
     probe_count: int = 0
+    # 同一份原件的第几版：0 是首次导入，之后每次「基于现有快照重建草稿」+1。
+    revision: int = 0
+    # 由哪条快照重建而来；首次导入为空。
+    derived_from_snapshot_id: int | None = None
     created_at: str | None = None
     published_at: str | None = None
     confirmed_by: str | None = None

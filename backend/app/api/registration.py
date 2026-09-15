@@ -81,6 +81,7 @@ from app.services.overseas_registration_history import (
     list_overseas_registration_relations,
     list_overseas_registration_snapshots,
     publish_overseas_registration_snapshot,
+    rebuild_overseas_registration_draft,
     stage_overseas_registration_snapshot,
 )
 from app.services.overseas_registration_preview import (
@@ -140,36 +141,48 @@ async def overseas_registration_snapshots(db: AsyncSession = Depends(get_db)):
     return OverseasRegistrationSnapshotList(items=items, total=len(items))
 
 
+def _prepare_overseas_draft(database: Path, file_path: str):
+    """解析原件 → 套用名称映射 → 匹配主数据；导入与重建草稿共用同一条链。"""
+
+    preview = build_overseas_registration_preview(file_path)
+    # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
+    # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。
+    model_names, probe_names = overseas_master_names(database)
+    preview = apply_overseas_name_corrections(
+        preview,
+        mappings=list_overseas_name_mappings(database),
+        known_model_names=model_names,
+        known_probe_names=probe_names,
+    ).preview
+    matches = match_overseas_registration_master_data(preview, database)
+    return preview, matches
+
+
+def _overseas_document_path(database: Path, source_document_id: int) -> str:
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        row = connection.execute(
+            "SELECT file_path FROM knowledge_documents WHERE id = ?",
+            (source_document_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="受控海外注册材料不存在")
+    return str(row[0])
+
+
 @router.post("/overseas/snapshots/drafts")
 async def create_overseas_registration_snapshot_draft(
     payload: OverseasRegistrationDraftRequest,
     db: AsyncSession = Depends(get_db),
 ):
     database = _database_path(db)
-    connection = sqlite3.connect(database)
-    try:
-        connection.execute("PRAGMA query_only = ON")
-        row = connection.execute(
-            "SELECT file_path FROM knowledge_documents WHERE id = ?",
-            (payload.source_document_id,),
-        ).fetchone()
-    finally:
-        connection.close()
-    if row is None:
-        raise HTTPException(status_code=404, detail="受控海外注册材料不存在")
+    file_path = _overseas_document_path(database, payload.source_document_id)
 
     def _stage_draft():
-        preview = build_overseas_registration_preview(row[0])
-        # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
-        # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。
-        model_names, probe_names = overseas_master_names(database)
-        preview = apply_overseas_name_corrections(
-            preview,
-            mappings=list_overseas_name_mappings(database),
-            known_model_names=model_names,
-            known_probe_names=probe_names,
-        ).preview
-        matches = match_overseas_registration_master_data(preview, database)
+        preview, matches = _prepare_overseas_draft(database, file_path)
         return stage_overseas_registration_snapshot(
             database,
             preview=preview,
@@ -179,6 +192,52 @@ async def create_overseas_registration_snapshot_draft(
 
     try:
         return await asyncio.to_thread(_stage_draft)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/overseas/snapshots/{snapshot_id}/rebuild-draft")
+async def rebuild_overseas_registration_snapshot_draft(
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """基于已发布快照重建一份新草稿：原件没变也能修订。
+
+    已发布快照是冻结且唯一的，同一份原件再次导入只会复用它；这条路径让
+    「解析代码或名称映射更新了、原件没变」也能重新解析出新的一版，
+    等人工确认后再发布，旧快照在发布前保持可查询。
+    """
+
+    database = _database_path(db)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        row = connection.execute(
+            """
+            SELECT document.file_path
+            FROM overseas_registration_snapshots snapshot
+            JOIN knowledge_documents document
+              ON document.id = snapshot.source_document_id
+            WHERE snapshot.id = ?
+            """,
+            (snapshot_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="海外注册快照不存在")
+
+    def _rebuild():
+        preview, matches = _prepare_overseas_draft(database, str(row[0]))
+        return rebuild_overseas_registration_draft(
+            database,
+            snapshot_id=snapshot_id,
+            preview=preview,
+            matches=matches,
+        )
+
+    try:
+        return await asyncio.to_thread(_rebuild)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -410,7 +410,15 @@
           >
             <template #title>
               有 1 份海外注册草稿快照尚未发布（{{ overseasDraftSnapshot.source_file_name }} ·
-              {{ overseasDraftSnapshot.relation_count }} 条关系），草稿不参与查询，因此下面结果为空。
+              第 {{ (overseasDraftSnapshot.revision || 0) + 1 }} 版 ·
+              {{ overseasDraftSnapshot.relation_count }} 条关系）。
+              <template v-if="overseasActiveSnapshot">
+                当前查询仍使用已发布快照 #{{ overseasActiveSnapshot.id }}（{{
+                  overseasActiveSnapshot.relation_count
+                }}
+                条关系），发布这份草稿后才会切换。
+              </template>
+              <template v-else>草稿不参与查询，因此下面结果为空。</template>
             </template>
             <el-button
               type="warning"
@@ -421,10 +429,20 @@
               发布此快照
             </el-button>
           </el-alert>
-          <div v-else-if="overseasActiveSnapshot" class="summary-row overseas-snapshot-row">
+          <div v-if="overseasActiveSnapshot" class="summary-row overseas-snapshot-row">
             <span>当前生效快照 <strong>#{{ overseasActiveSnapshot.id }}</strong></span>
+            <span>版本 <strong>第 {{ (overseasActiveSnapshot.revision || 0) + 1 }} 版</strong></span>
             <span>快照日期 <strong>{{ overseasActiveSnapshot.snapshot_date || '—' }}</strong></span>
             <span>发布人 <strong>{{ overseasActiveSnapshot.confirmed_by || '—' }}</strong></span>
+            <el-button
+              v-if="overseasRebuildAvailable"
+              size="small"
+              :loading="overseasRebuilding"
+              title="原件没变、但解析规则或已确认的名称映射更新了：重新解析出一版草稿，人工确认后再发布"
+              @click="rebuildOverseasDraft"
+            >
+              基于此快照重建草稿
+            </el-button>
           </div>
           <div class="toolbar overseas-toolbar">
             <el-select
@@ -976,6 +994,7 @@ import {
   saveOverseasNameMapping,
   deleteOverseasNameMapping,
   publishOverseasRegistrationSnapshot,
+  rebuildOverseasRegistrationDraft,
   updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
@@ -1197,6 +1216,17 @@ const overseasDraftSnapshot = computed(
 const overseasActiveSnapshot = computed(
   () => overseasSnapshots.value.find(snapshot => snapshot.status === 'active') || null
 )
+// 同一份原件已经有一版待发布草稿时，不再重复重建，避免同时挂着两份草稿。
+const overseasRebuildAvailable = computed(
+  () =>
+    Boolean(overseasActiveSnapshot.value) &&
+    !(
+      overseasDraftSnapshot.value &&
+      overseasDraftSnapshot.value.source_document_id ===
+        overseasActiveSnapshot.value.source_document_id
+    )
+)
+const overseasRebuilding = ref(false)
 
 const loadOverseasSnapshots = async () => {
   try {
@@ -1279,6 +1309,34 @@ const removeNameMapping = async (mapping) => {
     await loadNameMappings()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '删除失败')
+  }
+}
+
+const rebuildOverseasDraft = async () => {
+  const active = overseasActiveSnapshot.value
+  if (!active) return
+  const nextRevision = (active.revision || 0) + 1
+  try {
+    await ElMessageBox.confirm(
+      `将用当前的解析规则和已确认的名称映射，重新解析这份原件并生成新草稿（第 ${nextRevision + 1} 版），人工确认后再发布。` +
+        `已发布快照 #${active.id} 在发布前继续生效，海外注册查询不受影响。`,
+      '基于当前快照重建草稿',
+      { confirmButtonText: '重建', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  overseasRebuilding.value = true
+  try {
+    const result = await rebuildOverseasRegistrationDraft(active.id)
+    ElMessage.success(
+      `已生成草稿快照 #${result.snapshot_id}（第 ${(result.revision || 0) + 1} 版 · ${result.relation_count} 条关系），确认后发布`
+    )
+    await loadOverseasSnapshots()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '重建草稿失败')
+  } finally {
+    overseasRebuilding.value = false
   }
 }
 

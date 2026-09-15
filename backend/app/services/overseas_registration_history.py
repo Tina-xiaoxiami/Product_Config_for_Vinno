@@ -141,6 +141,74 @@ def register_controlled_overseas_tracking_document(
         connection.close()
 
 
+_SNAPSHOT_COLUMNS = (
+    "id, source_document_id, source_file_name, source_sha256, snapshot_date, "
+    "status, relation_count, country_count, model_count, probe_count, "
+    "created_at, published_at, confirmed_by"
+)
+
+
+def _needs_snapshot_upgrade(connection: sqlite3.Connection) -> bool:
+    """老库的 source_sha256 是全局唯一，同一份原件因此无法产生第二个版本。"""
+
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'overseas_registration_snapshots'"
+    ).fetchone()
+    if exists is None:
+        return False
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(overseas_registration_snapshots)"
+        )
+    }
+    return "revision" not in columns
+
+
+def _upgrade_snapshot_table(connection: sqlite3.Connection) -> None:
+    """重建快照表：去掉 sha 全局唯一，改成 (sha, revision) 唯一并补追溯列。
+
+    SQLite 不能删除列上的 UNIQUE 约束，只能重建；重建前必须关掉外键，
+    否则 DROP 父表会级联删掉已发布的 relations。
+    """
+
+    connection.executescript(
+        f"""
+        BEGIN IMMEDIATE;
+        CREATE TABLE overseas_registration_snapshots_upgraded (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_document_id INTEGER NOT NULL
+                REFERENCES knowledge_documents(id),
+            source_file_name TEXT NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            snapshot_date TEXT,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'active', 'superseded')),
+            relation_count INTEGER NOT NULL,
+            country_count INTEGER NOT NULL,
+            model_count INTEGER NOT NULL,
+            probe_count INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0,
+            derived_from_snapshot_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            published_at TEXT,
+            confirmed_by TEXT,
+            UNIQUE (source_sha256, revision)
+        );
+        INSERT INTO overseas_registration_snapshots_upgraded (
+            {_SNAPSHOT_COLUMNS}, revision, derived_from_snapshot_id
+        )
+        SELECT {_SNAPSHOT_COLUMNS}, 0, NULL
+        FROM overseas_registration_snapshots;
+        DROP TABLE overseas_registration_snapshots;
+        ALTER TABLE overseas_registration_snapshots_upgraded
+            RENAME TO overseas_registration_snapshots;
+        COMMIT;
+        """
+    )
+
+
 def migrate_overseas_registration_history_schema(database_path: str | Path) -> None:
     """Create the isolated overseas history layer without changing config masters."""
 
@@ -149,6 +217,11 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
         raise FileNotFoundError(database)
     connection = sqlite3.connect(database, isolation_level=None)
     try:
+        # 升级老库要重建快照表（见 _upgrade_snapshot_table），关外键必须在事务外，
+        # 否则 DROP 父表会把 relations 一起级联删掉。
+        connection.execute("PRAGMA foreign_keys = OFF")
+        if _needs_snapshot_upgrade(connection):
+            _upgrade_snapshot_table(connection)
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(
             """
@@ -158,7 +231,7 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
                 source_document_id INTEGER NOT NULL
                     REFERENCES knowledge_documents(id),
                 source_file_name TEXT NOT NULL,
-                source_sha256 TEXT NOT NULL UNIQUE,
+                source_sha256 TEXT NOT NULL,
                 snapshot_date TEXT,
                 status TEXT NOT NULL DEFAULT 'draft'
                     CHECK (status IN ('draft', 'active', 'superseded')),
@@ -166,9 +239,14 @@ def migrate_overseas_registration_history_schema(database_path: str | Path) -> N
                 country_count INTEGER NOT NULL,
                 model_count INTEGER NOT NULL,
                 probe_count INTEGER NOT NULL,
+                -- 同一份原件的第几版：0 是首次导入，之后每次重建 +1。
+                revision INTEGER NOT NULL DEFAULT 0,
+                -- 由哪条快照重建而来，仅作追溯；源文件没换时就是上一版。
+                derived_from_snapshot_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 published_at TEXT,
-                confirmed_by TEXT
+                confirmed_by TEXT,
+                UNIQUE (source_sha256, revision)
             );
 
             CREATE TABLE IF NOT EXISTS overseas_registration_relations (
@@ -260,13 +338,90 @@ def _match_map(items) -> dict[str, object]:
     }
 
 
+def _unique_relations(preview: OverseasRegistrationPreview):
+    """按业务键去重并校验：只有已完成注册的关系能进历史层。"""
+
+    unique: dict[tuple, object] = {}
+    for relation in preview.relations:
+        business_key = (
+            relation.jurisdiction_code,
+            normalize_business_name(relation.model_name).casefold(),
+            normalize_business_name(relation.probe_model).casefold(),
+            relation.registration_status,
+            relation.address_version,
+        )
+        unique.setdefault(business_key, relation)
+    relations = tuple(unique.values())
+    if not relations:
+        raise ValueError("海外注册预览中没有可发布的国家－型号－探头关系")
+    if any(item.registration_status != "completed" for item in relations):
+        raise ValueError("只有已完成注册的数据可以进入海外注册历史层")
+    return relations
+
+
+def _counts(relations) -> dict[str, int]:
+    return {
+        "relation_count": len(relations),
+        "country_count": len({item.jurisdiction_code for item in relations}),
+        "model_count": len(
+            {normalize_business_name(item.model_name).casefold() for item in relations}
+        ),
+        "probe_count": len(
+            {normalize_business_name(item.probe_model).casefold() for item in relations}
+        ),
+    }
+
+
+def _insert_relations(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_id: int,
+    relations,
+    matches: OverseasMasterDataMatchPreview,
+) -> None:
+    model_matches = _match_map(matches.models)
+    probe_matches = _match_map(matches.probes)
+    for relation in relations:
+        model_match = model_matches.get(
+            normalize_business_name(relation.model_name).casefold()
+        )
+        probe_match = probe_matches.get(
+            normalize_business_name(relation.probe_model).casefold()
+        )
+        connection.execute(
+            """
+            INSERT INTO overseas_registration_relations (
+                snapshot_id, country_code, model_name, normalized_model,
+                probe_model, normalized_probe, registration_status,
+                address_version, source_ref, model_match_status,
+                product_model_id, probe_match_status, probe_model_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot_id,
+                relation.jurisdiction_code,
+                relation.model_name,
+                normalize_business_name(relation.model_name).casefold(),
+                relation.probe_model,
+                normalize_business_name(relation.probe_model).casefold(),
+                relation.registration_status,
+                relation.address_version,
+                relation.source_ref,
+                getattr(model_match, "match_status", "unmatched"),
+                (getattr(model_match, "candidate_ids", ()) or (None,))[0],
+                getattr(probe_match, "match_status", "unmatched"),
+                (getattr(probe_match, "candidate_ids", ()) or (None,))[0],
+            ),
+        )
+
+
 def stage_overseas_registration_snapshot(
     database_path: str | Path,
     *,
     preview: OverseasRegistrationPreview,
     matches: OverseasMasterDataMatchPreview,
     source_document_id: int,
-) -> dict[str, int | str]:
+) -> dict[str, int | str | bool]:
     """Persist an inert draft; only explicit publishing makes it queryable."""
 
     migrate_overseas_registration_history_schema(database_path)
@@ -280,10 +435,16 @@ def stage_overseas_registration_snapshot(
             source_document_id=source_document_id,
             preview=preview,
         )
+        # 同一份原件只留一条待发布草稿：有草稿就复用，否则退回最近一版
+        # （可能已发布）。已发布的那版不能悄悄改动，界面会提示去「重建草稿」。
         existing = connection.execute(
             """
-            SELECT id, status, relation_count, country_count, model_count, probe_count
-            FROM overseas_registration_snapshots WHERE source_sha256 = ?
+            SELECT id, status, revision, relation_count, country_count,
+                   model_count, probe_count
+            FROM overseas_registration_snapshots
+            WHERE source_sha256 = ?
+            ORDER BY (status = 'draft') DESC, revision DESC, id DESC
+            LIMIT 1
             """,
             (source_sha,),
         ).fetchone()
@@ -299,87 +460,42 @@ def stage_overseas_registration_snapshot(
             return {
                 "snapshot_id": int(existing[0]),
                 "status": str(existing[1]),
-                "relation_count": int(existing[2]),
-                "country_count": int(existing[3]),
-                "model_count": int(existing[4]),
-                "probe_count": int(existing[5]),
+                "revision": int(existing[2]),
+                "reused": True,
+                "relation_count": int(existing[3]),
+                "country_count": int(existing[4]),
+                "model_count": int(existing[5]),
+                "probe_count": int(existing[6]),
             }
 
-        unique_relations = {}
-        for relation in preview.relations:
-            business_key = (
-                relation.jurisdiction_code,
-                normalize_business_name(relation.model_name).casefold(),
-                normalize_business_name(relation.probe_model).casefold(),
-                relation.registration_status,
-                relation.address_version,
-            )
-            unique_relations.setdefault(business_key, relation)
-        relations = tuple(unique_relations.values())
-        if not relations:
-            raise ValueError("海外注册预览中没有可发布的国家－型号－探头关系")
-        if any(item.registration_status != "completed" for item in relations):
-            raise ValueError("只有已完成注册的数据可以进入海外注册历史层")
-        countries = {item.jurisdiction_code for item in relations}
-        models = {
-            normalize_business_name(item.model_name).casefold() for item in relations
-        }
-        probes = {
-            normalize_business_name(item.probe_model).casefold() for item in relations
-        }
+        relations = _unique_relations(preview)
+        counts = _counts(relations)
         cursor = connection.execute(
             """
             INSERT INTO overseas_registration_snapshots (
                 source_document_id, source_file_name, source_sha256, snapshot_date,
-                status, relation_count, country_count, model_count, probe_count
-            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+                status, relation_count, country_count, model_count, probe_count,
+                revision, derived_from_snapshot_id
+            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 0, NULL)
             """,
             (
                 source_document_id,
                 file_name,
                 source_sha,
                 preview.snapshot_date,
-                len(relations),
-                len(countries),
-                len(models),
-                len(probes),
+                counts["relation_count"],
+                counts["country_count"],
+                counts["model_count"],
+                counts["probe_count"],
             ),
         )
         snapshot_id = int(cursor.lastrowid)
-        model_matches = _match_map(matches.models)
-        probe_matches = _match_map(matches.probes)
-        for relation in relations:
-            model_match = model_matches.get(
-                normalize_business_name(relation.model_name).casefold()
-            )
-            probe_match = probe_matches.get(
-                normalize_business_name(relation.probe_model).casefold()
-            )
-            connection.execute(
-                """
-                INSERT INTO overseas_registration_relations (
-                    snapshot_id, country_code, model_name, normalized_model,
-                    probe_model, normalized_probe, registration_status,
-                    address_version, source_ref, model_match_status,
-                    product_model_id, probe_match_status, probe_model_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    snapshot_id,
-                    relation.jurisdiction_code,
-                    relation.model_name,
-                    normalize_business_name(relation.model_name).casefold(),
-                    relation.probe_model,
-                    normalize_business_name(relation.probe_model).casefold(),
-                    relation.registration_status,
-                    relation.address_version,
-                    relation.source_ref,
-                    getattr(model_match, "match_status", "unmatched"),
-                    (getattr(model_match, "candidate_ids", ()) or (None,))[0],
-                    getattr(probe_match, "match_status", "unmatched"),
-                    (getattr(probe_match, "candidate_ids", ()) or (None,))[0],
-                ),
-            )
+        _insert_relations(
+            connection,
+            snapshot_id=snapshot_id,
+            relations=relations,
+            matches=matches,
+        )
         stage_overseas_preview_review_items(
             database,
             snapshot_id=snapshot_id,
@@ -391,10 +507,109 @@ def stage_overseas_registration_snapshot(
         return {
             "snapshot_id": snapshot_id,
             "status": "draft",
-            "relation_count": len(relations),
-            "country_count": len(countries),
-            "model_count": len(models),
-            "probe_count": len(probes),
+            "revision": 0,
+            "reused": False,
+            **counts,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def rebuild_overseas_registration_draft(
+    database_path: str | Path,
+    *,
+    snapshot_id: int,
+    preview: OverseasRegistrationPreview,
+    matches: OverseasMasterDataMatchPreview,
+) -> dict[str, int | str]:
+    """基于一条已发布快照重建新草稿（同一份原件的新版本）。
+
+    已发布快照是冻结的：关系查询只认它，人工也不能再改；原件没变时再次导入
+    只会复用它。于是「原件没变，但解析代码或名称映射更新了」就没有补救手段。
+    这里把已发布快照当作原件来源，用当前的解析结果另开一版草稿；
+    旧快照在草稿发布前一直是 active，查询不受影响。
+    """
+
+    migrate_overseas_registration_history_schema(database_path)
+    database = Path(database_path).expanduser().resolve()
+    migrate_data_review_schema(database)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        base = connection.execute(
+            """
+            SELECT source_document_id, source_sha256, snapshot_date, status
+            FROM overseas_registration_snapshots WHERE id = ?
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        if base is None:
+            raise ValueError("海外注册快照不存在")
+        if str(base[3]) != "active":
+            raise ValueError("只有已发布快照需要重建草稿；草稿可以直接重新导入")
+        source_document_id = int(base[0])
+        registered_sha = str(base[1]).lower()
+        file_name, source_sha = _controlled_document(
+            connection,
+            source_document_id=source_document_id,
+            preview=preview,
+        )
+        if source_sha != registered_sha:
+            raise ValueError("重建草稿必须基于该快照登记的同一份受控原件")
+        revision = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(revision), -1) + 1 "
+                "FROM overseas_registration_snapshots WHERE source_sha256 = ?",
+                (registered_sha,),
+            ).fetchone()[0]
+        )
+        relations = _unique_relations(preview)
+        counts = _counts(relations)
+        cursor = connection.execute(
+            """
+            INSERT INTO overseas_registration_snapshots (
+                source_document_id, source_file_name, source_sha256, snapshot_date,
+                status, relation_count, country_count, model_count, probe_count,
+                revision, derived_from_snapshot_id
+            ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_document_id,
+                file_name,
+                registered_sha,
+                preview.snapshot_date or base[2],
+                counts["relation_count"],
+                counts["country_count"],
+                counts["model_count"],
+                counts["probe_count"],
+                revision,
+                snapshot_id,
+            ),
+        )
+        rebuilt_id = int(cursor.lastrowid)
+        _insert_relations(
+            connection,
+            snapshot_id=rebuilt_id,
+            relations=relations,
+            matches=matches,
+        )
+        stage_overseas_preview_review_items(
+            database,
+            snapshot_id=rebuilt_id,
+            source_document_id=source_document_id,
+            preview=preview,
+            _connection=connection,
+        )
+        connection.commit()
+        return {
+            "snapshot_id": rebuilt_id,
+            "status": "draft",
+            "revision": revision,
+            "derived_from_snapshot_id": snapshot_id,
+            **counts,
         }
     except Exception:
         connection.rollback()
@@ -543,6 +758,7 @@ async def list_overseas_registration_snapshots(
             """
             SELECT id, source_document_id, source_file_name, snapshot_date, status,
                    relation_count, country_count, model_count, probe_count,
+                   revision, derived_from_snapshot_id,
                    created_at, published_at, confirmed_by
             FROM overseas_registration_snapshots
             ORDER BY id DESC

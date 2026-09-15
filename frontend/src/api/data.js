@@ -210,6 +210,9 @@ export const stageOverseasRegistrationSnapshot = (sourceDocumentId) =>
   api.post('/registrations/overseas/snapshots/drafts', { source_document_id: sourceDocumentId })
 export const publishOverseasRegistrationSnapshot = (snapshotId, confirmedBy) =>
   api.post(`/registrations/overseas/snapshots/${snapshotId}/publish`, { confirmed_by: confirmedBy })
+// 原件没变、但解析规则或名称映射更新了：基于已发布快照重新解析出一版草稿。
+export const rebuildOverseasRegistrationDraft = (snapshotId) =>
+  api.post(`/registrations/overseas/snapshots/${snapshotId}/rebuild-draft`)
 export const stageRegistrationPackageDraft = (formData) =>
   api.post('/registrations/packages/drafts', formData)
 export const getRegistrationPackageMappings = (versionId) =>

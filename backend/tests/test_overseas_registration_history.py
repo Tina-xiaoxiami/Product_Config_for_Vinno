@@ -267,6 +267,8 @@ async def test_history_layer_keeps_drafts_out_of_queries_and_master_data_unchang
     assert staged == {
         "snapshot_id": 1,
         "status": "draft",
+        "revision": 0,
+        "reused": False,
         "relation_count": 2,
         "country_count": 2,
         "model_count": 2,

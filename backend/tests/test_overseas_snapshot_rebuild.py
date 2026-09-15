@@ -348,7 +348,7 @@ def test_review_items_are_staged_per_snapshot(tmp_path):
         batches = dict(
             connection.execute(
                 "SELECT batch_id, COUNT(*) FROM data_review_items "
-                "WHERE data_type = 'overseas_registration' GROUP BY batch_id"
+                "WHERE data_type = 'overseas_registration_row' GROUP BY batch_id"
             )
         )
     finally:
