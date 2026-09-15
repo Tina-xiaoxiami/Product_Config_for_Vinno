@@ -618,6 +618,58 @@ def rebuild_overseas_registration_draft(
         connection.close()
 
 
+def discard_overseas_registration_draft(
+    database_path: str | Path,
+    *,
+    snapshot_id: int,
+) -> dict[str, int | str]:
+    """放弃一份未发布的草稿：连它的关系、审核条目与修订记录一起删掉。
+
+    草稿是「还没生效」的一版，做错或不需要时要能撤掉，否则只能发布或一直挂着。
+    已发布和历史快照不能走这条路：它们是查询与审计的依据，要换版本只能发布
+    新草稿去顶替。
+    """
+
+    migrate_overseas_registration_history_schema(database_path)
+    database = Path(database_path).expanduser().resolve()
+    migrate_data_review_schema(database)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        row = connection.execute(
+            "SELECT status, relation_count, revision FROM "
+            "overseas_registration_snapshots WHERE id = ?",
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("海外注册快照不存在")
+        if str(row[0]) != "draft":
+            raise ValueError("已发布或历史快照不能放弃；更换版本请发布新的草稿")
+        relation_count = int(row[1])
+        # 审核条目挂在通用 batch_id 上，没有外键指向快照，必须显式清理，
+        # 否则审核中心会留下一个指向已删快照的幽灵批次。
+        connection.execute(
+            "DELETE FROM data_review_items WHERE data_type = ? AND batch_id = ?",
+            ("overseas_registration_row", snapshot_id),
+        )
+        connection.execute(
+            "DELETE FROM overseas_registration_snapshots WHERE id = ?",
+            (snapshot_id,),
+        )
+        connection.commit()
+        return {
+            "snapshot_id": snapshot_id,
+            "status": "discarded",
+            "revision": int(row[2]),
+            "relation_count": relation_count,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def publish_overseas_registration_snapshot(
     database_path: str | Path,
     *,

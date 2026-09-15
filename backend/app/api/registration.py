@@ -77,6 +77,7 @@ from app.services.local_file_actions import (
     open_local_path,
 )
 from app.services.overseas_registration_history import (
+    discard_overseas_registration_draft,
     list_overseas_registration_countries,
     list_overseas_registration_relations,
     list_overseas_registration_snapshots,
@@ -309,6 +310,23 @@ async def publish_overseas_registration_snapshot_api(
             _database_path(db),
             snapshot_id=snapshot_id,
             confirmed_by=payload.confirmed_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/overseas/snapshots/{snapshot_id}")
+async def discard_overseas_registration_snapshot_draft(
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """放弃一份未发布的草稿（连它的关系、审核条目与修订记录）。"""
+
+    try:
+        return await asyncio.to_thread(
+            discard_overseas_registration_draft,
+            _database_path(db),
+            snapshot_id=snapshot_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
