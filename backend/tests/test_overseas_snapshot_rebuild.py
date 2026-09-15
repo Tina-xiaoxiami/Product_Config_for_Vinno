@@ -13,7 +13,9 @@ import sqlite3
 
 import pytest
 
+from app.services.data_review import revise_data_review_item
 from app.services.overseas_registration_history import (
+    discard_overseas_registration_draft,
     migrate_overseas_registration_history_schema,
     publish_overseas_registration_snapshot,
     rebuild_overseas_registration_draft,
@@ -407,6 +409,145 @@ def test_migration_upgrades_an_existing_snapshot_table(tmp_path):
     finally:
         connection.close()
     assert violations == []
+
+
+def test_discard_removes_only_the_draft(tmp_path):
+    database_path, controlled_file = _setup(tmp_path)
+    staged = stage_overseas_registration_snapshot(
+        database_path,
+        preview=_preview(controlled_file),
+        matches=_matches(),
+        source_document_id=1,
+    )
+    publish_overseas_registration_snapshot(
+        database_path, snapshot_id=staged["snapshot_id"], confirmed_by="本机操作"
+    )
+    rebuilt = rebuild_overseas_registration_draft(
+        database_path,
+        snapshot_id=staged["snapshot_id"],
+        preview=_preview(controlled_file),
+        matches=_matches(),
+    )
+    connection = sqlite3.connect(database_path)
+    try:
+        item_id = connection.execute(
+            "SELECT id FROM data_review_items WHERE batch_id = ?",
+            (rebuilt["snapshot_id"],),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    revise_data_review_item(
+        database_path,
+        item_id=item_id,
+        effective_payload={"country_code": "TH"},
+        review_status="confirmed",
+        changed_by="复核人",
+        change_note="重建后确认",
+    )
+
+    discard_overseas_registration_draft(
+        database_path, snapshot_id=rebuilt["snapshot_id"]
+    )
+
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM overseas_registration_snapshots WHERE id = ?",
+            (rebuilt["snapshot_id"],),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM overseas_registration_relations WHERE snapshot_id = ?",
+            (rebuilt["snapshot_id"],),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM data_review_items WHERE batch_id = ?",
+            (rebuilt["snapshot_id"],),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM data_review_revisions WHERE review_item_id = ?",
+            (item_id,),
+        ).fetchone()[0] == 0
+        # 已发布快照与它的数据、审核条目都不受影响
+        assert connection.execute(
+            "SELECT status FROM overseas_registration_snapshots WHERE id = ?",
+            (staged["snapshot_id"],),
+        ).fetchone()[0] == "active"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM overseas_registration_relations WHERE snapshot_id = ?",
+            (staged["snapshot_id"],),
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM data_review_items WHERE batch_id = ?",
+            (staged["snapshot_id"],),
+        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        connection.close()
+
+
+def test_discard_refuses_published_and_superseded(tmp_path):
+    database_path, controlled_file = _setup(tmp_path)
+    staged = stage_overseas_registration_snapshot(
+        database_path,
+        preview=_preview(controlled_file),
+        matches=_matches(),
+        source_document_id=1,
+    )
+    publish_overseas_registration_snapshot(
+        database_path, snapshot_id=staged["snapshot_id"], confirmed_by="本机操作"
+    )
+    rebuilt = rebuild_overseas_registration_draft(
+        database_path,
+        snapshot_id=staged["snapshot_id"],
+        preview=_preview(controlled_file),
+        matches=_matches(),
+    )
+
+    with pytest.raises(ValueError) as published_error:
+        discard_overseas_registration_draft(
+            database_path, snapshot_id=staged["snapshot_id"]
+        )
+    assert "已发布" in str(published_error.value)
+
+    publish_overseas_registration_snapshot(
+        database_path, snapshot_id=rebuilt["snapshot_id"], confirmed_by="本机操作"
+    )
+    with pytest.raises(ValueError):
+        discard_overseas_registration_draft(
+            database_path, snapshot_id=staged["snapshot_id"]
+        )
+    assert _snapshot_row(database_path, staged["snapshot_id"])[0] == "superseded"
+    assert _snapshot_row(database_path, rebuilt["snapshot_id"])[0] == "active"
+
+
+def test_discard_frees_the_revision_slot_for_another_rebuild(tmp_path):
+    database_path, controlled_file = _setup(tmp_path)
+    staged = stage_overseas_registration_snapshot(
+        database_path,
+        preview=_preview(controlled_file),
+        matches=_matches(),
+        source_document_id=1,
+    )
+    publish_overseas_registration_snapshot(
+        database_path, snapshot_id=staged["snapshot_id"], confirmed_by="本机操作"
+    )
+    first = rebuild_overseas_registration_draft(
+        database_path,
+        snapshot_id=staged["snapshot_id"],
+        preview=_preview(controlled_file),
+        matches=_matches(),
+    )
+    discard_overseas_registration_draft(database_path, snapshot_id=first["snapshot_id"])
+
+    second = rebuild_overseas_registration_draft(
+        database_path,
+        snapshot_id=staged["snapshot_id"],
+        preview=_preview(controlled_file),
+        matches=_matches(),
+    )
+
+    assert second["revision"] == first["revision"] == 1
+    assert _snapshot_row(database_path, staged["snapshot_id"])[0] == "active"
 
 
 def test_migration_allows_one_revision_per_source_and_no_more(tmp_path):
