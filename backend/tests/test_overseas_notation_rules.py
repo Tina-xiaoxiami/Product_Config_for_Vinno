@@ -156,7 +156,7 @@ def test_colon_notation_matches_a_marker_by_family_when_the_row_has_that_family(
     assert pairs["G65"] == ("S1-8C", "S2-9C")
     for uncovered in ("VINNO X1", "S100", "S200", "S300"):
         assert pairs[uncovered] == ()
-    assert "notation:partial" in resolved.applied_rules
+    assert any(rule.startswith("notation:partial") for rule in resolved.applied_rules)
 
 
 def test_slash_means_no_probe_relation_but_an_empty_cell_does_not():
