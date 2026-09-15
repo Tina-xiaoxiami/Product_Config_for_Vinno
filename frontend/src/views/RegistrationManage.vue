@@ -1773,7 +1773,8 @@ onMounted(async () => {
 .probe-table { width: 100%; }
 .overseas-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .overseas-toolbar { margin-bottom: 0; }
-.overseas-snapshot-row { margin-top: 10px; }
+.overseas-snapshot-row { margin-top: 10px; align-items: center; }
+.overseas-snapshot-row .el-button { margin-left: auto; }
 .overseas-publish-button { margin-top: 6px; }
 .mapping-form { display: grid; grid-template-columns: 110px 1fr 1fr 150px auto; gap: 8px; margin-bottom: 12px; }
 .master-link-note { display: block; margin-top: 4px; color: #64748b; }
