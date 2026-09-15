@@ -4,6 +4,7 @@ import sqlite3
 from openpyxl import Workbook
 
 from app.services.overseas_registration_preview import (
+    _split_models,
     build_overseas_registration_preview,
     match_overseas_registration_master_data,
     write_overseas_master_data_match_preview,
@@ -220,3 +221,28 @@ def test_master_data_match_separates_direct_alias_similarity_and_registration_on
     assert "entity_type,source_name,match_status" in text
     assert "model,V10,alias_candidate,VINNO 10" in text
     assert "probe,X4-0E,similarity_candidate,X4-9E" in text
+
+
+def test_space_separated_model_lists_are_split_without_breaking_real_names() -> None:
+    """空格分隔的型号清单要切开，但带空格的真实型号名不能切坏。"""
+
+    # 原表用空格分隔三个型号
+    assert _split_models("A3 A5 A6") == ("A3", "A5", "A6")
+    assert _split_models("A3 A6") == ("A3", "A6")
+
+    # 品牌词没有数字 → 整体是一个名字，不拆
+    for single in ("VINNO S300", "VINNO R300", "ULTIMUS 9E", "Utimus 9E"):
+        assert _split_models(single) == (single,), single
+
+    # 版本后缀词 → 不拆
+    assert _split_models("V10 Super") == ("V10 Super",)
+
+    # 混乱单元格（段内有非法字符）→ 不拆，留给人工确认
+    assert _split_models("Sg12--- S300:OEM") == ("Sg12--- S300:OEM",)
+
+    # 原有分隔符行为不变
+    assert _split_models("V9,V9E,V9P") == ("V9", "V9E", "V9P")
+    assert _split_models("Ultimus 7P,7E,8P") == ("Ultimus 7P", "7E", "8P")
+
+    # 段里出现裸数字 → 整串是一条乱写记录，不是清单，不切
+    assert _split_models("9URM-Ultimus 9") == ("9URM-Ultimus 9",)
