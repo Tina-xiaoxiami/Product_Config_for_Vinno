@@ -1199,7 +1199,11 @@ const reviewStatusType = status => ({
 }[status] || 'info')
 const issueLabel = issue => ({
   jurisdiction_requires_mapping: '国家待匹配',
-  non_final_status: '非最终状态',
+  non_final_status: '尚未拿证（进行中/新地址）',
+  // 作者已经写下的结论：只留记录，不是待办事项
+  registration_not_required: '该国无需注册',
+  registration_failed: '注册未成功',
+  registration_suspended: '注册已暂停/停止',
   narrative_rule_requires_review: '含说明性文字',
   model_scope_requires_expansion: '机型范围待展开',
   model_name_requires_review: '机型名称待修正',

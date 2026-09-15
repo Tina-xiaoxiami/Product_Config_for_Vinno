@@ -289,6 +289,14 @@ def _jurisdiction(value: str) -> tuple[str | None, str | None, str | None]:
     return None, None, None
 
 
+# 表格作者写在单元格里的结论；只降不升——进行中/新地址的行不会被抬成 completed。
+_FINAL_STATUS_CODES = {
+    "not_required": "registration_not_required",
+    "failed": "registration_failed",
+    "suspended": "registration_suspended",
+}
+
+
 def _status(default_status: str, text: str) -> str:
     if re.search(r"不需要注册|不需注册|不注册", text):
         return "not_required"
@@ -681,13 +689,18 @@ def evaluate_overseas_row_issues(
     行不该再因为"写法"被拦下；``unresolved_rules`` 说明还有哪些写法没解决。
     """
 
+    # 作者已经写下结论（无需注册 / 未注册成功 / 暂停或停止注册）的行只报状态本身：
+    # 它们永远不会产生关系，再罗列机型、探头的写法问题只会变成噪音。
+    if status in _FINAL_STATUS_CODES:
+        return (_FINAL_STATUS_CODES[status],)
+
     issues: list[str] = []
     combined = f"{model_raw} {probe_raw}"
     if jurisdiction_code is None:
         issues.append("jurisdiction_requires_mapping")
     if status != "completed":
         issues.append("non_final_status")
-    if re.search(r"销售反馈|证书|可直接销售|不需要注册|不需注册", combined):
+    if re.search(r"销售反馈|证书|可直接销售", combined):
         issues.append("narrative_rule_requires_review")
     if "series" in unresolved_rules:
         issues.append("model_scope_requires_expansion")

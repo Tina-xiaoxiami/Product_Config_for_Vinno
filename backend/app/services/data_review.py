@@ -117,6 +117,19 @@ def _overseas_payload(record) -> dict[str, Any]:
 
 
 _NON_FORMAL_NOTE = "注册状态非「已完成注册」，自动排除：仅保留记录，不作为正式数据"
+# 逐状态的排除原因：把「该国无需注册」和「进行中」写成同一句话，
+# 会让人误以为无需注册还是个待办事项。
+_NON_FORMAL_NOTES = {
+    "not_required": "该国无需注册，自动排除：仅保留记录，不作为正式数据",
+    "failed": "注册未成功，自动排除：仅保留记录，不作为正式数据",
+    "suspended": "注册已暂停或停止，自动排除：仅保留记录，不作为正式数据",
+    "in_progress": "注册进行中（尚未拿证），自动排除：仅保留记录，不作为正式数据",
+    "new_address_scope": "新地址登记（尚未拿证），自动排除：仅保留记录，不作为正式数据",
+}
+
+
+def _non_formal_note(status: object) -> str:
+    return _NON_FORMAL_NOTES.get(str(status or ""), _NON_FORMAL_NOTE)
 
 
 def _overseas_review_status(record) -> str:
@@ -179,7 +192,11 @@ def stage_overseas_preview_review_items(
                     _json_dump(payload),
                     _json_dump(list(record.issue_codes)),
                     review_status,
-                    _NON_FORMAL_NOTE if review_status == "excluded" else None,
+                    (
+                        _non_formal_note(record.registration_status)
+                        if review_status == "excluded"
+                        else None
+                    ),
                 ),
             )
         if owns_connection:

@@ -90,7 +90,8 @@ def test_preview_does_not_treat_not_required_as_completed(tmp_path):
     )
     assert bangladesh.registration_status == "not_required"
     assert bangladesh.ready_for_import is False
-    assert "narrative_rule_requires_review" in bangladesh.issue_codes
+    # 「不需要注册」是作者写下的结论：只报状态本身，不再罗列写法问题
+    assert bangladesh.issue_codes == ("registration_not_required",)
 
 
 def test_preview_supports_legacy_xls_through_temporary_conversion(
