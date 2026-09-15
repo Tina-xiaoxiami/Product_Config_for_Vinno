@@ -216,3 +216,44 @@ def test_mapping_input_is_validated(tmp_path: Path) -> None:
             target_name="Y",
             confirmed_by="",
         )
+
+
+def test_corrected_copy_highlights_only_the_changed_cells(tmp_path: Path) -> None:
+    """导出带颜色标注的副本：只给改过的单元格填色，且原件保持不动。"""
+
+    from openpyxl import Workbook, load_workbook
+
+    from app.services.overseas_name_corrections import OverseasNameCorrection
+    from app.services.overseas_registration_preview import write_overseas_corrected_copy
+
+    source = tmp_path / "tracking.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "已完成注册"
+    sheet.append(["国家/地区", "机型", "探头"])
+    sheet.append(["泰国", "V10", "X4-12,S2-9C"])
+    sheet.append(["巴西", "A3", "F2-5C,X4-12L"])
+    workbook.save(source)
+
+    target = write_overseas_corrected_copy(
+        source,
+        corrections=(OverseasNameCorrection("probe", "X4-12", "X4-12L", "mapping"),),
+        output_directory=tmp_path / "导入预览",
+        snapshot_date="2026-08-19",
+    )
+
+    assert target.name == "overseas-registration-corrected-2026-08-19.xlsx"
+    result = load_workbook(target)["已完成注册"]
+    assert result["C2"].value == "X4-12L,S2-9C"
+    assert result["C2"].fill.patternType == "solid"
+    assert "X4-12,S2-9C" in (result["C2"].comment.text if result["C2"].comment else "")
+    # 本已正确的写法不该被改动、也不该被标色
+    assert result["C3"].value == "F2-5C,X4-12L"
+    assert result["C3"].fill.patternType is None
+    # 未涉及的单元格不动
+    assert result["B2"].value == "V10"
+
+    # 原件一个字都没变
+    original = load_workbook(source)["已完成注册"]
+    assert original["C2"].value == "X4-12,S2-9C"
+    assert original["C2"].fill.patternType is None

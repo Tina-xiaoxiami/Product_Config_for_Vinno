@@ -736,3 +736,68 @@ def write_overseas_master_data_match_preview(
                     ]
                 )
     return target
+
+
+_CORRECTED_FILL = "FFF2CC"
+
+
+def write_overseas_corrected_copy(
+    source_path: str | Path,
+    *,
+    corrections,
+    output_directory: str | Path,
+    snapshot_date: str | None = None,
+) -> Path:
+    """另存一份「已标注修改」的副本，**绝不改写受控原件**。
+
+    按名称映射替换单元格文本，改动过的单元格填浅黄并在批注里写明原值，
+    便于把修好的表格回流给业务方；原件的 sha256 因此保持有效。
+    """
+
+    from openpyxl.comments import Comment
+    from openpyxl.styles import PatternFill
+
+    rename = {
+        str(item.source_name): str(item.target_name)
+        for item in corrections
+        if str(item.source_name) != str(item.target_name)
+    }
+    source = Path(source_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    directory = Path(output_directory).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="overseas-corrected-") as temp:
+        parse_path = source
+        if source.suffix.casefold() == ".xls":
+            parse_path = _convert_legacy_xls(source, Path(temp))
+        workbook = load_workbook(parse_path)
+        try:
+            fill = PatternFill("solid", fgColor=_CORRECTED_FILL) if rename else None
+            for sheet in workbook.worksheets:
+                for row in sheet.iter_rows():
+                    for cell in row:
+                        value = cell.value
+                        if not isinstance(value, str) or not value.strip():
+                            continue
+                        updated = value
+                        for old, new in rename.items():
+                            # 词边界：X4-12 → X4-12L，但不会误伤本已正确的 X4-12L
+                            updated = re.sub(
+                                rf"(?<![0-9A-Za-z]){re.escape(old)}(?![0-9A-Za-z])",
+                                new,
+                                updated,
+                            )
+                        if updated == value:
+                            continue
+                        cell.comment = Comment(f"原值：{value}", "产品配置管理系统")
+                        cell.value = updated
+                        if fill is not None:
+                            cell.fill = fill
+            suffix = snapshot_date or datetime.now().strftime("%Y-%m-%d")
+            target = directory / f"overseas-registration-corrected-{suffix}.xlsx"
+            workbook.save(target)
+        finally:
+            workbook.close()
+    return target
