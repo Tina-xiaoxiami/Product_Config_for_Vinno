@@ -113,7 +113,9 @@ def test_preview_supports_legacy_xls_through_temporary_conversion(
     assert preview.summary["source_rows"] == 6
 
 
-def test_preview_does_not_expand_abbreviated_model_lists_silently(tmp_path):
+def test_preview_expands_abbreviated_model_lists_with_a_trace(tmp_path):
+    """缩写续写按用户裁定展开，但要在 applied_rules 里留下痕迹。"""
+
     workbook_path = tmp_path / "tracking.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -125,12 +127,16 @@ def test_preview_does_not_expand_abbreviated_model_lists_silently(tmp_path):
 
     preview = build_overseas_registration_preview(workbook_path)
 
-    assert all(record.ready_for_import is False for record in preview.records)
+    assert [record.models for record in preview.records] == [
+        ("Ultimus 7P", "Ultimus 7E", "Ultimus 8P"),
+        ("G65", "G75"),
+    ]
+    assert all(record.ready_for_import for record in preview.records)
     assert all(
-        "model_name_requires_review" in record.issue_codes
+        any(rule.startswith("prefix:") for rule in record.applied_rules)
         for record in preview.records
     )
-    assert preview.summary["normalized_relations"] == 0
+    assert preview.summary["normalized_relations"] == 10
 
 
 def test_preview_writes_reviewable_json_and_csv_without_database_changes(tmp_path):

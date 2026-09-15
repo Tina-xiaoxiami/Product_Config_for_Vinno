@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 import hashlib
 import json
@@ -77,7 +77,8 @@ _JURISDICTIONS = {
 }
 
 _MODEL_SPLIT = re.compile(r"[，、,;；\n]+")
-_PROBE_SPLIT = re.compile(r"[，、,;；\n]+")
+# 探头写法里的分隔符：斜杠、句点、英文 and 都是"还有别的探头"，不是同一个探头的别名。
+_PROBE_SPLIT = re.compile(r"[，、,;；\n]+|/|\.|\s+and\s+|\s+", re.IGNORECASE)
 _MODEL_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 +._-]*$")
 _PROBE_TOKEN = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$")
 
@@ -425,7 +426,7 @@ _ANNOTATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
 # 探头列的「/」= 不适用（同一写法里作者自己写了「P:/」），不是"忘了填"。
 _PROBE_NONE = {"/", "／"}
 _SERIES_BRACKET = re.compile(r"^(?P<name>.+?)\s*[（(](?P<list>[^（()）]*)[)）]\s*$")
-_NOTATION_MARKER = re.compile(r"[^\s,、;；/]+")
+_NOTATION_MARKER = re.compile(r"[^\s,、;；/:：]+")
 
 
 def series_key(value: object) -> str:
@@ -499,6 +500,7 @@ def _expand_model_series(
     """把系列写法换成一串机型；返回机型、未展开的原写法、套用/未解决的规则、系列名索引。"""
 
     models: list[str] = []
+    literal: list[bool] = []
     unresolved_parts: list[str] = []
     applied: list[str] = []
     unresolved: list[str] = []
@@ -510,6 +512,7 @@ def _expand_model_series(
             if listed:
                 name = bracket.group("name").strip()
                 models.extend(listed)
+                literal.extend([False] * len(listed))
                 by_name[series_key(name)] = listed
                 applied.append(f"series:{name}")
                 continue
@@ -517,6 +520,7 @@ def _expand_model_series(
             target = series_index.get(series_key(part))
             if target:
                 models.extend(target)
+                literal.extend([False] * len(target))
                 by_name[series_key(part)] = target
                 nickname = _SERIES_PATTERN.sub("", part).strip(" -—–_/")
                 if nickname:
@@ -527,9 +531,13 @@ def _expand_model_series(
                 # 没展开的原写法照原样留着：界面要让人看见「R series 还没展开」。
                 unresolved_parts.append(part)
             continue
-        models.extend(_split_models(part))
+        split = _split_models(part)
+        models.extend(split)
+        literal.extend([True] * len(split))
+    inherited, prefix_rules = _inherit_numeric_prefix(models, literal)
+    applied.extend(prefix_rules)
     return (
-        tuple(dict.fromkeys(models)),
+        tuple(dict.fromkeys(inherited)),
         tuple(dict.fromkeys(unresolved_parts)),
         tuple(dict.fromkeys(applied)),
         tuple(dict.fromkeys(unresolved)),
@@ -537,47 +545,134 @@ def _expand_model_series(
     )
 
 
+def _inherit_numeric_prefix(
+    models: list[str], literal: list[bool] | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """省略前缀的续写继承前一个机型的字母前缀：``G65, 75`` → ``G65, G75``。
+
+    表格里大量出现 ``R300,500,700``、``Ultimus 7P,7E,8P`` 这种续写。三条限制：
+    前一个 token 必须是原表直接写出来的机型（否则 ``R series, 9E`` 会被系列展开后的
+    R500 改写成 ``R9E``）；纯数字续写一律补前缀；带一个字母的续写只在有品牌前缀时
+    才补（``V10, 9E`` 的 9E 本身就是完整机型名，不能变成 ``V9E``）。
+    ``3EXP`` 这种多字母后缀的真实型号从不改写。推断结果写进 applied_rules 留痕。
+    """
+
+    result: list[str] = []
+    applied: list[str] = []
+    for index, token in enumerate(models):
+        previous_is_literal = literal is None or (
+            index > 0 and literal[index - 1]
+        )
+        if not previous_is_literal or not result:
+            result.append(token)
+            continue
+        previous = result[-1]
+        continuation = re.fullmatch(r"\d+", token) is not None or (
+            re.fullmatch(r"\d+[A-Za-z]", token) is not None and " " in previous
+        )
+        if continuation:
+            prefix = re.match(r"^[A-Za-z][A-Za-z ]*", previous)
+            if prefix is not None:
+                merged = f"{prefix.group(0)}{token}"
+                applied.append(f"prefix:{token}→{merged}")
+                result.append(merged)
+                continue
+        result.append(token)
+    return tuple(result), tuple(applied)
+
+
+@dataclass(frozen=True)
+class _Notation:
+    """「机型:探头列表」写法的解析结果。"""
+
+    groups: tuple[tuple[str, tuple[str, ...]], ...]
+    added: tuple[str, ...] = ()
+    uncovered: tuple[str, ...] = ()
+
+
+def _split_probe_text(text: str) -> list[str]:
+    return [token for token in _PROBE_SPLIT.split(str(text or "")) if token]
+
+
 def _notation_groups(
     probe_text: str,
     model_lookup: dict[str, str],
     alias_lookup: dict[str, str],
     series_models: dict[str, tuple[str, ...]],
-) -> dict[str, list[str]] | None:
-    """解析「机型:探头列表」写法；标记可以是精确机型、别名，或本行出现的系列名。"""
+    models: tuple[str, ...],
+) -> _Notation | None:
+    """解析「机型:探头列表」写法。
+
+    标记可以是精确机型、别名、本行的系列写法，或本行的同族机型
+    （``E20:`` 对 E10、E35，``R:`` 对 R300、R700）；标记点到的机型即使不在
+    机型列里也补进来。第一个标记之前的清单归"没有被任何标记点名的机型"。
+    """
+
+    def marker_models(value: str) -> tuple[str, ...]:
+        canonical = model_lookup.get(value.casefold()) or alias_lookup.get(
+            _model_alias_identity(value)
+        )
+        if canonical is not None:
+            return (canonical,)
+        series = series_models.get(series_key(value))
+        if series is not None:
+            return tuple(series)
+        # 探头名一律不当标记，否则前一组最后一个探头会被误认成机型
+        if _PROBE_TOKEN.fullmatch(value):
+            return ()
+        letter = re.match(r"^[A-Za-z]+", value)
+        if letter is not None:
+            family = tuple(
+                model
+                for model in models
+                if re.match(rf"^{letter.group(0)}\d", model, re.IGNORECASE)
+            )
+            if family:
+                return family
+        # 标记点到的机型不在机型列里：补进来
+        if _MODEL_TOKEN.fullmatch(value):
+            return (value,)
+        return ()
 
     spans: list[tuple[int, int, tuple[str, ...]]] = []
     for hit in re.finditer(r"[:：]", probe_text):
         head = probe_text[: hit.start()]
         picked: list[tuple[str, int]] = []
         for token in reversed(list(re.finditer(_NOTATION_MARKER, head))):
-            value = token.group(0)
-            # 精确 → 别名（``E20`` ↔ ``VINNO E20``）→ 本行的系列写法
-            canonical = model_lookup.get(value.casefold()) or alias_lookup.get(
-                _model_alias_identity(value)
-            )
-            if canonical is not None:
-                picked.insert(0, (canonical, token.start()))
-                continue
-            series = series_models.get(series_key(value))
-            if series is not None:
-                picked = [
-                    (name, token.start()) for name in series
-                ] + picked
+            names = marker_models(token.group(0))
+            if not names:
                 break
-            break
+            picked = [(name, token.start()) for name in names] + picked
         if picked:
             spans.append((picked[0][1], hit.end(), tuple(name for name, _ in picked)))
     if not spans or len(spans) != len(re.findall(r"[:：]", probe_text)):
-        # 有冒号没能认出机型（例如机型列写 X2、探头列却写 A5/A6:…）：留给人。
         return None
+
     groups: dict[str, list[str]] = {}
-    for index, (_, end, models) in enumerate(spans):
+    added: list[str] = []
+    for index, (_, end, names) in enumerate(spans):
         stop = spans[index + 1][0] if index + 1 < len(spans) else len(probe_text)
-        body = re.split(r"[，、,;；/\s]+", probe_text[end:stop])
-        probes = [token for token in body if token]
-        for model in models:
-            groups.setdefault(model, []).extend(probes)
-    return groups
+        probes = _split_probe_text(probe_text[end:stop])
+        for name in names:
+            groups.setdefault(name, []).extend(probes)
+            if name not in models and name not in added:
+                added.append(name)
+
+    uncovered = [model for model in models if model not in groups]
+    if uncovered:
+        # 第一个标记之前的清单属于这些没被点名的机型（菲律宾 A53 的 X2 就是这样）
+        head_probes = _split_probe_text(probe_text[: spans[0][0]])
+        if head_probes:
+            for model in uncovered:
+                groups.setdefault(model, []).extend(head_probes)
+            uncovered = []
+    return _Notation(
+        groups=tuple(
+            (model, tuple(dict.fromkeys(probes))) for model, probes in groups.items()
+        ),
+        added=tuple(added),
+        uncovered=tuple(uncovered),
+    )
 
 
 def resolve_overseas_row_cells(
@@ -607,21 +702,19 @@ def resolve_overseas_row_cells(
     unresolved.extend(series_unresolved)
 
     probe_none = probe_text in _PROBE_NONE
+    notation: _Notation | None = None
     if probe_none:
         applied.append("probe:none")
         probes: tuple[str, ...] = ()
-        groups: dict[str, list[str]] | None = None
     elif not probe_text:
         probes = ()
-        groups = None
         unresolved.append("probe_blank")
     else:
         probes = _split_probes(probe_text)
-        groups = None
         if re.search(r"[:：]", probe_text):
             lookup = {model.casefold(): model for model in models}
             # 别名只收唯一候选：``E20`` 对上 ``VINNO E20`` 是确定的，
-            # 一对多就是猜，仍旧交给人。
+            # 一对多就是猜。
             candidates: dict[str, list[str]] = {}
             for model in models:
                 candidates.setdefault(_model_alias_identity(model), []).append(model)
@@ -630,17 +723,24 @@ def resolve_overseas_row_cells(
                 for identity, names in candidates.items()
                 if len(names) == 1
             }
-            candidate = _notation_groups(probe_text, lookup, aliases, series_models)
-            if candidate is None or set(candidate) != set(models):
+            notation = _notation_groups(
+                probe_text, lookup, aliases, series_models, models
+            )
+            if notation is None:
                 unresolved.append("notation")
             else:
-                groups = candidate
                 applied.append("notation:model_probe")
-                flattened = [probe for values in groups.values() for probe in values]
+                if notation.added:
+                    models = tuple(dict.fromkeys(models + notation.added))
+                flattened = [probe for _, values in notation.groups for probe in values]
                 probes = tuple(dict.fromkeys(flattened))
                 if any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes):
-                    groups = None
+                    notation = None
                     unresolved.append("notation")
+                elif notation.uncovered:
+                    # 有标记没点到的机型：本行不给它们探头，但要留痕，
+                    # 预览阶段还会检查它们在同国别的行里有没有探头。
+                    applied.append("notation:partial:" + "/".join(notation.uncovered))
 
     if any(not _MODEL_TOKEN.fullmatch(model) for model in models) or (
         models and _has_abbreviated_model_tokens(models)
@@ -652,7 +752,8 @@ def resolve_overseas_row_cells(
     if probes and any(not _PROBE_TOKEN.fullmatch(probe) for probe in probes):
         unresolved.append("probe")
 
-    if groups is not None:
+    if notation is not None:
+        groups = dict(notation.groups)
         model_probes = tuple(
             (model, tuple(dict.fromkeys(groups.get(model, ())))) for model in models
         )
@@ -803,9 +904,119 @@ def _parse_workbook(
                     unresolved_rules=resolved.unresolved_rules,
                 )
                 records.append(record)
-        return tuple(records), build_overseas_relations(records)
+        resolved_records = _resolve_cross_row_probes(records)
+        return resolved_records, build_overseas_relations(resolved_records)
     finally:
         workbook.close()
+
+
+def _probe_lookup_key(model: object) -> str:
+    """跨行比对机型用的键：品牌前缀不算差异（``VINNO X1`` 与 ``X1`` 是同一个）。"""
+
+    return re.sub(r"(?i)^vinno\s*", "", str(model or "").strip()).casefold()
+
+
+def _resolve_cross_row_probes(records) -> tuple:
+    """跨行补探头：整份表看完之后才知道别的行有没有这份数据。
+
+    两种情况（都是用户裁定的口径）：
+    - 探头列空白：沿用同国同机型的另一行；没有就找同国同族（如 V8 用 V5/V6 的，
+      只在那一族只有一份清单时才用），补上后写进 applied_rules 留痕；
+    - 「机型:探头」写法里有标记没点到的机型：它们在同国别的行里有探头就算正常
+      （越南 A172 的 X1/S100/S200/S300 由 A168 覆盖），
+      否则仍然按「写法需拆分」交给人。
+    """
+
+    known: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+    families: dict[tuple[str, str], dict[frozenset, str]] = {}
+    for record in records:
+        # 只拿"已完成注册"的行当依据：进行中/新地址的探头不能补进正式数据
+        if record.registration_status != "completed":
+            continue
+        for model, probes in record.model_probes:
+            if not probes or record.jurisdiction_code is None:
+                continue
+            key = (record.jurisdiction_code, _probe_lookup_key(model))
+            known.setdefault(key, (record.source_ref, tuple(probes)))
+            letter = re.match(r"^[A-Za-z]+", model)
+            if letter is not None:
+                families.setdefault(
+                    (record.jurisdiction_code, letter.group(0).upper()), {}
+                ).setdefault(frozenset(probes), record.source_ref)
+
+    resolved = []
+    for record in records:
+        if record.jurisdiction_code is None:
+            resolved.append(record)
+            continue
+        pairs = []
+        applied = list(record.applied_rules)
+        unresolved = list(record.unresolved_rules)
+        missing = {
+            model
+            for model, probes in record.model_probes
+            if not probes
+            and any(rule.startswith("notation:partial") for rule in record.applied_rules)
+        }
+        for model, probes in record.model_probes:
+            if probes or "probe_blank" not in record.unresolved_rules:
+                pairs.append((model, probes))
+                continue
+            source = known.get((record.jurisdiction_code, _probe_lookup_key(model)))
+            if source is None:
+                letter = re.match(r"^[A-Za-z]+", model)
+                candidates = (
+                    families.get((record.jurisdiction_code, letter.group(0).upper()), {})
+                    if letter is not None
+                    else {}
+                )
+                # 同族只有一份清单时才敢沿用，多于一份就是猜
+                if len(candidates) == 1:
+                    probe_list, ref = next(iter(candidates.items()))
+                    source = (ref, probe_list)
+            if source is None:
+                pairs.append((model, ()))
+                continue
+            ref, inherited = source
+            pairs.append((model, tuple(inherited)))
+            applied.append(f"probe-inherit:{ref}")
+        if not any(not probes for _, probes in pairs):
+            unresolved = [rule for rule in unresolved if rule != "probe_blank"]
+        # 写法没点到的机型，同国别的行也没有它们的探头 → 这里就是真缺数据，交给人
+        for model in missing:
+            if (record.jurisdiction_code, _probe_lookup_key(model)) not in known:
+                unresolved.append("notation")
+        if (
+            tuple(pairs) == record.model_probes
+            and tuple(applied) == record.applied_rules
+            and tuple(unresolved) == record.unresolved_rules
+        ):
+            resolved.append(record)
+            continue
+        flattened = tuple(
+            dict.fromkeys(probe for _, probes in pairs for probe in probes)
+        )
+        issue_codes = evaluate_overseas_row_issues(
+            jurisdiction_code=record.jurisdiction_code,
+            status=record.registration_status,
+            model_raw=record.model_text or record.model_raw,
+            probe_raw=record.probe_text or record.probe_raw,
+            models=record.models,
+            probes=flattened,
+            unresolved_rules=tuple(dict.fromkeys(unresolved)),
+        )
+        resolved.append(
+            replace(
+                record,
+                probes=flattened,
+                model_probes=tuple(pairs),
+                applied_rules=tuple(dict.fromkeys(applied)),
+                unresolved_rules=tuple(dict.fromkeys(unresolved)),
+                issue_codes=issue_codes,
+                ready_for_import=not issue_codes,
+            )
+        )
+    return tuple(resolved)
 
 
 def build_overseas_relations(
