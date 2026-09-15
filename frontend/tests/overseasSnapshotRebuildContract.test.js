@@ -32,3 +32,26 @@ test('published overseas snapshot can be rebuilt into a draft without losing the
     /export const rebuildOverseasRegistrationDraft[\s\S]*rebuild-draft/
   )
 })
+
+
+test('an unwanted draft can be discarded from the same bar', () => {
+  const view = read('../src/views/RegistrationManage.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /放弃草稿/)
+  assert.match(view, /const discardOverseasDraft = async/)
+  assert.match(view, /discardOverseasRegistrationDraft\(draft\.id\)/)
+
+  // 删的是草稿，必须说清删掉什么、且不可撤销
+  assert.match(view, /ElMessageBox\.confirm/)
+  assert.match(view, /审核条目/)
+  assert.match(view, /不可撤销/)
+
+  // 删完要刷新：快照、国家列表、关系都要回到已发布那一版
+  assert.match(view, /await loadOverseasSnapshots\(\)[\s\S]{0,200}loadOverseasRelations/)
+
+  assert.match(
+    api,
+    /export const discardOverseasRegistrationDraft[\s\S]*api\.delete\([\s\S]*overseas\/snapshots/
+  )
+})
