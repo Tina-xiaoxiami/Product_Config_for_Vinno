@@ -13,6 +13,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.controlled_material_import import (  # noqa: E402
     CONTROLLED_MATERIALS_ROOT,
+    ControlledMaterialsRootError,
+    validate_controlled_materials_root,
 )
 from app.services.knowledge_document_path_migration import (  # noqa: E402
     migrate_knowledge_document_paths,
@@ -46,6 +48,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    try:
+        validate_controlled_materials_root(args.target_root)
+    except ControlledMaterialsRootError as error:
+        print(f"ERROR {error}")
+        return 2
     result = migrate_knowledge_document_paths(
         args.database,
         source_root=args.source_root,

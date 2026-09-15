@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import re
 
-from app.services.controlled_material_import import CONTROLLED_MATERIALS_ROOT
+import pytest
+
+from app.services.controlled_material_import import (
+    CONTROLLED_MATERIALS_ROOT,
+    ControlledMaterialsRootError,
+    validate_controlled_materials_root,
+)
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -60,3 +67,89 @@ def test_scripts_derive_their_defaults_from_the_canonical_root() -> None:
     ):
         text = script.read_text(encoding="utf-8")
         assert "CONTROLLED_MATERIALS_ROOT" in text, script.name
+
+
+def _load_script(name: str):
+    path = BACKEND_ROOT / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_probe_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _sibling_tree(root: Path) -> Path:
+    """造出迁移时误建的那种旁支目录：结构合法，但没有 `.obsidian/`。"""
+
+    sibling = root / "Obsidian" / "产品配置管理系统" / "受控材料"
+    sibling.mkdir(parents=True)
+    return sibling
+
+
+def test_validation_accepts_a_tree_inside_an_obsidian_vault(tmp_path: Path) -> None:
+    vault = tmp_path / "Obsidian Vault"
+    (vault / ".obsidian").mkdir(parents=True)
+    root = vault / "产品配置管理系统" / "受控材料"
+    root.mkdir(parents=True)
+
+    assert validate_controlled_materials_root(root) == root
+
+
+def test_validation_rejects_a_tree_that_is_not_in_a_vault(tmp_path: Path) -> None:
+    """旁支目录有完全合法的目录结构，只有 `.obsidian/` 能把它识别出来。"""
+
+    with pytest.raises(ControlledMaterialsRootError) as error:
+        validate_controlled_materials_root(_sibling_tree(tmp_path))
+
+    assert "Vault" in str(error.value)
+
+
+def test_validation_rejects_a_missing_root(tmp_path: Path) -> None:
+    with pytest.raises(ControlledMaterialsRootError):
+        validate_controlled_materials_root(tmp_path / "不存在")
+
+
+def test_shipped_root_passes_validation_where_the_vault_exists() -> None:
+    """随代码发布的默认根目录本身必须合法；本机没有库时不做断言。"""
+
+    if not CONTROLLED_MATERIALS_ROOT.is_dir():
+        pytest.skip("本机没有 Obsidian 库")
+    assert (
+        validate_controlled_materials_root(CONTROLLED_MATERIALS_ROOT)
+        == CONTROLLED_MATERIALS_ROOT
+    )
+
+
+def test_import_script_stops_loudly_on_a_root_outside_the_vault(tmp_path: Path) -> None:
+    """扫错树必须显式失败，而不是静默扫完再报成功。"""
+
+    module = _load_script("import_controlled_materials")
+
+    exit_code = module.main(
+        [
+            "--database",
+            str(tmp_path / "product_config.db"),
+            "--controlled-root",
+            str(_sibling_tree(tmp_path)),
+        ]
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / "product_config.db").exists()
+
+
+def test_migrate_script_stops_loudly_on_a_target_outside_the_vault(
+    tmp_path: Path,
+) -> None:
+    module = _load_script("migrate_knowledge_document_paths")
+
+    exit_code = module.main(
+        [
+            "--database",
+            str(tmp_path / "product_config.db"),
+            "--target-root",
+            str(_sibling_tree(tmp_path)),
+        ]
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / "product_config.db").exists()
