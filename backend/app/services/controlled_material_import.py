@@ -11,6 +11,13 @@ import re
 import sqlite3
 
 
+#: 受控材料的唯一规范根目录（真实 Obsidian 库，目录名含空格）。
+#: 所有登记 / 迁移路径都必须由它派生——曾经三处各自硬编码该路径、其中两处漏掉
+#: " Vault"，把登记写进了迁移时误建的旁支目录（见 knowledge_documents id=19/21）。
+CONTROLLED_MATERIALS_ROOT = (
+    Path.home() / "Documents" / "Obsidian Vault" / "产品配置管理系统" / "受控材料"
+)
+
 CONTROLLED_PRODUCT_DIRECTORIES = {
     "说明书": ("manual", {".pdf", ".docx"}),
     "白皮书": ("whitepaper", {".pdf"}),

@@ -11,6 +11,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from app.services.controlled_material_import import (  # noqa: E402
+    CONTROLLED_MATERIALS_ROOT,
+)
 from app.services.knowledge_document_path_migration import (  # noqa: E402
     migrate_knowledge_document_paths,
 )
@@ -20,9 +23,7 @@ DEFAULT_DATABASE = BACKEND_ROOT / "product_config.db"
 DEFAULT_SOURCE_ROOT = (
     Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 )
-DEFAULT_TARGET_ROOT = (
-    Path.home() / "Documents" / "Obsidian" / "产品配置管理系统" / "受控材料"
-)
+DEFAULT_TARGET_ROOT = CONTROLLED_MATERIALS_ROOT
 
 
 def _parser() -> argparse.ArgumentParser:

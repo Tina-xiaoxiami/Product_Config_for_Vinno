@@ -12,14 +12,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.controlled_material_import import (  # noqa: E402
+    CONTROLLED_MATERIALS_ROOT,
     import_controlled_product_materials,
 )
 
 
 DEFAULT_DATABASE = BACKEND_ROOT / "product_config.db"
-DEFAULT_CONTROLLED_ROOT = (
-    Path.home() / "Documents" / "Obsidian" / "产品配置管理系统" / "受控材料"
-)
+DEFAULT_CONTROLLED_ROOT = CONTROLLED_MATERIALS_ROOT
 
 
 def _parser() -> argparse.ArgumentParser:
