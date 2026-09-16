@@ -1092,14 +1092,37 @@ const confirmSubmitDraft = async () => {
   if (entries.length === 0) return
 
   try {
-    await Promise.all(entries.map(([seriesId, batchId]) =>
+    // 每个系列各有一个草稿批次：没有改动的系列其批次是空的，服务端会返回
+    // 400「没有待提交的草稿」。此前用 Promise.all，任一空批次就让整个提交报
+    // 「提交失败」，而已经有改动的批次其实已经提交完成。
+    const settled = await Promise.allSettled(entries.map(([seriesId, batchId]) =>
       submitDraftBatch(batchId, {
         version_number: submitForm.version_number || undefined,
         description: submitForm.description || undefined
       })
     ))
+    const isEmptyBatch = (reason) =>
+      reason?.response?.status === 400
+      && String(reason?.response?.data?.detail || '').includes('没有待提交的草稿')
+    const failures = settled.filter(
+      result => result.status === 'rejected' && !isEmptyBatch(result.reason)
+    )
+    const skipped = settled.filter(
+      result => result.status === 'rejected' && isEmptyBatch(result.reason)
+    ).length
+    const submitted = settled.length - failures.length - skipped
 
-    ElMessage.success('提交成功')
+    if (failures.length > 0) {
+      const detail = failures[0].reason?.response?.data?.detail
+      ElMessage.error(
+        `提交失败：${submitted} 个系列已提交，${failures.length} 个失败`
+        + (detail ? `（${detail}）` : '')
+      )
+      await handleCompare()
+      return
+    }
+
+    ElMessage.success(skipped > 0 ? `提交成功（${skipped} 个系列无改动，已跳过）` : '提交成功')
     submitDialogVisible.value = false
 
     // 清空草稿状态

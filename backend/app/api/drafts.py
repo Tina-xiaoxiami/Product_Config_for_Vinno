@@ -371,10 +371,9 @@ async def submit_draft_batch(
             last_version.version_number if last_version else None
         )
 
-    # 部分提交：根据 item_ids / model_ids 过滤要处理的草稿
+    # 提交范围：根据 item_ids / model_ids 过滤要处理的草稿（都不传即全量提交）
     item_ids_filter = set(data.item_ids) if data.item_ids else None
     model_ids_filter = set(data.model_ids) if data.model_ids else None
-    is_partial = bool(item_ids_filter or model_ids_filter)
 
     if model_ids_filter and not item_ids_filter:
         # 按机型过滤：model_id=None（旧数据/全局变更）则包含，否则按 model_id 匹配
@@ -450,18 +449,19 @@ async def submit_draft_batch(
     for draft in drafts:
         await db.delete(draft)
 
-    # 部分提交：更新批次统计
-    if is_partial:
-        remaining_result = await db.execute(
-            select(ConfigDraft.change_type, func.count()).where(
-                ConfigDraft.batch_id == batch_id
-            ).group_by(ConfigDraft.change_type)
-        )
-        type_counts = dict(remaining_result.all())
-        batch.create_count = type_counts.get("create", 0)
-        batch.update_count = type_counts.get("update", 0)
-        batch.delete_count = type_counts.get("delete", 0)
-        batch.total_count = sum(type_counts.values())
+    # 重算批次统计（不限于部分提交）。此前只在部分提交时重算，
+    # 全量提交后 total_count 仍是提交前的数字，于是下面判断 remaining_count == 0
+    # 永远不成立：批次既不置为 submitted，计数也不清零。
+    remaining_result = await db.execute(
+        select(ConfigDraft.change_type, func.count()).where(
+            ConfigDraft.batch_id == batch_id
+        ).group_by(ConfigDraft.change_type)
+    )
+    type_counts = dict(remaining_result.all())
+    batch.create_count = type_counts.get("create", 0)
+    batch.update_count = type_counts.get("update", 0)
+    batch.delete_count = type_counts.get("delete", 0)
+    batch.total_count = sum(type_counts.values())
 
     # 版本号已在进入写操作之前确定并校验（见函数开头）
 

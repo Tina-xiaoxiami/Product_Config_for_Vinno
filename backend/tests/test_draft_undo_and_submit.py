@@ -277,3 +277,29 @@ async def test_partial_submit_matching_nothing_does_not_create_an_empty_version(
 
         assert (await session.execute(select(ConfigVersion))).scalars().all() == []
         assert len((await session.execute(select(ConfigDraft))).scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_full_submit_marks_the_batch_submitted_and_clears_its_counters(tmp_path):
+    """全量提交后批次要置为 submitted 且计数清零。
+
+    此前计数只在部分提交时重算，全量提交后 total_count 仍是旧值，批次永远停在
+    draft，界面下次仍把它当成"当前草稿"并反复提示有待提交内容。
+    """
+
+    database_path = tmp_path / "product_config.db"
+    client, engine, session_factory = await _client_for(database_path)
+    await _seed(session_factory)
+
+    async with client:
+        response = await client.post("/api/drafts/batch/B1/submit", json={})
+    await engine.dispose()
+
+    assert response.status_code == 200, response.text
+    async with session_factory() as session:
+        from sqlalchemy import select
+
+        batch = (await session.execute(select(DraftBatch))).scalar_one()
+        assert batch.status == "submitted"
+        assert batch.submitted_at is not None
+        assert (batch.total_count, batch.create_count, batch.update_count, batch.delete_count) == (0, 0, 0, 0)
