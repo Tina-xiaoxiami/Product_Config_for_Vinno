@@ -9,6 +9,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 import io
 import json
+from urllib.parse import quote
 
 
 class ExportRequest(BaseModel):
@@ -1255,7 +1256,8 @@ async def export_excel(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}"
+            # 系列名可能是中文，响应头按 latin-1 编码，必须百分号编码
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
         }
     )
 

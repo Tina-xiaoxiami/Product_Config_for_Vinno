@@ -392,14 +392,16 @@ async def test_product_query_groups_each_mapped_certificate_active_snapshot(tmp_
     )
     assert first_f4["registration_status"] == "registered"
     assert second_f4["registration_status"] == "unregistered"
+    # 国内红线只取本证当前有效版本：国家共享主数据里的探头若不属于本证，
+    # 不应出现在本证结果里（此前实现按国家列出全部探头并标为 unregistered）
     for registration in result["registrations"]:
-        removed = next(
-            item
+        assert all(
+            item["probe_model"] != "REMOVED-PROBE"
             for item in registration["items"]
-            if item["probe_model"] == "REMOVED-PROBE"
         )
-        assert removed["registration_status"] == "unregistered"
-        assert removed["effective_status"] == "#"
+        assert {
+            item["probe_model"] for item in registration["items"]
+        } == {"F2-5C", "G1-4P", "F4-9E"}
 
     connection = sqlite3.connect(database_path)
     connection.execute(

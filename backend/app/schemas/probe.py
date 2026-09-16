@@ -214,7 +214,10 @@ class ProductProbeConfigMatrix(BaseModel):
     product_model_name: str = ""
     features: List[dict] = []   # [{id, name, group_id, group_name}]
     probe_models: List[dict] = []  # [{id, model_number, category_id, category_name, priority}]
-    applications: List[dict] = []  # [{id, name}]
+    # 按探头类型分组的应用：{"regular": [...], "poc": [...]}
+    # （与 SeriesMatrixResponse.applications 同形；旧注解 List[dict] 与实现不符，
+    #   会让 GET /probes/config/{id} 及其导出直接 500）
+    applications: dict = {}
     configs: dict = {}  # key: f"{probe_model_id}_{feature_id}" -> ProductProbeConfigItem
 
 

@@ -511,7 +511,15 @@ async def rollback_version(
     version_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """回滚到指定版本（创建新版本，内容为目标版本快照）"""
+    """回滚到指定版本（创建新版本，内容为目标版本快照）。
+
+    只回滚本系列的配置值。``config_items`` 是所有系列共用的配置项主数据，
+    回滚一个系列不能删除或改写其他系列的配置项：那样会让其他系列的配置值
+    变成孤儿行（界面上直接消失），且不可恢复。
+
+    配置项按 IPN 匹配（IPN 是跨版本稳定的标识），匹配不到的才按快照新建；
+    已有配置项的名称/描述等主数据不在这里改写，它们由功能管理与导入维护。
+    """
     result = await db.execute(select(ConfigVersion).where(ConfigVersion.id == version_id))
     target_version = result.scalar_one_or_none()
 
@@ -527,41 +535,59 @@ async def rollback_version(
     )
     current_models = {m.id: m for m in models_result.scalars().all()}
 
-    # 清空当前配置数据
+    # 只清空本系列的配置值（config_values 按 model_id 归属系列）
     await db.execute(delete(ConfigValue).where(ConfigValue.model_id.in_(current_models.keys())))
-    await db.execute(delete(ConfigItem))
+    # 必须先落库，否则重建时同一 (item_id, model_id) 会撞 uq_config_value
+    await db.flush()
 
     # 恢复配置项和配置值
+    warnings: List[str] = []
     model_id_map = {}  # 快照中的model_id -> 当前model_id
     for model_info in snapshot.get("models", []):
-        # 查找或创建型号
+        model_name = model_info.get("name")
         model = await db.execute(
             select(ProductModel).where(
                 ProductModel.series_id == target_version.series_id,
-                ProductModel.name == model_info.get("name")
+                ProductModel.name == model_name
             )
         )
         existing_model = model.scalar_one_or_none()
         if existing_model:
             model_id_map[model_info.get("id")] = existing_model.id
+        else:
+            # 快照里的机型在当前系列已不存在，其配置值无法恢复
+            warnings.append(f"机型「{model_name}」已不存在，其配置值未恢复")
 
-    # 恢复配置项和值
+    # 按 IPN 索引现有配置项（跨系列共享，只复用不删除）
+    existing_items_result = await db.execute(select(ConfigItem))
+    items_by_ipn = {}
+    for existing in existing_items_result.scalars().all():
+        ipn_key = str(existing.ipn).strip() if existing.ipn else None
+        if ipn_key and ipn_key not in items_by_ipn:
+            items_by_ipn[ipn_key] = existing
+
     new_items = []
     for item_info in snapshot.get("items", []):
-        item = ConfigItem(
-            category=item_info.get("category"),
-            row_index=item_info.get("row_index"),
-            rd_name=item_info.get("rd_name"),
-            v_code=item_info.get("v_code"),
-            ipn=item_info.get("ipn"),
-            zh_desc=item_info.get("zh_desc"),
-            en_desc=item_info.get("en_desc")
-        )
-        db.add(item)
-        await db.flush()
+        ipn_key = str(item_info.get("ipn")).strip() if item_info.get("ipn") else None
+        item = items_by_ipn.get(ipn_key) if ipn_key else None
+        if item is None:
+            item = ConfigItem(
+                category=item_info.get("category"),
+                row_index=item_info.get("row_index"),
+                rd_name=item_info.get("rd_name"),
+                v_code=item_info.get("v_code"),
+                ipn=item_info.get("ipn"),
+                zh_desc=item_info.get("zh_desc"),
+                en_desc=item_info.get("en_desc")
+            )
+            db.add(item)
+            await db.flush()
+            if ipn_key:
+                items_by_ipn[ipn_key] = item
         new_items.append((item, item_info))
 
     # 恢复配置值
+    skipped_value_count = 0
     for item, item_info in new_items:
         values = item_info.get("values", {})
         for old_model_id, value_info in values.items():
@@ -576,6 +602,10 @@ async def rollback_version(
                     rd_status=value_info.get("rd_status")
                 )
                 db.add(value)
+            else:
+                skipped_value_count += 1
+    if skipped_value_count:
+        warnings.append(f"{skipped_value_count} 条配置值因机型缺失未恢复")
 
     # 创建新版本
     last_version = await db.execute(
@@ -603,7 +633,8 @@ async def rollback_version(
 
     return {
         "message": "回滚成功",
-        "new_version": new_version
+        "new_version": new_version,
+        "warnings": warnings
     }
 
 

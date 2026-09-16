@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 import io, json
 from datetime import datetime
+from urllib.parse import quote
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from app.database import get_db
@@ -1208,7 +1209,7 @@ async def export_config(product_model_id: int, db: AsyncSession = Depends(get_db
     wb.save(output); output.seek(0)
     filename = f"{matrix.product_model_name}_探头配置_{datetime.now().strftime('%Y%m%d')}.xlsx"
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 # ========== 机型分组管理 ==========

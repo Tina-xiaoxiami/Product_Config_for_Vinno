@@ -10,6 +10,7 @@ from typing import List, Optional
 import json
 import io
 from datetime import datetime
+from urllib.parse import quote
 
 from app.database import get_db
 from app.models import ConfigItem, ConfigValue, ProductModel, ProductSeries
@@ -474,5 +475,6 @@ async def export_compare_result(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
+        # 响应头按 latin-1 编码，非 ASCII 文件名必须百分号编码，否则抛 UnicodeEncodeError
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"}
     )
