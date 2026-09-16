@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 from app.database import get_db
 from app.models import ConfigItem, ConfigValue, ProductModel, ProductSeries
+from app.utils.excel import neutralize_formulas
 from app.schemas.config import (
     ConfigRowResponse, ConfigValueResponse,
     ConfigCompareRequest, ConfigCompareResponse, ConfigDiffItem,
@@ -466,6 +467,7 @@ async def export_compare_result(
         ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 15
 
     # 导出
+    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)

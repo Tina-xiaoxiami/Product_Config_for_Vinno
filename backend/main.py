@@ -69,4 +69,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8086)
+    # 本系统是单机工具、没有任何鉴权，只能监听回环地址
+    uvicorn.run(app, host="127.0.0.1", port=8086)

@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime
 
 from app.database import get_db
+from app.utils.excel import neutralize_formulas
 from app.models import (
     ProductSeries, ProductModel, ConfigItem, ConfigValue,
     DraftBatch, ConfigDraft, ImportHistory, ConfigVersion
@@ -1247,6 +1248,7 @@ async def export_excel(
 
     # 保存到内存
     output = io.BytesIO()
+    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     wb.save(output)
     output.seek(0)
 
@@ -1284,6 +1286,7 @@ async def download_template():
             ws.cell(row=row_idx, column=col_idx, value=value)
 
     output = io.BytesIO()
+    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     wb.save(output)
     output.seek(0)
 

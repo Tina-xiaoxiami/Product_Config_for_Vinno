@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.feature_identity import clean_feature_name
+from app.utils.excel import neutralize_formulas
 from app.services.feature_master_data import _clean_aliases, _normalized, _replace_language_names
 
 TEMPLATE_SHEET_NAME = "功能主数据"
@@ -1075,6 +1076,7 @@ async def build_feature_template_workbook(session: AsyncSession) -> bytes:
     for column_index, width in enumerate((12, 16, 34, 40), start=1):
         ipn_sheet.column_dimensions[get_column_letter(column_index)].width = width
 
+    neutralize_formulas(workbook)  # 用户可控文本不得变成活公式
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
