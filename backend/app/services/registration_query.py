@@ -253,12 +253,17 @@ async def list_product_registration_probes(
     if not mappings:
         return None
 
+    # 探头清单仍按国家列出（本证之外的探头照旧标为未注册），但"结论"必须按
+    # 该机型对应的这张启用证的注册差异表来算：national 的 registration_probes
+    # 是全国共用的一行，谁最后上传资料就写成谁的值——包括已停用的证。因此 IPN
+    # 优先取本证版本里声明的值，本证没有声明的探头才回落到国家共享值。
     result = await session.execute(
         text(
             """
             SELECT package.id AS registration_package_id,
                    country_probe.id AS probe_id,
-                   country_probe.probe_model, country_probe.ipn,
+                   country_probe.probe_model,
+                   COALESCE(probe.ipn, country_probe.ipn) AS ipn,
                    COALESCE(matrix.registration_status, 'unregistered')
                        AS registration_status,
                    value.selection_config, value.current_config,
@@ -286,16 +291,17 @@ async def list_product_registration_probes(
              AND matrix.version_id = package_version.id
              AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON country_probe.ipn IS NOT NULL
-             AND item.ipn = country_probe.ipn AND item.category = 'Probes'
+              ON COALESCE(probe.ipn, country_probe.ipn) IS NOT NULL
+             AND item.ipn = COALESCE(probe.ipn, country_probe.ipn)
+             AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
               ON variant.id = (
                   SELECT MIN(candidate.id)
                   FROM probe_model_variants candidate
-                  WHERE country_probe.ipn IS NOT NULL
+                  WHERE COALESCE(probe.ipn, country_probe.ipn) IS NOT NULL
                     AND candidate.ipn IS NOT NULL
                     AND UPPER(TRIM(candidate.ipn))
-                      = UPPER(TRIM(country_probe.ipn))
+                      = UPPER(TRIM(COALESCE(probe.ipn, country_probe.ipn)))
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id
