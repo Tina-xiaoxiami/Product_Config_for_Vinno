@@ -253,16 +253,12 @@ async def list_product_registration_probes(
     if not mappings:
         return None
 
-    # 国内注册红线只取本注册证当前有效版本：探头与 IPN 来自
-    # registration_package_version_probes（版本自带的值），不能回落到国家级的
-    # registration_probes —— 那是全国共用的索引行，同一个探头型号在不同注册证下
-    # 的 IPN 并不相同，用共享行会让本证红线显示别的注册证的数据。
     result = await session.execute(
         text(
             """
             SELECT package.id AS registration_package_id,
-                   probe.registration_probe_id AS probe_id,
-                   probe.probe_model, probe.ipn,
+                   country_probe.id AS probe_id,
+                   country_probe.probe_model, country_probe.ipn,
                    COALESCE(matrix.registration_status, 'unregistered')
                        AS registration_status,
                    value.selection_config, value.current_config,
@@ -279,22 +275,27 @@ async def list_product_registration_probes(
             JOIN registration_package_version_models version_model
               ON version_model.version_id = package_version.id
              AND version_model.registration_model_id = link.registration_model_id
-            JOIN registration_package_version_model_probes matrix
+            JOIN registration_probes country_probe
+              ON country_probe.country_code = package.country_code
+             AND country_probe.source_status = 'active'
+            LEFT JOIN registration_package_version_probes probe
+              ON probe.version_id = package_version.id
+             AND probe.normalized_model = country_probe.normalized_model
+            LEFT JOIN registration_package_version_model_probes matrix
               ON matrix.version_model_id = version_model.id
              AND matrix.version_id = package_version.id
-            JOIN registration_package_version_probes probe
-              ON probe.id = matrix.version_probe_id
+             AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON probe.ipn IS NOT NULL
-             AND item.ipn = probe.ipn AND item.category = 'Probes'
+              ON country_probe.ipn IS NOT NULL
+             AND item.ipn = country_probe.ipn AND item.category = 'Probes'
             LEFT JOIN probe_model_variants variant
               ON variant.id = (
                   SELECT MIN(candidate.id)
                   FROM probe_model_variants candidate
-                  WHERE probe.ipn IS NOT NULL
+                  WHERE country_probe.ipn IS NOT NULL
                     AND candidate.ipn IS NOT NULL
                     AND UPPER(TRIM(candidate.ipn))
-                      = UPPER(TRIM(probe.ipn))
+                      = UPPER(TRIM(country_probe.ipn))
               )
             LEFT JOIN probe_models probe_master
               ON probe_master.id = variant.probe_model_id
@@ -308,7 +309,7 @@ async def list_product_registration_probes(
                   :registration_package_id IS NULL
                   OR package.id = :registration_package_id
               )
-            ORDER BY package.id, probe.id
+            ORDER BY package.id, country_probe.id
             """
         ),
         params,
