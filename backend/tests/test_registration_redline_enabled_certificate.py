@@ -1,9 +1,10 @@
-"""国内注册红线按"该机型对应的那张**启用**注册证"取结论。
+"""停用的注册证不能改写当前注册红线的结论。
 
 同一个国家的两张注册证可以覆盖同一批机型，但只有一张是启用的。国家级的
 ``registration_probes`` 是全国共用的一行，谁最后上传资料就写成谁的值 —— 包括
-已停用的证。因此红线的探头与结论必须按"该机型对应的启用证"来取，不能被停用证的
-数据改掉。
+已停用的证。红线的结论按「探头型号 → 配置管理的英文描述 → 候选 IPN 的选型类别」
+算，不依赖注册资料里的 IPN，也不依赖那张共享行，因此停用证的数据改不动它。
+（`test_registration_redline_probe_match.py` 覆盖匹配口径本身。）
 
 同时保留原有设计：探头清单仍然列该国家的全部探头，本证之外的显示为未注册
 （见 6ba0a54 fix: report probes outside a certificate as unregistered）。
@@ -136,7 +137,7 @@ async def test_redline_uses_the_enabled_certificate_not_a_disabled_one(tmp_path)
     connection.close()
 
     probes = _probes(await _redline(database_path, 1))
-    assert probes["F2-5C"]["ipn"] == "1000530", "必须按启用的证1算，不能被停用证2改写"
+    assert probes["F2-5C"]["ipn"] == "1000530", "不能被停用证2改写共享行而改变结论"
     assert probes["F2-5C"]["effective_status"] == "X"
     assert probes["F2-5C"]["config_item_id"] is not None
 

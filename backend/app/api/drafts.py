@@ -341,39 +341,10 @@ async def submit_draft_batch(
     if not all_drafts:
         raise HTTPException(status_code=400, detail="没有待提交的草稿")
 
-    # 版本号必须在任何写操作之前确定并校验：放到最后校验的话，版本号冲突会
-    # 在 commit 时以 IntegrityError 冒出来（用户看到裸 500，且已经改过的配置值
-    # 和已删除的草稿都不会回退）。
-    version_number = data.version_number
-    if version_number:
-        duplicated = await db.execute(
-            select(ConfigVersion)
-            .where(
-                ConfigVersion.series_id == batch.series_id,
-                ConfigVersion.version_number == version_number,
-            )
-            .limit(1)
-        )
-        if duplicated.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"版本号 {version_number} 在该系列中已存在",
-            )
-    else:
-        last_version_result = await db.execute(
-            select(ConfigVersion)
-            .where(ConfigVersion.series_id == batch.series_id)
-            .order_by(ConfigVersion.id.desc())
-            .limit(1)
-        )
-        last_version = last_version_result.scalar_one_or_none()
-        version_number = generate_next_version(
-            last_version.version_number if last_version else None
-        )
-
-    # 提交范围：根据 item_ids / model_ids 过滤要处理的草稿（都不传即全量提交）
+    # 部分提交：根据 item_ids / model_ids 过滤要处理的草稿
     item_ids_filter = set(data.item_ids) if data.item_ids else None
     model_ids_filter = set(data.model_ids) if data.model_ids else None
+    is_partial = bool(item_ids_filter or model_ids_filter)
 
     if model_ids_filter and not item_ids_filter:
         # 按机型过滤：model_id=None（旧数据/全局变更）则包含，否则按 model_id 匹配
@@ -392,10 +363,6 @@ async def submit_draft_batch(
         ]
     else:
         drafts = all_drafts
-    if not drafts:
-        # 部分提交时，本批次的草稿可能都不在筛选范围内。此前会继续走下去，
-        # 给这个系列凭空追加一条没有内容的版本记录。
-        raise HTTPException(status_code=400, detail="没有匹配的待提交草稿")
     processed_count = len(drafts)
 
     # 提取所有需要更新的 (item_id, model_id) 组合
@@ -449,21 +416,30 @@ async def submit_draft_batch(
     for draft in drafts:
         await db.delete(draft)
 
-    # 重算批次统计（不限于部分提交）。此前只在部分提交时重算，
-    # 全量提交后 total_count 仍是提交前的数字，于是下面判断 remaining_count == 0
-    # 永远不成立：批次既不置为 submitted，计数也不清零。
-    remaining_result = await db.execute(
-        select(ConfigDraft.change_type, func.count()).where(
-            ConfigDraft.batch_id == batch_id
-        ).group_by(ConfigDraft.change_type)
-    )
-    type_counts = dict(remaining_result.all())
-    batch.create_count = type_counts.get("create", 0)
-    batch.update_count = type_counts.get("update", 0)
-    batch.delete_count = type_counts.get("delete", 0)
-    batch.total_count = sum(type_counts.values())
+    # 部分提交：更新批次统计
+    if is_partial:
+        remaining_result = await db.execute(
+            select(ConfigDraft.change_type, func.count()).where(
+                ConfigDraft.batch_id == batch_id
+            ).group_by(ConfigDraft.change_type)
+        )
+        type_counts = dict(remaining_result.all())
+        batch.create_count = type_counts.get("create", 0)
+        batch.update_count = type_counts.get("update", 0)
+        batch.delete_count = type_counts.get("delete", 0)
+        batch.total_count = sum(type_counts.values())
 
-    # 版本号已在进入写操作之前确定并校验（见函数开头）
+    # 创建版本
+    version_number = data.version_number
+    if not version_number:
+        last_version_result = await db.execute(
+            select(ConfigVersion)
+            .where(ConfigVersion.series_id == batch.series_id)
+            .order_by(ConfigVersion.id.desc())
+            .limit(1)
+        )
+        last_version = last_version_result.scalar_one_or_none()
+        version_number = generate_next_version(last_version.version_number if last_version else None)
 
     # 获取当前数据创建快照
     models_result = await db.execute(
@@ -564,35 +540,6 @@ async def _process_single_batch_submit(
     if not all_drafts:
         return {"success": False, "message": "草稿批次中没有草稿项"}
 
-    # 版本号必须在任何写操作之前确定并校验。此前这一步放在写操作之后，
-    # 版本号冲突时会返回失败，却已经把配置值改掉、把草稿删掉，且没有留下版本记录。
-    last_version_result = await db.execute(
-        select(ConfigVersion)
-        .where(ConfigVersion.series_id == batch.series_id)
-        .order_by(ConfigVersion.id.desc())
-        .limit(1)
-    )
-    last_version = last_version_result.scalar_one_or_none()
-
-    if version_number:
-        existing = await db.execute(
-            select(ConfigVersion)
-            .where(
-                ConfigVersion.series_id == batch.series_id,
-                ConfigVersion.version_number == version_number,
-            )
-            .limit(1)
-        )
-        if existing.scalar_one_or_none():
-            return {
-                "success": False,
-                "message": f"版本号 {version_number} 在该系列中已存在",
-            }
-    else:
-        version_number = generate_next_version(
-            last_version.version_number if last_version else None
-        )
-
     # 处理更新类型的草稿
     update_drafts = [
         d for d in all_drafts
@@ -643,7 +590,30 @@ async def _process_single_batch_submit(
     for draft in all_drafts:
         await db.delete(draft)
 
-    # 版本号已在进入写操作之前确定并校验（见函数开头）
+    # 生成版本号
+    last_version_result = await db.execute(
+        select(ConfigVersion)
+        .where(ConfigVersion.series_id == batch.series_id)
+        .order_by(ConfigVersion.id.desc())
+        .limit(1)
+    )
+    last_version = last_version_result.scalar_one_or_none()
+
+    if version_number:
+        # 用户指定了版本号，检查是否与系列内已有版本号重复
+        existing = await db.execute(
+            select(ConfigVersion).where(
+                ConfigVersion.series_id == batch.series_id,
+                ConfigVersion.version_number == version_number
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            return {
+                "success": False,
+                "message": f"版本号 {version_number} 在该系列中已存在"
+            }
+    else:
+        version_number = generate_next_version(last_version.version_number if last_version else None)
 
     # 获取当前数据创建快照
     models_result = await db.execute(
@@ -855,19 +825,18 @@ async def batch_discard_drafts(
             batch.delete_count = 0
             batch.status = "discarded"
 
-            # 每个批次独立提交：否则后面某个批次失败时，一次 rollback 会把前面
-            # 已经成功的批次一起回滚掉，而结果里仍然写着 success
-            await db.commit()
             results.append(BatchDiscardResult(
                 batch_id=batch_id, series_id=series_id,
                 success=True, message="数据已回滚"
             ))
         except Exception as e:
-            await db.rollback()  # 丢弃本批次的半成品，避免污染后续批次
             results.append(BatchDiscardResult(
                 batch_id=batch_id, series_id=0,
                 success=False, message=str(e)
             ))
+            await db.rollback()  # 回滚事务以便后续继续
+
+    await db.commit()
 
     return BatchDiscardResponse(
         discarded_count=sum(1 for r in results if r.success),
@@ -892,9 +861,16 @@ async def batch_submit_drafts(
                 version_number=data.version_number,
                 db=db
             )
-            if not result["success"]:
-                # 校验类失败（如版本号重复）：回滚，确保不留下已改的值和已删的草稿
-                await db.rollback()
+            if result["success"]:
+                results.append(BatchSubmitResult(
+                    batch_id=batch_id,
+                    series_id=result["series_id"],
+                    version_number=result["version_number"],
+                    changes=result["changes"],
+                    success=True,
+                    message=result["message"]
+                ))
+            else:
                 results.append(BatchSubmitResult(
                     batch_id=batch_id,
                     series_id=0,
@@ -903,20 +879,7 @@ async def batch_submit_drafts(
                     success=False,
                     message=result["message"]
                 ))
-                continue
-            # 每个批次独立提交：否则后面某个批次失败时，一次 rollback 会把前面
-            # 已经成功的批次一起回滚掉，而结果里仍然写着成功
-            await db.commit()
-            results.append(BatchSubmitResult(
-                batch_id=batch_id,
-                series_id=result["series_id"],
-                version_number=result["version_number"],
-                changes=result["changes"],
-                success=True,
-                message=result["message"]
-            ))
         except Exception as e:
-            await db.rollback()
             results.append(BatchSubmitResult(
                 batch_id=batch_id,
                 series_id=0,
@@ -925,6 +888,8 @@ async def batch_submit_drafts(
                 success=False,
                 message=str(e)
             ))
+
+    await db.commit()
 
     return BatchSubmitResponse(
         submitted_count=sum(1 for r in results if r.success),
@@ -1087,45 +1052,37 @@ async def discard_draft_batch(
         raise HTTPException(status_code=500, detail=f"废弃失败: {str(e)}")
 
 
-async def _restore_draft_previous_value(db, draft: ConfigDraft) -> None:
-    """删除草稿时把配置值改回草稿记录的旧值。
+@router.delete("/draft/{draft_id}")
+async def delete_draft(
+    draft_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """删除单个草稿"""
+    result = await db.execute(select(ConfigDraft).where(ConfigDraft.id == draft_id))
+    draft = result.scalar_one_or_none()
 
-    ``_sync_config_value`` 在创建草稿时就把 new_value 写进了 config_values，
-    草稿只是变更记录。所以"删掉草稿"不能只删记录 —— 那样界面以为撤销了，
-    数据库里仍是改过的值，之后提交出来的版本会带着用户以为已撤销的改动。
-    """
+    if not draft:
+        raise HTTPException(status_code=404, detail="草稿不存在")
 
-    if not draft.field_name or draft.field_name not in (
-        "final_config", "current_config", "selection_config", "rd_status"
-    ):
-        return
-    if draft.item_id is None or draft.model_id is None:
-        return
-    result = await db.execute(
-        select(ConfigValue).where(
-            ConfigValue.item_id == draft.item_id,
-            ConfigValue.model_id == draft.model_id,
-        )
-    )
-    value = result.scalar_one_or_none()
-    if value is not None:
-        setattr(value, draft.field_name, draft.old_value)
+    # 更新批次统计
+    batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == draft.batch_id))
+    batch = batch_result.scalar_one_or_none()
 
+    if batch:
+        if draft.change_type == "create":
+            batch.create_count = max(0, batch.create_count - 1)
+        elif draft.change_type == "update":
+            batch.update_count = max(0, batch.update_count - 1)
+        elif draft.change_type == "delete":
+            batch.delete_count = max(0, batch.delete_count - 1)
+        batch.total_count = max(0, batch.total_count - 1)
 
-def _decrement_batch_counts(batch: DraftBatch, draft: ConfigDraft) -> None:
-    """按草稿类型回退批次计数。"""
+    await db.delete(draft)
+    await db.commit()
 
-    if draft.change_type == "create":
-        batch.create_count = max(0, batch.create_count - 1)
-    elif draft.change_type == "update":
-        batch.update_count = max(0, batch.update_count - 1)
-    elif draft.change_type == "delete":
-        batch.delete_count = max(0, batch.delete_count - 1)
-    batch.total_count = max(0, batch.total_count - 1)
+    return {"message": "删除成功"}
 
 
-# 注意：静态路由 /draft/by-key 必须注册在 /draft/{draft_id} 之前，
-# 否则会被动态路由抢先匹配，{draft_id} 解析 "by-key" 失败直接返回 422。
 @router.delete("/draft/by-key")
 async def delete_draft_by_key(
     batch_id: str,
@@ -1134,62 +1091,34 @@ async def delete_draft_by_key(
     field_name: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """根据条件删除草稿，并把配置值改回草稿记录的旧值。"""
+    """根据条件删除草稿"""
     result = await db.execute(
-        select(ConfigDraft)
-        .where(
+        select(ConfigDraft).where(
             ConfigDraft.batch_id == batch_id,
             ConfigDraft.item_id == item_id,
             ConfigDraft.model_id == model_id,
             ConfigDraft.field_name == field_name
         )
-        .order_by(ConfigDraft.id)
     )
-    # 同一格可能出现多条草稿（历史并发写入留下的重复行），要一并清掉，
-    # 旧值取最后一条（最新写入）为准
-    drafts = result.scalars().all()
-
-    if not drafts:
-        return {"message": "草稿不存在", "deleted": False}
-
-    latest = drafts[-1]
-    await _restore_draft_previous_value(db, latest)
-
-    batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == latest.batch_id))
-    batch = batch_result.scalar_one_or_none()
-    if batch:
-        for draft in drafts:
-            _decrement_batch_counts(batch, draft)
-
-    for draft in drafts:
-        await db.delete(draft)
-    await db.commit()
-
-    return {"message": "删除成功", "deleted": True, "removed": len(drafts)}
-
-
-@router.delete("/draft/{draft_id}")
-async def delete_draft(
-    draft_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    """删除单个草稿，并把配置值改回草稿记录的旧值。"""
-    result = await db.execute(select(ConfigDraft).where(ConfigDraft.id == draft_id))
     draft = result.scalar_one_or_none()
 
     if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
-
-    await _restore_draft_previous_value(db, draft)
+        return {"message": "草稿不存在", "deleted": False}
 
     # 更新批次统计
     batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == draft.batch_id))
     batch = batch_result.scalar_one_or_none()
 
     if batch:
-        _decrement_batch_counts(batch, draft)
+        if draft.change_type == "create":
+            batch.create_count = max(0, batch.create_count - 1)
+        elif draft.change_type == "update":
+            batch.update_count = max(0, batch.update_count - 1)
+        elif draft.change_type == "delete":
+            batch.delete_count = max(0, batch.delete_count - 1)
+        batch.total_count = max(0, batch.total_count - 1)
 
     await db.delete(draft)
     await db.commit()
 
-    return {"message": "删除成功"}
+    return {"message": "删除成功", "deleted": True}

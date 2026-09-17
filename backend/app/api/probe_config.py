@@ -7,11 +7,9 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 import io, json
 from datetime import datetime
-from urllib.parse import quote
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from app.database import get_db
-from app.utils.excel import neutralize_formulas
 from app.utils.time import utcnow
 from app.models.probe import (
     ProductProbeModel, ProductProbeConfig,
@@ -1207,11 +1205,10 @@ async def export_config(product_model_id: int, db: AsyncSession = Depends(get_db
         row += 1
 
     output = io.BytesIO()
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     wb.save(output); output.seek(0)
     filename = f"{matrix.product_model_name}_探头配置_{datetime.now().strftime('%Y%m%d')}.xlsx"
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
 
 
 # ========== 机型分组管理 ==========

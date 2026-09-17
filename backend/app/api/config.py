@@ -10,11 +10,9 @@ from typing import List, Optional
 import json
 import io
 from datetime import datetime
-from urllib.parse import quote
 
 from app.database import get_db
 from app.models import ConfigItem, ConfigValue, ProductModel, ProductSeries
-from app.utils.excel import neutralize_formulas
 from app.schemas.config import (
     ConfigRowResponse, ConfigValueResponse,
     ConfigCompareRequest, ConfigCompareResponse, ConfigDiffItem,
@@ -467,7 +465,6 @@ async def export_compare_result(
         ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 15
 
     # 导出
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -477,6 +474,5 @@ async def export_compare_result(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        # 响应头按 latin-1 编码，非 ASCII 文件名必须百分号编码，否则抛 UnicodeEncodeError
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"}
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
     )

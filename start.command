@@ -33,7 +33,7 @@ done
 echo ""
 echo "[Step 2] 启动后端服务 (端口 $BACKEND_PORT)..."
 cd "$PROJECT_DIR/backend"
-$PYTHON -m uvicorn main:app --host 127.0.0.1 --port $BACKEND_PORT --reload &
+$PYTHON -m uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT --reload &
 BACKEND_PID=$!
 sleep 3
 

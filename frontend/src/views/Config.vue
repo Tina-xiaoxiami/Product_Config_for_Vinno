@@ -2638,29 +2638,14 @@ const removeDraftChange = async (rowId, modelId, field, key) => {
     if (draftStats.update > 0) draftStats.update--
     if (draftStats.total > 0) draftStats.total--
   } catch (error) {
-    // 撤销失败必须让用户看到：否则界面上看起来已撤销，服务端草稿仍在
     console.error('删除草稿失败:', error)
-    ElMessage.error('撤销失败，该改动仍在草稿中')
-  }
-}
-
-// 把单元格还原成本地记录的原值（保存失败或撤销时使用）
-const revertCellValue = (row, modelId, field, oldValue) => {
-  const cell = row?.model_values?.[modelId]
-  if (cell && field in cell) {
-    cell[field] = oldValue
   }
 }
 
 // 单元格变更
 const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
   const seriesId = findSeriesIdByModelId(modelId)
-  if (!seriesId || !draftBatchMap.value.has(seriesId)) {
-    // 该系列的草稿批次尚未就绪：这里必须提示，否则改动既没保存也没有任何反馈
-    ElMessage.warning('草稿批次未就绪，本次修改未保存，请稍后重试')
-    revertCellValue(row, modelId, field, oldValue)
-    return false
-  }
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
 
   const batchId = draftBatchMap.value.get(seriesId)
   const key = `${row.id}_${modelId}_${field}`
@@ -2697,14 +2682,9 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
         draftStats.update++
       }
     }
-    return true
   } catch (error) {
-    // 保存失败要把单元格还原，否则表格继续显示没有落库的值，
-    // 用户提交后拿到的版本里并没有这次改动
-    revertCellValue(row, modelId, field, oldValue)
     console.error('保存草稿失败:', error)
-    ElMessage.error('保存失败，已恢复原值')
-    return false
+    ElMessage.error('保存失败')
   }
 }
 
@@ -3505,36 +3485,11 @@ const confirmSubmitDraft = async () => {
     if (submitForm.model_ids && submitForm.model_ids.size > 0) {
       params.model_ids = Array.from(submitForm.model_ids)
     }
-    // 每个系列各有一个草稿批次：没有改动的系列其批次是空的，服务端会返回
-    // 400「没有待提交的草稿」。此前用 Promise.all，任一空批次就让整个提交报
-    // 「提交失败」，而已经有改动的批次其实已经提交完成。这里分开处理：
-    // 空批次视为跳过，只有真正的失败才算失败。
-    const settled = await Promise.allSettled(entries.map(([seriesId, batchId]) =>
+    await Promise.all(entries.map(([seriesId, batchId]) =>
       submitDraftBatch(batchId, params)
     ))
-    const isEmptyBatch = (reason) =>
-      reason?.response?.status === 400
-      && String(reason?.response?.data?.detail || '').includes('没有待提交的草稿')
-    const failures = settled.filter(
-      result => result.status === 'rejected' && !isEmptyBatch(result.reason)
-    )
-    const skipped = settled.filter(
-      result => result.status === 'rejected' && isEmptyBatch(result.reason)
-    ).length
-    const submitted = settled.length - failures.length - skipped
 
-    if (failures.length > 0) {
-      const detail = failures[0].reason?.response?.data?.detail
-      ElMessage.error(
-        `提交失败：${submitted} 个系列已提交，${failures.length} 个失败`
-        + (detail ? `（${detail}）` : '')
-      )
-      await loadData()
-      await initDraft()
-      return
-    }
-
-    ElMessage.success(skipped > 0 ? `提交成功（${skipped} 个系列无改动，已跳过）` : '提交成功')
+    ElMessage.success('提交成功')
     submitDialogVisible.value = false
 
     draftStats.total = 0

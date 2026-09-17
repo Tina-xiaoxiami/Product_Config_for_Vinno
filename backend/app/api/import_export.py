@@ -9,7 +9,6 @@ from typing import List, Optional
 from pydantic import BaseModel
 import io
 import json
-from urllib.parse import quote
 
 
 class ExportRequest(BaseModel):
@@ -28,7 +27,6 @@ import uuid
 from datetime import datetime
 
 from app.database import get_db
-from app.utils.excel import neutralize_formulas
 from app.models import (
     ProductSeries, ProductModel, ConfigItem, ConfigValue,
     DraftBatch, ConfigDraft, ImportHistory, ConfigVersion
@@ -1248,7 +1246,6 @@ async def export_excel(
 
     # 保存到内存
     output = io.BytesIO()
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     wb.save(output)
     output.seek(0)
 
@@ -1258,8 +1255,7 @@ async def export_excel(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            # 系列名可能是中文，响应头按 latin-1 编码，必须百分号编码
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}"
         }
     )
 
@@ -1286,7 +1282,6 @@ async def download_template():
             ws.cell(row=row_idx, column=col_idx, value=value)
 
     output = io.BytesIO()
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     wb.save(output)
     output.seek(0)
 

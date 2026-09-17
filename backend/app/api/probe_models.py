@@ -7,7 +7,6 @@ import io
 from datetime import datetime
 from urllib.parse import quote
 from app.database import get_db
-from app.utils.excel import neutralize_formulas
 from app.models.probe import ProbeModel, ProbeModelVariant, ProbeModelApp, Application, ProbeCategory
 from app.models.config import ConfigItem
 from app.schemas.probe import (
@@ -144,7 +143,6 @@ async def export_variants_excel(db: AsyncSession = Depends(get_db)):
     ws.column_dimensions['E'].width = 24
     ws.column_dimensions['F'].width = 8
 
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -285,7 +283,6 @@ async def export_model_variants_excel(model_id: int, db: AsyncSession = Depends(
     ws.column_dimensions['E'].width = 24
     ws.column_dimensions['F'].width = 8
 
-    neutralize_formulas(wb)  # 用户可控文本不得变成活公式
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
