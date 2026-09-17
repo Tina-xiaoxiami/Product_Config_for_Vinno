@@ -292,23 +292,32 @@ async def list_product_registration_probes(
              AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
               ON item.id = (
-                  -- 优先取"在本机型有正式选型类别（X/O/Δ）"的那个变体 —— 支持结论的来源；
-                  -- 该型号没有这样的变体时回退到任意变体，保证配置项名称与
-                  -- 研发当前配置备注照旧能取到（备注只作提示，不参与判定）。
+                  -- 候选 IPN 按「配置管理的**英文描述** = 证上的探头型号」找。
+                  -- 不能拿探头管理的型号字段当匹配键：那里不一定建过该型号
+                  -- （例如 F4-9E 在探头管理里没有，配置管理里有 3 行英文描述是 F4-9E）。
+                  -- 英文描述带括号补充时也认（例如 X4-9E(Straight handle)）。
                   SELECT candidate_item.id
-                  FROM probe_model_variants candidate_variant
-                  JOIN probe_models candidate_model
-                    ON candidate_model.id = candidate_variant.probe_model_id
-                  JOIN config_items candidate_item
-                    ON candidate_item.ipn = candidate_variant.ipn
-                   AND candidate_item.category = 'Probes'
+                  FROM config_items candidate_item
                   LEFT JOIN config_values candidate_value
                     ON candidate_value.item_id = candidate_item.id
                    AND candidate_value.model_id = :product_model_id
-                  WHERE candidate_variant.ipn IS NOT NULL
-                    AND UPPER(TRIM(candidate_model.model_number))
-                      = UPPER(TRIM(country_probe.probe_model))
+                  WHERE candidate_item.category = 'Probes'
+                    AND (
+                        UPPER(TRIM(COALESCE(candidate_item.en_desc, '')))
+                          = UPPER(TRIM(country_probe.probe_model))
+                        OR instr(
+                             UPPER(TRIM(COALESCE(candidate_item.en_desc, ''))),
+                             UPPER(TRIM(country_probe.probe_model)) || '('
+                           ) = 1
+                        OR instr(
+                             UPPER(TRIM(COALESCE(candidate_item.en_desc, ''))),
+                             UPPER(TRIM(country_probe.probe_model)) || '（'
+                           ) = 1
+                    )
                   ORDER BY
+                    -- 只要有候选在本机型是正式类别（X/O/Δ）就算支持，并取该类别；
+                    -- 都没有时回退到任意候选，保证配置项名称与"研发当前配置"
+                    -- 备注照旧能取到（备注只作提示，不参与判定）。
                     CASE WHEN UPPER(REPLACE(TRIM(COALESCE(candidate_value.selection_config, '')),
                                             '∆', 'Δ')) IN ('X', 'O', 'Δ')
                          THEN 0 ELSE 1 END,
