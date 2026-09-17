@@ -253,17 +253,17 @@ async def list_product_registration_probes(
     if not mappings:
         return None
 
-    # 探头清单仍按国家列出（本证之外的探头照旧标为未注册），但"结论"必须按
-    # 该机型对应的这张启用证的注册差异表来算：national 的 registration_probes
-    # 是全国共用的一行，谁最后上传资料就写成谁的值——包括已停用的证。因此 IPN
-    # 优先取本证版本里声明的值，本证没有声明的探头才回落到国家共享值。
+    # 结论按「探头型号 → 该型号在探头基础数据里的全部变体 IPN → 配置管理选型类别」算：
+    # 只要有一个变体在本机型的选型类别是正式类别（X/O/Δ），该探头就判为支持，并取该类别。
+    # 注册资料里的 IPN 不参与判定 —— 注册证只有"探头型号"的概念，且 national 的
+    # registration_probes 是全国共用的一行，会被别的证（含已停用的证）改写。
     result = await session.execute(
         text(
             """
             SELECT package.id AS registration_package_id,
                    country_probe.id AS probe_id,
                    country_probe.probe_model,
-                   COALESCE(probe.ipn, country_probe.ipn) AS ipn,
+                   COALESCE(item.ipn, probe.ipn, country_probe.ipn) AS ipn,
                    COALESCE(matrix.registration_status, 'unregistered')
                        AS registration_status,
                    value.selection_config, value.current_config,
@@ -291,20 +291,34 @@ async def list_product_registration_probes(
              AND matrix.version_id = package_version.id
              AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON COALESCE(probe.ipn, country_probe.ipn) IS NOT NULL
-             AND item.ipn = COALESCE(probe.ipn, country_probe.ipn)
-             AND item.category = 'Probes'
-            LEFT JOIN probe_model_variants variant
-              ON variant.id = (
-                  SELECT MIN(candidate.id)
-                  FROM probe_model_variants candidate
-                  WHERE COALESCE(probe.ipn, country_probe.ipn) IS NOT NULL
-                    AND candidate.ipn IS NOT NULL
-                    AND UPPER(TRIM(candidate.ipn))
-                      = UPPER(TRIM(COALESCE(probe.ipn, country_probe.ipn)))
+              ON item.id = (
+                  -- 优先取"在本机型有正式选型类别（X/O/Δ）"的那个变体 —— 支持结论的来源；
+                  -- 该型号没有这样的变体时回退到任意变体，保证配置项名称与
+                  -- 研发当前配置备注照旧能取到（备注只作提示，不参与判定）。
+                  SELECT candidate_item.id
+                  FROM probe_model_variants candidate_variant
+                  JOIN probe_models candidate_model
+                    ON candidate_model.id = candidate_variant.probe_model_id
+                  JOIN config_items candidate_item
+                    ON candidate_item.ipn = candidate_variant.ipn
+                   AND candidate_item.category = 'Probes'
+                  LEFT JOIN config_values candidate_value
+                    ON candidate_value.item_id = candidate_item.id
+                   AND candidate_value.model_id = :product_model_id
+                  WHERE candidate_variant.ipn IS NOT NULL
+                    AND UPPER(TRIM(candidate_model.model_number))
+                      = UPPER(TRIM(country_probe.probe_model))
+                  ORDER BY
+                    CASE WHEN UPPER(REPLACE(TRIM(COALESCE(candidate_value.selection_config, '')),
+                                            '∆', 'Δ')) IN ('X', 'O', 'Δ')
+                         THEN 0 ELSE 1 END,
+                    CASE WHEN candidate_value.id IS NULL THEN 1 ELSE 0 END,
+                    candidate_item.id
+                  LIMIT 1
               )
             LEFT JOIN probe_models probe_master
-              ON probe_master.id = variant.probe_model_id
+              ON UPPER(TRIM(probe_master.model_number))
+               = UPPER(TRIM(country_probe.probe_model))
             LEFT JOIN config_values value
               ON value.item_id = item.id
              AND value.model_id = :product_model_id
