@@ -537,3 +537,274 @@ async def test_table_of_contents_lines_are_not_release_evidence(tmp_path):
         if item["feature_id"] == 7 and item["is_first_release_candidate"]
     ]
     assert [item["software_version"] for item in first] == ["1.14.80"]
+
+
+async def _mark_evidence(
+    database_path,
+    *,
+    software_version: str,
+    change_type: str,
+    evidence_kind: str,
+    feature_id: int | None = None,
+) -> None:
+    """把某条待复核记录标成指定证据类型（回填才会这么写，手工登记没有这两个字段）。"""
+
+    connection = sqlite3.connect(database_path)
+    if feature_id is None:
+        connection.execute(
+            """
+            UPDATE feature_versions SET change_type = ?, evidence_kind = ?
+            WHERE software_version = ?
+            """,
+            (change_type, evidence_kind, software_version),
+        )
+    else:
+        connection.execute(
+            """
+            UPDATE feature_versions SET change_type = ?, evidence_kind = ?
+            WHERE software_version = ? AND feature_id = ?
+            """,
+            (change_type, evidence_kind, software_version, feature_id),
+        )
+    connection.commit()
+    connection.close()
+
+
+def _pending_versions(database_path) -> set[str]:
+    connection = sqlite3.connect(database_path)
+    rows = connection.execute(
+        "SELECT software_version FROM feature_versions WHERE review_status = 'pending'"
+    ).fetchall()
+    connection.close()
+    return {row[0] for row in rows}
+
+
+@pytest.mark.asyncio
+async def test_batch_review_previews_then_confirms_only_pending_rows(tmp_path):
+    """批量确认先预览后落库，且只动待复核的行。"""
+
+    database_path = tmp_path / "release.db"
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        await _create_version(client, 1, software_version="1.14.80", review_status="pending")
+        await _create_version(client, 1, software_version="1.14.40", review_status="confirmed")
+        await _create_version(client, 7, software_version="1.14.20", review_status="pending")
+        # 预览不要求填操作人：界面还没填人也应该能先看将命中哪些行。
+        preview = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "software_version": "1.14.80",
+            },
+        )
+        # 预览不动数据：确认前的真实状态是两条待复核。
+        pending_before_apply = _pending_versions(database_path)
+        applied = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "dry_run": False,
+            },
+        )
+    await engine.dispose()
+
+    assert preview.status_code == 200
+    assert preview.json()["applied"] is False
+    assert preview.json()["dry_run"] is True
+    assert preview.json()["matched"] == 1
+    assert pending_before_apply == {"1.14.80", "1.14.20"}
+
+    assert applied.status_code == 200
+    assert applied.json()["applied"] is True
+    assert applied.json()["action"] == "batch_confirmed"
+    assert applied.json()["matched"] == 2
+    assert applied.json()["by_change_type"] == [{"change_type": "unknown", "matched": 2}]
+    assert _pending_versions(database_path) == set()
+    assert {item["software_version"] for item in applied.json()["items"]} == {
+        "1.14.80",
+        "1.14.20",
+    }
+
+
+@pytest.mark.asyncio
+async def test_batch_review_keeps_one_revision_per_row_and_records_the_operator(tmp_path):
+    """批量动作也要逐条留痕：每行一条，带操作人与批量口径。"""
+
+    database_path = tmp_path / "release.db"
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        confirmed = await _create_version(
+            client, 1, software_version="1.14.40", review_status="confirmed"
+        )
+        await _create_version(client, 1, software_version="1.14.80", review_status="pending")
+        applied = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "change_note": "1.14.80 配置变更表已逐条核对",
+                "software_version": "1.14.80",
+                "dry_run": False,
+            },
+        )
+        batch_revisions = await client.get(
+            f"/api/release/versions/{applied.json()['items'][0]['id']}/revisions"
+        )
+        untouched = await client.get(
+            f"/api/release/versions/{confirmed.json()['id']}/revisions"
+        )
+    await engine.dispose()
+
+    assert batch_revisions.status_code == 200
+    items = batch_revisions.json()["items"]
+    # 登记时写过一条 created，批量确认再写一条 batch_confirmed。
+    assert [item["action"] for item in items] == ["batch_confirmed", "created"]
+    assert items[0]["changed_by"] == "product_owner"
+    assert items[0]["change_note"] == "1.14.80 配置变更表已逐条核对"
+    assert items[0]["before"]["review_status"] == "pending"
+    assert items[0]["after"]["review_status"] == "confirmed"
+
+    # 已经确认过的行不参与批量动作，因此只有登记那一条留痕。
+    assert [item["action"] for item in untouched.json()["items"]] == ["created"]
+
+
+@pytest.mark.asyncio
+async def test_batch_review_first_candidate_only_keeps_the_earliest_added_evidence(tmp_path):
+    """「一键确认首发候选」只挑每个功能最早一条「配置变更表 + 新增」。"""
+
+    database_path = tmp_path / "release.db"
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        # 四条都是待复核候选（_create_version 的默认值是已确认，这里必须显式覆盖）。
+        await _create_version(client, 1, software_version="1.14.40", review_status="pending")
+        await _create_version(client, 1, software_version="1.14.80", review_status="pending")
+        await _create_version(client, 7, software_version="1.14.40", review_status="pending")
+        await _create_version(client, 7, software_version="1.14.80", review_status="pending")
+        await _mark_evidence(
+            database_path,
+            software_version="1.14.40",
+            change_type="optimized",
+            evidence_kind="narrative",
+        )
+        await _mark_evidence(
+            database_path,
+            software_version="1.14.80",
+            change_type="added",
+            evidence_kind="configuration_change",
+        )
+        preview = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "first_candidate_only": True,
+            },
+        )
+        applied = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "first_candidate_only": True,
+                "dry_run": False,
+            },
+        )
+    await engine.dispose()
+
+    assert preview.json()["matched"] == 2
+    assert {
+        (item["feature_id"], item["software_version"]) for item in preview.json()["items"]
+    } == {(1, "1.14.80"), (7, "1.14.80")}
+    assert all(item["is_first_release_candidate"] for item in preview.json()["items"])
+
+    # 只有首发候选被确认，正文叙述那条（1.14.40）仍是待复核。
+    assert applied.json()["matched"] == 2
+    assert _pending_versions(database_path) == {"1.14.40"}
+
+
+@pytest.mark.asyncio
+async def test_batch_review_over_the_limit_requires_the_confirmed_count(tmp_path):
+    """一次确认太多条时必须回传确认条数。"""
+
+    database_path = tmp_path / "release.db"
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        for index in range(55):
+            await _create_version(
+                client, 1, software_version=f"1.0.{index}", review_status="pending"
+            )
+        blocked = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "dry_run": False,
+            },
+        )
+        # 被拒绝时一行都不许改：这里读的是拒绝之后、重试之前的真实状态。
+        pending_after_block = _pending_versions(database_path)
+        applied = await client.post(
+            "/api/release/versions/batch-review",
+            json={
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "confirm_count": 55,
+                "dry_run": False,
+            },
+        )
+    await engine.dispose()
+
+    assert blocked.status_code == 422
+    assert "confirm_count=55" in blocked.json()["detail"]
+    assert pending_after_block == {f"1.0.{index}" for index in range(55)}
+
+    assert applied.status_code == 200
+    assert applied.json()["requires_confirm_count"] is True
+    assert applied.json()["matched"] == 55
+    assert _pending_versions(database_path) == set()
+
+
+@pytest.mark.asyncio
+async def test_single_update_records_a_revision_with_the_operator(tmp_path):
+    """单条复核同样留痕：确认动作与操作人写进留痕表。"""
+
+    database_path = tmp_path / "release.db"
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        created = await _create_version(
+            client, 1, software_version="1.14.80", review_status="pending"
+        )
+        confirmed = await client.put(
+            f"/api/release/versions/{created.json()['id']}",
+            json={"review_status": "confirmed", "changed_by": "product_owner"},
+        )
+        revisions = await client.get(
+            f"/api/release/versions/{created.json()['id']}/revisions"
+        )
+        rejected = await client.put(
+            f"/api/release/versions/{created.json()['id']}",
+            json={"review_status": "rejected", "changed_by": "product_owner"},
+        )
+        after_reject = await client.get(
+            f"/api/release/versions/{created.json()['id']}/revisions"
+        )
+    await engine.dispose()
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["review_status"] == "confirmed"
+    items = revisions.json()["items"]
+    assert [item["action"] for item in items] == ["confirmed", "created"]
+    assert items[0]["changed_by"] == "product_owner"
+
+    assert rejected.json()["review_status"] == "rejected"
+    assert [item["action"] for item in after_reject.json()["items"]] == [
+        "rejected",
+        "confirmed",
+        "created",
+    ]

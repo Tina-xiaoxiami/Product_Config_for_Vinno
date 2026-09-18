@@ -54,6 +54,16 @@ FEATURE_VERSION_LIFECYCLE_STATUSES = (
 
 RELEASE_INTRODUCTION_REVIEW_STATUSES = ("draft", "published")
 
+# 留痕动作：候选回填、手工登记、单条复核与批量复核要能分辨。
+FEATURE_VERSION_REVISION_ACTIONS = (
+    "created",  # 登记一条功能版本（手工或回填落库）
+    "updated",  # 单条修改
+    "confirmed",  # 单条确认
+    "rejected",  # 单条驳回
+    "batch_confirmed",  # 批量确认
+    "batch_rejected",  # 批量驳回
+)
+
 
 class FeatureVersion(Base):
     """一个功能在一个软件版本、一个产品系列范围里的变化记录。"""
@@ -99,6 +109,42 @@ class FeatureVersion(Base):
         Index("ix_feature_versions_version", "software_version"),
         Index("ix_feature_versions_sort", "version_sort_key"),
         Index("ix_feature_versions_review", "review_status"),
+    )
+
+
+class FeatureVersionRevision(Base):
+    """功能版本每次写入的不可变快照。
+
+    确认与否是正式结论的分界线，所以批量动作也必须逐条留痕：一次批量确认会为
+    命中的每一行各写一条快照，`action` 区分单条（`confirmed`）与批量
+    （`batch_confirmed`），`change_note` 带上批量口径（按版本 / 变更类型 /
+    首发候选），`changed_by` 记录操作人。这样「谁在什么时候把哪一行从什么状态
+    改成什么状态」永远可查，而不是只在行上留下最后一次结果。
+    """
+
+    __tablename__ = "feature_version_revisions"
+
+    id = Column(Integer, primary_key=True)
+    feature_version_id = Column(
+        Integer,
+        ForeignKey("feature_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_no = Column(Integer, nullable=False)
+    action = Column(String(30), nullable=False)
+    before_json = Column(Text, nullable=True)
+    after_json = Column(Text, nullable=False)
+    change_note = Column(Text, nullable=True)
+    changed_by = Column(String(100), nullable=True)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "feature_version_id",
+            "revision_no",
+            name="uq_feature_version_revision",
+        ),
+        Index("ix_feature_version_revisions_version", "feature_version_id"),
     )
 
 

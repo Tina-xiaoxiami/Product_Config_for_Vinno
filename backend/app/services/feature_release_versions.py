@@ -157,6 +157,161 @@ def _row_payload(row) -> dict:
     }
 
 
+# 留痕快照只记录功能版本自身的字段：联表带出的文档标题、发布介绍摘要属于派生
+# 信息，放进快照会让 diff 出现与本次修改无关的噪声。
+_AUDIT_FIELDS = (
+    "feature_id",
+    "software_version",
+    "version_sort_key",
+    "product_series",
+    "market",
+    "release_date",
+    "change_type",
+    "configuration_status",
+    "lifecycle_status",
+    "evidence_document_id",
+    "evidence_source_ref",
+    "evidence_excerpt",
+    "evidence_kind",
+    "matched_by",
+    "source",
+    "review_status",
+    "change_note",
+)
+
+# 超过这个条数的批量复核必须回传确认条数，避免手滑一次改掉整库。
+BATCH_REVIEW_LIMIT = 50
+
+
+def _json_load(value: str | None) -> dict:
+    if not value:
+        return {}
+    try:
+        loaded = json.loads(value)
+    except ValueError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _audit_snapshot(item: dict) -> str:
+    return json.dumps(
+        {field: item.get(field) for field in _AUDIT_FIELDS},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _revision_action(current: dict, updated: dict) -> str:
+    """只改复核状态时按状态命名动作，其余一律记为单条修改。"""
+
+    changed = {
+        field for field in _AUDIT_FIELDS if current.get(field) != updated.get(field)
+    }
+    if changed == {"review_status"} and updated.get("review_status") in (
+        "confirmed",
+        "rejected",
+    ):
+        return str(updated["review_status"])
+    return "updated"
+
+
+async def _next_revision_numbers(
+    session: AsyncSession, version_ids: list[int]
+) -> dict[int, int]:
+    """一次查出多条记录的最大留痕序号，批量确认时不必逐条查询。"""
+
+    if not version_ids:
+        return {}
+    result = await session.execute(
+        text(
+            """
+            SELECT feature_version_id, COALESCE(MAX(revision_no), 0) AS last_no
+            FROM feature_version_revisions
+            WHERE feature_version_id IN :version_ids
+            GROUP BY feature_version_id
+            """
+        ).bindparams(bindparam("version_ids", expanding=True)),
+        {"version_ids": version_ids},
+    )
+    return {int(row.feature_version_id): int(row.last_no) for row in result}
+
+
+async def _append_revisions(
+    session: AsyncSession,
+    *,
+    entries: list[dict],
+    action: str,
+    change_note: str | None,
+    changed_by: str | None,
+) -> int:
+    """为每条记录追加一条不可变快照，返回写入条数。"""
+
+    if not entries:
+        return 0
+    numbers = await _next_revision_numbers(
+        session, [int(entry["id"]) for entry in entries]
+    )
+    for entry in entries:
+        version_id = int(entry["id"])
+        numbers[version_id] = numbers.get(version_id, 0) + 1
+        await session.execute(
+            text(
+                """
+                INSERT INTO feature_version_revisions (
+                    feature_version_id, revision_no, action,
+                    before_json, after_json, change_note, changed_by
+                ) VALUES (
+                    :feature_version_id, :revision_no, :action,
+                    :before_json, :after_json, :change_note, :changed_by
+                )
+                """
+            ),
+            {
+                "feature_version_id": version_id,
+                "revision_no": numbers[version_id],
+                "action": action,
+                "before_json": entry.get("before_json"),
+                "after_json": entry["after_json"],
+                "change_note": change_note,
+                "changed_by": changed_by,
+            },
+        )
+    return len(entries)
+
+
+async def list_feature_version_revisions(
+    session: AsyncSession, version_id: int
+) -> list[dict]:
+    """一条功能版本的全部留痕，最新在前。"""
+
+    await get_feature_version(session, version_id)
+    result = await session.execute(
+        text(
+            """
+            SELECT revision_no, action, before_json, after_json,
+                   change_note, changed_by, created_at
+            FROM feature_version_revisions
+            WHERE feature_version_id = :version_id
+            ORDER BY revision_no DESC
+            """
+        ),
+        {"version_id": version_id},
+    )
+    return [
+        {
+            "revision_no": int(row.revision_no),
+            "action": row.action,
+            "before": _json_load(row.before_json),
+            "after": _json_load(row.after_json),
+            "change_note": row.change_note,
+            "changed_by": row.changed_by,
+            "created_at": row.created_at,
+        }
+        for row in result
+    ]
+
+
 async def _feature_row(session: AsyncSession, feature_id: int):
     result = await session.execute(
         text(
@@ -404,6 +559,7 @@ async def create_feature_version(
     source: str | None = None,
     review_status: str | None = None,
     change_note: str | None = None,
+    changed_by: str | None = None,
 ) -> dict:
     feature = await _feature_row(session, feature_id)
     if feature is None:
@@ -481,8 +637,22 @@ async def create_feature_version(
         },
     )
     version_id = int(result.scalar_one())
+    created = await get_feature_version(session, version_id)
+    await _append_revisions(
+        session,
+        entries=[
+            {
+                "id": version_id,
+                "before_json": None,
+                "after_json": _audit_snapshot(created),
+            }
+        ],
+        action="created",
+        change_note=change_note,
+        changed_by=changed_by,
+    )
     await session.commit()
-    return await get_feature_version(session, version_id)
+    return created
 
 
 async def get_feature_version(session: AsyncSession, version_id: int) -> dict:
@@ -519,6 +689,7 @@ async def update_feature_version(
     lifecycle_status: str | None = None,
     review_status: str | None = None,
     change_note: str | None = None,
+    changed_by: str | None = None,
     fields_set: set[str] | None = None,
 ) -> dict:
     """Update one row. Only the fields present in the request are changed."""
@@ -568,8 +739,281 @@ async def update_feature_version(
         ),
         {**assignments, "version_id": version_id},
     )
+    updated = await get_feature_version(session, version_id)
+    # 值没有实际变化时不写留痕：否则每次「打开又保存」都会堆一条噪声快照。
+    if _audit_snapshot(current) != _audit_snapshot(updated):
+        await _append_revisions(
+            session,
+            entries=[
+                {
+                    "id": version_id,
+                    "before_json": _audit_snapshot(current),
+                    "after_json": _audit_snapshot(updated),
+                }
+            ],
+            action=_revision_action(current, updated),
+            change_note=updated.get("change_note"),
+            changed_by=changed_by,
+        )
     await session.commit()
-    return await get_feature_version(session, version_id)
+    return updated
+
+
+async def _pending_review_rows(
+    session: AsyncSession,
+    *,
+    feature_id: int | None = None,
+    software_version: str | None = None,
+    product_series: str | None = None,
+    market: str | None = None,
+    change_type: str | None = None,
+    evidence_kind: str | None = None,
+    version_ids: list[int] | None = None,
+) -> list[dict]:
+    """待复核（pending）记录，按可选范围过滤。"""
+
+    ids = [int(value) for value in version_ids] if version_ids else None
+    params: dict[str, object] = {
+        "feature_id": feature_id,
+        "software_version": _normalize_scope(software_version) or None,
+        "product_series": _normalize_scope(product_series) or None,
+        "market": _normalize_scope(market) or None,
+        "change_type": _normalize_scope(change_type) or None,
+        "evidence_kind": _normalize_scope(evidence_kind) or None,
+        "version_ids": ids,
+    }
+    filters = """
+        version.review_status = 'pending'
+        AND (:feature_id IS NULL OR version.feature_id = :feature_id)
+        AND (:software_version IS NULL OR version.software_version = :software_version)
+        AND (:product_series IS NULL OR version.product_series = :product_series)
+        AND (:market IS NULL OR version.market = :market)
+        AND (:change_type IS NULL OR version.change_type = :change_type)
+        AND (:evidence_kind IS NULL OR version.evidence_kind = :evidence_kind)
+    """
+    if ids is not None:
+        filters += " AND version.id IN :version_ids"
+    statement = text(
+        f"""
+        SELECT {_ROW_COLUMNS}
+        FROM feature_versions version
+        LEFT JOIN knowledge_documents document
+          ON document.id = version.evidence_document_id
+        LEFT JOIN release_introductions introduction
+          ON introduction.feature_version_id = version.id
+        WHERE {filters}
+        ORDER BY version.version_sort_key, version.feature_id, version.id
+        """
+    )
+    if ids is not None:
+        statement = statement.bindparams(bindparam("version_ids", expanding=True))
+    result = await session.execute(statement, params)
+    return [_row_payload(row) for row in result]
+
+
+async def _review_rows_by_ids(session: AsyncSession, version_ids: list[int]) -> list[dict]:
+    """按 id 读回记录（不限状态）：批量动作落库后刷新返回值用。"""
+
+    if not version_ids:
+        return []
+    result = await session.execute(
+        text(
+            f"""
+            SELECT {_ROW_COLUMNS}
+            FROM feature_versions version
+            LEFT JOIN knowledge_documents document
+              ON document.id = version.evidence_document_id
+            LEFT JOIN release_introductions introduction
+              ON introduction.feature_version_id = version.id
+            WHERE version.id IN :version_ids
+            ORDER BY version.version_sort_key, version.feature_id, version.id
+            """
+        ).bindparams(bindparam("version_ids", expanding=True)),
+        {"version_ids": [int(value) for value in version_ids]},
+    )
+    return [_row_payload(row) for row in result]
+
+
+def _first_release_candidate_ids(items: list[dict]) -> set[int]:
+    """每个功能 + 系列范围内最早一条「配置变更表 + 新增」证据的 id。
+
+    与回填预览的 `is_first_release_candidate` 同一口径：只有配置变更表里的
+    「新增」才算首发证据，正文里的「优化」只说明该版本涉及该功能。
+    """
+
+    def is_candidate(item: dict) -> bool:
+        return (
+            item["change_type"] == "added"
+            and item["evidence_kind"] == "configuration_change"
+        )
+
+    earliest: dict[tuple[int, str], str] = {}
+    for item in items:
+        if not is_candidate(item):
+            continue
+        scope = (int(item["feature_id"]), item["product_series"] or "")
+        current = earliest.get(scope)
+        if current is None or item["version_sort_key"] < current:
+            earliest[scope] = item["version_sort_key"]
+    return {
+        int(item["id"])
+        for item in items
+        if is_candidate(item)
+        and earliest.get((int(item["feature_id"]), item["product_series"] or ""))
+        == item["version_sort_key"]
+    }
+
+
+def _count_by(items: list[dict], field: str, label: str) -> list[dict]:
+    counts: dict[str, int] = {}
+    for item in items:
+        key = str(item.get(field) or "")
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {label: key, "matched": counts[key]}
+        for key in sorted(counts, key=lambda value: (-counts[value], value))
+    ]
+
+
+def _batch_review_note(
+    review_status: str,
+    *,
+    matched: int,
+    first_candidate_only: bool,
+    change_type: str | None,
+    software_version: str | None,
+    evidence_kind: str | None,
+) -> str:
+    """批量动作写进每一行的口径：以后看单条记录也能知道它属于哪一次批量。"""
+
+    scope: list[str] = []
+    if first_candidate_only:
+        scope.append("首发候选")
+    if software_version:
+        scope.append(f"版本 {software_version}")
+    if change_type:
+        scope.append(f"变更类型 {change_type}")
+    if evidence_kind:
+        scope.append(f"证据类型 {evidence_kind}")
+    label = "确认" if review_status == "confirmed" else "驳回"
+    scope_text = "、".join(scope) if scope else "全部待复核记录"
+    return f"批量{label}｜口径：{scope_text}｜本次 {matched} 条"
+
+
+async def batch_review_feature_versions(
+    session: AsyncSession,
+    *,
+    review_status: str,
+    changed_by: str | None = None,
+    change_note: str | None = None,
+    feature_id: int | None = None,
+    software_version: str | None = None,
+    product_series: str | None = None,
+    market: str | None = None,
+    change_type: str | None = None,
+    evidence_kind: str | None = None,
+    first_candidate_only: bool = False,
+    version_ids: list[int] | None = None,
+    confirm_count: int | None = None,
+    dry_run: bool = True,
+) -> dict:
+    """按范围批量确认或驳回待复核记录，并逐条留痕。
+
+    与候选回填同一条纪律：默认只预览（`dry_run=True`），显式落库才写；只处理
+    `pending` 行，已确认或已驳回的记录不会被批量动作覆盖。预览不要求填操作人，
+    落库时必填并写进每一条留痕。
+    """
+
+    status = _validate_choice(review_status, ("confirmed", "rejected"), "批量复核状态")
+    actor = str(changed_by or "").strip()
+    if not actor and not dry_run:
+        raise FeatureReleaseError("批量复核需要填写操作人")
+
+    items = await _pending_review_rows(
+        session,
+        feature_id=feature_id,
+        software_version=software_version,
+        product_series=product_series,
+        market=market,
+        change_type=change_type,
+        evidence_kind=evidence_kind,
+        version_ids=version_ids,
+    )
+    if first_candidate_only:
+        keep = _first_release_candidate_ids(items)
+        items = [item for item in items if int(item["id"]) in keep]
+    candidate_ids = _first_release_candidate_ids(items)
+    for item in items:
+        item["is_first_release_candidate"] = int(item["id"]) in candidate_ids
+
+    matched = len(items)
+    note = str(change_note or "").strip() or _batch_review_note(
+        status,
+        matched=matched,
+        first_candidate_only=first_candidate_only,
+        change_type=change_type,
+        software_version=software_version,
+        evidence_kind=evidence_kind,
+    )
+    if matched > BATCH_REVIEW_LIMIT and confirm_count != matched:
+        raise FeatureReleaseError(
+            f"本次将影响 {matched} 条记录，超过 {BATCH_REVIEW_LIMIT} 条，"
+            f"需要回传确认条数 confirm_count={matched} 才能执行"
+        )
+
+    result = {
+        "applied": False,
+        "dry_run": bool(dry_run),
+        "review_status": status,
+        "action": f"batch_{status}",
+        "change_note": note,
+        "matched": matched,
+        "limit": BATCH_REVIEW_LIMIT,
+        "requires_confirm_count": matched > BATCH_REVIEW_LIMIT,
+        "by_change_type": _count_by(items, "change_type", "change_type"),
+        "by_software_version": _count_by(items, "software_version", "software_version"),
+        "items": items,
+    }
+    if dry_run or not items:
+        return result
+
+    before = {int(item["id"]): _audit_snapshot(item) for item in items}
+    identifiers = [int(item["id"]) for item in items]
+    await session.execute(
+        text(
+            """
+            UPDATE feature_versions
+            SET review_status = :review_status, change_note = :change_note,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id IN :version_ids
+            """
+        ).bindparams(bindparam("version_ids", expanding=True)),
+        {"review_status": status, "change_note": note, "version_ids": identifiers},
+    )
+    for item in items:
+        item["review_status"] = status
+        item["change_note"] = note
+    await _append_revisions(
+        session,
+        entries=[
+            {
+                "id": int(item["id"]),
+                "before_json": before[int(item["id"])],
+                "after_json": _audit_snapshot(item),
+            }
+            for item in items
+        ],
+        action=f"batch_{status}",
+        change_note=note,
+        changed_by=actor,
+    )
+    await session.commit()
+
+    refreshed = await _review_rows_by_ids(session, identifiers)
+    result["items"] = refreshed
+    result["applied"] = True
+    result["dry_run"] = False
+    return result
 
 
 async def delete_feature_version(session: AsyncSession, version_id: int) -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api import knowledge
 from app.database import get_db
 from app.services.data_review import (
+    batch_revise_data_review_items,
     get_data_review_item_history,
     list_data_review_batches,
     list_data_review_items,
@@ -429,3 +430,342 @@ async def test_completed_rows_with_writing_issues_still_need_review(tmp_path):
     )
 
     assert staged == {"item_count": 1, "needs_review_count": 1}
+
+
+def _bulk_preview(controlled_file: Path, count: int) -> OverseasRegistrationPreview:
+    """构造一批「已完成注册但写法待修正」的行，用于批量确认测试。"""
+
+    digest = hashlib.sha256(controlled_file.read_bytes()).hexdigest()
+    records = tuple(
+        OverseasRegistrationRecord(
+            sheet_name="已完成注册",
+            source_row=index + 2,
+            source_ref=f"已完成注册!A{index + 2}:C{index + 2}",
+            jurisdiction_raw="巴西",
+            jurisdiction_name="巴西",
+            jurisdiction_code="BR",
+            authority=None,
+            registration_status="completed",
+            address_version="unspecified",
+            model_raw=f"VINNNO {index}",
+            probe_raw=f"S2_{index}C",
+            models=(f"VINNNO {index}",),
+            probes=(f"S2_{index}C",),
+            ready_for_import=False,
+            issue_codes=("model_name_requires_review",),
+        )
+        for index in range(count)
+    )
+    return OverseasRegistrationPreview(
+        source_file=str(controlled_file),
+        source_sha256=digest,
+        snapshot_date="2026-08-19",
+        records=records,
+        relations=(),
+        summary={"source_rows": count, "ready_rows": 0, "review_rows": count},
+    )
+
+
+def _review_center_client(database_path):
+    """把审核中心挂到一个最小 app 上，用于验证批量入口。"""
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    app = FastAPI()
+    app.include_router(knowledge.router, prefix="/api/knowledge")
+
+    async def override_db():
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_db
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
+    return client, engine
+
+
+@pytest.mark.asyncio
+async def test_issue_summary_groups_pending_rows_and_batch_confirm_previews_first(tmp_path):
+    """按问题类型批量处理：先按问题码分组，预览不落库，落库逐条留痕。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+    stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_preview(controlled_file),
+    )
+
+    client, engine = _review_center_client(database_path)
+    async with client:
+        summary = await client.get(
+            "/api/knowledge/review-items/issue-summary",
+            params={"data_type": "overseas_registration_row", "batch_id": 7},
+        )
+        # 预览不要求填修改人：界面还没填人也应该能先看将处理哪些行。
+        preview = await client.post(
+            "/api/knowledge/review-items/batch-confirm",
+            json={
+                "data_type": "overseas_registration_row",
+                "batch_id": 7,
+                "review_status": "confirmed",
+                "issue_codes": ["model_name_requires_review"],
+            },
+        )
+        # 预览之后、落库之前的真实状态：确认前仍然是待修正。
+        probe = sqlite3.connect(database_path)
+        statuses_before_apply = dict(
+            probe.execute(
+                "SELECT id, review_status FROM data_review_items WHERE batch_id = 7"
+            ).fetchall()
+        )
+        probe.close()
+        applied = await client.post(
+            "/api/knowledge/review-items/batch-confirm",
+            json={
+                "data_type": "overseas_registration_row",
+                "batch_id": 7,
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "issue_codes": ["model_name_requires_review"],
+                "dry_run": False,
+            },
+        )
+        history = await client.get(
+            f"/api/knowledge/review-items/{applied.json()['items'][0]['id']}/history"
+        )
+    await engine.dispose()
+
+    # 待修正 1 行，但它同时带机型与探头两个问题码 → 分组各计一次。
+    assert summary.status_code == 200
+    assert summary.json()["editable"] is True
+    assert summary.json()["needs_review_total"] == 1
+    assert {
+        item["issue_code"]: item["needs_review_count"]
+        for item in summary.json()["issues"]
+    } == {"model_name_requires_review": 1, "probe_name_requires_review": 1}
+
+    assert preview.status_code == 200
+    assert preview.json()["applied"] is False
+    assert preview.json()["dry_run"] is True
+    assert preview.json()["matched"] == 1
+    assert preview.json()["items"][0]["model_raw"] == "VINNNO 10"
+
+    # 预览不落库：确认前的真实状态是「待修正」。
+    assert set(statuses_before_apply.values()) == {"auto_ready", "needs_review"}
+
+    assert applied.status_code == 200
+    assert applied.json()["applied"] is True
+    assert applied.json()["action"] == "batch_confirmed"
+    assert "批量确认" in applied.json()["change_note"]
+    assert "model_name_requires_review" in applied.json()["change_note"]
+
+    # 逐条留痕：批量动作也留下操作人与口径，且原始值保持不变。
+    record = history.json()["items"][0]
+    assert record["action"] == "confirmed"
+    assert record["changed_by"] == "product_owner"
+    assert record["before_payload"] == record["after_payload"]
+    assert record["before_payload"]["model_raw"] == "VINNNO 10"
+
+    connection = sqlite3.connect(database_path)
+    remaining = connection.execute(
+        """
+        SELECT COUNT(*) FROM data_review_items
+        WHERE batch_id = 7 AND review_status = 'needs_review'
+        """
+    ).fetchone()[0]
+    auto_ready = connection.execute(
+        """
+        SELECT COUNT(*) FROM data_review_items
+        WHERE batch_id = 7 AND review_status = 'auto_ready'
+        """
+    ).fetchone()[0]
+    revisions = connection.execute(
+        "SELECT COUNT(*) FROM data_review_revisions"
+    ).fetchone()[0]
+    connection.close()
+    # 自动可用的行不参与批量动作，也不会被顺手改掉。
+    assert remaining == 0
+    assert auto_ready == 1
+    assert revisions == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_confirm_rejects_a_frozen_batch_instead_of_failing_on_click(tmp_path):
+    """已发布冻结的批次直接拒绝批量动作，界面据此禁用入口。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+    stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_preview(controlled_file),
+    )
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        "UPDATE overseas_registration_snapshots SET status = 'superseded' WHERE id = 7"
+    )
+    connection.commit()
+    connection.close()
+
+    client, engine = _review_center_client(database_path)
+    async with client:
+        summary = await client.get(
+            "/api/knowledge/review-items/issue-summary",
+            params={"data_type": "overseas_registration_row", "batch_id": 7},
+        )
+        rejected = await client.post(
+            "/api/knowledge/review-items/batch-confirm",
+            json={
+                "data_type": "overseas_registration_row",
+                "batch_id": 7,
+                "review_status": "confirmed",
+                "changed_by": "product_owner",
+                "dry_run": False,
+            },
+        )
+    await engine.dispose()
+
+    assert summary.status_code == 200
+    assert summary.json()["editable"] is False
+    assert summary.json()["needs_review_total"] == 1
+
+    assert rejected.status_code == 400
+    assert "冻结" in rejected.json()["detail"]
+
+    # 冻结原因优先于「没填修改人」：否则用户填完修改人才知道这一批根本改不了。
+    with pytest.raises(ValueError) as excinfo:
+        batch_revise_data_review_items(
+            database_path,
+            data_type="overseas_registration_row",
+            batch_id=7,
+            review_status="confirmed",
+            dry_run=False,
+        )
+    assert "冻结" in str(excinfo.value)
+
+    connection = sqlite3.connect(database_path)
+    row = connection.execute(
+        "SELECT review_status FROM data_review_items WHERE batch_id = 7 AND source_ref = '已完成注册!A3:C3'"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "needs_review"
+
+
+@pytest.mark.asyncio
+async def test_batch_confirm_over_the_limit_requires_the_confirmed_count(tmp_path):
+    """一次影响太多行时必须回传确认条数，避免手滑改掉一整批。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+    stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_bulk_preview(controlled_file, 60),
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        batch_revise_data_review_items(
+            database_path,
+            data_type="overseas_registration_row",
+            batch_id=7,
+            review_status="confirmed",
+            changed_by="product_owner",
+            issue_codes=["model_name_requires_review"],
+            dry_run=False,
+        )
+    assert "confirm_count=60" in str(excinfo.value)
+
+    applied = batch_revise_data_review_items(
+        database_path,
+        data_type="overseas_registration_row",
+        batch_id=7,
+        review_status="confirmed",
+        changed_by="product_owner",
+        issue_codes=["model_name_requires_review"],
+        confirm_count=60,
+        dry_run=False,
+    )
+
+    assert applied["applied"] is True
+    assert applied["matched"] == 60
+    assert applied["by_issue"] == [
+        {"issue_code": "model_name_requires_review", "matched": 60}
+    ]
+
+    connection = sqlite3.connect(database_path)
+    revisions = connection.execute(
+        "SELECT COUNT(*) FROM data_review_revisions"
+    ).fetchone()[0]
+    pending = connection.execute(
+        """
+        SELECT COUNT(*) FROM data_review_items
+        WHERE batch_id = 7 AND review_status = 'needs_review'
+        """
+    ).fetchone()[0]
+    connection.close()
+    # 每行各留一条痕，而不是只记一次批量动作。
+    assert revisions == 60
+    assert pending == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_confirm_only_accepts_confirm_or_exclude(tmp_path):
+    """批量不能写值：改内容必须逐条修正，否则会把整类行写成同一个值。"""
+
+    controlled_file = tmp_path / "tracking.xls"
+    controlled_file.write_bytes(b"controlled")
+    database_path = tmp_path / "product_config.db"
+    _create_database(database_path, controlled_file)
+    migrate_data_review_schema(database_path)
+    stage_overseas_preview_review_items(
+        database_path,
+        snapshot_id=7,
+        source_document_id=1,
+        preview=_preview(controlled_file),
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        batch_revise_data_review_items(
+            database_path,
+            data_type="overseas_registration_row",
+            batch_id=7,
+            review_status="corrected",
+            changed_by="product_owner",
+            issue_codes=["model_name_requires_review"],
+        )
+    assert "逐条修正" in str(excinfo.value)
+
+    # 预览可以没有修改人；一旦要落库就必须填。
+    preview = batch_revise_data_review_items(
+        database_path,
+        data_type="overseas_registration_row",
+        batch_id=7,
+        review_status="confirmed",
+        issue_codes=["model_name_requires_review"],
+    )
+    assert preview["applied"] is False
+
+    with pytest.raises(ValueError) as excinfo:
+        batch_revise_data_review_items(
+            database_path,
+            data_type="overseas_registration_row",
+            batch_id=7,
+            review_status="confirmed",
+            changed_by="   ",
+            dry_run=False,
+        )
+    assert "修改人不能为空" in str(excinfo.value)

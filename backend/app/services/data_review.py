@@ -293,6 +293,274 @@ def stage_knowledge_document_review_items(
             connection.close()
 
 
+BATCH_REVIEW_LIMIT = 50
+# 批量只允许「确认」和「排除」：改值必须逐条改，否则会把整类行写成同一个值。
+_BATCH_REVIEW_STATUSES = ("confirmed", "excluded")
+
+
+def _batchable(data_type: str) -> None:
+    if data_type != DATA_TYPE_OVERSEAS_REGISTRATION:
+        raise ValueError("当前材料类型尚未配置批量审核")
+
+
+def _issue_codes_of(row) -> tuple[str, ...]:
+    values = _json_load(row["issue_codes_json"], [])
+    if not isinstance(values, list):
+        return ()
+    return tuple(str(value) for value in values if str(value).strip())
+
+
+def _open_review_connection(database_path: str | Path, batch_id: int):
+    """打开审核批次并确认它还能改：冻结批次直接拒绝，而不是让用户点了才报错。"""
+
+    database = Path(database_path).expanduser().resolve()
+    migrate_data_review_schema(database)
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    snapshot = connection.execute(
+        """
+        SELECT id, status, snapshot_date FROM overseas_registration_snapshots
+        WHERE id = ?
+        """,
+        (batch_id,),
+    ).fetchone()
+    if snapshot is None:
+        connection.close()
+        raise ValueError("审核批次不存在")
+    if snapshot["status"] != "draft":
+        connection.close()
+        raise ValueError("该批次已发布冻结，不能批量审核；如需修订请更新源表后重新导入并发布新版本")
+    return connection, snapshot
+
+
+def summarize_data_review_issues(
+    database_path: str | Path, *, data_type: str, batch_id: int
+) -> dict[str, Any]:
+    """按问题类型（issue_code）汇总一个批次的待修正条数。
+
+    一个待修正行常常同时带多个问题码（例如「机型范围待展开 + 机型名称待修正」），
+    所以同一行会在每个命中的问题码下各计一次，`issues` 的合计会大于
+    `needs_review_total`，这是正常的。
+    """
+
+    _batchable(data_type)
+    database = Path(database_path).expanduser().resolve()
+    migrate_data_review_schema(database)
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    try:
+        snapshot = connection.execute(
+            """
+            SELECT id, status, snapshot_date FROM overseas_registration_snapshots
+            WHERE id = ?
+            """,
+            (batch_id,),
+        ).fetchone()
+        if snapshot is None:
+            raise ValueError("审核批次不存在")
+        rows = connection.execute(
+            """
+            SELECT issue_codes_json, review_status FROM data_review_items
+            WHERE data_type = ? AND batch_id = ?
+            """,
+            (data_type, batch_id),
+        ).fetchall()
+        counts: dict[str, int] = {}
+        needs_review_total = 0
+        for row in rows:
+            if row["review_status"] != "needs_review":
+                continue
+            needs_review_total += 1
+            for code in _issue_codes_of(row):
+                counts[code] = counts.get(code, 0) + 1
+        return {
+            "data_type": data_type,
+            "batch_id": batch_id,
+            "batch_status": snapshot["status"],
+            "snapshot_date": snapshot["snapshot_date"],
+            "editable": snapshot["status"] == "draft",
+            "needs_review_total": needs_review_total,
+            "issues": [
+                {"issue_code": code, "needs_review_count": counts[code]}
+                for code in sorted(counts, key=lambda value: (-counts[value], value))
+            ],
+        }
+    finally:
+        connection.close()
+
+
+def _batch_note(review_status: str, *, issue_codes, matched: int) -> str:
+    label = "确认" if review_status == "confirmed" else "排除"
+    codes = [str(code) for code in (issue_codes or []) if str(code).strip()]
+    scope = "、".join(codes) if codes else "全部待修正行"
+    return f"批量{label}｜问题类型：{scope}｜本次 {matched} 条"
+
+
+def _preview_item(row) -> dict[str, Any]:
+    payload = _json_load(row["effective_payload_json"], {})
+    return {
+        "id": int(row["id"]),
+        "source_ref": row["source_ref"],
+        "issue_codes": list(_issue_codes_of(row)),
+        "review_status": row["review_status"],
+        "jurisdiction_name": payload.get("jurisdiction_name"),
+        "jurisdiction_code": payload.get("jurisdiction_code"),
+        "registration_status": payload.get("registration_status"),
+        "model_raw": payload.get("model_raw"),
+        "probe_raw": payload.get("probe_raw"),
+    }
+
+
+def batch_revise_data_review_items(
+    database_path: str | Path,
+    *,
+    data_type: str,
+    batch_id: int,
+    review_status: str,
+    changed_by: str | None = None,
+    change_note: str | None = None,
+    issue_codes: list[str] | None = None,
+    item_ids: list[int] | None = None,
+    source_refs: list[str] | None = None,
+    confirm_count: int | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """按问题类型批量确认或排除待修正行，并逐条留痕。
+
+    与逐条修正同一套纪律，只是把动作放大到一类行：
+
+    - 只处理 `needs_review` 行，自动可用 / 已排除 / 已确认的记录不会被覆盖；
+    - 默认只预览（`dry_run=True`），显式落库才写；
+    - 预览不要求填修改人，落库必填并写进每一条留痕；
+    - 每条仍写一行 `data_review_revisions`，`change_note` 带上批量口径，
+      因此「这一行是哪一次批量动作改的」永远可查；
+    - 命中条数超过 `BATCH_REVIEW_LIMIT` 时必须回传相同数字的 `confirm_count`。
+    """
+
+    _batchable(data_type)
+    status = str(review_status or "").strip()
+    if status not in _BATCH_REVIEW_STATUSES:
+        raise ValueError("批量状态只支持已确认或已排除；改值仍需逐条修正")
+
+    # 先判批次能不能改：冻结批次要报「已发布冻结」，而不是先报缺修改人，
+    # 否则用户填完修改人才知道这一批根本改不了。
+    connection, snapshot = _open_review_connection(database_path, batch_id)
+    try:
+        actor = str(changed_by or "").strip()
+        if not actor and not dry_run:
+            raise ValueError("修改人不能为空")
+        rows = connection.execute(
+            """
+            SELECT * FROM data_review_items
+            WHERE data_type = ? AND batch_id = ? AND review_status = 'needs_review'
+            ORDER BY id
+            """,
+            (data_type, batch_id),
+        ).fetchall()
+        codes = {str(code) for code in (issue_codes or []) if str(code).strip()}
+        wanted_ids = {int(value) for value in (item_ids or [])}
+        wanted_refs = {str(value) for value in (source_refs or []) if str(value).strip()}
+        matched = []
+        for row in rows:
+            if wanted_ids and int(row["id"]) not in wanted_ids:
+                continue
+            if wanted_refs and row["source_ref"] not in wanted_refs:
+                continue
+            if codes and not codes & set(_issue_codes_of(row)):
+                continue
+            matched.append(row)
+
+        by_issue: dict[str, int] = {}
+        for row in matched:
+            for code in _issue_codes_of(row):
+                if codes and code not in codes:
+                    continue
+                by_issue[code] = by_issue.get(code, 0) + 1
+
+        count = len(matched)
+        note = str(change_note or "").strip() or _batch_note(
+            status, issue_codes=sorted(codes) or None, matched=count
+        )
+        result: dict[str, Any] = {
+            "data_type": data_type,
+            "batch_id": batch_id,
+            "batch_status": snapshot["status"],
+            "editable": True,
+            "applied": False,
+            "dry_run": bool(dry_run),
+            "review_status": status,
+            "action": f"batch_{status}",
+            "change_note": note,
+            "matched": count,
+            "limit": BATCH_REVIEW_LIMIT,
+            "requires_confirm_count": count > BATCH_REVIEW_LIMIT,
+            "needs_review_total": len(rows),
+            "by_issue": [
+                {"issue_code": code, "matched": by_issue[code]}
+                for code in sorted(by_issue, key=lambda value: (-by_issue[value], value))
+            ],
+            "items": [_preview_item(row) for row in matched],
+        }
+        if count > BATCH_REVIEW_LIMIT and confirm_count != count:
+            raise ValueError(
+                f"本次将影响 {count} 条记录，超过 {BATCH_REVIEW_LIMIT} 条，"
+                f"需要回传确认条数 confirm_count={count} 才能执行"
+            )
+        if dry_run or not matched:
+            return result
+
+        for row in matched:
+            item_id = int(row["id"])
+            before_json = str(row["effective_payload_json"])
+            revision_no = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(MAX(revision_no), 0) + 1
+                    FROM data_review_revisions WHERE review_item_id = ?
+                    """,
+                    (item_id,),
+                ).fetchone()[0]
+            )
+            # 留痕的 action 沿用审核状态本身（与逐条修正同一口径），
+            # 「这一次是批量动作」由 change_note 里的「批量确认｜问题类型：…」标明。
+            connection.execute(
+                """
+                INSERT INTO data_review_revisions (
+                    review_item_id, revision_no, before_payload_json,
+                    after_payload_json, action, change_note, changed_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (item_id, revision_no, before_json, before_json, status, note, actor),
+            )
+            connection.execute(
+                """
+                UPDATE data_review_items
+                SET review_status = ?, updated_by = ?, change_note = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, actor, note, item_id),
+            )
+        connection.commit()
+        stored = connection.execute(
+            """
+            SELECT * FROM data_review_items WHERE id IN ({})
+            ORDER BY id
+            """.format(",".join("?" for _ in matched)),
+            [int(row["id"]) for row in matched],
+        ).fetchall()
+        result["items"] = [_preview_item(row) for row in stored]
+        result["applied"] = True
+        result["dry_run"] = False
+        return result
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _item_from_mapping(row) -> dict[str, Any]:
     item = dict(row)
     item["raw_payload"] = _json_load(item.pop("raw_payload_json"), {})

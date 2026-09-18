@@ -591,6 +591,51 @@
             </el-button>
           </div>
 
+          <div
+            v-if="reviewIssueSummary && reviewIssueSummary.issues.length"
+            class="issue-batch-panel"
+            data-testid="issue-batch-panel"
+          >
+            <div class="issue-batch-head">
+              <span class="issue-batch-title">按问题类型批量处理</span>
+              <span class="issue-batch-hint">
+                一类问题一次处理；每行仍各留一条审核记录，原文不变。
+              </span>
+              <span v-if="!reviewBatchEditable" class="issue-batch-locked">
+                该批次已发布冻结，如需修订请更新源表后重新导入并发布新版本
+              </span>
+            </div>
+            <div class="issue-batch-list">
+              <div
+                v-for="issue in reviewIssueSummary.issues"
+                :key="issue.issue_code"
+                class="issue-batch-item"
+                :data-testid="`issue-batch-item-${issue.issue_code}`"
+              >
+                <span class="issue-batch-name">{{ issueLabel(issue.issue_code) }}</span>
+                <span class="issue-batch-count">{{ issue.needs_review_count }}</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :disabled="!reviewBatchEditable"
+                  :data-testid="`issue-batch-confirm-${issue.issue_code}`"
+                  @click="openIssueBatch(issue, 'confirmed')"
+                >
+                  确认这类
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!reviewBatchEditable"
+                  :data-testid="`issue-batch-exclude-${issue.issue_code}`"
+                  @click="openIssueBatch(issue, 'excluded')"
+                >
+                  排除这类
+                </el-button>
+              </div>
+            </div>
+          </div>
+
           <el-table
             :data="dataReviewRows"
             border
@@ -842,6 +887,76 @@
     </el-dialog>
 
     <el-dialog
+      v-model="issueBatchDialogVisible"
+      :title="issueBatchTitle"
+      width="760px"
+      data-testid="issue-batch-dialog"
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="批量动作不会改动原文与识别值，只会给命中的每一行各写一条审核记录；未确认前不写入。"
+      />
+      <template v-if="issueBatchPreview">
+        <p class="issue-batch-summary" data-testid="issue-batch-summary">
+          本批共 {{ issueBatchPreview.needs_review_total }} 行待修正，本次将处理
+          <strong>{{ issueBatchPreview.matched }}</strong> 行（同一行可能带多个问题类型）。
+        </p>
+        <el-table
+          :data="issueBatchPreview.items"
+          border
+          stripe
+          size="small"
+          max-height="300"
+          class="review-table"
+        >
+          <el-table-column prop="source_ref" label="原表位置" min-width="150" />
+          <el-table-column prop="jurisdiction_name" label="国家/地区" width="110" />
+          <el-table-column prop="model_raw" label="机型（原文）" min-width="180" />
+          <el-table-column prop="probe_raw" label="探头（原文）" min-width="180" />
+        </el-table>
+        <el-form label-width="90px" class="issue-batch-form">
+          <el-form-item label="修改人" required>
+            <el-input
+              v-model="issueBatchChangedBy"
+              placeholder="姓名或工号，会写进审核记录"
+              data-testid="issue-batch-changed-by"
+            />
+          </el-form-item>
+          <el-form-item label="批量说明">
+            <el-input
+              v-model="issueBatchChangeNote"
+              placeholder="留空则自动写成「批量确认｜问题类型：…｜本次 N 条」"
+            />
+          </el-form-item>
+          <el-form-item
+            v-if="issueBatchPreview.requires_confirm_count"
+            label="确认条数"
+            required
+          >
+            <el-input
+              v-model="issueBatchConfirmCount"
+              :placeholder="`超过 ${issueBatchPreview.limit} 条需输入 ${issueBatchPreview.matched}`"
+              data-testid="issue-batch-confirm-count"
+            />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="issueBatchDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="issueBatchLoading"
+          data-testid="issue-batch-apply"
+          @click="applyIssueBatch"
+        >
+          确认写入 {{ issueBatchPreview?.matched ?? 0 }} 条
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="packageDialogVisible"
       title="新增注册资料包"
       width="760px"
@@ -982,6 +1097,8 @@ import {
   getKnowledgeDocumentPreviewUrl,
   getDataReviewBatches,
   getDataReviewItems,
+  getDataReviewIssueSummary,
+  batchConfirmDataReviewItems,
   getRegistrationModelProbes,
   getRegistrationModels,
   getRegistrationDifferenceSummary,
@@ -1049,6 +1166,16 @@ const editingReviewItem = ref(null)
 const dataReviewForm = ref({})
 const dataReviewChangedBy = ref('product_owner')
 const dataReviewChangeNote = ref('')
+// 按问题类型批量处理：一个待修正行常带多个问题码，所以同一行会在多个类型下各计一次。
+const reviewIssueSummary = ref(null)
+const issueBatchDialogVisible = ref(false)
+const issueBatchPreview = ref(null)
+const issueBatchLoading = ref(false)
+const issueBatchStatus = ref('confirmed')
+const issueBatchIssueCode = ref('')
+const issueBatchChangedBy = ref('product_owner')
+const issueBatchChangeNote = ref('')
+const issueBatchConfirmCount = ref('')
 const draftReview = ref(null)
 const packageForm = ref({
   country_code: 'CN',
@@ -1453,6 +1580,7 @@ const loadDataReviewItems = async () => {
   if (!selectedReviewBatch.value) {
     dataReviewRows.value = []
     dataReviewTotal.value = 0
+    reviewIssueSummary.value = null
     return
   }
   dataReviewLoading.value = true
@@ -1473,6 +1601,104 @@ const loadDataReviewItems = async () => {
     ElMessage.error('审核明细加载失败')
   } finally {
     dataReviewLoading.value = false
+  }
+  await loadReviewIssueSummary()
+}
+
+// 只有海外注册行支持按问题类型批量处理：段落类批次不会产生待修正行。
+const isBatchableReviewBatch = batch =>
+  batch?.data_type === 'overseas_registration_row' && batch?.batch_id
+
+const loadReviewIssueSummary = async () => {
+  const batch = selectedReviewBatch.value
+  if (!batch || !isBatchableReviewBatch(batch)) {
+    reviewIssueSummary.value = null
+    return
+  }
+  try {
+    reviewIssueSummary.value = await getDataReviewIssueSummary({
+      data_type: batch.data_type,
+      batch_id: batch.batch_id
+    })
+  } catch {
+    // 摘要失败不该拖垮审核列表：这里静默降级，批量入口整体不显示。
+    reviewIssueSummary.value = null
+  }
+}
+
+const issueBatchTitle = computed(() => {
+  const action = issueBatchStatus.value === 'confirmed' ? '批量确认' : '批量排除'
+  const name = issueBatchIssueCode.value ? issueLabel(issueBatchIssueCode.value) : ''
+  return name ? `${action}：${name}` : action
+})
+
+const openIssueBatch = async (issue, reviewStatus) => {
+  const batch = selectedReviewBatch.value
+  if (!batch || !isBatchableReviewBatch(batch)) return
+  if (!reviewBatchEditable.value) {
+    ElMessage.warning('这一批已发布，正式版本不可修改；如需修订请更新源表后重新导入并发布新版本')
+    return
+  }
+  issueBatchStatus.value = reviewStatus
+  issueBatchIssueCode.value = issue.issue_code
+  issueBatchConfirmCount.value = ''
+  issueBatchChangeNote.value = ''
+  issueBatchLoading.value = true
+  try {
+    // 先预览：预览阶段不要求填修改人，也不会写库。
+    issueBatchPreview.value = await batchConfirmDataReviewItems({
+      data_type: batch.data_type,
+      batch_id: batch.batch_id,
+      review_status: reviewStatus,
+      issue_codes: [issue.issue_code],
+      dry_run: true
+    })
+    issueBatchDialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量预览失败')
+  } finally {
+    issueBatchLoading.value = false
+  }
+}
+
+const applyIssueBatch = async () => {
+  const batch = selectedReviewBatch.value
+  const preview = issueBatchPreview.value
+  if (!batch || !preview) return
+  if (!issueBatchChangedBy.value.trim()) {
+    ElMessage.warning('请填写修改人')
+    return
+  }
+  const body = {
+    data_type: batch.data_type,
+    batch_id: batch.batch_id,
+    review_status: issueBatchStatus.value,
+    changed_by: issueBatchChangedBy.value.trim(),
+    issue_codes: [issueBatchIssueCode.value],
+    dry_run: false
+  }
+  if (issueBatchChangeNote.value.trim()) {
+    body.change_note = issueBatchChangeNote.value.trim()
+  }
+  if (preview.requires_confirm_count) {
+    const confirmed = Number(issueBatchConfirmCount.value)
+    if (!Number.isInteger(confirmed) || confirmed !== preview.matched) {
+      ElMessage.warning(`本次将处理 ${preview.matched} 条，请在「确认条数」里输入这个数字`)
+      return
+    }
+    body.confirm_count = confirmed
+  }
+  issueBatchLoading.value = true
+  try {
+    const result = await batchConfirmDataReviewItems(body)
+    const label = issueBatchStatus.value === 'confirmed' ? '确认' : '排除'
+    ElMessage.success(`已${label} ${result.matched} 条，每行各留一条审核记录`)
+    issueBatchDialogVisible.value = false
+    await loadDataReviewBatches()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量处理失败')
+  } finally {
+    issueBatchLoading.value = false
   }
 }
 
@@ -1819,6 +2045,17 @@ onMounted(async () => {
 .review-summary { align-items: center; }
 .review-locked { color: #94a3b8; font-size: 12px; }
 .review-summary .el-button { margin-left: auto; }
+.issue-batch-panel { margin: 12px 0; padding: 12px; border: 1px solid #fde68a; border-radius: 10px; background: #fffbeb; }
+.issue-batch-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.issue-batch-title { font-weight: 600; color: #92400e; font-size: 13px; }
+.issue-batch-hint { color: #a16207; font-size: 12px; }
+.issue-batch-locked { color: #b91c1c; font-size: 12px; }
+.issue-batch-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.issue-batch-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid #fcd34d; border-radius: 8px; background: #fff; }
+.issue-batch-name { color: #334155; font-size: 13px; }
+.issue-batch-count { min-width: 24px; text-align: center; font-weight: 600; color: #b45309; }
+.issue-batch-summary { margin: 12px 0; color: #475569; font-size: 13px; }
+.issue-batch-form { margin-top: 12px; }
 .review-table { width: 100%; }
 .source-values { display: grid; gap: 3px; color: #64748b; font-size: 12px; }
 .source-values strong { color: #334155; font-size: 13px; }

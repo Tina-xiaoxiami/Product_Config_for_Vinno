@@ -263,3 +263,74 @@ class DataReviewRevisionItem(BaseModel):
 
 class DataReviewRevisionList(BaseModel):
     items: list[DataReviewRevisionItem] = Field(default_factory=list)
+
+
+class DataReviewIssueSummaryItem(BaseModel):
+    issue_code: str
+    needs_review_count: int
+
+
+class DataReviewIssueSummary(BaseModel):
+    """一个批次的待修正问题分布，供「按问题类型批量处理」使用。"""
+
+    data_type: str
+    batch_id: int
+    batch_status: str | None = None
+    snapshot_date: str | None = None
+    editable: bool = False
+    needs_review_total: int
+    issues: list[DataReviewIssueSummaryItem] = Field(default_factory=list)
+
+
+class DataReviewBatchConfirmRequest(BaseModel):
+    """按问题类型批量确认或排除；默认只预览，显式落库才写。
+
+    预览（`dry_run=True`）不要求填修改人；落库时必填，会写进每一条留痕。
+    命中条数超过 `limit` 时必须回传相同数字的 `confirm_count`。
+    """
+
+    data_type: str = Field(min_length=1, max_length=80)
+    batch_id: int = Field(ge=1)
+    review_status: str = Field(pattern="^(confirmed|excluded)$")
+    changed_by: str | None = Field(default=None, max_length=100)
+    change_note: str | None = Field(default=None, max_length=1000)
+    issue_codes: list[str] | None = None
+    item_ids: list[int] | None = None
+    source_refs: list[str] | None = None
+    confirm_count: int | None = Field(default=None, ge=0)
+    dry_run: bool = True
+
+
+class DataReviewBatchPreviewItem(BaseModel):
+    id: int
+    source_ref: str
+    issue_codes: list[str] = Field(default_factory=list)
+    review_status: str
+    jurisdiction_name: str | None = None
+    jurisdiction_code: str | None = None
+    registration_status: str | None = None
+    model_raw: str | None = None
+    probe_raw: str | None = None
+
+
+class DataReviewBatchConfirmGroup(BaseModel):
+    issue_code: str
+    matched: int
+
+
+class DataReviewBatchConfirmResult(BaseModel):
+    data_type: str
+    batch_id: int
+    batch_status: str | None = None
+    editable: bool = False
+    applied: bool
+    dry_run: bool
+    review_status: str
+    action: str
+    change_note: str
+    matched: int
+    limit: int
+    requires_confirm_count: bool
+    needs_review_total: int
+    by_issue: list[DataReviewBatchConfirmGroup] = Field(default_factory=list)
+    items: list[DataReviewBatchPreviewItem] = Field(default_factory=list)

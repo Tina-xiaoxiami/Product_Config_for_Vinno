@@ -33,6 +33,60 @@ class ReleaseVersionUpdate(BaseModel):
     lifecycle_status: str | None = Field(default=None, max_length=20)
     review_status: str | None = Field(default=None, max_length=20)
     change_note: str | None = None
+    # 留痕的操作人：不传也能改，但留痕里会记成未署名，便于事后区分。
+    changed_by: str | None = Field(default=None, max_length=100)
+
+
+class ReleaseBatchReviewRequest(BaseModel):
+    """批量复核待确认的功能版本；默认只预览，显式落库才写。
+
+    范围可以用版本 / 系列 / 变更类型 / 证据类型组合，也可以直接用
+    `first_candidate_only` 只处理每个功能的首发候选；`version_ids` 用于
+    界面勾选后的精确提交。预览（`dry_run=True`）不要求填修改人，落库时必填。
+    """
+
+    review_status: str = Field(pattern="^(confirmed|rejected)$")
+    changed_by: str | None = Field(default=None, max_length=100)
+    change_note: str | None = Field(default=None, max_length=1000)
+    feature_id: int | None = None
+    software_version: str | None = Field(default=None, max_length=50)
+    product_series: str | None = Field(default=None, max_length=100)
+    market: str | None = Field(default=None, max_length=30)
+    change_type: str | None = Field(default=None, max_length=30)
+    evidence_kind: str | None = Field(default=None, max_length=30)
+    first_candidate_only: bool = False
+    version_ids: list[int] | None = None
+    # 命中超过 batch_review_limit 时必须回传相同数字才能执行。
+    confirm_count: int | None = Field(default=None, ge=0)
+    dry_run: bool = True
+
+
+class ReleaseBatchReviewChangeTypeGroup(BaseModel):
+    """按变更类型的命中分布。"""
+
+    change_type: str
+    matched: int
+
+
+class ReleaseBatchReviewVersionGroup(BaseModel):
+    """按软件版本的命中分布。"""
+
+    software_version: str
+    matched: int
+
+
+class ReleaseVersionRevisionItem(BaseModel):
+    revision_no: int
+    action: str
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+    change_note: str | None = None
+    changed_by: str | None = None
+    created_at: str
+
+
+class ReleaseVersionRevisionList(BaseModel):
+    items: list[ReleaseVersionRevisionItem] = Field(default_factory=list)
 
 
 class ReleaseVersionItem(BaseModel):
@@ -67,6 +121,34 @@ class ReleaseVersionItem(BaseModel):
     feature_primary_cn_name: str | None = None
     feature_primary_en_name: str | None = None
     feature_ipn: str | None = None
+
+
+class ReleaseBatchReviewItem(ReleaseVersionItem):
+    """批量复核的明细行，额外标出它是否属于首发候选。"""
+
+    is_first_release_candidate: bool = False
+
+
+class ReleaseBatchReviewResult(BaseModel):
+    """批量复核的结果：先预览（dry_run），再落库。
+
+    `applied=False` 表示这次只做了预览；`limit` 与 `requires_confirm_count`
+    告诉界面「命中条数超过阈值时必须回传确认条数」。
+    """
+
+    applied: bool
+    dry_run: bool
+    review_status: str
+    action: str
+    change_note: str
+    matched: int
+    limit: int
+    requires_confirm_count: bool
+    by_change_type: list[ReleaseBatchReviewChangeTypeGroup] = Field(default_factory=list)
+    by_software_version: list[ReleaseBatchReviewVersionGroup] = Field(
+        default_factory=list
+    )
+    items: list[ReleaseBatchReviewItem] = Field(default_factory=list)
 
 
 class ReleaseFeatureIdentity(BaseModel):

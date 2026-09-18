@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.knowledge import (
+    DataReviewBatchConfirmRequest,
+    DataReviewBatchConfirmResult,
     DataReviewBatchList,
+    DataReviewIssueSummary,
     DataReviewItem,
     DataReviewItemList,
     DataReviewItemUpdate,
@@ -32,11 +35,13 @@ from app.schemas.knowledge import (
     LocalFileOpenResult,
 )
 from app.services.data_review import (
+    batch_revise_data_review_items,
     get_data_review_item_history,
     list_data_review_batches,
     list_data_review_items,
     revise_data_review_item,
     stage_knowledge_document_review_items,
+    summarize_data_review_issues,
 )
 from app.services.knowledge_documents import (
     KnowledgeDocumentInUseError,
@@ -111,6 +116,45 @@ async def get_review_items(
         limit=limit,
     )
     return DataReviewItemList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/review-items/issue-summary", response_model=DataReviewIssueSummary)
+async def get_review_issue_summary(
+    data_type: str = Query(..., min_length=1, max_length=80),
+    batch_id: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """一个批次的待修正问题分布：按问题类型给出条数，供批量处理入口使用。"""
+
+    try:
+        return DataReviewIssueSummary(
+            **summarize_data_review_issues(
+                _database_path(db), data_type=data_type, batch_id=batch_id
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/review-items/batch-confirm", response_model=DataReviewBatchConfirmResult)
+async def batch_confirm_review_items(
+    payload: DataReviewBatchConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """按问题类型批量确认或排除待修正行；默认只预览。
+
+    与逐条修正同一套纪律：`dry_run=True`（默认）只返回将命中的行，显式
+    `dry_run=false` 才落库，并为每行写一条留痕。冻结批次会被拒绝。
+    """
+
+    try:
+        return DataReviewBatchConfirmResult(
+            **batch_revise_data_review_items(
+                _database_path(db), **payload.model_dump()
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/review-items/{item_id}", response_model=DataReviewItem)

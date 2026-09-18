@@ -20,6 +20,8 @@ from app.schemas.release import (
     ReleaseAttachmentDeleteResult,
     ReleaseBackfillPreview,
     ReleaseBackfillRequest,
+    ReleaseBatchReviewRequest,
+    ReleaseBatchReviewResult,
     ReleaseEvidenceDocumentList,
     ReleaseIntroductionHistory,
     ReleaseIntroductionItem,
@@ -32,6 +34,7 @@ from app.schemas.release import (
     ReleaseVersionItem,
     ReleaseVersionList,
     ReleaseVersionOverviewList,
+    ReleaseVersionRevisionList,
     ReleaseVersionUpdate,
 )
 from app.services.feature_release_backfill import (
@@ -53,6 +56,7 @@ from app.services.feature_release_versions import (
     FeatureReleaseError,
     FeatureReleaseNotFoundError,
     add_introduction_attachment,
+    batch_review_feature_versions,
     create_feature_version,
     delete_feature_version,
     delete_introduction_attachment,
@@ -60,6 +64,7 @@ from app.services.feature_release_versions import (
     get_feature_version,
     get_introduction,
     list_evidence_documents,
+    list_feature_version_revisions,
     list_versions_by_software_version,
     list_introduction_history,
     list_release_versions_overview,
@@ -177,6 +182,39 @@ async def update_release_version(
         await db.rollback()
         raise _http_error(exc) from exc
     return ReleaseVersionItem(**item)
+
+
+@router.post("/versions/batch-review", response_model=ReleaseBatchReviewResult)
+async def batch_review_release_versions(
+    data: ReleaseBatchReviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """批量确认或驳回待复核的功能版本；默认只预览。
+
+    与候选回填同一套纪律：`dry_run=True`（默认）只返回将命中的记录与分组计数，
+    显式 `dry_run=false` 才落库，并为每一行写一条留痕。
+    """
+
+    try:
+        result = await batch_review_feature_versions(db, **data.model_dump())
+    except FeatureReleaseError as exc:
+        await db.rollback()
+        raise _http_error(exc) from exc
+    return ReleaseBatchReviewResult(**result)
+
+
+@router.get(
+    "/versions/{version_id}/revisions",
+    response_model=ReleaseVersionRevisionList,
+)
+async def release_version_revisions(version_id: int, db: AsyncSession = Depends(get_db)):
+    """一条功能版本的留痕：谁、什么时候、把哪一行从什么状态改成了什么状态。"""
+
+    try:
+        items = await list_feature_version_revisions(db, version_id)
+    except FeatureReleaseError as exc:
+        raise _http_error(exc) from exc
+    return ReleaseVersionRevisionList(items=items)
 
 
 @router.delete("/versions/{version_id}")

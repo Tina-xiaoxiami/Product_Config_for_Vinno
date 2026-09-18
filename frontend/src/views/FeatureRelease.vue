@@ -7,13 +7,22 @@
           功能版本、发布日期与发布介绍以功能（IPN）为身份单独管理；首发版本只由已确认的版本记录得出。
         </p>
       </div>
-      <el-button
-        type="primary"
-        data-testid="release-create-version"
-        @click="openCreateDialog"
-      >
-        手工登记功能版本
-      </el-button>
+      <div class="release-operator">
+        <el-input
+          v-model="releaseOperator"
+          data-testid="release-operator"
+          aria-label="操作人"
+          placeholder="操作人（写进留痕）"
+          style="width: 180px"
+        />
+        <el-button
+          type="primary"
+          data-testid="release-create-version"
+          @click="openCreateDialog"
+        >
+          手工登记功能版本
+        </el-button>
+      </div>
     </header>
 
     <el-tabs v-model="activeTab" class="release-tabs">
@@ -210,6 +219,22 @@
             </el-select>
             <el-button type="primary" :loading="versionLoading" @click="loadVersions">
               查询
+            </el-button>
+            <el-button
+              data-testid="release-batch-confirm-version"
+              :loading="batchLoading"
+              @click="openReleaseBatch({ software_version: versionFilter || undefined })"
+            >
+              批量确认{{ versionFilter ? ` ${versionFilter} ` : '' }}待复核
+            </el-button>
+            <el-button
+              type="success"
+              plain
+              data-testid="release-batch-first-candidate"
+              :loading="batchLoading"
+              @click="openReleaseBatch({ first_candidate_only: true })"
+            >
+              确认首发候选
             </el-button>
           </div>
 
@@ -742,6 +767,99 @@
         <el-button type="danger" @click="removeVersion">删除该记录</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="batchDialogVisible"
+      :title="batchTitle"
+      width="820px"
+      data-testid="release-batch-dialog"
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="批量复核只为每一行各写一条留痕，证据与来源不会改变；未确认前不写入。"
+      />
+      <template v-if="batchPreview">
+        <p class="release-total" data-testid="release-batch-summary">
+          本次将处理 <strong>{{ batchPreview.matched }}</strong> 条待复核记录
+          <span v-if="batchPreview.by_change_type.length">
+            （
+            <template v-for="(group, index) in batchPreview.by_change_type" :key="group.change_type">
+              <span v-if="index">、</span>{{ changeLabel(group.change_type) }} {{ group.matched }}
+            </template>
+            ）
+          </span>
+        </p>
+        <el-table
+          :data="batchPreview.items"
+          border
+          stripe
+          size="small"
+          max-height="320"
+        >
+          <el-table-column label="功能" min-width="150">
+            <template #default="{ row }">
+              {{ row.feature_primary_cn_name || row.feature_name || `#${row.feature_id}` }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="software_version" label="软件版本" width="110" />
+          <el-table-column label="系列" width="130">
+            <template #default="{ row }">{{ row.product_series || '未指定' }}</template>
+          </el-table-column>
+          <el-table-column label="变更" width="110">
+            <template #default="{ row }">{{ changeLabel(row.change_type) }}</template>
+          </el-table-column>
+          <el-table-column label="证据" min-width="180">
+            <template #default="{ row }">
+              {{ row.evidence_document_title || '手工登记' }}
+              <small v-if="row.evidence_source_ref"> · {{ row.evidence_source_ref }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column label="首发候选" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.is_first_release_candidate" type="success" size="small">
+                是
+              </el-tag>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-form label-width="90px" class="intro-form">
+          <el-form-item label="操作人" required>
+            <el-input
+              v-model="batchForm.changed_by"
+              data-testid="release-batch-changed-by"
+              placeholder="姓名或工号，会写进留痕"
+            />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input
+              v-model="batchForm.change_note"
+              placeholder="留空则自动写成「批量确认｜口径：…｜本次 N 条」"
+            />
+          </el-form-item>
+          <el-form-item v-if="batchPreview.requires_confirm_count" label="确认条数" required>
+            <el-input
+              v-model="batchForm.confirm_count"
+              data-testid="release-batch-confirm-count"
+              :placeholder="`超过 ${batchPreview.limit} 条需输入 ${batchPreview.matched}`"
+            />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="batchDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="batchLoading"
+          data-testid="release-batch-apply"
+          @click="applyReleaseBatch"
+        >
+          确认写入 {{ batchPreview?.matched ?? 0 }} 条
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -749,6 +867,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  batchReviewReleaseVersions,
   createFeatureReleaseVersion,
   deleteReleaseAttachment,
   deleteReleaseVersion,
@@ -863,9 +982,15 @@ const openDocument = (url) => {
   if (url) window.open(url, '_blank')
 }
 
+// 复核要留痕，所以单条与批量动作都带上操作人（页面顶部一个输入框统管）。
+const releaseOperator = ref('product_owner')
+
 const confirmVersion = async (row) => {
   try {
-    await updateReleaseVersion(row.id, { review_status: 'confirmed' })
+    await updateReleaseVersion(row.id, {
+      review_status: 'confirmed',
+      changed_by: releaseOperator.value.trim() || undefined
+    })
     ElMessage.success('已确认')
     await loadTimeline()
   } catch (error) {
@@ -875,11 +1000,88 @@ const confirmVersion = async (row) => {
 
 const rejectVersion = async (row) => {
   try {
-    await updateReleaseVersion(row.id, { review_status: 'rejected' })
+    await updateReleaseVersion(row.id, {
+      review_status: 'rejected',
+      changed_by: releaseOperator.value.trim() || undefined
+    })
     ElMessage.success('已驳回')
     await loadTimeline()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '驳回失败')
+  }
+}
+
+// ---------- 批量复核（按版本 / 首发候选） ----------
+// 与候选回填同一条纪律：先预览，再落库；每行各留一条留痕。
+const batchDialogVisible = ref(false)
+const batchPreview = ref(null)
+const batchLoading = ref(false)
+const batchScope = reactive({ first_candidate_only: false, software_version: '' })
+const batchForm = reactive({ changed_by: '', change_note: '', confirm_count: '' })
+
+const batchTitle = computed(() =>
+  batchScope.first_candidate_only ? '确认首发候选' : '批量确认待复核记录'
+)
+
+const openReleaseBatch = async (scope) => {
+  batchLoading.value = true
+  batchScope.first_candidate_only = Boolean(scope.first_candidate_only)
+  batchScope.software_version = scope.software_version || ''
+  batchForm.changed_by = releaseOperator.value
+  batchForm.change_note = ''
+  batchForm.confirm_count = ''
+  try {
+    batchPreview.value = await batchReviewReleaseVersions({
+      review_status: 'confirmed',
+      first_candidate_only: batchScope.first_candidate_only,
+      software_version: batchScope.software_version || null,
+      dry_run: true
+    })
+    if (!batchPreview.value.matched) {
+      ElMessage.info('没有待复核的记录需要处理')
+      return
+    }
+    batchDialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量预览失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+const applyReleaseBatch = async () => {
+  const preview = batchPreview.value
+  if (!preview) return
+  if (!batchForm.changed_by.trim()) {
+    ElMessage.warning('请填写操作人')
+    return
+  }
+  const body = {
+    review_status: 'confirmed',
+    changed_by: batchForm.changed_by.trim(),
+    first_candidate_only: batchScope.first_candidate_only,
+    software_version: batchScope.software_version || null,
+    dry_run: false
+  }
+  if (batchForm.change_note.trim()) body.change_note = batchForm.change_note.trim()
+  if (preview.requires_confirm_count) {
+    const confirmed = Number(batchForm.confirm_count)
+    if (!Number.isInteger(confirmed) || confirmed !== preview.matched) {
+      ElMessage.warning(`本次将处理 ${preview.matched} 条，请在「确认条数」里输入这个数字`)
+      return
+    }
+    body.confirm_count = confirmed
+  }
+  batchLoading.value = true
+  try {
+    const result = await batchReviewReleaseVersions(body)
+    ElMessage.success(`已确认 ${result.matched} 条，每行各留一条留痕`)
+    batchDialogVisible.value = false
+    await loadVersions()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量确认失败')
+  } finally {
+    batchLoading.value = false
   }
 }
 
@@ -1330,6 +1532,7 @@ onMounted(async () => {
 .feature-release { padding: 16px; }
 .release-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .release-header h2 { margin: 0; font-size: 18px; color: #1f2937; }
+.release-operator { display: flex; align-items: center; gap: 10px; }
 .release-subtitle { margin: 6px 0 0; color: #64748b; font-size: 12px; }
 .release-panel { padding: 4px 0; }
 .release-search { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }

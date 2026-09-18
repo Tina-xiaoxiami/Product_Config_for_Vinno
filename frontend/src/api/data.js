@@ -174,6 +174,10 @@ export const getDataReviewBatches = () => api.get('/knowledge/review-batches')
 export const getDataReviewItems = (params) => api.get('/knowledge/review-items', { params })
 export const updateDataReviewItem = (id, data) => api.put(`/knowledge/review-items/${id}`, data)
 export const getDataReviewItemHistory = (id) => api.get(`/knowledge/review-items/${id}/history`)
+export const getDataReviewIssueSummary = (params) =>
+  api.get('/knowledge/review-items/issue-summary', { params })
+export const batchConfirmDataReviewItems = (data) =>
+  api.post('/knowledge/review-items/batch-confirm', data)
 
 // ==================== 功能发布 ====================
 export const getFeatureReleaseTimeline = (featureId, params) =>
@@ -182,6 +186,10 @@ export const createFeatureReleaseVersion = (featureId, data) =>
   api.post(`/release/features/${featureId}/versions`, data)
 export const getReleaseVersions = (params) => api.get('/release/versions', { params })
 export const updateReleaseVersion = (id, data) => api.put(`/release/versions/${id}`, data)
+export const batchReviewReleaseVersions = (data) =>
+  api.post('/release/versions/batch-review', data)
+export const getReleaseVersionRevisions = (id) =>
+  api.get(`/release/versions/${id}/revisions`)
 export const deleteReleaseVersion = (id) => api.delete(`/release/versions/${id}`)
 export const getReleaseOverview = () => api.get('/release/overview')
 export const getReleaseEvidenceDocuments = (params) =>
