@@ -30,6 +30,12 @@ from app.models.knowledge import (
     DataReviewItem,
     DataReviewRevision,
 )
+from app.models.release import (
+    FeatureVersion,
+    ReleaseIntroduction,
+    ReleaseIntroductionRevision,
+    ReleaseIntroductionAttachment,
+)
 from app.models.registration import (
     RegistrationImportBatch,
     RegistrationPackage,
@@ -90,4 +96,8 @@ __all__ = [
     "ProductRegistrationModelLink",
     "OverseasRegistrationSnapshot",
     "OverseasRegistrationRelation",
+    "FeatureVersion",
+    "ReleaseIntroduction",
+    "ReleaseIntroductionRevision",
+    "ReleaseIntroductionAttachment",
 ]

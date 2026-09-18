@@ -175,6 +175,33 @@ export const getDataReviewItems = (params) => api.get('/knowledge/review-items',
 export const updateDataReviewItem = (id, data) => api.put(`/knowledge/review-items/${id}`, data)
 export const getDataReviewItemHistory = (id) => api.get(`/knowledge/review-items/${id}/history`)
 
+// ==================== 功能发布 ====================
+export const getFeatureReleaseTimeline = (featureId, params) =>
+  api.get(`/release/features/${featureId}/versions`, { params })
+export const createFeatureReleaseVersion = (featureId, data) =>
+  api.post(`/release/features/${featureId}/versions`, data)
+export const getReleaseVersions = (params) => api.get('/release/versions', { params })
+export const updateReleaseVersion = (id, data) => api.put(`/release/versions/${id}`, data)
+export const deleteReleaseVersion = (id) => api.delete(`/release/versions/${id}`)
+export const getReleaseOverview = () => api.get('/release/overview')
+export const getReleaseEvidenceDocuments = (params) =>
+  api.get('/release/evidence-documents', { params })
+export const getReleaseIntroduction = (versionId) =>
+  api.get(`/release/versions/${versionId}/introduction`)
+export const saveReleaseIntroduction = (versionId, data) =>
+  api.put(`/release/versions/${versionId}/introduction`, data)
+export const getReleaseIntroductionHistory = (versionId) =>
+  api.get(`/release/versions/${versionId}/introduction/history`)
+export const uploadReleaseAttachment = (versionId, file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`/release/versions/${versionId}/introduction/attachments`, form)
+}
+export const deleteReleaseAttachment = (attachmentId) =>
+  api.delete(`/release/introduction-attachments/${attachmentId}`)
+export const previewReleaseBackfill = (data) => api.post('/release/backfill', data)
+export const applyReleaseBackfill = (data) => api.post('/release/backfill', { ...data, apply: true })
+
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>
   api.get('/registrations/configured-models', { params })
