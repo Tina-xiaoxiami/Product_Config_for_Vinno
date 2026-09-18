@@ -316,6 +316,24 @@
                   inactive-text="草稿"
                 />
               </el-form-item>
+              <el-form-item label="导出模板">
+                <el-select
+                  v-model="introTemplateId"
+                  data-testid="release-intro-template"
+                  placeholder="默认发布介绍模板"
+                  clearable
+                  style="width: 260px"
+                >
+                  <el-option
+                    v-for="template in templates"
+                    :key="template.code"
+                    :label="`${template.name}${template.is_system ? '（内置）' : ''}`"
+                    :value="template.id"
+                    :disabled="!template.active"
+                  />
+                </el-select>
+                <span class="release-hint">留空使用内置默认模板</span>
+              </el-form-item>
               <el-form-item>
                 <el-button
                   type="primary"
@@ -324,6 +342,12 @@
                   @click="saveIntroduction"
                 >
                   保存发布介绍
+                </el-button>
+                <el-button
+                  data-testid="release-intro-export"
+                  @click="exportIntroduction"
+                >
+                  导出 Word
                 </el-button>
                 <el-button @click="loadIntroductionHistory">查看历史版本</el-button>
               </el-form-item>
@@ -460,7 +484,125 @@
           <el-empty v-else-if="!backfillLoading" description="尚未生成候选" />
         </section>
       </el-tab-pane>
+
+      <el-tab-pane label="文档模板" name="templates">
+        <section class="release-panel">
+          <p class="release-subtitle">
+            模板真实参与导出：章节列表决定文档包含哪些章节与顺序，变量列表是允许输出的白名单；
+            内置模板只读，自定义模板可增删改。
+          </p>
+          <div class="release-search">
+            <el-button
+              type="primary"
+              data-testid="release-template-create"
+              @click="openTemplateDialog"
+            >
+              新建模板
+            </el-button>
+            <el-button @click="loadTemplates">刷新</el-button>
+          </div>
+
+          <el-table :data="templates" border stripe>
+            <el-table-column prop="code" label="代码" width="200" />
+            <el-table-column prop="name" label="名称" min-width="160" />
+            <el-table-column label="章节" min-width="260">
+              <template #default="{ row }">
+                <el-tag
+                  v-for="section in row.sections"
+                  :key="section"
+                  size="small"
+                  class="section-tag"
+                >
+                  {{ section }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="变量数" width="90">
+              <template #default="{ row }">{{ row.variables.length }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.active ? 'success' : 'info'" size="small">
+                  {{ row.active ? '启用' : '停用' }}
+                </el-tag>
+                <el-tag v-if="row.is_system" size="small" type="warning">内置</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="170">
+              <template #default="{ row }">
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="row.is_system"
+                  @click="editTemplate(row)"
+                >
+                  编辑
+                </el-button>
+                <el-button
+                  link
+                  type="danger"
+                  :disabled="row.is_system"
+                  @click="removeTemplate(row)"
+                >
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="templateDialogVisible"
+      :title="templateForm.id ? '编辑文档模板' : '新建文档模板'"
+      width="620px"
+    >
+      <el-form label-width="110px">
+        <el-form-item label="代码">
+          <el-input
+            v-model="templateForm.code"
+            :disabled="Boolean(templateForm.id)"
+            placeholder="小写字母、数字、下划线，例如 tender_short"
+          />
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="templateForm.name" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="templateForm.description" />
+        </el-form-item>
+        <el-form-item label="章节">
+          <el-checkbox-group v-model="templateForm.sections">
+            <el-checkbox
+              v-for="section in sectionOptions"
+              :key="section"
+              :value="section"
+              :label="section"
+            />
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="变量">
+          <el-checkbox-group v-model="templateForm.variables">
+            <el-checkbox
+              v-for="variable in variableOptions"
+              :key="variable"
+              :value="variable"
+              :label="variable"
+            />
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="templateForm.active" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="templateSaving" @click="submitTemplate">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="createDialogVisible" title="手工登记功能版本" width="560px">
       <el-form label-width="110px">
@@ -613,8 +755,13 @@ import {
   applyReleaseBackfill,
   getFeatureReleaseTimeline,
   getKnowledgeFeatures,
+  createReleaseTemplate,
+  deleteReleaseTemplate,
   getReleaseEvidenceDocuments,
   getReleaseIntroduction,
+  getReleaseIntroductionExportUrl,
+  getReleaseTemplates,
+  updateReleaseTemplate,
   getReleaseIntroductionHistory,
   getReleaseOverview,
   getReleaseVersions,
@@ -1041,9 +1188,141 @@ const applyBackfill = async () => {
   }
 }
 
+// ---------- 文档模板与导出 ----------
+const sectionOptions = [
+  '基本信息',
+  '功能概述',
+  '临床意义',
+  '工作流程',
+  '参数介绍',
+  '适用范围',
+  '变更说明'
+]
+const variableOptions = [
+  'function_name',
+  'function_version',
+  'function_category',
+  'function_status',
+  'release_date',
+  'summary',
+  'clinical_significance',
+  'workflow',
+  'applications',
+  'parameters',
+  'change_log'
+]
+const templates = ref([])
+const introTemplateId = ref(null)
+const templateDialogVisible = ref(false)
+const templateSaving = ref(false)
+const templateForm = reactive({
+  id: null,
+  code: '',
+  name: '',
+  description: '',
+  sections: [...sectionOptions],
+  variables: [...variableOptions],
+  active: true
+})
+
+const loadTemplates = async () => {
+  try {
+    templates.value = (await getReleaseTemplates()).items || []
+  } catch (error) {
+    ElMessage.error('模板加载失败')
+  }
+}
+
+const openTemplateDialog = () => {
+  Object.assign(templateForm, {
+    id: null,
+    code: '',
+    name: '',
+    description: '',
+    sections: [...sectionOptions],
+    variables: [...variableOptions],
+    active: true
+  })
+  templateDialogVisible.value = true
+}
+
+const editTemplate = (row) => {
+  Object.assign(templateForm, {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description || '',
+    sections: [...row.sections],
+    variables: [...row.variables],
+    active: row.active
+  })
+  templateDialogVisible.value = true
+}
+
+const submitTemplate = async () => {
+  if (!templateForm.name.trim() || !templateForm.code.trim()) {
+    ElMessage.warning('请填写模板代码与名称')
+    return
+  }
+  if (!templateForm.sections.length) {
+    ElMessage.warning('模板至少需要保留一个章节')
+    return
+  }
+  templateSaving.value = true
+  const payload = {
+    name: templateForm.name,
+    description: templateForm.description,
+    sections: templateForm.sections,
+    variables: templateForm.variables,
+    active: templateForm.active
+  }
+  try {
+    if (templateForm.id) {
+      await updateReleaseTemplate(templateForm.id, payload)
+    } else {
+      await createReleaseTemplate({ ...payload, code: templateForm.code })
+    }
+    ElMessage.success('模板已保存')
+    templateDialogVisible.value = false
+    await loadTemplates()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '模板保存失败')
+  } finally {
+    templateSaving.value = false
+  }
+}
+
+const removeTemplate = async (row) => {
+  try {
+    await ElMessageBox.confirm(`删除模板「${row.name}」？`, '确认删除', { type: 'warning' })
+  } catch (error) {
+    return
+  }
+  try {
+    await deleteReleaseTemplate(row.id)
+    ElMessage.success('模板已删除')
+    if (introTemplateId.value === row.id) introTemplateId.value = null
+    await loadTemplates()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '模板删除失败')
+  }
+}
+
+const exportIntroduction = () => {
+  if (!introVersion.value) {
+    ElMessage.warning('请先选择功能版本')
+    return
+  }
+  window.open(
+    getReleaseIntroductionExportUrl(introVersion.value.id, introTemplateId.value),
+    '_blank'
+  )
+}
+
 onMounted(async () => {
   await loadOverview()
   await loadVersions()
+  await loadTemplates()
 })
 </script>
 
@@ -1062,5 +1341,7 @@ onMounted(async () => {
 .coverage-note { margin: 8px 0; }
 .release-total { margin: 10px 0 0; color: #64748b; font-size: 12px; }
 .intro-form { max-width: 860px; margin-top: 12px; }
+.section-tag { margin: 0 4px 4px 0; }
+.release-hint { margin-left: 10px; color: #94a3b8; font-size: 12px; }
 .intro-attachments { margin: 18px 0; }
 </style>

@@ -178,3 +178,27 @@ class ReleaseIntroductionAttachment(Base):
     __table_args__ = (
         Index("ix_release_introduction_attachments_intro", "introduction_id"),
     )
+
+
+class ReleaseDocumentTemplate(Base):
+    """发布介绍导出 Word 时使用的文档模板。
+
+    与 A 侧不同，`sections` 与 `variables` 必须真实参与生成：章节顺序与取舍由
+    `sections` 决定，`variables` 是允许输出的变量白名单；A 侧存了这两个字段
+    但导出逻辑从不读取，这里不再保留那种空壳实现。
+    """
+
+    __tablename__ = "release_document_templates"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(80), nullable=False, unique=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    sections_json = Column(Text, nullable=False, server_default=text("'[]'"))
+    variables_json = Column(Text, nullable=False, server_default=text("'[]'"))
+    active = Column(Integer, nullable=False, default=1)
+    is_system = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (Index("ix_release_document_templates_active", "active"),)

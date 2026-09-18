@@ -223,3 +223,37 @@ class ReleaseAttachmentDeleteResult(BaseModel):
     attachment_id: int
     status: str
     removed_file: bool = False
+
+
+class ReleaseTemplateItem(BaseModel):
+    """发布介绍 Word 导出模板：`sections` 决定章节，`variables` 决定变量白名单。"""
+
+    id: int | None = None
+    code: str
+    name: str
+    description: str | None = None
+    sections: list[str] = Field(default_factory=list)
+    variables: list[str] = Field(default_factory=list)
+    active: bool = True
+    is_system: bool = False
+
+
+class ReleaseTemplateList(BaseModel):
+    items: list[ReleaseTemplateItem]
+
+
+class ReleaseTemplateCreate(BaseModel):
+    code: str = Field(min_length=3, max_length=80)
+    name: str = Field(min_length=1)
+    description: str | None = None
+    sections: list[str] | None = None
+    variables: list[str] | None = None
+    active: bool = True
+
+
+class ReleaseTemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    sections: list[str] | None = None
+    variables: list[str] | None = None
+    active: bool | None = None

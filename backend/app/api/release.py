@@ -8,7 +8,10 @@
 确认前不会进入正式结论。
 """
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -21,6 +24,10 @@ from app.schemas.release import (
     ReleaseIntroductionHistory,
     ReleaseIntroductionItem,
     ReleaseIntroductionSave,
+    ReleaseTemplateCreate,
+    ReleaseTemplateItem,
+    ReleaseTemplateList,
+    ReleaseTemplateUpdate,
     ReleaseVersionCreate,
     ReleaseVersionItem,
     ReleaseVersionList,
@@ -30,6 +37,16 @@ from app.schemas.release import (
 from app.services.feature_release_backfill import (
     apply_feature_version_candidates,
     preview_feature_version_candidates,
+)
+from app.services.release_documents import (
+    DOCX_MIME_TYPE,
+    ReleaseDocumentError,
+    ReleaseDocumentSystemTemplateError,
+    create_template,
+    delete_template,
+    export_release_document,
+    list_templates,
+    update_template,
 )
 from app.services.feature_release_versions import (
     FeatureReleaseAttachmentError,
@@ -59,6 +76,11 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=400, detail=str(exc))
     if isinstance(exc, FeatureReleaseNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
+    # 系统内置模板不可改不可删，属状态冲突而不是参数错误。
+    if isinstance(exc, ReleaseDocumentSystemTemplateError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ReleaseDocumentError):
+        return HTTPException(status_code=422, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
 
 
@@ -293,3 +315,93 @@ async def backfill_release_versions(
         limit=data.limit,
     )
     return ReleaseBackfillPreview(**refreshed, applied=True, created=created)
+
+
+# --------------------------------------------------------------------------
+# 文档模板与 Word 导出
+# --------------------------------------------------------------------------
+
+
+@router.get("/templates", response_model=ReleaseTemplateList)
+async def release_templates(db: AsyncSession = Depends(get_db)):
+    items = await list_templates(db)
+    return ReleaseTemplateList(items=items)
+
+
+@router.post("/templates", response_model=ReleaseTemplateItem)
+async def create_release_template(
+    data: ReleaseTemplateCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await create_template(db, **data.model_dump())
+    except FeatureReleaseError as exc:
+        await db.rollback()
+        raise _http_error(exc) from exc
+    return ReleaseTemplateItem(**item)
+
+
+@router.put("/templates/{template_id}", response_model=ReleaseTemplateItem)
+async def update_release_template(
+    template_id: int,
+    data: ReleaseTemplateUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await update_template(
+            db,
+            template_id,
+            fields_set=set(data.model_fields_set),
+            **data.model_dump(exclude_unset=True),
+        )
+    except FeatureReleaseError as exc:
+        await db.rollback()
+        raise _http_error(exc) from exc
+    return ReleaseTemplateItem(**item)
+
+
+@router.delete("/templates/{template_id}")
+async def remove_release_template(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await delete_template(db, template_id)
+    except FeatureReleaseError as exc:
+        await db.rollback()
+        raise _http_error(exc) from exc
+    return {"message": "删除成功"}
+
+
+@router.get("/versions/{version_id}/introduction/export")
+async def export_release_introduction(
+    version_id: int,
+    template_id: int | None = Query(None, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出该功能版本的发布介绍 Word 文件。"""
+
+    try:
+        payload, filename = await export_release_document(
+            db, version_id, template_id=template_id
+        )
+    except FeatureReleaseError as exc:
+        raise _http_error(exc) from exc
+
+    # 中文文件名同时给 RFC 5987 与 ASCII 兜底，避免旧客户端下载成乱码。
+    ascii_name = "".join(
+        character if character.isascii() and character not in '"\\' else "_"
+        for character in filename
+    ) or "release_introduction.docx"
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return StreamingResponse(
+        iter([payload]),
+        media_type=DOCX_MIME_TYPE,
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(len(payload)),
+        },
+    )

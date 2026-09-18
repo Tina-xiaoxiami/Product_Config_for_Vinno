@@ -94,3 +94,33 @@ test('feature release api surface matches the backend routes', () => {
   assert.match(api, /export const uploadReleaseAttachment/)
   assert.match(api, /introduction\/attachments/)
 })
+
+
+test('release introduction can be exported to Word with a chosen template', () => {
+  const view = read('../src/views/FeatureRelease.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /data-testid="release-intro-export"/)
+  assert.match(view, /data-testid="release-intro-template"/)
+  assert.match(view, /exportIntroduction/)
+  assert.match(view, /getReleaseIntroductionExportUrl/)
+  assert.match(api, /export const getReleaseIntroductionExportUrl/)
+  assert.match(api, /introduction\/export/)
+})
+
+test('document templates are manageable while the builtin one stays read-only', () => {
+  const view = read('../src/views/FeatureRelease.vue')
+  const api = read('../src/api/data.js')
+
+  assert.match(view, /label="文档模板"\s+name="templates"/)
+  assert.match(view, /data-testid="release-template-create"/)
+  assert.match(view, /:disabled="row\.is_system"/)
+  assert.match(view, /章节列表决定文档包含哪些章节与顺序/)
+  assert.match(view, /变量列表是允许输出的白名单/)
+  assert.match(view, /sectionOptions/)
+  assert.match(view, /variableOptions/)
+  assert.match(api, /export const getReleaseTemplates/)
+  assert.match(api, /export const createReleaseTemplate/)
+  assert.match(api, /export const updateReleaseTemplate/)
+  assert.match(api, /export const deleteReleaseTemplate/)
+})

@@ -32,6 +32,7 @@ from app.models.knowledge import (
 )
 from app.models.release import (
     FeatureVersion,
+    ReleaseDocumentTemplate,
     ReleaseIntroduction,
     ReleaseIntroductionRevision,
     ReleaseIntroductionAttachment,
@@ -100,4 +101,5 @@ __all__ = [
     "ReleaseIntroduction",
     "ReleaseIntroductionRevision",
     "ReleaseIntroductionAttachment",
+    "ReleaseDocumentTemplate",
 ]

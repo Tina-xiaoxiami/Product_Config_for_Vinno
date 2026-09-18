@@ -20,6 +20,9 @@ pandas==2.2.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
+# Document Generation（发布介绍导出 Word；正文抽取也用到 docx 解析）
+python-docx==1.2.0
+
 # CORS
 python-multipart==0.0.6
 

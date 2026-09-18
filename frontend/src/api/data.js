@@ -201,6 +201,14 @@ export const deleteReleaseAttachment = (attachmentId) =>
   api.delete(`/release/introduction-attachments/${attachmentId}`)
 export const previewReleaseBackfill = (data) => api.post('/release/backfill', data)
 export const applyReleaseBackfill = (data) => api.post('/release/backfill', { ...data, apply: true })
+export const getReleaseTemplates = () => api.get('/release/templates')
+export const createReleaseTemplate = (data) => api.post('/release/templates', data)
+export const updateReleaseTemplate = (id, data) => api.put(`/release/templates/${id}`, data)
+export const deleteReleaseTemplate = (id) => api.delete(`/release/templates/${id}`)
+export const getReleaseIntroductionExportUrl = (versionId, templateId) =>
+  templateId
+    ? `/api/release/versions/${versionId}/introduction/export?template_id=${templateId}`
+    : `/api/release/versions/${versionId}/introduction/export`
 
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>
