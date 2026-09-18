@@ -622,3 +622,71 @@ async def apply_feature_version_candidates(
         created += int(result.rowcount or 0)
     await session.commit()
     return created
+
+
+async def feature_release_coverage(session: AsyncSession) -> list[dict]:
+    """按功能汇总回填覆盖情况，供人工决定还要补哪些材料。
+
+    分三类：有「配置变更表 + 新增」证据（可给首发候选）、只有其他证据
+    （通常说明首发早于已纳管资料）、完全没有候选（多为尚未发布的功能）。
+    """
+
+    feature_rows = await session.execute(
+        text(
+            """
+            SELECT feature.id, feature.name, feature.primary_cn_name,
+                   feature.ipn, feature.identity_status
+            FROM features feature
+            ORDER BY feature.sort_order, feature.id
+            """
+        )
+    )
+    coverage: dict[int, dict] = {}
+    for row in feature_rows:
+        coverage[int(row.id)] = {
+            "feature_id": int(row.id),
+            "feature_name": row.name,
+            "primary_cn_name": row.primary_cn_name,
+            "ipn": row.ipn,
+            "identity_status": row.identity_status,
+            "candidate_count": 0,
+            "first_release_evidence_count": 0,
+            "first_release_version": None,
+            "versions": [],
+        }
+
+    version_rows = await session.execute(
+        text(
+            """
+            SELECT feature_id, software_version, change_type, evidence_kind
+            FROM feature_versions
+            """
+        )
+    )
+    for row in version_rows:
+        item = coverage.get(int(row.feature_id))
+        if item is None:
+            continue
+        item["candidate_count"] += 1
+        if row.software_version not in item["versions"]:
+            item["versions"].append(row.software_version)
+        if row.change_type == "added" and row.evidence_kind == "configuration_change":
+            item["first_release_evidence_count"] += 1
+            current = item["first_release_version"]
+            if current is None or version_sort_key(row.software_version) < version_sort_key(
+                current
+            ):
+                item["first_release_version"] = row.software_version
+
+    results = []
+    for item in coverage.values():
+        item["versions"].sort(key=version_sort_key)
+        item["status"] = (
+            "first_release"
+            if item["first_release_evidence_count"]
+            else ("other_evidence" if item["candidate_count"] else "no_candidate")
+        )
+        results.append(item)
+    order = {"no_candidate": 0, "other_evidence": 1, "first_release": 2}
+    results.sort(key=lambda item: (order[item["status"]], item["feature_id"]))
+    return results

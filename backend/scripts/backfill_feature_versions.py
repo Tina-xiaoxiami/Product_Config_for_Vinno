@@ -30,6 +30,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.feature_release_backfill import (  # noqa: E402
     apply_feature_version_candidates,
+    feature_release_coverage,
     preview_feature_version_candidates,
 )
 
@@ -64,6 +65,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="按功能汇总回填覆盖情况（不改数据）",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="以 JSON 输出候选，便于存档或复核",
@@ -88,6 +94,8 @@ async def _run(args: argparse.Namespace) -> int:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory() as session:
+            if args.coverage:
+                return await _report_coverage(session, database, args.json)
             preview = await preview_feature_version_candidates(
                 session,
                 product_series=args.product_series,
@@ -132,6 +140,46 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"已写入 {created} 条待复核候选（review_status=pending）")
         else:
             print("dry-run：未写入任何数据；确认后加 --apply")
+    return 0
+
+
+STATUS_LABELS = {
+    "first_release": "有首发证据",
+    "other_evidence": "仅其他证据",
+    "no_candidate": "无任何候选",
+}
+
+
+async def _report_coverage(session, database: Path, as_json: bool) -> int:
+    rows = await feature_release_coverage(session)
+    if as_json:
+        print(json.dumps({"database": str(database), "coverage": rows}, ensure_ascii=False, indent=2))
+        return 0
+
+    counts = {status: 0 for status in STATUS_LABELS}
+    for row in rows:
+        counts[row["status"]] += 1
+    print(f"数据库：{database}")
+    print(
+        "覆盖：功能 "
+        f"{len(rows)} 个 | 有首发证据 {counts['first_release']} | "
+        f"仅其他证据 {counts['other_evidence']} | 无任何候选 {counts['no_candidate']}"
+    )
+    for row in rows:
+        name = row["primary_cn_name"] or row["feature_name"]
+        detail = (
+            f"首发证据 {row['first_release_version']}"
+            if row["status"] == "first_release"
+            else "—"
+        )
+        print(
+            f"  [{STATUS_LABELS[row['status']]}] #{row['feature_id']} {name}"
+            f" | 候选 {row['candidate_count']} 条 | {detail}"
+        )
+    print(
+        "提示：「仅其他证据」的功能多半首发于已纳管资料之前，"
+        "需要补充更早的 Release Note 或人工确认；「无任何候选」多为尚未发布的功能。"
+    )
     return 0
 
 

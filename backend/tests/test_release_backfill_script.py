@@ -99,3 +99,21 @@ def test_backfill_script_reports_a_missing_database(tmp_path, capsys):
     missing = tmp_path / "nope.db"
     assert main(["--database", str(missing)]) == 2
     assert "数据库不存在" in capsys.readouterr().out
+
+
+def test_coverage_report_tells_which_features_still_lack_a_first_release(tmp_path, capsys):
+    database_path = tmp_path / "copy.db"
+    _create_database(database_path)
+
+    assert main(["--database", str(database_path), "--coverage"]) == 0
+    empty_output = capsys.readouterr().out
+    assert "覆盖：功能 1 个 | 有首发证据 0 | 仅其他证据 0 | 无任何候选 1" in empty_output
+    assert "[无任何候选] #1 梯形成像 | 候选 0 条" in empty_output
+    assert "多为尚未发布的功能" in empty_output
+
+    assert main(["--database", str(database_path), "--apply"]) == 0
+    capsys.readouterr()
+    assert main(["--database", str(database_path), "--coverage"]) == 0
+    output = capsys.readouterr().out
+    assert "覆盖：功能 1 个 | 有首发证据 1 | 仅其他证据 0 | 无任何候选 0" in output
+    assert "[有首发证据] #1 梯形成像 | 候选 1 条 | 首发证据 1.14.40" in output
