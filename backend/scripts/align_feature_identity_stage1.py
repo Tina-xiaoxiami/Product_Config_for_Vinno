@@ -53,9 +53,13 @@ def _print_plan(plan: dict) -> None:
     print(f"数据库：{plan['database']}")
     summary = plan["summary"]
     print(
-        "计划：新建身份 {new_identities} | 主名规范化 {renames} | 补 IPN {ipn_backfills} | "
+        "计划：新建身份 {new_identities} | 主名规范化 {renames} | 曾用名 {aliases} | "
+        "配置项规范化 {config_item_normalizations} | 补 IPN {ipn_backfills} | "
         "新关系 {relations} | 跳过 {skipped}".format(**summary)
     )
+    for item in plan["new_identities"]:
+        for warning in item.get("warnings", []):
+            print(f"  ! 提示：{item['ipn']} {warning}")
 
     for item in plan["new_identities"]:
         if item["action"] == "create":
@@ -67,6 +71,27 @@ def _print_plan(plan: dict) -> None:
             )
         else:
             print(f"  [跳过] {item['ipn']} {item['primary_cn_name']} —— {item['reason']}")
+
+    for item in plan["aliases"]:
+        if item["action"] == "create":
+            print(
+                f"  [登记曾用名] {item['target']} ← 「{item['name']}」"
+                f"（{item['a_record']}） [{item['source_reference']}]"
+            )
+        else:
+            print(f"  [跳过] 曾用名「{item['name']}」 —— {item['reason']}")
+
+    for item in plan["config_item_normalizations"]:
+        if item["action"] == "normalize":
+            print(
+                f"  [规范化配置项] ci#{item['config_item_id']}.{item['column']}："
+                f"{item['current']} → {item['normalized']} [{item['source_reference']}]"
+            )
+        else:
+            print(
+                f"  [跳过] 配置项 #{item['config_item_id']}.{item['column']}"
+                f" —— {item['reason']}"
+            )
 
     for item in plan["renames"]:
         if item["action"] == "rename":
