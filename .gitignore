@@ -30,6 +30,7 @@ Thumbs.db
 *.sqlite3
 registration_artifacts/
 registration_sources/
+release_attachments/
 
 # Logs
 *.log

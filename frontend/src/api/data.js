@@ -111,6 +111,14 @@ export const deleteFeature = (id) => api.delete(`/features/${id}`)
 export const getFeatureMasterData = (id) => api.get(`/features/${id}/master-data`)
 export const createFeatureMasterData = (data) => api.post('/features/master-data', data)
 export const updateFeatureMasterData = (id, data) => api.put(`/features/${id}/master-data`, data)
+export const downloadFeatureTemplate = () => api.get('/features/import/template', { responseType: 'blob' })
+export const previewFeatureImport = (formData) => api.post('/features/import/preview', formData)
+export const applyFeatureImport = (formData) => api.post('/features/import', formData)
+export const getFeatureNameStandardFlags = () => api.get('/features/standards/flags')
+export const getFeatureNameStandards = () => api.get('/features/standards')
+export const importFeatureNameStandards = (formData) => api.post('/features/standards/import', formData)
+export const getWhitepaperNameAudit = (params) => api.get('/features/standards/whitepaper-names', { params })
+export const getWhitepaperDocuments = () => api.get('/features/standards/whitepaper-documents')
 
 // 模板配置
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
@@ -162,6 +170,53 @@ export const getKnowledgeQuestion = (id) => api.get(`/knowledge/questions/${id}`
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)
 export const getKnowledgeQuestionCandidates = (id) => api.get(`/knowledge/questions/${id}/candidates`)
+export const getDataReviewBatches = () => api.get('/knowledge/review-batches')
+export const getDataReviewItems = (params) => api.get('/knowledge/review-items', { params })
+export const updateDataReviewItem = (id, data) => api.put(`/knowledge/review-items/${id}`, data)
+export const getDataReviewItemHistory = (id) => api.get(`/knowledge/review-items/${id}/history`)
+export const getDataReviewIssueSummary = (params) =>
+  api.get('/knowledge/review-items/issue-summary', { params })
+export const batchConfirmDataReviewItems = (data) =>
+  api.post('/knowledge/review-items/batch-confirm', data)
+
+// ==================== 功能发布 ====================
+export const getFeatureReleaseTimeline = (featureId, params) =>
+  api.get(`/release/features/${featureId}/versions`, { params })
+export const createFeatureReleaseVersion = (featureId, data) =>
+  api.post(`/release/features/${featureId}/versions`, data)
+export const getReleaseVersions = (params) => api.get('/release/versions', { params })
+export const updateReleaseVersion = (id, data) => api.put(`/release/versions/${id}`, data)
+export const batchReviewReleaseVersions = (data) =>
+  api.post('/release/versions/batch-review', data)
+export const getReleaseVersionRevisions = (id) =>
+  api.get(`/release/versions/${id}/revisions`)
+export const deleteReleaseVersion = (id) => api.delete(`/release/versions/${id}`)
+export const getReleaseOverview = () => api.get('/release/overview')
+export const getReleaseEvidenceDocuments = (params) =>
+  api.get('/release/evidence-documents', { params })
+export const getReleaseIntroduction = (versionId) =>
+  api.get(`/release/versions/${versionId}/introduction`)
+export const saveReleaseIntroduction = (versionId, data) =>
+  api.put(`/release/versions/${versionId}/introduction`, data)
+export const getReleaseIntroductionHistory = (versionId) =>
+  api.get(`/release/versions/${versionId}/introduction/history`)
+export const uploadReleaseAttachment = (versionId, file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`/release/versions/${versionId}/introduction/attachments`, form)
+}
+export const deleteReleaseAttachment = (attachmentId) =>
+  api.delete(`/release/introduction-attachments/${attachmentId}`)
+export const previewReleaseBackfill = (data) => api.post('/release/backfill', data)
+export const applyReleaseBackfill = (data) => api.post('/release/backfill', { ...data, apply: true })
+export const getReleaseTemplates = () => api.get('/release/templates')
+export const createReleaseTemplate = (data) => api.post('/release/templates', data)
+export const updateReleaseTemplate = (id, data) => api.put(`/release/templates/${id}`, data)
+export const deleteReleaseTemplate = (id) => api.delete(`/release/templates/${id}`)
+export const getReleaseIntroductionExportUrl = (versionId, templateId) =>
+  templateId
+    ? `/api/release/versions/${versionId}/introduction/export?template_id=${templateId}`
+    : `/api/release/versions/${versionId}/introduction/export`
 
 // ==================== 注册红线与产品策略 ====================
 export const getConfiguredRegistrationModels = (params) =>
@@ -182,6 +237,28 @@ export const getRegistrationDifferenceSummary = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}/difference-summary`)
 export const getRegistrationPackageVersion = (versionId) =>
   api.get(`/registrations/package-versions/${versionId}`)
+export const getOverseasRegistrationCountries = () =>
+  api.get('/registrations/overseas/countries')
+export const getOverseasRegistrationRelations = (params) =>
+  api.get('/registrations/overseas/relations', { params })
+export const getOverseasNameMappings = () =>
+  api.get('/registrations/overseas/name-mappings')
+export const saveOverseasNameMapping = (payload) =>
+  api.post('/registrations/overseas/name-mappings', payload)
+export const deleteOverseasNameMapping = (params) =>
+  api.delete('/registrations/overseas/name-mappings', { params })
+export const getOverseasRegistrationSnapshots = () =>
+  api.get('/registrations/overseas/snapshots')
+export const stageOverseasRegistrationSnapshot = (sourceDocumentId) =>
+  api.post('/registrations/overseas/snapshots/drafts', { source_document_id: sourceDocumentId })
+export const publishOverseasRegistrationSnapshot = (snapshotId, confirmedBy) =>
+  api.post(`/registrations/overseas/snapshots/${snapshotId}/publish`, { confirmed_by: confirmedBy })
+// 原件没变、但解析规则或名称映射更新了：基于已发布快照重新解析出一版草稿。
+export const rebuildOverseasRegistrationDraft = (snapshotId) =>
+  api.post(`/registrations/overseas/snapshots/${snapshotId}/rebuild-draft`)
+// 放弃一版未发布的草稿：关系、审核条目与修订记录一并删除。
+export const discardOverseasRegistrationDraft = (snapshotId) =>
+  api.delete(`/registrations/overseas/snapshots/${snapshotId}`)
 export const stageRegistrationPackageDraft = (formData) =>
   api.post('/registrations/packages/drafts', formData)
 export const getRegistrationPackageMappings = (versionId) =>
@@ -190,3 +267,10 @@ export const updateRegistrationPackageMappings = (versionId, mappings) =>
   api.put(`/registrations/package-versions/${versionId}/mappings`, { mappings })
 export const publishRegistrationPackageVersion = (versionId, confirmedBy) =>
   api.post(`/registrations/package-versions/${versionId}/publish`, { confirmed_by: confirmedBy })
+export const getRegistrationArtifactSheets = (versionId, artifactType) =>
+  api.get(`/registrations/package-versions/${versionId}/artifacts/${artifactType}/sheets`)
+export const openKnowledgeDocumentLocally = (id, mode = 'open') =>
+  api.post(`/knowledge/documents/${id}/open-locally`, { mode })
+export const openRegistrationArtifactLocally = (versionId, artifactType, mode = 'open') =>
+  api.post(`/registrations/package-versions/${versionId}/artifacts/${artifactType}/open-locally`, { mode })
+export const archiveKnowledgeDocument = (id) => api.post(`/knowledge/documents/${id}/archive`)

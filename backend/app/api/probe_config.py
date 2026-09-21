@@ -10,6 +10,7 @@ from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from app.database import get_db
+from app.utils.time import utcnow
 from app.models.probe import (
     ProductProbeModel, ProductProbeConfig,
     ProbeModel, ProbeCategory, ProbeModelVariant,
@@ -457,10 +458,10 @@ async def submit_series_drafts(data: SeriesSubmitRequest, db: AsyncSession = Dep
     # 创建系列版本快照
     snapshot = {
         "series_ids": data.series_ids, "model_ids": mid_list,
-        "submitted_at": datetime.utcnow().isoformat(),
+        "submitted_at": utcnow().isoformat(),
         "draft_count": total
     }
-    ver_num = data.version_number or f"v{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    ver_num = data.version_number or f"v{utcnow().strftime('%Y%m%d%H%M%S')}"
     db.add(SeriesProbeConfigVersion(
         series_ids=json.dumps(data.series_ids), model_ids=json.dumps(mid_list),
         version_number=ver_num, snapshot_data=json.dumps(snapshot, ensure_ascii=False),
@@ -905,7 +906,7 @@ async def submit_drafts(
     # Create version snapshot
     matrix = await get_config(product_model_id, db)
     version_num = (data.version_number if data and data.version_number
-                   else f"v{__import__('datetime').datetime.utcnow().strftime('%Y%m%d%H%M%S')}")
+                   else f"v{utcnow().strftime('%Y%m%d%H%M%S')}")
 
     version = ProbeConfigVersion(
         product_model_id=product_model_id,

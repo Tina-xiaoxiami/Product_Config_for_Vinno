@@ -11,6 +11,13 @@ import re
 import sqlite3
 
 
+#: 受控材料的唯一规范根目录（真实 Obsidian 库，目录名含空格）。
+#: 所有登记 / 迁移路径都必须由它派生——曾经三处各自硬编码该路径、其中两处漏掉
+#: " Vault"，把登记写进了迁移时误建的旁支目录（见 knowledge_documents id=19/21）。
+CONTROLLED_MATERIALS_ROOT = (
+    Path.home() / "Documents" / "Obsidian Vault" / "产品配置管理系统" / "受控材料"
+)
+
 CONTROLLED_PRODUCT_DIRECTORIES = {
     "说明书": ("manual", {".pdf", ".docx"}),
     "白皮书": ("whitepaper", {".pdf"}),
@@ -18,6 +25,32 @@ CONTROLLED_PRODUCT_DIRECTORIES = {
 }
 SEMANTIC_VERSION_RE = re.compile(r"(?<!\d)(\d+\.\d+\.\d+)(?!\d)")
 MANUAL_REVISION_RE = re.compile(r"(?<![A-Za-z0-9])(R\d+)(?!\d)", re.IGNORECASE)
+
+
+class ControlledMaterialsRootError(ValueError):
+    """受控材料根目录不可用：不存在，或不在真实 Obsidian 库内。"""
+
+
+def validate_controlled_materials_root(root: str | Path) -> Path:
+    """确认 root 位于真实 Obsidian 库内并返回它，否则抛错。
+
+    迁移事故中误建的旁支目录（`~/Documents/` 下那个缺 `Vault` 的）具有完全合法的
+    目录结构，只是名字不对；脚本会照样扫描并报告成功，把登记写进错误位置。这里
+    要求根目录的某个祖先含 `.obsidian/`，把"扫错树还报成功"变成显式失败。
+
+    只在命令行入口做这项校验：service 本身仍接受任意 root，便于测试与迁移。
+    """
+
+    resolved = Path(root).expanduser()
+    if not resolved.is_dir():
+        raise ControlledMaterialsRootError(f"受控材料根目录不存在：{resolved}")
+    for candidate in (resolved, *resolved.parents):
+        if (candidate / ".obsidian").is_dir():
+            return resolved
+    raise ControlledMaterialsRootError(
+        f"{resolved} 不在 Obsidian 库内（向上未找到 .obsidian/ 目录）；"
+        "请确认路径是否漏了 \" Vault\"，或指向了迁移时误建的旁支目录"
+    )
 
 
 @dataclass(frozen=True)

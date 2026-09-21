@@ -8,6 +8,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+class KnowledgeDocumentInUseError(ValueError):
+    """资料仍被正式答案引用，不能退役。"""
+
+    def __init__(self, citation_count: int) -> None:
+        super().__init__(
+            f"该资料仍被 {citation_count} 条正式答案的引文引用，请先调整这些答案再退役"
+        )
+        self.citation_count = citation_count
+
+
 async def list_knowledge_documents(
     session: AsyncSession,
     *,
@@ -110,4 +120,69 @@ async def get_registered_document(
         "file_name": row.file_name,
         "file_path": row.file_path,
         "mime_type": row.mime_type,
+    }
+
+
+async def archive_knowledge_document(
+    session: AsyncSession,
+    *,
+    document_id: int,
+) -> dict | None:
+    """退役一份受控资料：置为 archived 并清除派生数据（正文片段与提取记录）。
+
+    受控目录里的原件文件本身不动，由人工管理；派生数据必须一并清除，否则一旦
+    状态被改回 active，检索层会立刻复活这些片段，而 extraction 还谎报正文已提取。
+
+    已被正式答案引用的资料拒绝退役，避免留下指向空文件的引文。
+    """
+
+    document = (
+        await session.execute(
+            text("SELECT id FROM knowledge_documents WHERE id = :document_id"),
+            {"document_id": document_id},
+        )
+    ).one_or_none()
+    if document is None:
+        return None
+
+    async def _count(table: str) -> int:
+        return int(
+            (
+                await session.execute(
+                    text(f"SELECT COUNT(*) FROM {table} WHERE document_id = :document_id"),
+                    {"document_id": document_id},
+                )
+            ).scalar_one()
+        )
+
+    citation_count = await _count("knowledge_answer_citations")
+    if citation_count:
+        raise KnowledgeDocumentInUseError(citation_count)
+
+    removed_chunks = await _count("knowledge_document_chunks")
+    removed_extractions = await _count("knowledge_document_extractions")
+    await session.execute(
+        text("DELETE FROM knowledge_document_chunks WHERE document_id = :document_id"),
+        {"document_id": document_id},
+    )
+    await session.execute(
+        text("DELETE FROM knowledge_document_extractions WHERE document_id = :document_id"),
+        {"document_id": document_id},
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE knowledge_documents
+            SET source_status = 'archived', updated_at = CURRENT_TIMESTAMP
+            WHERE id = :document_id
+            """
+        ),
+        {"document_id": document_id},
+    )
+    await session.commit()
+    return {
+        "document_id": document_id,
+        "status": "archived",
+        "removed_chunks": removed_chunks,
+        "removed_extractions": removed_extractions,
     }

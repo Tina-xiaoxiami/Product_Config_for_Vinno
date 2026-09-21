@@ -1,11 +1,11 @@
 """
 草稿模型
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class DraftBatch(Base):
@@ -25,7 +25,7 @@ class DraftBatch(Base):
 
     # 元数据
     created_by = Column(String(100))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     submitted_at = Column(DateTime)
     submitted_by = Column(String(100))
 
@@ -54,7 +54,7 @@ class ConfigDraft(Base):
     new_value = Column(Text)
     old_value = Column(Text)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     # 关系
     series = relationship("ProductSeries", back_populates="config_drafts")

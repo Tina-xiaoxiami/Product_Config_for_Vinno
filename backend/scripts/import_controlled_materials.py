@@ -12,14 +12,15 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.controlled_material_import import (  # noqa: E402
+    CONTROLLED_MATERIALS_ROOT,
+    ControlledMaterialsRootError,
     import_controlled_product_materials,
+    validate_controlled_materials_root,
 )
 
 
 DEFAULT_DATABASE = BACKEND_ROOT / "product_config.db"
-DEFAULT_CONTROLLED_ROOT = (
-    Path.home() / "Documents" / "Obsidian" / "产品配置管理系统" / "受控材料"
-)
+DEFAULT_CONTROLLED_ROOT = CONTROLLED_MATERIALS_ROOT
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -37,6 +38,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    try:
+        validate_controlled_materials_root(args.controlled_root)
+    except ControlledMaterialsRootError as error:
+        print(f"ERROR {error}")
+        return 2
     result = import_controlled_product_materials(
         args.database,
         args.controlled_root,

@@ -286,7 +286,7 @@
     <el-dialog v-model="submitDialogVisible" title="提交发布" width="400px">
       <el-form label-width="100px">
         <el-form-item label="版本号">
-          <el-input v-model="submitForm.version_number" placeholder="自动生成版本号（如 v1.0.1）" />
+          <el-input v-model="submitForm.version_number" placeholder="自动生成版本号（如 1.0.1）" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="submitForm.description" type="textarea" placeholder="本次变更的描述" />

@@ -1,19 +1,29 @@
 """Unified product knowledge read APIs."""
 
+import asyncio
 from pathlib import Path
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.knowledge import (
+    DataReviewBatchConfirmRequest,
+    DataReviewBatchConfirmResult,
+    DataReviewBatchList,
+    DataReviewIssueSummary,
+    DataReviewItem,
+    DataReviewItemList,
+    DataReviewItemUpdate,
+    DataReviewRevisionList,
     FeatureKnowledgeItem,
     FeatureKnowledgeList,
     KnowledgeAnswerHistory,
     KnowledgeAnswerPublish,
     KnowledgeCandidateEvidenceList,
+    KnowledgeDocumentArchiveResult,
     KnowledgeDocumentList,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
@@ -21,10 +31,28 @@ from app.schemas.knowledge import (
     KnowledgeQuestionList,
     KnowledgeQuestionResult,
     KnowledgeStats,
+    LocalFileOpenRequest,
+    LocalFileOpenResult,
+)
+from app.services.data_review import (
+    batch_revise_data_review_items,
+    get_data_review_item_history,
+    list_data_review_batches,
+    list_data_review_items,
+    revise_data_review_item,
+    stage_knowledge_document_review_items,
+    summarize_data_review_issues,
 )
 from app.services.knowledge_documents import (
+    KnowledgeDocumentInUseError,
+    archive_knowledge_document,
     get_registered_document,
     list_knowledge_documents,
+)
+from app.services.local_file_actions import (
+    LocalOpenError,
+    is_local_host,
+    open_local_path,
 )
 from app.services.knowledge_query import (
     get_feature_knowledge,
@@ -49,6 +77,109 @@ from app.services.knowledge_content import (
 
 
 router = APIRouter()
+
+
+def _database_path(db: AsyncSession) -> Path:
+    bind = db.bind
+    database = getattr(getattr(bind, "url", None), "database", None)
+    if not database:
+        raise HTTPException(status_code=500, detail="无法确定知识库数据库路径")
+    return Path(str(database)).resolve()
+
+
+@router.get("/review-batches", response_model=DataReviewBatchList)
+async def get_review_batches(db: AsyncSession = Depends(get_db)):
+    items = await list_data_review_batches(db)
+    return DataReviewBatchList(items=items, total=len(items))
+
+
+@router.get("/review-items", response_model=DataReviewItemList)
+async def get_review_items(
+    data_type: str = Query(..., min_length=1, max_length=80),
+    batch_id: int = Query(..., ge=1),
+    review_status: str | None = Query(
+        None,
+        pattern="^(auto_ready|needs_review|corrected|confirmed|excluded)$",
+    ),
+    q: str | None = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_data_review_items(
+        db,
+        data_type=data_type,
+        batch_id=batch_id,
+        review_status=review_status,
+        query=q,
+        skip=skip,
+        limit=limit,
+    )
+    return DataReviewItemList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/review-items/issue-summary", response_model=DataReviewIssueSummary)
+async def get_review_issue_summary(
+    data_type: str = Query(..., min_length=1, max_length=80),
+    batch_id: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """一个批次的待修正问题分布：按问题类型给出条数，供批量处理入口使用。"""
+
+    try:
+        return DataReviewIssueSummary(
+            **summarize_data_review_issues(
+                _database_path(db), data_type=data_type, batch_id=batch_id
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/review-items/batch-confirm", response_model=DataReviewBatchConfirmResult)
+async def batch_confirm_review_items(
+    payload: DataReviewBatchConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """按问题类型批量确认或排除待修正行；默认只预览。
+
+    与逐条修正同一套纪律：`dry_run=True`（默认）只返回将命中的行，显式
+    `dry_run=false` 才落库，并为每行写一条留痕。冻结批次会被拒绝。
+    """
+
+    try:
+        return DataReviewBatchConfirmResult(
+            **batch_revise_data_review_items(
+                _database_path(db), **payload.model_dump()
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/review-items/{item_id}", response_model=DataReviewItem)
+async def update_review_item(
+    item_id: int,
+    payload: DataReviewItemUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return DataReviewItem(
+            **revise_data_review_item(
+                _database_path(db), item_id=item_id, **payload.model_dump()
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/review-items/{item_id}/history",
+    response_model=DataReviewRevisionList,
+)
+async def get_review_item_history(item_id: int, db: AsyncSession = Depends(get_db)):
+    items = get_data_review_item_history(_database_path(db), item_id=item_id)
+    return DataReviewRevisionList(items=items)
 
 
 @router.post("/questions/ask", response_model=KnowledgeQuestionResult)
@@ -237,7 +368,15 @@ async def extract_document_content(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(status_code=404, detail="资料不存在")
-    return KnowledgeDocumentExtractionItem(**item)
+    try:
+        review = await asyncio.to_thread(
+            stage_knowledge_document_review_items,
+            _database_path(db),
+            document_id=document_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return KnowledgeDocumentExtractionItem(**item, review=review)
 
 
 @router.get("/documents/{document_id}/preview")
@@ -259,4 +398,55 @@ async def preview_document(
         media_type=media_type or "application/octet-stream",
         filename=document["file_name"],
         content_disposition_type="inline",
+    )
+
+
+@router.post(
+    "/documents/{document_id}/archive",
+    response_model=KnowledgeDocumentArchiveResult,
+)
+async def archive_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """退役一份受控资料：不再出现在列表与检索中，并清除其派生数据（原件不动）。"""
+
+    try:
+        result = await archive_knowledge_document(db, document_id=document_id)
+    except KnowledgeDocumentInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return KnowledgeDocumentArchiveResult(**result)
+
+
+@router.post("/documents/{document_id}/open-locally", response_model=LocalFileOpenResult)
+async def open_document_locally(
+    document_id: int,
+    request: Request,
+    payload: LocalFileOpenRequest = LocalFileOpenRequest(),
+    db: AsyncSession = Depends(get_db),
+):
+    """用系统默认程序打开受控原件；仅限本机请求，路径只取自登记记录。"""
+
+    if not is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="仅允许在本机打开受控原件")
+    document = await get_registered_document(db, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+
+    path = Path(str(document["file_path"] or ""))
+    if not path.is_absolute() or not path.is_file():
+        raise HTTPException(status_code=410, detail="原文件不存在或尚未同步")
+
+    try:
+        await asyncio.to_thread(
+            open_local_path, path, reveal=payload.mode == "reveal"
+        )
+    except LocalOpenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LocalFileOpenResult(
+        file_name=document["file_name"] or path.name,
+        mode=payload.mode,
+        file_path=str(path),
     )

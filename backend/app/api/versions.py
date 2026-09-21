@@ -256,7 +256,7 @@ async def create_version(
         if last_version:
             version_number = generate_next_version(last_version.version_number)
         else:
-            version_number = "v1.0.0"
+            version_number = "1.0.0"
 
     # 获取当前数据快照
     models_result = await db.execute(

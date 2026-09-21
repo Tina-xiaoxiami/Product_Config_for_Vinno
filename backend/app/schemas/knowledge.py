@@ -1,6 +1,29 @@
 """Schemas for the unified product knowledge API."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+
+class LocalFileOpenRequest(BaseModel):
+    """在本机打开受控原件的方式。"""
+
+    mode: str = Field(default="open", pattern="^(open|reveal)$")
+
+
+class LocalFileOpenResult(BaseModel):
+    file_name: str
+    mode: str
+    file_path: str
+
+
+class KnowledgeDocumentArchiveResult(BaseModel):
+    """退役一份受控资料的结果。"""
+
+    document_id: int
+    status: str
+    removed_chunks: int = 0
+    removed_extractions: int = 0
 
 
 class FeatureKnowledgeName(BaseModel):
@@ -121,6 +144,11 @@ class KnowledgeQuestionList(BaseModel):
     limit: int
 
 
+class KnowledgeDocumentExtractionReview(BaseModel):
+    item_count: int = 0
+    needs_review_count: int = 0
+
+
 class KnowledgeDocumentExtractionItem(BaseModel):
     document_id: int
     status: str
@@ -128,6 +156,7 @@ class KnowledgeDocumentExtractionItem(BaseModel):
     extracted_at: str | None = None
     extractor_version: str
     reused: bool = False
+    review: KnowledgeDocumentExtractionReview | None = None
 
 
 class KnowledgeCandidateEvidence(BaseModel):
@@ -166,3 +195,142 @@ class KnowledgeAnswerRevisionItem(BaseModel):
 
 class KnowledgeAnswerHistory(BaseModel):
     items: list[KnowledgeAnswerRevisionItem]
+
+
+class DataReviewBatchItem(BaseModel):
+    data_type: str
+    batch_id: int
+    document_id: int
+    document_title: str
+    document_type: str
+    market: str
+    batch_status: str | None = None
+    snapshot_date: str | None = None
+    total_count: int
+    needs_review_count: int
+    corrected_count: int
+    excluded_count: int
+    preview_url: str
+
+
+class DataReviewBatchList(BaseModel):
+    items: list[DataReviewBatchItem] = Field(default_factory=list)
+    total: int
+
+
+class DataReviewItem(BaseModel):
+    id: int
+    document_id: int
+    document_title: str
+    data_type: str
+    batch_id: int
+    source_record_key: str
+    source_ref: str
+    raw_payload: dict[str, Any]
+    effective_payload: dict[str, Any]
+    issue_codes: list[str] = Field(default_factory=list)
+    review_status: str
+    updated_by: str | None = None
+    change_note: str | None = None
+    created_at: str
+    updated_at: str
+    preview_url: str
+
+
+class DataReviewItemList(BaseModel):
+    items: list[DataReviewItem] = Field(default_factory=list)
+    total: int
+    skip: int
+    limit: int
+
+
+class DataReviewItemUpdate(BaseModel):
+    effective_payload: dict[str, Any]
+    review_status: str = Field(pattern="^(corrected|confirmed|excluded)$")
+    changed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=1000)
+
+
+class DataReviewRevisionItem(BaseModel):
+    revision_no: int
+    before_payload: dict[str, Any]
+    after_payload: dict[str, Any]
+    action: str
+    change_note: str | None = None
+    changed_by: str
+    created_at: str
+
+
+class DataReviewRevisionList(BaseModel):
+    items: list[DataReviewRevisionItem] = Field(default_factory=list)
+
+
+class DataReviewIssueSummaryItem(BaseModel):
+    issue_code: str
+    needs_review_count: int
+
+
+class DataReviewIssueSummary(BaseModel):
+    """一个批次的待修正问题分布，供「按问题类型批量处理」使用。"""
+
+    data_type: str
+    batch_id: int
+    batch_status: str | None = None
+    snapshot_date: str | None = None
+    editable: bool = False
+    needs_review_total: int
+    issues: list[DataReviewIssueSummaryItem] = Field(default_factory=list)
+
+
+class DataReviewBatchConfirmRequest(BaseModel):
+    """按问题类型批量确认或排除；默认只预览，显式落库才写。
+
+    预览（`dry_run=True`）不要求填修改人；落库时必填，会写进每一条留痕。
+    命中条数超过 `limit` 时必须回传相同数字的 `confirm_count`。
+    """
+
+    data_type: str = Field(min_length=1, max_length=80)
+    batch_id: int = Field(ge=1)
+    review_status: str = Field(pattern="^(confirmed|excluded)$")
+    changed_by: str | None = Field(default=None, max_length=100)
+    change_note: str | None = Field(default=None, max_length=1000)
+    issue_codes: list[str] | None = None
+    item_ids: list[int] | None = None
+    source_refs: list[str] | None = None
+    confirm_count: int | None = Field(default=None, ge=0)
+    dry_run: bool = True
+
+
+class DataReviewBatchPreviewItem(BaseModel):
+    id: int
+    source_ref: str
+    issue_codes: list[str] = Field(default_factory=list)
+    review_status: str
+    jurisdiction_name: str | None = None
+    jurisdiction_code: str | None = None
+    registration_status: str | None = None
+    model_raw: str | None = None
+    probe_raw: str | None = None
+
+
+class DataReviewBatchConfirmGroup(BaseModel):
+    issue_code: str
+    matched: int
+
+
+class DataReviewBatchConfirmResult(BaseModel):
+    data_type: str
+    batch_id: int
+    batch_status: str | None = None
+    editable: bool = False
+    applied: bool
+    dry_run: bool
+    review_status: str
+    action: str
+    change_note: str
+    matched: int
+    limit: int
+    requires_confirm_count: bool
+    needs_review_total: int
+    by_issue: list[DataReviewBatchConfirmGroup] = Field(default_factory=list)
+    items: list[DataReviewBatchPreviewItem] = Field(default_factory=list)

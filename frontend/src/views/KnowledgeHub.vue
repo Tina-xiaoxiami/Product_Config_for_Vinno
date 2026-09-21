@@ -182,81 +182,120 @@
             <el-option label="人工确认" value="confirmed" />
             <el-option label="关系型功能" value="related" />
           </el-select>
+          <el-popover
+            v-model:visible="columnSettingsVisible"
+            data-testid="column-settings"
+            trigger="click"
+            placement="bottom-end"
+            :width="240"
+          >
+            <template #reference>
+              <el-button :icon="Operation">列显示</el-button>
+            </template>
+            <div class="column-settings">
+              <div class="column-settings-head">
+                <span class="column-settings-title">列显示设置</span>
+                <el-button link size="small" @click="resetColumnSettings">重置</el-button>
+              </div>
+              <div class="column-settings-list">
+                <el-checkbox
+                  v-for="option in columnOptions"
+                  :key="option.key"
+                  :model-value="visibleColumns[option.key]"
+                  @update:model-value="visibleColumns[option.key] = $event"
+                >
+                  {{ option.label }}
+                </el-checkbox>
+              </div>
+            </div>
+          </el-popover>
           <el-button type="primary" :icon="Search" @click="searchFeatures">查询</el-button>
         </section>
 
         <div data-testid="feature-knowledge-list" class="feature-list" v-loading="featureLoading">
           <article v-for="feature in features" :key="feature.id" class="feature-card">
-            <div class="feature-heading">
-              <div>
-                <div class="feature-title-row">
-                  <h3>{{ feature.primary_cn_name || feature.legacy_name }}</h3>
-                  <el-tag :type="statusType(feature.identity_status)" size="small" effect="plain">
-                    {{ statusLabel(feature.identity_status) }}
-                  </el-tag>
-                </div>
-                <p class="english-name">{{ feature.primary_en_name || '暂无英文主名' }}</p>
+            <div
+              v-if="columnVisible('cn_name') || columnVisible('status') || columnVisible('en_name')"
+              class="feature-row-main"
+            >
+              <div v-if="columnVisible('cn_name') || columnVisible('status')" class="feature-title-row">
+                <h3 v-if="columnVisible('cn_name')">
+                  {{ feature.primary_cn_name || feature.legacy_name }}
+                  <FeatureNameMark :feature-id="feature.id" :cn="feature.primary_cn_name" :en="feature.primary_en_name" :name="feature.legacy_name" />
+                </h3>
+                <el-tag v-if="columnVisible('status')" :type="statusType(feature.identity_status)" size="small" effect="plain">
+                  {{ statusLabel(feature.identity_status) }}
+                </el-tag>
               </div>
-              <span class="group-name">{{ feature.group_name }}</span>
+              <span v-if="columnVisible('en_name')" class="english-name">{{ feature.primary_en_name || '暂无英文主名' }}</span>
             </div>
 
-            <div class="ipn-list">
-              <div v-for="entry in feature.ipns" :key="`${entry.ipn}-${entry.relation_type}`" class="ipn-item">
+            <div v-if="columnVisible('ipn')" class="feature-row-ipn">
+              <span v-for="entry in feature.ipns" :key="`${entry.ipn}-${entry.relation_type}`" class="ipn-item">
                 <code>{{ entry.ipn }}</code>
                 <span>{{ relationLabel(entry.relation_type) }}</span>
                 <span v-if="entry.zh_desc && entry.zh_desc !== feature.primary_cn_name" class="ipn-description">
                   {{ entry.zh_desc }}
                 </span>
-              </div>
+              </span>
             </div>
 
-            <div class="name-section aliases-by-language">
-              <div class="alias-language-group">
-                <span class="section-label">中文曾用名</span>
-                <div class="alias-list">
-                  <el-tag
-                    v-for="name in aliasesByLanguage(feature, 'cn')"
-                    :key="`${name.language}-${name.name}`"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ name.name }}
-                  </el-tag>
-                  <span v-if="aliasesByLanguage(feature, 'cn').length === 0" class="empty-text">无</span>
-                </div>
-              </div>
-              <div class="alias-language-group">
-                <span class="section-label">英文曾用名</span>
-                <div class="alias-list">
-                  <el-tag
-                    v-for="name in aliasesByLanguage(feature, 'en')"
-                    :key="`${name.language}-${name.name}`"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ name.name }}
-                  </el-tag>
-                  <span v-if="aliasesByLanguage(feature, 'en').length === 0" class="empty-text">无</span>
-                </div>
-              </div>
+            <div v-if="columnVisible('cn_alias')" class="feature-row-alias">
+              <span class="section-label">中文曾用名</span>
+              <span class="alias-list">
+                <el-tag
+                  v-for="name in aliasesByLanguage(feature, 'cn')"
+                  :key="`${name.language}-${name.name}`"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                >
+                  {{ name.name }}
+                </el-tag>
+                <span v-if="aliasesByLanguage(feature, 'cn').length === 0" class="empty-text">无</span>
+              </span>
             </div>
 
-            <div v-if="feature.identity_status === 'related'" class="relation-note">
-              <el-icon><Link /></el-icon>
-              <span>{{ relationNote(feature) }}</span>
+            <div v-if="columnVisible('en_alias')" class="feature-row-alias">
+              <span class="section-label">英文曾用名</span>
+              <span class="alias-list">
+                <el-tag
+                  v-for="name in aliasesByLanguage(feature, 'en')"
+                  :key="`${name.language}-${name.name}`"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                >
+                  {{ name.name }}
+                </el-tag>
+                <span v-if="aliasesByLanguage(feature, 'en').length === 0" class="empty-text">无</span>
+              </span>
             </div>
+
+            <el-tooltip
+              v-if="feature.identity_status === 'related' && columnVisible('relation')"
+              :content="relationNote(feature)"
+              placement="top"
+            >
+              <span class="relation-note">
+                <el-icon><Link /></el-icon>
+                <span>{{ feature.ipns?.some((entry) => entry.relation_type === 'version_variant') ? '版本关系' : '关联功能' }}</span>
+              </span>
+            </el-tooltip>
+
+            <span v-if="columnVisible('group')" class="group-name">{{ feature.group_name }}</span>
           </article>
           <el-empty v-if="!featureLoading && features.length === 0" description="未找到匹配功能" />
         </div>
 
         <el-pagination
-          v-if="featureTotal > featureLimit"
+          v-if="featureTotal > 0"
           v-model:current-page="featurePage"
-          :page-size="featureLimit"
+          v-model:page-size="featurePageSize"
           :total="featureTotal"
-          layout="prev, pager, next, total"
+          :page-sizes="[50, 100, 200]"
+          layout="total, sizes, prev, pager, next"
+          @size-change="onFeaturePageSizeChange"
           @current-change="loadFeatures"
         />
       </el-tab-pane>
@@ -331,7 +370,40 @@
             <el-option label="# 未注册" value="#" />
             <el-option label="未定义" value="未定义" />
           </el-select>
-          <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
+          <div class="registration-toolbar-actions">
+            <el-popover
+              v-model:visible="registrationColumnSettingsVisible"
+              data-testid="registration-column-settings"
+              trigger="click"
+              placement="bottom-end"
+              :width="230"
+            >
+              <template #reference>
+                <el-button :icon="Operation">列显示</el-button>
+              </template>
+              <div class="column-settings">
+                <div class="column-settings-head">
+                  <span class="column-settings-title">附件列</span>
+                  <el-button link size="small" @click="resetRegistrationExtraColumns">重置</el-button>
+                </div>
+                <div class="column-settings-list single-column">
+                  <el-checkbox
+                    v-for="option in registrationExtraColumnOptions"
+                    :key="option.key"
+                    :model-value="registrationExtraColumns[option.key]"
+                    :data-testid="`registration-extra-column-${option.key}`"
+                    @update:model-value="setRegistrationExtraColumn(option.key, $event)"
+                  >
+                    {{ option.label }}
+                  </el-checkbox>
+                </div>
+                <p class="column-settings-note">
+                  「选型类别（正式）」「当前配置（备注）」默认不显示：判定依据列已写明这两项的取值与结论。
+                </p>
+              </div>
+            </el-popover>
+            <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
+          </div>
         </section>
 
         <div v-loading="registrationLoading" class="registration-groups">
@@ -354,67 +426,140 @@
                   </el-tag>
                 </div>
               </div>
-              <el-button
-                tag="a"
-                :icon="View"
-                :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
-                target="_blank"
-                rel="noopener"
-                :disabled="!group.source_document_id"
-              >
-                本证注册差异表原文
-              </el-button>
+              <div class="registration-header-actions">
+                <el-button
+                  v-if="registrationColumnWidthsCustomized"
+                  link
+                  size="small"
+                  @click="resetRegistrationColumnWidths"
+                >
+                  重置列宽
+                </el-button>
+                <el-button
+                  tag="a"
+                  :icon="View"
+                  :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
+                  target="_blank"
+                  rel="noopener"
+                  :disabled="!group.source_document_id"
+                >
+                  本证注册差异表原文
+                </el-button>
+              </div>
             </header>
 
-            <section class="registration-summary">
-              <div><strong>{{ group.summary.registered }}</strong><span>已注册</span></div>
-              <div class="danger"><strong>{{ group.summary.unregistered }}</strong><span>未注册</span></div>
-              <div><strong>{{ group.summary.standard }}</strong><span>标配</span></div>
-              <div><strong>{{ group.summary.optional }}</strong><span>选配</span></div>
-              <div><strong>{{ group.summary.tender }}</strong><span>招标支持</span></div>
-              <div><strong>{{ group.summary.undefined }}</strong><span>策略未定义</span></div>
+            <section class="registration-summary" aria-label="本注册证判定分布">
+              <button
+                v-for="tile in registrationSummaryTiles"
+                :key="tile.key"
+                type="button"
+                class="summary-tile"
+                :class="[tile.tone, { 'is-active': activeSummaryTile(group) === tile.key }]"
+                :data-testid="`registration-summary-tile-${tile.key}`"
+                :aria-pressed="activeSummaryTile(group) === tile.key"
+                :title="`只看「${tile.label}」的探头；再次点击取消筛选`"
+                @click="toggleSummaryTile(group, tile.key)"
+              >
+                <strong>{{ group.summary[tile.field] }}</strong>
+                <span>{{ tile.label }}</span>
+              </button>
             </section>
+
+            <div v-if="activeSummaryTile(group) || hasColumnFilter(group)" class="registration-filter-hint">
+              <el-tag type="primary" effect="light" closable @close="clearRegistrationFilters(group)">
+                <template v-if="activeSummaryTile(group)">
+                  已按「{{ summaryTileLabel(activeSummaryTile(group)) }}」筛选
+                </template>
+                <template v-else>已按表头列筛选</template>
+                <template v-if="activeSummaryTile(group) && hasColumnFilter(group)"> + 列筛选</template>
+                · 显示 {{ registrationFilterCount(group) }}
+              </el-tag>
+            </div>
 
             <el-table
               data-testid="registration-strategy-table"
-              :data="group.items"
+              :data="filteredRegistrationItems(group)"
+              :ref="(element) => setRegistrationTableRef(group, element)"
               border
               stripe
-              empty-text="本注册证下没有符合筛选条件的探头"
+              max-height="min(58vh, 520px)"
+              :empty-text="registrationEmptyText(group)"
               class="registration-table"
+              @filter-change="(filters) => onColumnFilterChange(group, filters)"
+              @header-dragend="(newWidth, oldWidth, column, source) => onRegistrationHeaderDragend(group, newWidth, oldWidth, column, source)"
             >
-              <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
-              <el-table-column prop="ipn" label="IPN" min-width="115" />
-              <el-table-column prop="config_name" label="配置名称" min-width="180">
+              <el-table-column prop="probe_model" label="探头型号" :min-width="registrationColumnWidths.probe_model" fixed="left" />
+              <el-table-column prop="ipn" label="IPN" :min-width="registrationColumnWidths.ipn" />
+              <el-table-column prop="config_name" label="配置名称" :min-width="registrationColumnWidths.config_name">
                 <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
               </el-table-column>
-              <el-table-column label="注册状态" min-width="105" align="center">
+              <el-table-column
+                column-key="registration_status"
+                label="注册状态"
+                :min-width="registrationColumnWidths.registration_status"
+                align="center"
+                :filters="registrationStatusColumnFilters"
+                :filter-method="filterRegistrationStatus"
+                filter-placement="bottom-end"
+              >
                 <template #default="scope">
                   <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
                     {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="选型类别（正式）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
-              </el-table-column>
-              <el-table-column label="当前配置（辅助）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
-              </el-table-column>
-              <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
+              <!-- 最终判定不设 fixed="right"：它排在中部，钉右侧会让"判定依据"在横向滚动时
+                   跑到它左边，与要求的列顺序相反。 -->
+              <el-table-column
+                column-key="effective_status"
+                label="最终判定"
+                :min-width="registrationColumnWidths.effective_status"
+                align="center"
+                :filters="effectiveStatusColumnFilters"
+                :filter-method="filterEffectiveStatus"
+                filter-placement="bottom-end"
+              >
                 <template #default="scope">
                   <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
                     {{ displayConfigStatus(scope.row.effective_status) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="判定依据" min-width="165">
+              <el-table-column
+                column-key="status_source"
+                label="判定依据"
+                :min-width="registrationColumnWidths.status_source"
+                :filters="statusSourceColumnFilters"
+                :filter-method="filterStatusSource"
+                filter-placement="bottom-end"
+              >
                 <template #default="scope">
-                  <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
-                    {{ statusSourceLabel(scope.row.status_source) }}
-                  </span>
+                  <span>{{ statusSourceLabel(scope.row.status_source) }}</span>
                   <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
+                  <div v-if="scope.row.current_config_note" class="config-note">
+                    {{ scope.row.current_config_note }}
+                  </div>
                 </template>
+              </el-table-column>
+              <!-- 附件列：默认不显示（工具栏「列显示」可打开，选择被记住）；
+                   放在判定链之后，打开时不打乱 注册状态 → 最终判定 → 判定依据 的阅读顺序。 -->
+              <el-table-column
+                v-if="registrationExtraColumns.selection_config"
+                column-key="selection_config"
+                label="选型类别（正式）"
+                :min-width="registrationColumnWidths.selection_config"
+                align="center"
+              >
+                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
+              </el-table-column>
+              <el-table-column
+                v-if="registrationExtraColumns.current_config"
+                column-key="current_config"
+                label="当前配置（备注）"
+                :min-width="registrationColumnWidths.current_config"
+                align="center"
+              >
+                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
               </el-table-column>
             </el-table>
           </article>
@@ -482,6 +627,23 @@
               <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
                 {{ canInline(document) ? '预览' : '打开原文' }}
               </el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="!document.available"
+                @click="openDocumentLocally(document, 'reveal')"
+              >
+                在访达中显示
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="!document.available"
+                @click="openDocumentLocally(document, 'open')"
+              >
+                本机打开
+              </el-button>
+              <el-button link type="danger" @click="archiveDocument(document)">归档</el-button>
             </div>
           </article>
           <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
@@ -577,15 +739,17 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Delete, Document, Link, Plus, Search, View } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Document, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
 import {
   askKnowledgeQuestion,
   extractKnowledgeDocument,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
+  openKnowledgeDocumentLocally,
+  archiveKnowledgeDocument,
   getKnowledgeFeatures,
   getKnowledgeStats,
   getKnowledgeQuestions,
@@ -605,7 +769,42 @@ const featureLoading = ref(false)
 const features = ref([])
 const featureTotal = ref(0)
 const featurePage = ref(1)
-const featureLimit = 20
+const featurePageSize = ref(50)
+
+const columnOptions = [
+  { key: 'cn_name', label: '中文名' },
+  { key: 'en_name', label: '英文名' },
+  { key: 'ipn', label: 'IPN' },
+  { key: 'group', label: '功能组' },
+  { key: 'status', label: '身份状态' },
+  { key: 'cn_alias', label: '中文曾用名' },
+  { key: 'en_alias', label: '英文曾用名' },
+  { key: 'relation', label: '关系型功能' }
+]
+const visibleColumns = ref({
+  cn_name: true,
+  en_name: true,
+  ipn: true,
+  group: false,
+  status: false,
+  cn_alias: false,
+  en_alias: false,
+  relation: false
+})
+const columnSettingsVisible = ref(false)
+const columnVisible = (key) => visibleColumns.value[key]
+const resetColumnSettings = () => {
+  visibleColumns.value = {
+    cn_name: true,
+    en_name: true,
+    ipn: true,
+    group: false,
+    status: false,
+    cn_alias: false,
+    en_alias: false,
+    relation: false
+  }
+}
 
 const documentQuery = ref('')
 const documentType = ref('')
@@ -703,9 +902,211 @@ const effectiveStatusType = (status) => ({
 const statusSourceLabel = (source) => ({
   registration_redline: '注册红线',
   selection_config: '正式选型类别',
-  current_config_aux: '研发当前配置（辅助）',
-  missing: '尚无正式策略'
+  missing: '选型类别未定义'
 }[source] || source || '—')
+
+// 判定分布卡片：点击即在当前注册证内筛选表格。
+// 只筛选已加载的数据、不重新请求后端——后端 summary 是对"筛选后数据"再统计的，
+// 走服务端筛选会把分布数字自己塌成 0，卡片就失去"看分布"的意义。
+// 顺序即渲染顺序：已注册 → 策略分布（标配/选配/招标支持/未定义）→ 例外态未注册。
+const registrationSummaryTiles = [
+  { key: 'registered', label: '已注册', field: 'registered', dimension: 'registration', status: 'registered' },
+  { key: 'standard', label: '标配', field: 'standard', dimension: 'effective', status: 'X' },
+  { key: 'optional', label: '选配', field: 'optional', dimension: 'effective', status: 'O' },
+  { key: 'tender', label: '招标支持', field: 'tender', dimension: 'effective', status: 'Δ' },
+  { key: 'undefined', label: '策略未定义', field: 'undefined', dimension: 'effective', status: '未定义' },
+  { key: 'unregistered', label: '未注册', field: 'unregistered', dimension: 'registration', status: 'unregistered', tone: 'danger' }
+]
+const summaryTileFilters = ref({})
+
+const activeSummaryTile = (group) => summaryTileFilters.value[group.registration_package_id] || ''
+const summaryTileLabel = (key) => registrationSummaryTiles.find(tile => tile.key === key)?.label || ''
+const summaryTile = (group) => registrationSummaryTiles.find(tile => tile.key === activeSummaryTile(group))
+
+// 列筛选：表头的漏斗按列取值筛选，同样只作用于已加载数据，和卡片筛选叠加生效。
+// column-key 必须显式给，Element Plus 的 filter-change 用它作为键，
+// 卡片筛选与列筛选共用同一个过滤函数，提示条上的条数才和表格实际行数一致。
+const registrationStatusColumnFilters = [
+  { text: '已注册', value: 'registered' },
+  { text: '# 未注册', value: 'unregistered' }
+]
+const effectiveStatusColumnFilters = [
+  { text: 'X 标配', value: 'X' },
+  { text: 'O 选配', value: 'O' },
+  { text: 'Δ 招标支持', value: 'Δ' },
+  { text: '# 未注册', value: '#' },
+  { text: '未定义', value: '未定义' }
+]
+const statusSourceColumnFilters = [
+  { text: '注册红线', value: 'registration_redline' },
+  { text: '正式选型类别', value: 'selection_config' },
+  { text: '选型类别未定义', value: 'missing' }
+]
+const filterRegistrationStatus = (value, row) => row.registration_status === value
+const filterEffectiveStatus = (value, row) => row.effective_status === value
+const filterStatusSource = (value, row) => row.status_source === value
+const registrationColumnFilterMethods = {
+  registration_status: filterRegistrationStatus,
+  effective_status: filterEffectiveStatus,
+  status_source: filterStatusSource
+}
+const columnFilters = ref({})
+const registrationTableRefs = {}
+
+// 列宽：默认值按"窄窗口也不出横向滚动条、超长内容自适应换行"给，
+// 合计 750px，在 1074 窗口（表格可用约 764px）下正好装得下。
+// 用户拖拽表头边框调过的宽度写入 localStorage，下次进入沿用；重置列宽恢复默认。
+const REGISTRATION_COLUMN_WIDTH_KEY = 'knowledge_registration_column_widths'
+const registrationColumnDefaults = {
+  probe_model: 110,
+  ipn: 95,
+  config_name: 150,
+  registration_status: 105,
+  effective_status: 110,
+  status_source: 180,
+  // 附件列默认不显示，宽度只在使用者打开后参与布局，不影响默认不出现滚动条
+  selection_config: 130,
+  current_config: 130
+}
+// 默认显示的列：合计 750px，在 1074 窗口（表格可用约 764px）下正好装得下
+const REGISTRATION_DEFAULT_VISIBLE_COLUMNS = [
+  'probe_model',
+  'ipn',
+  'config_name',
+  'registration_status',
+  'effective_status',
+  'status_source'
+]
+// 附件列：默认不显示，可由工具栏「列显示」打开，选择写入 localStorage
+const REGISTRATION_EXTRA_COLUMN_KEY = 'knowledge_registration_extra_columns'
+const registrationExtraColumnOptions = [
+  { key: 'selection_config', label: '选型类别（正式）' },
+  { key: 'current_config', label: '当前配置（备注）' }
+]
+const registrationExtraColumns = reactive((() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REGISTRATION_EXTRA_COLUMN_KEY) || 'null')
+    return {
+      selection_config: saved?.selection_config === true,
+      current_config: saved?.current_config === true
+    }
+  } catch {
+    return { selection_config: false, current_config: false }
+  }
+})())
+const registrationColumnSettingsVisible = ref(false)
+const setRegistrationExtraColumn = (key, visible) => {
+  if (!(key in registrationExtraColumns)) return
+  registrationExtraColumns[key] = visible === true
+  try {
+    localStorage.setItem(REGISTRATION_EXTRA_COLUMN_KEY, JSON.stringify(registrationExtraColumns))
+  } catch {
+    // 存储不可用（隐私模式等）时保持本次会话内的选择
+  }
+}
+const resetRegistrationExtraColumns = () => {
+  registrationExtraColumns.selection_config = false
+  registrationExtraColumns.current_config = false
+  try {
+    localStorage.removeItem(REGISTRATION_EXTRA_COLUMN_KEY)
+  } catch {
+    // 同上
+  }
+}
+const registrationColumnWidths = reactive((() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REGISTRATION_COLUMN_WIDTH_KEY) || 'null')
+    return { ...registrationColumnDefaults, ...(saved && typeof saved === 'object' ? saved : {}) }
+  } catch {
+    return { ...registrationColumnDefaults }
+  }
+})())
+const registrationColumnWidthsCustomized = computed(() => Object.keys(registrationColumnDefaults)
+  .some(key => registrationColumnWidths[key] !== registrationColumnDefaults[key]))
+const onRegistrationHeaderDragend = (group, newWidth, oldWidth, column) => {
+  const key = column?.columnKey || column?.property || ''
+  if (!(key in registrationColumnWidths) || !(newWidth > 0)) return
+  // 保底 80px（Element Plus 自身的列宽下限），避免把列拖成一条缝、表头整行折行
+  registrationColumnWidths[key] = Math.max(80, Math.round(newWidth))
+  try {
+    localStorage.setItem(REGISTRATION_COLUMN_WIDTH_KEY, JSON.stringify(registrationColumnWidths))
+  } catch {
+    // 存储不可用（隐私模式等）时保持本次会话内的调整
+  }
+  // Element Plus 拖动不做下限钳制，且会把宽度写成内部固定宽度；留着这个固定宽度，
+  // "重置列宽"和后续对该列的调整都会被它压住。这里统一清掉，让布局回到 min-width 驱动
+  // （也就是上面刚写入的值），钳制与重置因此都能立即生效。
+  column.width = undefined
+  column.realWidth = undefined
+  registrationTableRefs[group.registration_package_id]?.doLayout?.()
+}
+const resetRegistrationColumnWidths = () => {
+  Object.assign(registrationColumnWidths, registrationColumnDefaults)
+  try {
+    localStorage.removeItem(REGISTRATION_COLUMN_WIDTH_KEY)
+  } catch {
+    // 同上
+  }
+}
+
+const setRegistrationTableRef = (group, element) => {
+  const id = group.registration_package_id
+  if (element) registrationTableRefs[id] = element
+  else delete registrationTableRefs[id]
+}
+const activeColumnFilters = (group) => Object.entries(columnFilters.value[group.registration_package_id] || {})
+  .filter(([, values]) => (values || []).length > 0)
+const hasColumnFilter = (group) => activeColumnFilters(group).length > 0
+const onColumnFilterChange = (group, filters) => {
+  const id = group.registration_package_id
+  columnFilters.value = {
+    ...columnFilters.value,
+    [id]: { ...(columnFilters.value[id] || {}), ...filters }
+  }
+}
+const filteredRegistrationItems = (group) => {
+  const items = group.items || []
+  const tile = summaryTile(group)
+  const activeFilters = activeColumnFilters(group)
+  if (!tile && activeFilters.length === 0) return items
+  return items.filter(item => {
+    if (tile) {
+      const matched = tile.dimension === 'registration'
+        ? item.registration_status === tile.status
+        : item.effective_status === tile.status
+      if (!matched) return false
+    }
+    return activeFilters.every(([key, values]) => values.some(
+      value => registrationColumnFilterMethods[key]?.(value, item)
+    ))
+  })
+}
+const registrationEmptyText = (group) => {
+  if (activeSummaryTile(group)) return '本注册证下没有该判定结果的探头'
+  if (hasColumnFilter(group)) return '本注册证下没有符合列筛选条件的探头'
+  return '本注册证下没有符合筛选条件的探头'
+}
+const toggleSummaryTile = (group, key) => {
+  const id = group.registration_package_id
+  const next = { ...summaryTileFilters.value }
+  if (next[id] === key) delete next[id]
+  else next[id] = key
+  summaryTileFilters.value = next
+}
+const clearSummaryTile = (group) => {
+  const next = { ...summaryTileFilters.value }
+  delete next[group.registration_package_id]
+  summaryTileFilters.value = next
+}
+const clearRegistrationFilters = (group) => {
+  // clearFilter() 静默重置 Element Plus 内部筛选，不会再触发 filter-change，本地状态要一起清
+  registrationTableRefs[group.registration_package_id]?.clearFilter?.()
+  clearSummaryTile(group)
+  const next = { ...columnFilters.value }
+  delete next[group.registration_package_id]
+  columnFilters.value = next
+}
+const registrationFilterCount = (group) => `${filteredRegistrationItems(group).length} / ${(group.items || []).length} 条`
 
 const aliasesByLanguage = (feature, language) => (feature.names || []).filter(
   name => name.name_type === 'alias' && name.language === language
@@ -737,8 +1138,8 @@ const loadFeatures = async () => {
     const result = await getKnowledgeFeatures({
       q: featureQuery.value || undefined,
       identity_status: identityStatus.value || undefined,
-      skip: (featurePage.value - 1) * featureLimit,
-      limit: featureLimit
+      skip: (featurePage.value - 1) * featurePageSize.value,
+      limit: featurePageSize.value
     })
     features.value = result.items || []
     featureTotal.value = result.total || 0
@@ -752,6 +1153,34 @@ const loadFeatures = async () => {
 const searchFeatures = () => {
   featurePage.value = 1
   loadFeatures()
+}
+
+const onFeaturePageSizeChange = () => {
+  featurePage.value = 1
+  loadFeatures()
+}
+
+// 归档：退役一份受控资料。原件文件不动（受控目录由人工管理），
+// 但派生数据要被清除，且不再参与列表与检索。
+const archiveDocument = async (document) => {
+  try {
+    await ElMessageBox.confirm(
+      `归档后「${document.title}」不再出现在资料列表与问答检索中，已提取的正文片段会被清除；受控目录里的原件文件不会被删除。`,
+      '归档资料',
+      { type: 'warning', confirmButtonText: '归档', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await archiveKnowledgeDocument(document.id)
+    ElMessage.success(
+      `已归档「${document.title}」，清除正文片段 ${result.removed_chunks} 条`
+    )
+    await loadDocuments()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '归档失败')
+  }
 }
 
 const loadDocuments = async () => {
@@ -809,6 +1238,8 @@ const loadRegistrationProbes = async () => {
     })
     registrationGroups.value = result.registrations || []
     registrationProductModelName.value = result.product_model_name || ''
+    summaryTileFilters.value = {}
+    columnFilters.value = {}
   } catch {
     ElMessage.error('注册与策略数据加载失败')
   } finally {
@@ -829,6 +1260,20 @@ const previewDocument = (document) => {
   previewTitle.value = document.title
   previewUrl.value = url
   previewVisible.value = true
+}
+
+// 后端就跑在本机，因此可直接调用系统默认程序打开原件（仅本机请求有效）。
+const openDocumentLocally = async (document, mode) => {
+  try {
+    const result = await openKnowledgeDocumentLocally(document.id, mode)
+    ElMessage.success(
+      mode === 'reveal'
+        ? `已在访达中定位 ${result.file_name}`
+        : `已在本机打开 ${result.file_name}`
+    )
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '本机打开失败')
+  }
 }
 
 const askQuestion = async () => {
@@ -1049,29 +1494,39 @@ onMounted(() => {
 .dialog-candidate-card p { max-height: 120px; margin: 7px 0; overflow: auto; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .document-actions { display: flex; align-items: center; gap: 8px; }
 .el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
-.toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto; gap: 10px; margin: 10px 0 16px; }
+.toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto auto; gap: 10px; margin: 10px 0 16px; }
+.feature-list { max-height: calc(100vh - 400px); min-height: 220px; overflow-y: auto; padding-right: 4px; }
+.column-settings { display: flex; flex-direction: column; gap: 10px; }
+.column-settings-head { display: flex; align-items: center; justify-content: space-between; }
+.column-settings-title { font-weight: 600; color: #1f2937; }
+.column-settings-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.column-settings-list.single-column { grid-template-columns: 1fr; }
+.column-settings-note { margin: 0; color: #6b7280; font-size: 12px; line-height: 1.5; }
+.column-settings-list :deep(.el-checkbox) { margin-right: 0; }
 .feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
-.feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; padding: 15px 16px; background: #fff; }
+.feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; background: #fff; }
 .feature-card:hover, .document-card:hover { border-color: #bfdbfe; box-shadow: 0 3px 14px rgba(30, 64, 175, 0.06); }
-.feature-heading, .feature-title-row, .document-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.feature-title-row, .document-title-row { justify-content: flex-start; }
+.document-card { padding: 15px 16px; }
+.feature-card { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; padding: 9px 16px; }
+.feature-row-main { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.feature-title-row, .document-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 .feature-card h3, .document-card h3 { margin: 0; font-size: 15px; color: #1f2937; }
-.english-name, .document-info p { margin: 4px 0 0; color: #6b7280; font-size: 12px; }
-.group-name { color: #6b7280; background: #f3f4f6; border-radius: 12px; padding: 3px 9px; font-size: 12px; }
-.ipn-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
-.ipn-item { display: flex; align-items: center; gap: 7px; background: #f8fafc; border-radius: 6px; padding: 6px 9px; font-size: 12px; color: #64748b; }
+.feature-row-main .english-name { margin: 0; color: #6b7280; font-size: 12px; white-space: nowrap; }
+.group-name { color: #6b7280; background: #f3f4f6; border-radius: 12px; padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+.feature-row-ipn { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ipn-item { display: inline-flex; align-items: center; gap: 6px; background: #f8fafc; border-radius: 6px; padding: 3px 8px; font-size: 12px; color: #64748b; white-space: nowrap; }
 .ipn-item code { color: #1d4ed8; font-weight: 600; }
 .ipn-description { border-left: 1px solid #dbe3ef; padding-left: 7px; }
-.name-section { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; }
-.aliases-by-language { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
-.alias-language-group { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.feature-row-alias { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.feature-row-alias .section-label { min-width: auto; padding-top: 0; white-space: nowrap; }
 .section-label { min-width: 66px; padding-top: 3px; color: #6b7280; font-size: 12px; }
-.alias-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.alias-list { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .empty-text { color: #9ca3af; font-size: 12px; }
-.relation-note { display: flex; align-items: center; gap: 6px; margin-top: 11px; color: #92400e; font-size: 12px; }
+.relation-note { display: inline-flex; align-items: center; gap: 6px; color: #92400e; font-size: 12px; white-space: nowrap; }
 .document-card { display: flex; align-items: center; gap: 14px; }
 .document-icon { width: 42px; height: 42px; border-radius: 9px; display: grid; place-items: center; background: #eff6ff; color: #2563eb; font-size: 20px; }
 .document-info { flex: 1; min-width: 0; }
+.document-info p { margin: 4px 0 0; color: #6b7280; font-size: 12px; }
 .document-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: #6b7280; font-size: 11px; }
 .available { color: #15803d; }
 .unavailable { color: #b91c1c; }
@@ -1086,20 +1541,33 @@ onMounted(() => {
 .status-o { background: #2563eb; }
 .status-tender { background: #92400e; }
 .status-blocked { background: #dc2626; }
-.registration-toolbar { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(220px, 1.4fr) 150px 150px auto; gap: 9px; margin-bottom: 12px; }
-.registration-groups { display: grid; gap: 18px; min-height: 80px; }
-.registration-group-card { padding: 15px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
+.registration-toolbar { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 150px) minmax(0, 150px) auto; gap: 9px; margin-bottom: 12px; }
+.registration-toolbar-actions { display: flex; align-items: center; gap: 9px; }
+/* min-width: 0 让卡片可以被网格轨道收缩；否则卡片会被表格的 min-content 宽度撑开，
+   超出 .el-tabs__content 的 overflow: hidden 后被裁掉，表格自身也就不会出现横向滚动条。 */
+.registration-groups { display: grid; gap: 18px; min-height: 80px; min-width: 0; }
+.registration-group-card { min-width: 0; padding: 15px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .registration-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.registration-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .registration-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .registration-group-title h4 { margin: 0; color: #1f2937; font-size: 15px; }
 .registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 8px; color: #64748b; font-size: 12px; }
 .registration-context strong { color: #1f2937; }
 .registration-summary { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
-.registration-summary div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.registration-summary .summary-tile { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; font: inherit; text-align: left; cursor: pointer; transition: border-color .2s, background-color .2s, box-shadow .2s; }
+.registration-summary .summary-tile:hover { border-color: #93c5fd; background: #f8fbff; }
+.registration-summary .summary-tile:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 1px; }
+.registration-summary .summary-tile.is-active { border-color: #1d4ed8; background: #eff6ff; box-shadow: inset 0 0 0 1px #1d4ed8; }
 .registration-summary strong { color: #1f2937; font-size: 19px; }
 .registration-summary span { color: #64748b; font-size: 11px; }
 .registration-summary .danger strong { color: #dc2626; }
+.registration-filter-hint { margin-bottom: 10px; }
 .registration-table { width: 100%; }
+/* 表格有横向溢出时让横向滚动条常显：Element Plus 的滚动条默认要悬停才出现，
+   不悬停就看不到"可以向右滑"的提示，用户会以为右边被裁掉了。
+   v-show 写的是行内 display:none，所以这里必须用 !important 覆盖；
+   .el-table--scrollable-x 只在真的溢出时存在，宽窗口下不会出现多余的滚动条。 */
+.registration-table.el-table--scrollable-x :deep(.el-scrollbar__bar.is-horizontal) { display: block !important; }
 .registration-intro :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #86efac; }
 .registration-intro :deep(.el-button) { color: #334155; }
 .registration-toolbar :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
@@ -1112,7 +1580,7 @@ onMounted(() => {
 .registration-table :deep(.el-tag--warning.el-tag--dark) { background: #92400e; border-color: #92400e; }
 .registration-table :deep(.el-tag--danger.el-tag--dark) { background: #b91c1c; border-color: #b91c1c; }
 .registration-table :deep(.el-tag--info.el-tag--dark) { background: #475569; border-color: #475569; }
-.auxiliary-source { color: #b45309; }
+.config-note { margin-top: 4px; color: #b45309; font-size: 11px; line-height: 1.45; }
 .conflict-tag { display: block; width: fit-content; margin-top: 4px; }
 .preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
@@ -1121,7 +1589,8 @@ onMounted(() => {
   .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
   .registration-summary { grid-template-columns: repeat(2, 1fr); }
   .registration-intro, .registration-group-header { flex-direction: column; }
-  .aliases-by-language { grid-template-columns: 1fr; }
+  .feature-card { gap: 6px 12px; }
+  .feature-row-main { flex-wrap: wrap; row-gap: 4px; }
   .knowledge-header { flex-direction: column; gap: 10px; }
 }
 </style>

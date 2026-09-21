@@ -87,6 +87,13 @@ const routes = [
         component: () => import('../views/KnowledgeHub.vue'),
         meta: { title: '产品知识库' }
       }
+      ,
+      {
+        path: 'release',
+        name: 'FeatureRelease',
+        component: () => import('../views/FeatureRelease.vue'),
+        meta: { title: '功能发布' }
+      }
     ]
   }
 ]

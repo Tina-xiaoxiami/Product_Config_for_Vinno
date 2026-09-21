@@ -1,7 +1,6 @@
 """
 草稿管理 API
 """
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
@@ -10,6 +9,7 @@ import json
 import uuid
 
 from app.database import get_db
+from app.utils.time import utcnow
 from app.models import DraftBatch, ConfigDraft, ProductSeries, ConfigItem, ConfigValue, ProductModel, ConfigVersion
 from app.schemas.draft import (
     DraftBatchResponse, DraftSubmitRequest,
@@ -502,7 +502,7 @@ async def submit_draft_batch(
     remaining_count = batch.total_count  # 已重算
     if remaining_count == 0:
         batch.status = "submitted"
-        batch.submitted_at = datetime.utcnow()
+        batch.submitted_at = utcnow()
     # 有剩余草稿时保持 draft 状态
 
     await db.commit()
@@ -674,7 +674,7 @@ async def _process_single_batch_submit(
 
     # 更新批次状态
     batch.status = "submitted"
-    batch.submitted_at = datetime.utcnow()
+    batch.submitted_at = utcnow()
     batch.total_count = 0
     batch.create_count = 0
     batch.update_count = 0

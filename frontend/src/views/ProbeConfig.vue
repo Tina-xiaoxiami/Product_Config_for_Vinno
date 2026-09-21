@@ -98,7 +98,10 @@
           <el-table-column v-for="f in allFeatures" :key="f.id" :width="showDetailMode ? (featureWidths[f.id] || 64) : 64" align="center">
             <template #header>
               <div style="font-size:12px;line-height:1.3">
-                <div>{{ f.name }}</div>
+                <div>
+                  {{ f.name }}
+                  <FeatureNameMark :feature-id="f.id" :name="f.name" />
+                </div>
                 <div style="font-size:10px;color:#909399" v-if="f.ipn">{{ f.ipn }}</div>
               </div>
             </template>
@@ -129,7 +132,10 @@
       <div v-if="editDialog.row" class="edit-dialog-content">
         <div style="display:flex;gap:12px;margin-bottom:12px">
           <el-tag>{{ editDialog.row.model_number }}</el-tag>
-          <el-tag type="info">{{ editDialog.feature?.name }}</el-tag>
+          <el-tag type="info">
+            {{ editDialog.feature?.name }}
+            <FeatureNameMark :feature-id="editDialog.feature?.id" :name="editDialog.feature?.name" />
+          </el-tag>
         </div>
         <div v-if="editDialog.hasMixed" style="margin-bottom:12px;padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:12px">
           <strong style="color:#d46b08">不同型号值冲突，各型号当前值：</strong>

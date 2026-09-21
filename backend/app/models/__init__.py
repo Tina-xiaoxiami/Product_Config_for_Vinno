@@ -14,6 +14,7 @@ from app.models.probe import (
     ProductProbeModel, ProbeModelApp, ProductProbeConfig,
     ProbeConfigDraft, ProbeConfigVersion,
 )
+from app.models.feature_standard import FeatureNameStandard
 from app.models.knowledge import (
     FeatureName,
     FeatureRelation,
@@ -26,6 +27,16 @@ from app.models.knowledge import (
     KnowledgeAnswerRevision,
     KnowledgeDocumentExtraction,
     KnowledgeDocumentChunk,
+    DataReviewItem,
+    DataReviewRevision,
+)
+from app.models.release import (
+    FeatureVersion,
+    FeatureVersionRevision,
+    ReleaseDocumentTemplate,
+    ReleaseIntroduction,
+    ReleaseIntroductionRevision,
+    ReleaseIntroductionAttachment,
 )
 from app.models.registration import (
     RegistrationImportBatch,
@@ -35,6 +46,8 @@ from app.models.registration import (
     RegistrationProbe,
     RegistrationModelProbe,
     ProductRegistrationModelLink,
+    OverseasRegistrationSnapshot,
+    OverseasRegistrationRelation,
 )
 
 __all__ = [
@@ -63,6 +76,7 @@ __all__ = [
     "TemplateDraft",
     "TemplateVersion",
     "FeatureName",
+    "FeatureNameStandard",
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",
@@ -73,6 +87,8 @@ __all__ = [
     "KnowledgeAnswerRevision",
     "KnowledgeDocumentExtraction",
     "KnowledgeDocumentChunk",
+    "DataReviewItem",
+    "DataReviewRevision",
     "RegistrationImportBatch",
     "RegistrationPackage",
     "RegistrationPackageVersion",
@@ -80,4 +96,12 @@ __all__ = [
     "RegistrationProbe",
     "RegistrationModelProbe",
     "ProductRegistrationModelLink",
+    "OverseasRegistrationSnapshot",
+    "OverseasRegistrationRelation",
+    "FeatureVersion",
+    "FeatureVersionRevision",
+    "ReleaseIntroduction",
+    "ReleaseIntroductionRevision",
+    "ReleaseIntroductionAttachment",
+    "ReleaseDocumentTemplate",
 ]

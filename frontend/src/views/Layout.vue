@@ -14,6 +14,10 @@
             <el-icon><Collection /></el-icon>
             <span>产品知识库</span>
           </el-menu-item>
+          <el-menu-item index="/release">
+            <el-icon><Promotion /></el-icon>
+            <span>功能发布</span>
+          </el-menu-item>
           <el-sub-menu index="/manage">
             <template #title>
               <el-icon><Setting /></el-icon>
@@ -82,7 +86,7 @@
 </template>
 
 <script setup>
-import { Document, DataAnalysis, Setting, Collection } from '@element-plus/icons-vue'
+import { Document, DataAnalysis, Setting, Collection, Promotion } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import json
 from app.database import get_db
+from app.utils.time import utcnow
 from app.models.probe import Application, ProbeModelApp, ProbeModel, CategoryApplication, ApplicationVersion
 from app.schemas.probe import (
     ApplicationCreate, ApplicationUpdate,
@@ -99,7 +100,7 @@ async def create_app_version(data: dict = None, db: AsyncSession = Depends(get_d
             "probe_type": ca.probe_type,
             "app_name": app.name,
         })
-    ver_num = (data or {}).get("version_number") or f"v{__import__('datetime').datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    ver_num = (data or {}).get("version_number") or f"v{utcnow().strftime('%Y%m%d%H%M%S')}"
     description = (data or {}).get("description") or "应用关联变更"
     db.add(ApplicationVersion(version_number=ver_num, description=description, snapshot_data=json.dumps(snap, ensure_ascii=False)))
     await db.commit()

@@ -256,3 +256,69 @@ class KnowledgeDocumentChunk(Base):
         Index("ix_knowledge_document_chunks_document", "document_id"),
         Index("ix_knowledge_document_chunks_hash", "content_hash"),
     )
+
+
+class DataReviewItem(Base):
+    """One source-located extraction row with immutable raw and editable values."""
+
+    __tablename__ = "data_review_items"
+
+    id = Column(Integer, primary_key=True)
+    document_id = Column(
+        Integer,
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    data_type = Column(String(80), nullable=False)
+    batch_id = Column(Integer, nullable=False)
+    source_record_key = Column(Text, nullable=False)
+    source_ref = Column(Text, nullable=False)
+    raw_payload_json = Column(Text, nullable=False)
+    effective_payload_json = Column(Text, nullable=False)
+    issue_codes_json = Column(Text, nullable=False, server_default=text("'[]'"))
+    review_status = Column(String(30), nullable=False, server_default=text("'auto_ready'"))
+    updated_by = Column(Text, nullable=True)
+    change_note = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "data_type",
+            "batch_id",
+            "source_record_key",
+            name="uq_data_review_source_record",
+        ),
+        Index("ix_data_review_batch", "data_type", "batch_id"),
+        Index("ix_data_review_status", "review_status"),
+        Index("ix_data_review_document", "document_id"),
+    )
+
+
+class DataReviewRevision(Base):
+    """Append-only history for corrections made to one extraction row."""
+
+    __tablename__ = "data_review_revisions"
+
+    id = Column(Integer, primary_key=True)
+    review_item_id = Column(
+        Integer,
+        ForeignKey("data_review_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_no = Column(Integer, nullable=False)
+    before_payload_json = Column(Text, nullable=False)
+    after_payload_json = Column(Text, nullable=False)
+    action = Column(String(30), nullable=False)
+    change_note = Column(Text, nullable=True)
+    changed_by = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "review_item_id",
+            "revision_no",
+            name="uq_data_review_revision",
+        ),
+        Index("ix_data_review_revisions_item", "review_item_id"),
+    )

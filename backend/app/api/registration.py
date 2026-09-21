@@ -1,18 +1,36 @@
 """国内注册红线与产品策略查询 API。"""
 
+import asyncio
 import hashlib
 import json
 import mimetypes
+import re
 from pathlib import Path
+import sqlite3
 import tempfile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.registration import (  # Ensure startup metadata includes history tables.
+    OverseasRegistrationRelation,
+    OverseasRegistrationSnapshot,
+)
+from app.schemas.knowledge import LocalFileOpenRequest, LocalFileOpenResult
 from app.schemas.registration import (
     ConfiguredRegistrationModelList,
+    RegistrationArtifactWorkbook,
     RegistrationMasterProbeList,
     RegistrationDifferenceSummary,
     RegistrationModelList,
@@ -24,6 +42,18 @@ from app.schemas.registration import (
     RegistrationPackageVersionItem,
     RegistrationPackageVersionList,
     RegistrationProbeStrategyList,
+    OverseasRegistrationCountryList,
+    OverseasRegistrationRelationList,
+    OverseasRegistrationSnapshotList,
+    OverseasRegistrationDraftRequest,
+    OverseasNameMappingCreate,
+    OverseasNameMappingDeleteResult,
+    OverseasNameMappingItem,
+    OverseasNameMappingList,
+    OverseasSeriesMappingCreate,
+    OverseasSeriesMappingDeleteResult,
+    OverseasSeriesMappingItem,
+    OverseasSeriesMappingList,
 )
 from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
@@ -46,9 +76,354 @@ from app.services.registration_query import (
     list_registration_model_probes,
     list_registration_models,
 )
+from app.services.local_file_actions import (
+    LocalOpenError,
+    is_local_host,
+    open_local_path,
+)
+from app.services.overseas_registration_history import (
+    discard_overseas_registration_draft,
+    list_overseas_registration_countries,
+    list_overseas_registration_relations,
+    list_overseas_registration_snapshots,
+    publish_overseas_registration_snapshot,
+    rebuild_overseas_registration_draft,
+    stage_overseas_registration_snapshot,
+)
+from app.services.overseas_registration_preview import (
+    build_overseas_registration_preview,
+    match_overseas_registration_master_data,
+    overseas_master_names,
+)
+from app.services.overseas_name_corrections import (
+    apply_overseas_name_corrections,
+    delete_overseas_name_mapping,
+    list_overseas_name_mappings,
+    save_overseas_name_mapping,
+)
+from app.services.overseas_row_overrides import (
+    document_sha256,
+    list_row_probe_overrides,
+    row_probe_overrides_by_source,
+)
+from app.services.overseas_series_mappings import (
+    delete_overseas_series_mapping,
+    list_overseas_series_mappings,
+    overseas_series_index,
+    save_overseas_series_mapping,
+)
+from app.services.workbook_preview import (
+    WorkbookPreviewError,
+    read_workbook_preview,
+)
 
 
 router = APIRouter()
+
+
+@router.get("/overseas/countries", response_model=OverseasRegistrationCountryList)
+async def overseas_registration_countries(db: AsyncSession = Depends(get_db)):
+    items = await list_overseas_registration_countries(db)
+    return OverseasRegistrationCountryList(items=items, total=len(items))
+
+
+@router.get("/overseas/relations", response_model=OverseasRegistrationRelationList)
+async def overseas_registration_relations(
+    country_code: str | None = Query(None, pattern="^[A-Z]{2}$"),
+    q: str | None = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    items, total = await list_overseas_registration_relations(
+        db,
+        country_code=country_code,
+        query=q,
+        skip=skip,
+        limit=limit,
+    )
+    return OverseasRegistrationRelationList(
+        items=items, total=total, skip=skip, limit=limit
+    )
+
+
+@router.get(
+    "/overseas/snapshots",
+    response_model=OverseasRegistrationSnapshotList,
+)
+async def overseas_registration_snapshots(db: AsyncSession = Depends(get_db)):
+    """列出海外注册快照（含草稿）：关系查询只认已发布快照，界面靠这里发现待发布草稿。"""
+
+    items = await list_overseas_registration_snapshots(db)
+    return OverseasRegistrationSnapshotList(items=items, total=len(items))
+
+
+def _prepare_overseas_draft(database: Path, file_path: str):
+    """解析原件 → 套用名称/系列映射与文档补录 → 匹配主数据；导入与重建共用同一条链。"""
+
+    digest = document_sha256(file_path)
+    override_items = list_row_probe_overrides(database, document_sha256=digest)
+    preview = build_overseas_registration_preview(
+        file_path,
+        series_mappings=overseas_series_index(database),
+        probe_overrides=row_probe_overrides_by_source(database, digest),
+        # 留痕只写文档名（页码与机型族明细留在登记表里），免得痕迹长得没法看
+        override_note="；".join(
+            dict.fromkeys(
+                re.split(r"第\s*\d+\s*页", item.source_note)[0].strip("：: （(")
+                for item in override_items
+            )
+        ),
+    )
+    # 先套用「人工确认过的名称映射 + 纯标点差异自动纠正」，再匹配主数据，
+    # 这样确认过一次的写法以后每份文件都自动沿用，不再重复问人。
+    model_names, probe_names = overseas_master_names(database)
+    preview = apply_overseas_name_corrections(
+        preview,
+        mappings=list_overseas_name_mappings(database),
+        known_model_names=model_names,
+        known_probe_names=probe_names,
+    ).preview
+    matches = match_overseas_registration_master_data(preview, database)
+    return preview, matches
+
+
+def _overseas_document_path(database: Path, source_document_id: int) -> str:
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        row = connection.execute(
+            "SELECT file_path FROM knowledge_documents WHERE id = ?",
+            (source_document_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="受控海外注册材料不存在")
+    return str(row[0])
+
+
+@router.post("/overseas/snapshots/drafts")
+async def create_overseas_registration_snapshot_draft(
+    payload: OverseasRegistrationDraftRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    database = _database_path(db)
+    file_path = _overseas_document_path(database, payload.source_document_id)
+
+    def _stage_draft():
+        preview, matches = _prepare_overseas_draft(database, file_path)
+        return stage_overseas_registration_snapshot(
+            database,
+            preview=preview,
+            matches=matches,
+            source_document_id=payload.source_document_id,
+        )
+
+    try:
+        return await asyncio.to_thread(_stage_draft)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/overseas/snapshots/{snapshot_id}/rebuild-draft")
+async def rebuild_overseas_registration_snapshot_draft(
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """基于已发布快照重建一份新草稿：原件没变也能修订。
+
+    已发布快照是冻结且唯一的，同一份原件再次导入只会复用它；这条路径让
+    「解析代码或名称映射更新了、原件没变」也能重新解析出新的一版，
+    等人工确认后再发布，旧快照在发布前保持可查询。
+    """
+
+    database = _database_path(db)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        row = connection.execute(
+            """
+            SELECT document.file_path
+            FROM overseas_registration_snapshots snapshot
+            JOIN knowledge_documents document
+              ON document.id = snapshot.source_document_id
+            WHERE snapshot.id = ?
+            """,
+            (snapshot_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="海外注册快照不存在")
+
+    def _rebuild():
+        preview, matches = _prepare_overseas_draft(database, str(row[0]))
+        return rebuild_overseas_registration_draft(
+            database,
+            snapshot_id=snapshot_id,
+            preview=preview,
+            matches=matches,
+        )
+
+    try:
+        return await asyncio.to_thread(_rebuild)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingList,
+)
+async def overseas_name_mappings(db: AsyncSession = Depends(get_db)):
+    """人工确认过的「原表写法 → 系统名称」映射；导入时自动套用。"""
+
+    items = await asyncio.to_thread(list_overseas_name_mappings, _database_path(db))
+    return OverseasNameMappingList(
+        items=[OverseasNameMappingItem(**item.__dict__) for item in items],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingItem,
+)
+async def save_overseas_name_mapping_api(
+    payload: OverseasNameMappingCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        saved = await asyncio.to_thread(
+            save_overseas_name_mapping,
+            _database_path(db),
+            entity_type=payload.entity_type,
+            source_name=payload.source_name,
+            target_name=payload.target_name,
+            confirmed_by=payload.confirmed_by,
+            change_note=payload.change_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return OverseasNameMappingItem(**saved.__dict__)
+
+
+@router.delete(
+    "/overseas/name-mappings",
+    response_model=OverseasNameMappingDeleteResult,
+)
+async def delete_overseas_name_mapping_api(
+    entity_type: str = Query(pattern="^(model|probe)$"),
+    source_name: str = Query(min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await asyncio.to_thread(
+        delete_overseas_name_mapping,
+        _database_path(db),
+        entity_type=entity_type,
+        source_name=source_name,
+    )
+    return OverseasNameMappingDeleteResult(deleted=deleted)
+
+
+@router.get(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingList,
+)
+async def overseas_series_mappings(db: AsyncSession = Depends(get_db)):
+    """人工确认过的「系列 → 机型清单」；导入时自动展开。"""
+
+    items = await asyncio.to_thread(list_overseas_series_mappings, _database_path(db))
+    return OverseasSeriesMappingList(
+        items=[
+            OverseasSeriesMappingItem(
+                source_name=item.source_name,
+                target_models=list(item.target_models),
+                confirmed_by=item.confirmed_by,
+                change_note=item.change_note,
+            )
+            for item in items
+        ],
+        total=len(items),
+    )
+
+
+@router.post(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingItem,
+)
+async def save_overseas_series_mapping_api(
+    payload: OverseasSeriesMappingCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        saved = await asyncio.to_thread(
+            save_overseas_series_mapping,
+            _database_path(db),
+            source_name=payload.source_name,
+            target_models=payload.target_models,
+            confirmed_by=payload.confirmed_by,
+            change_note=payload.change_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return OverseasSeriesMappingItem(
+        source_name=saved.source_name,
+        target_models=list(saved.target_models),
+        confirmed_by=saved.confirmed_by,
+        change_note=saved.change_note,
+    )
+
+
+@router.delete(
+    "/overseas/series-mappings",
+    response_model=OverseasSeriesMappingDeleteResult,
+)
+async def delete_overseas_series_mapping_api(
+    source_name: str = Query(min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await asyncio.to_thread(
+        delete_overseas_series_mapping,
+        _database_path(db),
+        source_name=source_name,
+    )
+    return OverseasSeriesMappingDeleteResult(deleted=deleted)
+
+
+@router.post("/overseas/snapshots/{snapshot_id}/publish")
+async def publish_overseas_registration_snapshot_api(
+    snapshot_id: int,
+    payload: RegistrationPackagePublishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await asyncio.to_thread(
+            publish_overseas_registration_snapshot,
+            _database_path(db),
+            snapshot_id=snapshot_id,
+            confirmed_by=payload.confirmed_by,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/overseas/snapshots/{snapshot_id}")
+async def discard_overseas_registration_snapshot_draft(
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """放弃一份未发布的草稿（连它的关系、审核条目与修订记录）。"""
+
+    try:
+        return await asyncio.to_thread(
+            discard_overseas_registration_draft,
+            _database_path(db),
+            snapshot_id=snapshot_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _database_path(db: AsyncSession) -> Path:
@@ -67,7 +442,7 @@ async def _save_upload(upload: UploadFile, directory: Path, fallback_name: str) 
         raise HTTPException(status_code=413, detail=f"{fallback_name}不能超过100MB")
     name = Path(upload.filename or fallback_name).name
     target = directory / name
-    target.write_bytes(content)
+    await asyncio.to_thread(target.write_bytes, content)
     return target
 
 
@@ -98,7 +473,8 @@ async def update_registration_package_enabled(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return set_registration_package_enabled(
+        return await asyncio.to_thread(
+            set_registration_package_enabled,
             _database_path(db),
             package_id=package_id,
             is_enabled=payload.is_enabled,
@@ -138,7 +514,8 @@ async def create_registration_package_draft(
             difference_path = await _save_upload(
                 difference, directory, "difference.xlsx"
             )
-            return stage_registration_package_draft(
+            return await asyncio.to_thread(
+                stage_registration_package_draft,
                 _database_path(db),
                 country_code=country_code,
                 unit_code=unit_code,
@@ -165,7 +542,8 @@ async def update_registration_package_mappings(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return update_registration_package_version_mappings(
+        return await asyncio.to_thread(
+            update_registration_package_version_mappings,
             _database_path(db),
             version_id=version_id,
             product_model_mappings=payload.mappings,
@@ -180,8 +558,10 @@ async def registration_package_mappings(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return get_registration_package_version_mapping_review(
-            _database_path(db), version_id=version_id
+        return await asyncio.to_thread(
+            get_registration_package_version_mapping_review,
+            _database_path(db),
+            version_id=version_id,
         )
     except RegistrationPackageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -194,7 +574,8 @@ async def publish_registration_package(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return publish_registration_package_version(
+        return await asyncio.to_thread(
+            publish_registration_package_version,
             _database_path(db),
             version_id=version_id,
             confirmed_by=payload.confirmed_by,
@@ -245,12 +626,9 @@ async def registration_difference_summary(
     return RegistrationDifferenceSummary(**result)
 
 
-@router.get("/package-versions/{version_id}/artifacts/{artifact_type}")
-async def registration_package_artifact(
-    version_id: int,
-    artifact_type: str,
-    db: AsyncSession = Depends(get_db),
-):
+async def _resolve_registration_artifact(
+    db: AsyncSession, version_id: int, artifact_type: str
+) -> tuple[dict, Path]:
     if artifact_type not in {"certificate", "difference"}:
         raise HTTPException(status_code=404, detail="注册原件类型不存在")
     artifact = await get_registration_package_artifact(
@@ -263,7 +641,17 @@ async def registration_package_artifact(
     path = Path(str(artifact["file_path"] or ""))
     if not path.is_absolute() or not path.is_file():
         raise HTTPException(status_code=410, detail="受控注册原件不存在")
-    digest = _file_sha256(path)
+    return artifact, path
+
+
+@router.get("/package-versions/{version_id}/artifacts/{artifact_type}")
+async def registration_package_artifact(
+    version_id: int,
+    artifact_type: str,
+    db: AsyncSession = Depends(get_db),
+):
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
+    digest = await asyncio.to_thread(_file_sha256, path)
     if digest != artifact["sha256"]:
         raise HTTPException(status_code=409, detail="受控注册原件哈希校验失败")
     media_type = artifact["mime_type"] or mimetypes.guess_type(path.name)[0]
@@ -272,6 +660,57 @@ async def registration_package_artifact(
         media_type=media_type or "application/octet-stream",
         filename=artifact["file_name"] or path.name,
         content_disposition_type="inline",
+    )
+
+
+@router.get(
+    "/package-versions/{version_id}/artifacts/{artifact_type}/sheets",
+    response_model=RegistrationArtifactWorkbook,
+)
+async def registration_artifact_sheets(
+    version_id: int,
+    artifact_type: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """xlsx 原件的工作表预览：浏览器无法内嵌渲染 xlsx，改由应用读取后画表。"""
+
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
+    try:
+        preview = await asyncio.to_thread(read_workbook_preview, path)
+    except WorkbookPreviewError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    return RegistrationArtifactWorkbook(
+        file_name=artifact["file_name"] or path.name,
+        **preview,
+    )
+
+
+@router.post(
+    "/package-versions/{version_id}/artifacts/{artifact_type}/open-locally",
+    response_model=LocalFileOpenResult,
+)
+async def registration_artifact_open_locally(
+    version_id: int,
+    artifact_type: str,
+    request: Request,
+    payload: LocalFileOpenRequest = LocalFileOpenRequest(),
+    db: AsyncSession = Depends(get_db),
+):
+    """用系统默认程序打开原件；仅限本机请求，路径只取自登记记录。"""
+
+    if not is_local_host(request.client.host if request.client else None):
+        raise HTTPException(status_code=403, detail="仅允许在本机打开受控原件")
+    artifact, path = await _resolve_registration_artifact(db, version_id, artifact_type)
+    try:
+        await asyncio.to_thread(
+            open_local_path, path, reveal=payload.mode == "reveal"
+        )
+    except LocalOpenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LocalFileOpenResult(
+        file_name=artifact["file_name"] or path.name,
+        mode=payload.mode,
+        file_path=str(path),
     )
 
 

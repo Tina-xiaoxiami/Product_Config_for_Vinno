@@ -114,11 +114,8 @@
                   {{ supportingDocumentLabel(document.role) }}
                 </el-button>
                 <el-button
-                  tag="a"
-                  :href="version.difference.preview_url"
-                  target="_blank"
-                  rel="noopener"
                   :icon="View"
+                  @click="openArtifactPreview(version, 'difference')"
                 >
                   查看差异表
                 </el-button>
@@ -207,13 +204,21 @@
               </el-button>
               <el-button
                 v-if="selectedPackageGroup?.current_version"
+                :icon="View"
+                @click="openArtifactPreview(selectedPackageGroup.current_version, 'difference')"
+              >
+                查看差异表
+              </el-button>
+              <el-button
+                v-if="selectedPackageGroup?.current_version"
+                link
+                type="primary"
                 tag="a"
                 :href="selectedPackageGroup.current_version.difference.preview_url"
                 target="_blank"
                 rel="noopener"
-                :icon="View"
               >
-                查看差异表
+                下载原件
               </el-button>
             </div>
           </div>
@@ -221,11 +226,30 @@
           <div class="summary-row difference-metrics">
             <span>注册型号 <strong>{{ differenceSummary.total_models }}</strong></span>
             <span>探头范围 <strong>{{ differenceSummary.total_probes }}</strong></span>
-            <span>全部适用 <strong>{{ allApplicableCount }}</strong></span>
-            <span class="danger">存在差异 <strong>{{ differenceModelCount }}</strong></span>
+            <span>全部适用探头 <strong>{{ allApplicableProbeCount }}</strong></span>
+            <span class="danger">存在差异探头 <strong>{{ differenceProbeCount }}</strong></span>
+            <!-- 紧跟在它筛选的那个数字之后，而不是跟资料包/搜索框挤在顶部工具栏 -->
+            <el-select
+              v-model="differenceProbeFilter"
+              class="difference-probe-filter"
+              data-testid="difference-probe-filter"
+              size="small"
+              clearable
+              aria-label="按差异探头筛选"
+              placeholder="按差异探头筛选影响的机型"
+            >
+              <el-option
+                v-for="option in differenceProbeOptions"
+                :key="option.probe_model"
+                :label="differenceProbeOptionLabel(option)"
+                :value="option.probe_model"
+              />
+            </el-select>
           </div>
 
-          <div class="difference-section-title">不适用/未注册探头差异（按原表格式）</div>
+          <div class="difference-section-title">
+            <span>不适用/未注册探头差异</span>
+          </div>
           <el-empty
             v-if="differenceTableGroups.length === 0"
             description="当前注册资料包暂无型号差异数据"
@@ -252,7 +276,11 @@
                       探头全适用
                     </span>
                     <span v-else class="not-applicable">
-                      {{ model.unregistered_probes.map(probe => probe.probe_model).join('、') }}不适用
+                      <span
+                        v-for="(probe, index) in model.unregistered_probes"
+                        :key="probe.probe_model"
+                        :class="{ 'probe-hit': probe.probe_model === differenceProbeFilter }"
+                      >{{ probe.probe_model }}{{ isLastProbe(model.unregistered_probes, index) ? '' : '、' }}</span>不适用
                     </span>
                   </td>
                 </tr>
@@ -359,7 +387,574 @@
           </main>
         </section>
       </el-tab-pane>
+
+      <el-tab-pane label="海外注册查询" name="overseas">
+        <section
+          data-testid="overseas-registration-query"
+          class="overseas-panel"
+          v-loading="overseasLoading"
+        >
+          <el-alert
+            title="这里显示国家－型号－探头的仅注册历史数据，可用于注册查询，但不会进入当前配置管理列表。"
+            type="info"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          />
+          <el-alert
+            v-if="overseasDraftSnapshot"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          >
+            <template #title>
+              有 1 份海外注册草稿快照尚未发布（{{ overseasDraftSnapshot.source_file_name }} ·
+              第 {{ (overseasDraftSnapshot.revision || 0) + 1 }} 版 ·
+              {{ overseasDraftSnapshot.relation_count }} 条关系）。
+              <template v-if="overseasActiveSnapshot">
+                当前查询仍使用已发布快照 #{{ overseasActiveSnapshot.id }}（{{
+                  overseasActiveSnapshot.relation_count
+                }}
+                条关系），发布这份草稿后才会切换。
+              </template>
+              <template v-else>草稿不参与查询，因此下面结果为空。</template>
+            </template>
+            <el-button
+              type="warning"
+              size="small"
+              class="overseas-publish-button"
+              @click="publishOverseasDraft"
+            >
+              发布此快照
+            </el-button>
+            <el-button size="small" class="overseas-discard-button" @click="discardOverseasDraft">
+              放弃草稿
+            </el-button>
+          </el-alert>
+          <div v-if="overseasActiveSnapshot" class="summary-row overseas-snapshot-row">
+            <span>当前生效快照 <strong>#{{ overseasActiveSnapshot.id }}</strong></span>
+            <span>版本 <strong>第 {{ (overseasActiveSnapshot.revision || 0) + 1 }} 版</strong></span>
+            <span>快照日期 <strong>{{ overseasActiveSnapshot.snapshot_date || '—' }}</strong></span>
+            <span>发布人 <strong>{{ overseasActiveSnapshot.confirmed_by || '—' }}</strong></span>
+            <el-button
+              v-if="overseasRebuildAvailable"
+              size="small"
+              :loading="overseasRebuilding"
+              title="原件没变、但解析规则或已确认的名称映射更新了：重新解析出一版草稿，人工确认后再发布"
+              @click="rebuildOverseasDraft"
+            >
+              基于此快照重建草稿
+            </el-button>
+          </div>
+          <div class="toolbar overseas-toolbar">
+            <el-select
+              v-model="overseasCountryCode"
+              clearable
+              placeholder="全部国家"
+              aria-label="海外注册国家"
+              @change="loadOverseasRelations"
+            >
+              <el-option
+                v-for="country in overseasCountries"
+                :key="country.country_code"
+                :label="`${country.country_code}（${country.relation_count}）`"
+                :value="country.country_code"
+              />
+            </el-select>
+            <el-input
+              v-model="overseasQuery"
+              clearable
+              placeholder="搜索型号或探头型号"
+              :prefix-icon="Search"
+              @keyup.enter="loadOverseasRelations"
+              @clear="loadOverseasRelations"
+            />
+            <el-button type="primary" :icon="Search" @click="loadOverseasRelations">
+              查询
+            </el-button>
+            <el-button @click="openNameMappings">名称映射</el-button>
+          </div>
+          <div class="summary-row">
+            <span>查询结果 <strong>{{ overseasTotal }}</strong></span>
+            <span>数据范围 <strong>注册历史</strong></span>
+          </div>
+          <el-table :data="overseasRows" border stripe empty-text="暂无已发布的海外注册数据">
+            <el-table-column prop="country_code" label="国家/地区" width="110" />
+            <el-table-column prop="model_name" label="注册型号" min-width="150" />
+            <el-table-column prop="probe_model" label="注册探头型号" min-width="150" />
+            <el-table-column label="注册状态" width="120" align="center">
+              <template #default>
+                <el-tag type="success" effect="plain">已完成注册</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="数据属性" min-width="150">
+              <template #default="scope">
+                <el-tag type="info" effect="plain">仅注册历史数据</el-tag>
+                <small v-if="scope.row.product_model_id || scope.row.probe_model_id" class="master-link-note">
+                  已找到当前基础数据候选
+                </small>
+              </template>
+            </el-table-column>
+            <el-table-column prop="snapshot_date" label="资料日期" width="120" />
+            <el-table-column label="原始材料" width="120" align="center">
+              <template #default="scope">
+                <el-button
+                  link
+                  type="primary"
+                  tag="a"
+                  :href="getKnowledgeDocumentPreviewUrl(scope.row.source_document_id)"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  查看原表
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="数据审核与修正" name="review">
+        <section
+          data-testid="data-review-center"
+          class="review-center"
+          v-loading="dataReviewLoading"
+        >
+          <el-alert
+            title="原文和原始识别值始终保留；修正后内容作为草稿的有效值，每次修改都会留下记录。"
+            type="info"
+            :closable="false"
+            show-icon
+            class="source-alert"
+          />
+          <div class="review-toolbar">
+            <el-select
+              v-model="selectedReviewBatchKey"
+              placeholder="选择待审核材料"
+              aria-label="待审核材料"
+              @change="handleReviewBatchChange"
+            >
+              <el-option
+                v-for="batch in dataReviewBatches"
+                :key="reviewBatchKey(batch)"
+                :label="`${batch.document_title}（${batch.total_count} ${reviewBatchUnit(batch)}）`"
+                :value="reviewBatchKey(batch)"
+              />
+            </el-select>
+            <el-select
+              v-model="dataReviewStatus"
+              clearable
+              placeholder="全部审核状态"
+              aria-label="审核状态"
+              @change="loadDataReviewItems"
+            >
+              <el-option label="待修正" value="needs_review" />
+              <el-option label="已修正" value="corrected" />
+              <el-option label="已确认" value="confirmed" />
+              <el-option label="自动可用" value="auto_ready" />
+              <el-option label="已排除" value="excluded" />
+            </el-select>
+            <el-input
+              v-model="dataReviewQuery"
+              clearable
+              placeholder="搜索国家、型号、探头或原文位置"
+              :prefix-icon="Search"
+              @keyup.enter="loadDataReviewItems"
+              @clear="loadDataReviewItems"
+            />
+            <el-button type="primary" :icon="Search" @click="loadDataReviewItems">查询</el-button>
+          </div>
+
+          <div v-if="selectedReviewBatch" class="summary-row review-summary">
+            <span>{{ reviewRecordLabel(selectedReviewBatch) }} <strong>{{ selectedReviewBatch.total_count }}</strong></span>
+            <span class="danger">待修正 <strong>{{ selectedReviewBatch.needs_review_count }}</strong></span>
+            <span>已修正 <strong>{{ selectedReviewBatch.corrected_count }}</strong></span>
+            <span>已排除 <strong>{{ selectedReviewBatch.excluded_count }}</strong></span>
+            <el-tag
+              v-if="selectedReviewBatch.batch_status"
+              :type="reviewBatchEditable ? 'warning' : 'success'"
+              size="small"
+              effect="plain"
+            >
+              {{ reviewBatchEditable ? '草稿 · 可审核修正' : '已发布 · 不可修改' }}
+            </el-tag>
+            <el-button
+              link
+              type="primary"
+              tag="a"
+              :href="selectedReviewBatch.preview_url"
+              target="_blank"
+              rel="noopener"
+            >
+              查看原文
+            </el-button>
+          </div>
+
+          <div
+            v-if="reviewIssueSummary && reviewIssueSummary.issues.length"
+            class="issue-batch-panel"
+            data-testid="issue-batch-panel"
+          >
+            <div class="issue-batch-head">
+              <span class="issue-batch-title">按问题类型批量处理</span>
+              <span class="issue-batch-hint">
+                一类问题一次处理；每行仍各留一条审核记录，原文不变。
+              </span>
+              <span v-if="!reviewBatchEditable" class="issue-batch-locked">
+                该批次已发布冻结，如需修订请更新源表后重新导入并发布新版本
+              </span>
+            </div>
+            <div class="issue-batch-list">
+              <div
+                v-for="issue in reviewIssueSummary.issues"
+                :key="issue.issue_code"
+                class="issue-batch-item"
+                :data-testid="`issue-batch-item-${issue.issue_code}`"
+              >
+                <span class="issue-batch-name">{{ issueLabel(issue.issue_code) }}</span>
+                <span class="issue-batch-count">{{ issue.needs_review_count }}</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :disabled="!reviewBatchEditable"
+                  :data-testid="`issue-batch-confirm-${issue.issue_code}`"
+                  @click="openIssueBatch(issue, 'confirmed')"
+                >
+                  确认这类
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!reviewBatchEditable"
+                  :data-testid="`issue-batch-exclude-${issue.issue_code}`"
+                  @click="openIssueBatch(issue, 'excluded')"
+                >
+                  排除这类
+                </el-button>
+              </div>
+            </div>
+          </div>
+
+          <el-table
+            :data="dataReviewRows"
+            border
+            stripe
+            empty-text="暂无待审核数据"
+            class="review-table"
+          >
+            <el-table-column prop="source_ref" label="原表位置" min-width="155" />
+            <el-table-column label="原始识别值" min-width="235">
+              <template #default="scope">
+                <div v-if="isChunkReviewRow(scope.row)" class="source-values">
+                  <span class="review-type-label">识别正文</span>
+                  <span class="chunk-content">{{ scope.row.raw_payload.content }}</span>
+                </div>
+                <div v-else class="source-values">
+                  <span>{{ scope.row.raw_payload.jurisdiction_raw || scope.row.raw_payload.jurisdiction_code }}</span>
+                  <strong>{{ scope.row.raw_payload.model_raw }}</strong>
+                  <span>{{ scope.row.raw_payload.probe_raw }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="修正后内容" min-width="235">
+              <template #default="scope">
+                <div v-if="isChunkReviewRow(scope.row)" class="source-values effective-values">
+                  <span class="review-type-label">识别正文</span>
+                  <span class="chunk-content">{{ scope.row.effective_payload.content }}</span>
+                </div>
+                <div v-else class="source-values effective-values">
+                  <span>{{ scope.row.effective_payload.jurisdiction_code }}</span>
+                  <strong>{{ scope.row.effective_payload.model_raw }}</strong>
+                  <span>{{ scope.row.effective_payload.probe_raw }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="问题/状态" min-width="190">
+              <template #default="scope">
+                <el-tag :type="reviewStatusType(scope.row.review_status)" effect="plain" size="small">
+                  {{ reviewStatusLabel(scope.row.review_status) }}
+                </el-tag>
+                <div v-if="scope.row.issue_codes.length" class="issue-list">
+                  {{ scope.row.issue_codes.map(issueLabel).join('、') }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="165" align="center" fixed="right">
+              <template #default="scope">
+                <el-button
+                  v-if="reviewBatchEditable"
+                  link
+                  type="primary"
+                  @click="openDataReviewEditor(scope.row)"
+                >
+                  审核/修正
+                </el-button>
+                <span v-else class="review-locked">已发布，需走修订</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination
+            v-if="dataReviewTotal > dataReviewPageSize"
+            v-model:current-page="dataReviewPage"
+            :page-size="dataReviewPageSize"
+            :total="dataReviewTotal"
+            layout="prev, pager, next, total"
+            class="review-pagination"
+            @current-change="loadDataReviewItems"
+          />
+        </section>
+      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="nameMappingVisible"
+      title="海外名称映射（编辑一次，后续导入自动沿用）"
+      width="780px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        title="登记「原表写法 → 系统名称」。只影响系统内的解析结果，不会改写受控原件。"
+        type="info"
+        :closable="false"
+        show-icon
+        class="dialog-alert"
+      />
+      <div class="mapping-form">
+        <el-select v-model="nameMappingForm.entity_type" aria-label="映射类型">
+          <el-option label="探头" value="probe" />
+          <el-option label="机型" value="model" />
+        </el-select>
+        <el-input v-model="nameMappingForm.source_name" placeholder="原表写法，如 X4-12" />
+        <el-input v-model="nameMappingForm.target_name" placeholder="系统名称，如 X4-12L" />
+        <el-input v-model="nameMappingForm.confirmed_by" placeholder="确认人（必填）" />
+        <el-button type="primary" :loading="nameMappingSaving" @click="saveNameMapping">
+          登记
+        </el-button>
+      </div>
+      <el-table
+        :data="nameMappings"
+        border
+        stripe
+        empty-text="暂无名称映射"
+        max-height="320px"
+      >
+        <el-table-column label="类型" width="86">
+          <template #default="scope">
+            {{ scope.row.entity_type === 'probe' ? '探头' : '机型' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="source_name" label="原表写法" min-width="130" />
+        <el-table-column prop="target_name" label="系统名称" min-width="130" />
+        <el-table-column prop="confirmed_by" label="确认人" width="110" />
+        <el-table-column prop="change_note" label="备注" min-width="150" />
+        <el-table-column label="操作" width="86" align="center">
+          <template #default="scope">
+            <el-button link type="danger" @click="removeNameMapping(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="nameMappingVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="artifactPreviewVisible"
+      :title="artifactPreviewTitle"
+      width="86%"
+      top="5vh"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="artifactPreviewLoading" class="artifact-preview">
+        <el-tabs v-if="artifactPreview.sheets.length" v-model="artifactPreviewSheet">
+          <el-tab-pane
+            v-for="sheet in artifactPreview.sheets"
+            :key="sheet.name"
+            :label="`${sheet.name}（${sheet.rows.length} 行）`"
+            :name="sheet.name"
+          >
+            <el-alert
+              v-if="sheet.truncated"
+              title="表格过大，此处仅显示前面部分内容；完整内容请下载原件。"
+              type="warning"
+              :closable="false"
+              class="dialog-alert"
+            />
+            <div class="artifact-preview-scroll">
+              <table class="artifact-preview-table">
+                <tbody>
+                  <tr v-for="(row, rowIndex) in sheet.rows" :key="rowIndex">
+                    <th scope="row">{{ rowIndex + 1 }}</th>
+                    <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+        <el-empty
+          v-else-if="!artifactPreviewLoading"
+          description="该原件没有可预览的工作表"
+          :image-size="56"
+        />
+      </div>
+      <template #footer>
+        <span class="artifact-preview-name">{{ artifactPreview.file_name }}</span>
+        <el-button @click="artifactPreviewVisible = false">关闭</el-button>
+        <el-button link type="primary" @click="openArtifactLocally('reveal')">
+          在访达中显示
+        </el-button>
+        <el-button link type="primary" @click="openArtifactLocally('open')">
+          本机打开
+        </el-button>
+        <el-button
+          type="primary"
+          tag="a"
+          :href="artifactPreviewDownloadUrl"
+          target="_blank"
+          rel="noopener"
+        >
+          下载原件
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="dataReviewDialogVisible"
+      title="审核与修正提取结果"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        v-if="editingReviewItem && !isChunkReviewRow(editingReviewItem)"
+        :title="`原始识别值：${editingReviewItem.raw_payload.model_raw || '-'} / ${editingReviewItem.raw_payload.probe_raw || '-'}`"
+        type="info"
+        :closable="false"
+        class="dialog-alert"
+      />
+      <el-alert
+        v-else-if="editingReviewItem"
+        :title="`原始识别正文：${editingReviewItem.raw_payload.content || '-'}`"
+        type="info"
+        :closable="false"
+        class="dialog-alert"
+      />
+      <el-form :model="dataReviewForm" label-width="100px">
+        <el-form-item v-if="isChunkReviewRow(editingReviewItem)" label="识别正文">
+          <el-input v-model="dataReviewForm.content" type="textarea" :rows="6" />
+        </el-form-item>
+        <div v-else class="form-grid">
+          <el-form-item label="国家代码">
+            <el-input v-model="dataReviewForm.jurisdiction_code" maxlength="2" />
+          </el-form-item>
+          <el-form-item label="注册状态">
+            <el-select v-model="dataReviewForm.registration_status">
+              <el-option label="已完成注册" value="completed" />
+              <el-option label="进行中" value="in_progress" />
+              <el-option label="不需注册" value="not_required" />
+              <el-option label="暂停/失败" value="suspended" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="机型">
+            <el-input v-model="dataReviewForm.model_raw" />
+          </el-form-item>
+          <el-form-item label="探头型号">
+            <el-input v-model="dataReviewForm.probe_raw" />
+          </el-form-item>
+        </div>
+        <el-form-item label="修改人">
+          <el-input v-model="dataReviewChangedBy" placeholder="姓名或工号" />
+        </el-form-item>
+        <el-form-item label="修正说明">
+          <el-input
+            v-model="dataReviewChangeNote"
+            type="textarea"
+            :rows="2"
+            placeholder="如：OCR 将 VINNO 识别为 VINNNO"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dataReviewDialogVisible = false">取消</el-button>
+        <el-button type="danger" plain :loading="dataReviewSaving" @click="saveDataReview('excluded')">
+          排除此行
+        </el-button>
+        <el-button type="success" :loading="dataReviewSaving" @click="saveDataReview('corrected')">
+          保存修正
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="issueBatchDialogVisible"
+      :title="issueBatchTitle"
+      width="760px"
+      data-testid="issue-batch-dialog"
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="批量动作不会改动原文与识别值，只会给命中的每一行各写一条审核记录；未确认前不写入。"
+      />
+      <template v-if="issueBatchPreview">
+        <p class="issue-batch-summary" data-testid="issue-batch-summary">
+          本批共 {{ issueBatchPreview.needs_review_total }} 行待修正，本次将处理
+          <strong>{{ issueBatchPreview.matched }}</strong> 行（同一行可能带多个问题类型）。
+        </p>
+        <el-table
+          :data="issueBatchPreview.items"
+          border
+          stripe
+          size="small"
+          max-height="300"
+          class="review-table"
+        >
+          <el-table-column prop="source_ref" label="原表位置" min-width="150" />
+          <el-table-column prop="jurisdiction_name" label="国家/地区" width="110" />
+          <el-table-column prop="model_raw" label="机型（原文）" min-width="180" />
+          <el-table-column prop="probe_raw" label="探头（原文）" min-width="180" />
+        </el-table>
+        <el-form label-width="90px" class="issue-batch-form">
+          <el-form-item label="修改人" required>
+            <el-input
+              v-model="issueBatchChangedBy"
+              placeholder="姓名或工号，会写进审核记录"
+              data-testid="issue-batch-changed-by"
+            />
+          </el-form-item>
+          <el-form-item label="批量说明">
+            <el-input
+              v-model="issueBatchChangeNote"
+              placeholder="留空则自动写成「批量确认｜问题类型：…｜本次 N 条」"
+            />
+          </el-form-item>
+          <el-form-item
+            v-if="issueBatchPreview.requires_confirm_count"
+            label="确认条数"
+            required
+          >
+            <el-input
+              v-model="issueBatchConfirmCount"
+              :placeholder="`超过 ${issueBatchPreview.limit} 条需输入 ${issueBatchPreview.matched}`"
+              data-testid="issue-batch-confirm-count"
+            />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="issueBatchDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="issueBatchLoading"
+          data-testid="issue-batch-apply"
+          @click="applyIssueBatch"
+        >
+          确认写入 {{ issueBatchPreview?.matched ?? 0 }} 条
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="packageDialogVisible"
@@ -500,12 +1095,28 @@ import { Plus, Search, UploadFilled, View } from '@element-plus/icons-vue'
 import {
   getConfiguredRegistrationModels,
   getKnowledgeDocumentPreviewUrl,
+  getDataReviewBatches,
+  getDataReviewItems,
+  getDataReviewIssueSummary,
+  batchConfirmDataReviewItems,
   getRegistrationModelProbes,
   getRegistrationModels,
   getRegistrationDifferenceSummary,
+  getRegistrationArtifactSheets,
   getRegistrationPackageMappings,
   getRegistrationPackages,
   getRegistrationPackageVersions,
+  openRegistrationArtifactLocally,
+  getOverseasRegistrationCountries,
+  getOverseasRegistrationRelations,
+  getOverseasRegistrationSnapshots,
+  getOverseasNameMappings,
+  saveOverseasNameMapping,
+  deleteOverseasNameMapping,
+  publishOverseasRegistrationSnapshot,
+  rebuildOverseasRegistrationDraft,
+  discardOverseasRegistrationDraft,
+  updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
   stageRegistrationPackageDraft,
@@ -525,14 +1136,46 @@ const packageGroups = ref([])
 const historyExpanded = ref(false)
 const registrationView = ref('summary')
 const selectedPackageVersionId = ref(null)
-const differenceSummary = ref({ total_models: 0, total_probes: 0, models: [] })
+const differenceSummary = ref({ total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] })
 const differenceQuery = ref('')
+const differenceProbeFilter = ref('')
 const differenceLoading = ref(false)
 const packageDialogVisible = ref(false)
 const certificateFile = ref(null)
 const differenceFile = ref(null)
 const staging = ref(false)
 const publishing = ref(false)
+const overseasLoading = ref(false)
+const overseasCountries = ref([])
+const overseasCountryCode = ref('')
+const overseasQuery = ref('')
+const overseasRows = ref([])
+const overseasTotal = ref(0)
+const dataReviewLoading = ref(false)
+const dataReviewBatches = ref([])
+const selectedReviewBatchKey = ref('')
+const dataReviewStatus = ref('needs_review')
+const dataReviewQuery = ref('')
+const dataReviewRows = ref([])
+const dataReviewTotal = ref(0)
+const dataReviewPage = ref(1)
+const dataReviewPageSize = 50
+const dataReviewDialogVisible = ref(false)
+const dataReviewSaving = ref(false)
+const editingReviewItem = ref(null)
+const dataReviewForm = ref({})
+const dataReviewChangedBy = ref('product_owner')
+const dataReviewChangeNote = ref('')
+// 按问题类型批量处理：一个待修正行常带多个问题码，所以同一行会在多个类型下各计一次。
+const reviewIssueSummary = ref(null)
+const issueBatchDialogVisible = ref(false)
+const issueBatchPreview = ref(null)
+const issueBatchLoading = ref(false)
+const issueBatchStatus = ref('confirmed')
+const issueBatchIssueCode = ref('')
+const issueBatchChangedBy = ref('product_owner')
+const issueBatchChangeNote = ref('')
+const issueBatchConfirmCount = ref('')
 const draftReview = ref(null)
 const packageForm = ref({
   country_code: 'CN',
@@ -558,27 +1201,546 @@ const currentPackageGroups = computed(() => packageGroups.value.filter(group => 
 const selectedPackageGroup = computed(() => currentPackageGroups.value.find(
   group => group.current_version.id === selectedPackageVersionId.value
 ))
+// 差异探头反查：从各机型的「不适用探头」汇总出 探头 → 受影响机型。
+const differenceProbeOptions = computed(() => {
+  const byProbe = new Map()
+  for (const model of differenceSummary.value.models) {
+    for (const probe of model.unregistered_probes) {
+      if (!byProbe.has(probe.probe_model)) {
+        byProbe.set(probe.probe_model, { probe_model: probe.probe_model, models: [] })
+      }
+      byProbe.get(probe.probe_model).models.push(model.model_name)
+    }
+  }
+  return [...byProbe.values()].sort(
+    (left, right) => right.models.length - left.models.length
+      || left.probe_model.localeCompare(right.probe_model)
+  )
+})
+// 下拉只给「型号（受影响机型数）」：IPN 没有决策价值，
+// "影响 N 个机型"这类说明也不必写在每一项里，标题与筛选控件本身已交代口径
+const differenceProbeOptionLabel = option => (
+  `${option.probe_model}（${option.models.length}）`
+)
+const isLastProbe = (probes, index) => index === probes.length - 1
 const filteredDifferenceModels = computed(() => {
   const query = differenceQuery.value.trim().toLowerCase()
-  if (!query) return differenceSummary.value.models
-  return differenceSummary.value.models.filter(model => model.model_name.toLowerCase().includes(query))
+  const probeFilter = differenceProbeFilter.value
+  return differenceSummary.value.models.filter((model) => {
+    if (probeFilter
+      && !model.unregistered_probes.some(probe => probe.probe_model === probeFilter)) {
+      return false
+    }
+    if (query && !model.model_name.toLowerCase().includes(query)) return false
+    return true
+  })
 })
+// 每行 6 个机型、合并成一个块：原表截图是一块 3 个机型，页面再把两块并排，
+// 结果一行出现两套"型号/差异"行标签、还多一条块间距。合并后行标签只留一套，
+// 同样的页宽下每个机型反而更宽（少的那个标签列宽度直接还给机型列）。
+const DIFFERENCE_MODELS_PER_ROW = 6
 const differenceTableGroups = computed(() => {
   const groups = []
-  for (let index = 0; index < filteredDifferenceModels.value.length; index += 3) {
-    groups.push(filteredDifferenceModels.value.slice(index, index + 3))
+  for (let index = 0; index < filteredDifferenceModels.value.length; index += DIFFERENCE_MODELS_PER_ROW) {
+    groups.push(filteredDifferenceModels.value.slice(index, index + DIFFERENCE_MODELS_PER_ROW))
   }
   return groups
 })
-const allApplicableCount = computed(() => differenceSummary.value.models.filter(
-  model => model.unregistered_probes.length === 0
-).length)
-const differenceModelCount = computed(() => differenceSummary.value.models.filter(
-  model => model.unregistered_probes.length > 0
-).length)
+// 全部适用/存在差异以差异对象（探头）为准：所有机型必然有差异，按机型统计没有信息量。
+const allApplicableProbeCount = computed(() => differenceSummary.value.all_applicable_probes)
+const differenceProbeCount = computed(() => differenceSummary.value.different_probes)
+
+// 原件在线预览：浏览器无法内嵌渲染 xlsx，改为应用内读取工作表后自行画表；下载地址保持不变。
+const ARTIFACT_PREVIEW_LABEL = { certificate: '注册证', difference: '差异表' }
+const artifactPreviewVisible = ref(false)
+const artifactPreviewLoading = ref(false)
+const artifactPreviewTitle = ref('原件预览')
+const artifactPreviewDownloadUrl = ref('')
+const artifactPreviewSheet = ref('')
+const artifactPreview = ref({ file_name: '', sheets: [] })
+const artifactPreviewTarget = ref({ versionId: null, artifactType: '' })
+
+const openArtifactPreview = async (version, artifactType) => {
+  const artifact = artifactType === 'certificate' ? version?.certificate : version?.difference
+  if (!artifact) return
+  artifactPreviewTitle.value = `${ARTIFACT_PREVIEW_LABEL[artifactType] || '原件'}预览`
+  artifactPreviewDownloadUrl.value = artifact.preview_url
+  artifactPreviewTarget.value = { versionId: version.id, artifactType }
+  artifactPreviewVisible.value = true
+  artifactPreviewLoading.value = true
+  artifactPreview.value = { file_name: '', sheets: [] }
+  artifactPreviewSheet.value = ''
+  try {
+    const result = await getRegistrationArtifactSheets(version.id, artifactType)
+    artifactPreview.value = result
+    artifactPreviewSheet.value = result.sheets?.[0]?.name || ''
+  } catch (error) {
+    artifactPreviewVisible.value = false
+    ElMessage.error(error?.response?.data?.detail || '原件在线预览失败，请下载原件查看')
+  } finally {
+    artifactPreviewLoading.value = false
+  }
+}
+
+// 后端就跑在本机，因此可直接调用系统默认程序打开原件（仅本机请求有效）。
+const openArtifactLocally = async (mode) => {
+  const { versionId, artifactType } = artifactPreviewTarget.value
+  if (!versionId || !artifactType) return
+  try {
+    const result = await openRegistrationArtifactLocally(versionId, artifactType, mode)
+    ElMessage.success(
+      mode === 'reveal'
+        ? `已在访达中定位 ${result.file_name}`
+        : `已在本机打开 ${result.file_name}`
+    )
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '本机打开失败')
+  }
+}
+const reviewBatchKey = batch => `${batch.data_type}:${batch.batch_id}`
+const isChunkReviewRow = row => row?.data_type === 'knowledge_document_chunk'
+const reviewBatchUnit = batch => isChunkReviewRow(batch) ? '段' : '行'
+const reviewRecordLabel = batch => isChunkReviewRow(batch) ? '原文段落' : '原表行'
+const selectedReviewBatch = computed(() => dataReviewBatches.value.find(
+  batch => reviewBatchKey(batch) === selectedReviewBatchKey.value
+))
+// 已发布的快照是冻结的正式版本，后端会拒绝修改（"已发布数据需先创建新修订草稿"），
+// 所以界面必须先把这件事说清楚，而不是让用户点了才报错。
+const reviewBatchEditable = computed(() => {
+  const status = selectedReviewBatch.value?.batch_status
+  return !status || status === 'draft'
+})
+const reviewStatusLabel = status => ({
+  auto_ready: '自动可用',
+  needs_review: '待修正',
+  corrected: '已修正',
+  confirmed: '已确认',
+  excluded: '已排除'
+}[status] || status)
+const reviewStatusType = status => ({
+  auto_ready: 'success',
+  needs_review: 'warning',
+  corrected: 'primary',
+  confirmed: 'success',
+  excluded: 'info'
+}[status] || 'info')
+const issueLabel = issue => ({
+  jurisdiction_requires_mapping: '国家待匹配',
+  non_final_status: '尚未拿证（进行中/新地址）',
+  // 作者已经写下的结论：只留记录，不是待办事项
+  registration_not_required: '该国无需注册',
+  registration_failed: '注册未成功',
+  registration_suspended: '注册已暂停/停止',
+  narrative_rule_requires_review: '含说明性文字',
+  model_scope_requires_expansion: '机型范围待展开',
+  model_name_requires_review: '机型名称待修正',
+  probe_scope_not_explicit: '探头范围不明确',
+  complex_probe_mapping: '探头表述需拆分',
+  probe_name_requires_review: '探头名称待修正'
+}[issue] || issue)
 
 const primaryCertificateLabel = title => title?.includes('变更') ? '查看变更文件' : '查看注册证'
 const supportingDocumentLabel = role => role === 'original_certificate' ? '查看原注册证' : '查看关联变更文件'
+
+// 海外快照有「草稿 / 生效 / 历史」三态；关系查询只认生效快照，
+// 所以界面必须把草稿暴露出来，否则导入完就查不到东西、也不知道为什么。
+const overseasSnapshots = ref([])
+const overseasDraftSnapshot = computed(
+  () => overseasSnapshots.value.find(snapshot => snapshot.status === 'draft') || null
+)
+const overseasActiveSnapshot = computed(
+  () => overseasSnapshots.value.find(snapshot => snapshot.status === 'active') || null
+)
+// 同一份原件已经有一版待发布草稿时，不再重复重建，避免同时挂着两份草稿。
+const overseasRebuildAvailable = computed(
+  () =>
+    Boolean(overseasActiveSnapshot.value) &&
+    !(
+      overseasDraftSnapshot.value &&
+      overseasDraftSnapshot.value.source_document_id ===
+        overseasActiveSnapshot.value.source_document_id
+    )
+)
+const overseasRebuilding = ref(false)
+
+const loadOverseasSnapshots = async () => {
+  try {
+    const result = await getOverseasRegistrationSnapshots()
+    overseasSnapshots.value = result.items || []
+  } catch {
+    overseasSnapshots.value = []
+  }
+}
+
+// 名称映射：原表写法 → 系统名称。登记一次，后续导入自动套用，不再重复问人。
+const nameMappingVisible = ref(false)
+const nameMappingSaving = ref(false)
+const nameMappings = ref([])
+const nameMappingForm = ref({
+  entity_type: 'probe',
+  source_name: '',
+  target_name: '',
+  confirmed_by: ''
+})
+
+const loadNameMappings = async () => {
+  try {
+    const result = await getOverseasNameMappings()
+    nameMappings.value = result.items || []
+  } catch {
+    nameMappings.value = []
+  }
+}
+
+const openNameMappings = async () => {
+  nameMappingVisible.value = true
+  await loadNameMappings()
+}
+
+const saveNameMapping = async () => {
+  const form = nameMappingForm.value
+  if (!form.source_name.trim() || !form.target_name.trim()) {
+    ElMessage.warning('原表写法与系统名称都不能为空')
+    return
+  }
+  if (!form.confirmed_by.trim()) {
+    ElMessage.warning('请填写确认人')
+    return
+  }
+  nameMappingSaving.value = true
+  try {
+    await saveOverseasNameMapping({ ...form })
+    ElMessage.success('已登记，后续导入会自动沿用这条映射')
+    nameMappingForm.value = {
+      entity_type: form.entity_type,
+      source_name: '',
+      target_name: '',
+      confirmed_by: form.confirmed_by
+    }
+    await loadNameMappings()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '登记失败')
+  } finally {
+    nameMappingSaving.value = false
+  }
+}
+
+const removeNameMapping = async (mapping) => {
+  try {
+    await ElMessageBox.confirm(
+      `删除后「${mapping.source_name}」不再自动映射为「${mapping.target_name}」，下次导入会重新询问。`,
+      '删除名称映射',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteOverseasNameMapping({
+      entity_type: mapping.entity_type,
+      source_name: mapping.source_name
+    })
+    ElMessage.success('已删除')
+    await loadNameMappings()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '删除失败')
+  }
+}
+
+const rebuildOverseasDraft = async () => {
+  const active = overseasActiveSnapshot.value
+  if (!active) return
+  const nextRevision = (active.revision || 0) + 1
+  try {
+    await ElMessageBox.confirm(
+      `将用当前的解析规则和已确认的名称映射，重新解析这份原件并生成新草稿（第 ${nextRevision + 1} 版），人工确认后再发布。` +
+        `已发布快照 #${active.id} 在发布前继续生效，海外注册查询不受影响。`,
+      '基于当前快照重建草稿',
+      { confirmButtonText: '重建', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  overseasRebuilding.value = true
+  try {
+    const result = await rebuildOverseasRegistrationDraft(active.id)
+    ElMessage.success(
+      `已生成草稿快照 #${result.snapshot_id}（第 ${(result.revision || 0) + 1} 版 · ${result.relation_count} 条关系），确认后发布`
+    )
+    await loadOverseasSnapshots()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '重建草稿失败')
+  } finally {
+    overseasRebuilding.value = false
+  }
+}
+
+const discardOverseasDraft = async () => {
+  const draft = overseasDraftSnapshot.value
+  if (!draft) return
+  try {
+    await ElMessageBox.confirm(
+      `将删除草稿快照 #${draft.id}（第 ${(draft.revision || 0) + 1} 版 · ${draft.relation_count} 条关系）、` +
+        '这批关系、以及它的审核条目和修订记录，且不可撤销。' +
+        '已发布快照与当前查询不受影响；需要时可以从已发布快照重新重建。',
+      '放弃这份草稿',
+      { confirmButtonText: '放弃草稿', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await discardOverseasRegistrationDraft(draft.id)
+    ElMessage.success(
+      `已放弃草稿快照 #${result.snapshot_id}（${result.relation_count} 条关系），当前查询仍是已发布那一版`
+    )
+    await loadOverseasSnapshots()
+    await loadOverseasCountries()
+    await loadOverseasRelations()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '放弃草稿失败')
+  }
+}
+
+const publishOverseasDraft = async () => {
+  const draft = overseasDraftSnapshot.value
+  if (!draft) return
+  let confirmedBy = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `发布后该快照（${draft.relation_count} 条关系）才可被海外注册查询使用；原先生效的快照会转为历史。请填写发布人。`,
+      '发布海外注册快照',
+      { confirmButtonText: '发布', cancelButtonText: '取消', inputPlaceholder: '姓名或工号' }
+    )
+    confirmedBy = (value || '').trim()
+  } catch {
+    return
+  }
+  if (!confirmedBy) {
+    ElMessage.warning('请填写发布人')
+    return
+  }
+  try {
+    await publishOverseasRegistrationSnapshot(draft.id, confirmedBy)
+    ElMessage.success('已发布，海外注册查询现在可以查到这批数据')
+    await loadOverseasSnapshots()
+    await loadOverseasCountries()
+    await loadOverseasRelations()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '发布失败')
+  }
+}
+
+const loadOverseasRelations = async () => {
+  overseasLoading.value = true
+  try {
+    const result = await getOverseasRegistrationRelations({
+      country_code: overseasCountryCode.value || undefined,
+      q: overseasQuery.value || undefined,
+      limit: 500
+    })
+    overseasRows.value = result.items || []
+    overseasTotal.value = result.total || 0
+  } catch {
+    overseasRows.value = []
+    overseasTotal.value = 0
+    ElMessage.error('海外注册数据加载失败')
+  } finally {
+    overseasLoading.value = false
+  }
+}
+
+const loadOverseasCountries = async () => {
+  try {
+    const result = await getOverseasRegistrationCountries()
+    overseasCountries.value = result.items || []
+  } catch {
+    overseasCountries.value = []
+    ElMessage.error('海外注册国家列表加载失败')
+  }
+}
+
+const loadDataReviewBatches = async () => {
+  try {
+    const result = await getDataReviewBatches()
+    dataReviewBatches.value = result.items || []
+    if (!dataReviewBatches.value.some(batch => reviewBatchKey(batch) === selectedReviewBatchKey.value)) {
+      const preferred = dataReviewBatches.value.find(batch => batch.batch_status === 'draft') || dataReviewBatches.value[0]
+      selectedReviewBatchKey.value = preferred ? reviewBatchKey(preferred) : ''
+    }
+    await loadDataReviewItems()
+  } catch {
+    dataReviewBatches.value = []
+    dataReviewRows.value = []
+    ElMessage.error('待审核数据加载失败')
+  }
+}
+
+const loadDataReviewItems = async () => {
+  if (!selectedReviewBatch.value) {
+    dataReviewRows.value = []
+    dataReviewTotal.value = 0
+    reviewIssueSummary.value = null
+    return
+  }
+  dataReviewLoading.value = true
+  try {
+    const result = await getDataReviewItems({
+      data_type: selectedReviewBatch.value.data_type,
+      batch_id: selectedReviewBatch.value.batch_id,
+      review_status: dataReviewStatus.value || undefined,
+      q: dataReviewQuery.value || undefined,
+      skip: (dataReviewPage.value - 1) * dataReviewPageSize,
+      limit: dataReviewPageSize
+    })
+    dataReviewRows.value = result.items || []
+    dataReviewTotal.value = result.total || 0
+  } catch {
+    dataReviewRows.value = []
+    dataReviewTotal.value = 0
+    ElMessage.error('审核明细加载失败')
+  } finally {
+    dataReviewLoading.value = false
+  }
+  await loadReviewIssueSummary()
+}
+
+// 只有海外注册行支持按问题类型批量处理：段落类批次不会产生待修正行。
+const isBatchableReviewBatch = batch =>
+  batch?.data_type === 'overseas_registration_row' && batch?.batch_id
+
+const loadReviewIssueSummary = async () => {
+  const batch = selectedReviewBatch.value
+  if (!batch || !isBatchableReviewBatch(batch)) {
+    reviewIssueSummary.value = null
+    return
+  }
+  try {
+    reviewIssueSummary.value = await getDataReviewIssueSummary({
+      data_type: batch.data_type,
+      batch_id: batch.batch_id
+    })
+  } catch {
+    // 摘要失败不该拖垮审核列表：这里静默降级，批量入口整体不显示。
+    reviewIssueSummary.value = null
+  }
+}
+
+const issueBatchTitle = computed(() => {
+  const action = issueBatchStatus.value === 'confirmed' ? '批量确认' : '批量排除'
+  const name = issueBatchIssueCode.value ? issueLabel(issueBatchIssueCode.value) : ''
+  return name ? `${action}：${name}` : action
+})
+
+const openIssueBatch = async (issue, reviewStatus) => {
+  const batch = selectedReviewBatch.value
+  if (!batch || !isBatchableReviewBatch(batch)) return
+  if (!reviewBatchEditable.value) {
+    ElMessage.warning('这一批已发布，正式版本不可修改；如需修订请更新源表后重新导入并发布新版本')
+    return
+  }
+  issueBatchStatus.value = reviewStatus
+  issueBatchIssueCode.value = issue.issue_code
+  issueBatchConfirmCount.value = ''
+  issueBatchChangeNote.value = ''
+  issueBatchLoading.value = true
+  try {
+    // 先预览：预览阶段不要求填修改人，也不会写库。
+    issueBatchPreview.value = await batchConfirmDataReviewItems({
+      data_type: batch.data_type,
+      batch_id: batch.batch_id,
+      review_status: reviewStatus,
+      issue_codes: [issue.issue_code],
+      dry_run: true
+    })
+    issueBatchDialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量预览失败')
+  } finally {
+    issueBatchLoading.value = false
+  }
+}
+
+const applyIssueBatch = async () => {
+  const batch = selectedReviewBatch.value
+  const preview = issueBatchPreview.value
+  if (!batch || !preview) return
+  if (!issueBatchChangedBy.value.trim()) {
+    ElMessage.warning('请填写修改人')
+    return
+  }
+  const body = {
+    data_type: batch.data_type,
+    batch_id: batch.batch_id,
+    review_status: issueBatchStatus.value,
+    changed_by: issueBatchChangedBy.value.trim(),
+    issue_codes: [issueBatchIssueCode.value],
+    dry_run: false
+  }
+  if (issueBatchChangeNote.value.trim()) {
+    body.change_note = issueBatchChangeNote.value.trim()
+  }
+  if (preview.requires_confirm_count) {
+    const confirmed = Number(issueBatchConfirmCount.value)
+    if (!Number.isInteger(confirmed) || confirmed !== preview.matched) {
+      ElMessage.warning(`本次将处理 ${preview.matched} 条，请在「确认条数」里输入这个数字`)
+      return
+    }
+    body.confirm_count = confirmed
+  }
+  issueBatchLoading.value = true
+  try {
+    const result = await batchConfirmDataReviewItems(body)
+    const label = issueBatchStatus.value === 'confirmed' ? '确认' : '排除'
+    ElMessage.success(`已${label} ${result.matched} 条，每行各留一条审核记录`)
+    issueBatchDialogVisible.value = false
+    await loadDataReviewBatches()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '批量处理失败')
+  } finally {
+    issueBatchLoading.value = false
+  }
+}
+
+const handleReviewBatchChange = async () => {
+  dataReviewPage.value = 1
+  await loadDataReviewItems()
+}
+
+const openDataReviewEditor = (item) => {
+  if (!reviewBatchEditable.value) {
+    ElMessage.warning('这一批已发布，正式版本不可修改；如需修订请更新源表后重新导入并发布新版本')
+    return
+  }
+  editingReviewItem.value = item
+  dataReviewForm.value = { ...item.effective_payload }
+  dataReviewChangeNote.value = item.change_note || ''
+  dataReviewDialogVisible.value = true
+}
+
+const saveDataReview = async (reviewStatus) => {
+  if (!editingReviewItem.value) return
+  if (!dataReviewChangedBy.value.trim()) {
+    ElMessage.warning('请填写修改人')
+    return
+  }
+  dataReviewSaving.value = true
+  try {
+    await updateDataReviewItem(editingReviewItem.value.id, {
+      effective_payload: dataReviewForm.value,
+      review_status: reviewStatus,
+      changed_by: dataReviewChangedBy.value.trim(),
+      change_note: dataReviewChangeNote.value.trim() || undefined
+    })
+    ElMessage.success(reviewStatus === 'excluded' ? '已排除该行' : '修正已保存')
+    dataReviewDialogVisible.value = false
+    await loadDataReviewBatches()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '保存修正失败')
+  } finally {
+    dataReviewSaving.value = false
+  }
+}
 
 const loadMappings = async () => {
   const result = await getConfiguredRegistrationModels({
@@ -628,15 +1790,16 @@ const selectModel = async (modelId) => {
 }
 
 const loadDifferenceSummary = async () => {
+  differenceProbeFilter.value = ''
   if (!selectedPackageVersionId.value) {
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     return
   }
   differenceLoading.value = true
   try {
     differenceSummary.value = await getRegistrationDifferenceSummary(selectedPackageVersionId.value)
   } catch {
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     ElMessage.error('注册差异汇总加载失败')
   } finally {
     differenceLoading.value = false
@@ -664,7 +1827,7 @@ const loadPackageHistory = async () => {
   } catch {
     packageGroups.value = []
     selectedPackageVersionId.value = null
-    differenceSummary.value = { total_models: 0, total_probes: 0, models: [] }
+    differenceSummary.value = { total_models: 0, total_probes: 0, all_applicable_probes: 0, different_probes: 0, models: [] }
     ElMessage.error('注册资料版本加载失败')
   } finally {
     packageLoading.value = false
@@ -786,7 +1949,15 @@ const handlePublishPackage = async () => {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMappings(), loadModels(), loadPackageHistory()])
+    await Promise.all([
+      loadMappings(),
+      loadModels(),
+      loadPackageHistory(),
+      loadOverseasCountries(),
+      loadOverseasSnapshots(),
+      loadOverseasRelations(),
+      loadDataReviewBatches()
+    ])
   } catch {
     ElMessage.error('注册主数据加载失败')
   }
@@ -822,11 +1993,18 @@ onMounted(async () => {
 .change-table { margin-top: 10px; }
 .registration-data-tabs { margin-top: 4px; }
 .difference-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
-.difference-toolbar { display: grid; grid-template-columns: minmax(280px, 0.8fr) minmax(260px, 1fr) auto; gap: 10px; align-items: center; }
+.artifact-preview-scroll { max-height: 62vh; overflow: auto; }
+.artifact-preview-table { border-collapse: collapse; color: #334155; font-size: 12px; }
+.artifact-preview-table th, .artifact-preview-table td { padding: 5px 8px; border: 1px solid #e2e8f0; text-align: left; white-space: nowrap; }
+.artifact-preview-table th { position: sticky; left: 0; background: #f8fafc; color: #94a3b8; font-weight: 400; text-align: right; }
+.artifact-preview-name { float: left; color: #94a3b8; font-size: 12px; line-height: 32px; }
+.difference-toolbar { display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) auto; gap: 10px; align-items: center; }
 .difference-actions { display: flex; gap: 8px; }
-.difference-metrics { margin-bottom: 12px; }
-.difference-section-title { margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
-.difference-original-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.difference-metrics { align-items: center; margin-bottom: 12px; }
+.difference-probe-filter { flex: 0 0 240px; width: 240px; }
+.difference-section-title { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
+/* 一块 6 个机型占满整行：行标签只出现一次，机型列拿到全部剩余宽度 */
+.difference-original-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .difference-original-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #334155; font-size: 13px; }
 .difference-original-table th, .difference-original-table td { padding: 10px 8px; border: 1px solid #cbd5e1; text-align: center; vertical-align: middle; }
 .difference-original-table th { width: 54px; background: #f8fafc; color: #475569; font-weight: 600; }
@@ -835,6 +2013,7 @@ onMounted(async () => {
 .difference-original-table td small { margin-top: 3px; color: #94a3b8; font-weight: 400; }
 .all-applicable { color: #15803d; }
 .not-applicable { color: #b91c1c; }
+.not-applicable .probe-hit { padding: 0 4px; border-radius: 4px; background: #fee2e2; font-weight: 700; }
 .toolbar { display: grid; grid-template-columns: 180px minmax(280px, 1fr) auto; gap: 10px; margin-bottom: 14px; }
 .content-grid { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 14px; align-items: start; }
 .model-panel, .probe-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }
@@ -853,6 +2032,38 @@ onMounted(async () => {
 .summary-row .danger strong { color: #b91c1c; }
 .unlinked { color: #b45309; }
 .probe-table { width: 100%; }
+.overseas-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.overseas-toolbar { margin-bottom: 0; }
+.overseas-snapshot-row { margin-top: 10px; align-items: center; }
+.overseas-snapshot-row .el-button { margin-left: auto; }
+.overseas-publish-button { margin-top: 6px; }
+.overseas-discard-button { margin-top: 6px; margin-left: 8px; }
+.mapping-form { display: grid; grid-template-columns: 110px 1fr 1fr 150px auto; gap: 8px; margin-bottom: 12px; }
+.master-link-note { display: block; margin-top: 4px; color: #64748b; }
+.review-center { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+.review-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 150px minmax(260px, 1.3fr) auto; gap: 10px; }
+.review-summary { align-items: center; }
+.review-locked { color: #94a3b8; font-size: 12px; }
+.review-summary .el-button { margin-left: auto; }
+.issue-batch-panel { margin: 12px 0; padding: 12px; border: 1px solid #fde68a; border-radius: 10px; background: #fffbeb; }
+.issue-batch-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.issue-batch-title { font-weight: 600; color: #92400e; font-size: 13px; }
+.issue-batch-hint { color: #a16207; font-size: 12px; }
+.issue-batch-locked { color: #b91c1c; font-size: 12px; }
+.issue-batch-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.issue-batch-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid #fcd34d; border-radius: 8px; background: #fff; }
+.issue-batch-name { color: #334155; font-size: 13px; }
+.issue-batch-count { min-width: 24px; text-align: center; font-weight: 600; color: #b45309; }
+.issue-batch-summary { margin: 12px 0; color: #475569; font-size: 13px; }
+.issue-batch-form { margin-top: 12px; }
+.review-table { width: 100%; }
+.source-values { display: grid; gap: 3px; color: #64748b; font-size: 12px; }
+.source-values strong { color: #334155; font-size: 13px; }
+.effective-values strong { color: #1d4ed8; }
+.review-type-label { color: #94a3b8; font-size: 11px; }
+.chunk-content { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.issue-list { margin-top: 5px; color: #b45309; font-size: 11px; line-height: 1.45; }
+.review-pagination { justify-content: flex-end; margin-top: 14px; }
 .dialog-alert { margin-bottom: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
 .upload-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
@@ -861,8 +2072,7 @@ onMounted(async () => {
 .review-heading p { margin: 0; color: #64748b; font-size: 13px; }
 .mapping-alert { margin-top: 12px; }
 @media (max-width: 850px) {
-  .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid { grid-template-columns: 1fr; }
-  .difference-original-grid { grid-template-columns: 1fr; }
+  .difference-toolbar, .toolbar, .content-grid, .form-grid, .upload-grid, .review-toolbar { grid-template-columns: 1fr; }
   .difference-actions { flex-wrap: wrap; }
   .model-panel { min-height: auto; }
 }
