@@ -438,6 +438,70 @@ async def test_partial_submit_snapshot_excludes_remaining_drafts_and_discard_res
 
 
 @pytest.mark.asyncio
+async def test_partial_snapshot_rewinds_cell_create_without_removing_published_pair(tmp_path):
+    client, session_factory, engine = await _draft_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        session.add_all(
+            [
+                ConfigVersion(
+                    series_id=1,
+                    version_number="1.0.0",
+                    snapshot_data=json.dumps(_snapshot()),
+                    row_count=2,
+                ),
+                DraftBatch(id="batch-1", series_id=1, status="draft", total_count=2, update_count=1, create_count=1),
+                ConfigValue(item_id=100, model_id=10, current_config="working-cpu"),
+                ConfigValue(
+                    item_id=101,
+                    model_id=10,
+                    current_config="baseline-gpu",
+                    final_config="new cell",
+                ),
+                ConfigDraft(
+                    series_id=1,
+                    batch_id="batch-1",
+                    change_type="update",
+                    item_id=100,
+                    model_id=10,
+                    field_name="current_config",
+                    old_value="baseline-cpu",
+                    new_value="working-cpu",
+                ),
+                ConfigDraft(
+                    series_id=1,
+                    batch_id="batch-1",
+                    change_type="create",
+                    item_id=101,
+                    model_id=10,
+                    field_name="final_config",
+                    old_value=None,
+                    new_value="new cell",
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/drafts/batch/batch-1/submit",
+            json={"item_ids": [100], "version_number": "1.1.0"},
+        )
+    assert response.status_code == 200, response.text
+
+    async with session_factory() as session:
+        version = await session.scalar(
+            select(ConfigVersion).where(ConfigVersion.version_number == "1.1.0")
+        )
+        snapshot = json.loads(version.snapshot_data)
+        gpu = next(item for item in snapshot["items"] if item["ipn"] == "IPN-101")
+    await engine.dispose()
+
+    assert gpu["values"]["10"]["current_config"] == "baseline-gpu"
+    assert gpu["values"]["10"]["final_config"] is None
+
+
+@pytest.mark.asyncio
 async def test_delete_single_update_draft_restores_old_field_value(tmp_path):
     client, session_factory, engine = await _draft_harness(tmp_path)
     await _seed_catalog(session_factory)
