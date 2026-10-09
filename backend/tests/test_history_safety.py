@@ -110,7 +110,7 @@ async def test_restore_is_series_scoped_reuses_items_and_preserves_shared_metada
         ipn="IPN-1",
         zh_desc="keep me",
     )
-    no_ipn = ConfigItem(id=2, category="Local", row_index=2, rd_name="No IPN canonical")
+    no_ipn = ConfigItem(id=2, category="Local", row_index=2, rd_name="No IPN canonical", v_code="LOCAL-2")
     other_only = ConfigItem(id=3, category="Other", row_index=3, rd_name="Other series", ipn="IPN-3")
     db.add_all([shared, no_ipn, other_only])
     await db.flush()
@@ -143,6 +143,7 @@ async def test_restore_is_series_scoped_reuses_items_and_preserves_shared_metada
                 "category": "Historical local",
                 "row_index": 2,
                 "rd_name": "Do not overwrite no-IPN metadata",
+                "v_code": "LOCAL-2",
                 "ipn": None,
                 "values": {"99": {"final_config": "restored local"}},
             },
@@ -358,3 +359,45 @@ async def test_restore_rejects_recycled_no_ipn_id_with_conflicting_feature_ident
     with pytest.raises(ValueError, match='身份|冲突|无法确认'):
         await restore_series_snapshot(db, 1, snapshot)
     assert (await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1, ConfigValue.model_id == china.id))).current_config == 'keep'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('registered', [True, False])
+async def test_restore_rejects_recycled_model_id_without_matching_identity(db, registered):
+    model = ProductModel(id=10, series_id=1, name='Unrelated new model')
+    item = ConfigItem(id=1, category='Main', row_index=1, rd_name='Feature', ipn='IPN-1')
+    db.add_all([model, item])
+    await db.flush()
+    if registered:
+        db.add(ProductModelIdentity(series_id=1, model_id=10, source_uuid=SOURCE_UUID, aliases_json='[]', historical_ids_json='[]'))
+    db.add(ConfigValue(item_id=1, model_id=10, current_config='keep'))
+    await db.flush()
+    snapshot = {'models': [{'id': 10, 'name': 'Deleted old model'}], 'items': [{'id': 1, 'ipn': 'IPN-1', 'values': {'10': {'current_config': 'wrong'}}}]}
+    with pytest.raises(ValueError, match='身份|冲突|无法确认'):
+        await restore_series_snapshot(db, 1, snapshot)
+    assert (await db.scalar(select(ConfigValue))).current_config == 'keep'
+
+
+@pytest.mark.asyncio
+async def test_restore_prefers_stable_source_uuid_over_recycled_model_id(db):
+    china, _, _, _ = await seed_models(db)
+    second_uuid = '11111111-1111-4111-8111-111111111111'
+    db.add(ProductModelIdentity(series_id=1, model_id=12, source_uuid=second_uuid, aliases_json='[]', historical_ids_json='[]'))
+    item = ConfigItem(id=1, category='Main', row_index=1, rd_name='Feature', ipn='IPN-1')
+    db.add(item)
+    await db.flush()
+    snapshot = {'models': [{'id': 12, 'name': 'V10 Legacy', 'source_uuid': SOURCE_UUID}], 'items': [{'id': 1, 'ipn': 'IPN-1', 'values': {'12': {'current_config': 'restored'}}}]}
+    assert await restore_series_snapshot(db, 1, snapshot) == 1
+    value = await db.scalar(select(ConfigValue))
+    assert (value.model_id, value.current_config) == (china.id, 'restored')
+
+
+@pytest.mark.asyncio
+async def test_restore_resolves_unregistered_legacy_model_by_unique_name(db):
+    await seed_models(db)
+    item = ConfigItem(id=1, category='Main', row_index=1, rd_name='Feature', ipn='IPN-1')
+    db.add(item)
+    await db.flush()
+    snapshot = {'models': [{'id': 999, 'name': 'V10 Pro'}], 'items': [{'id': 1, 'ipn': 'IPN-1', 'values': {'999': {'current_config': 'restored'}}}]}
+    assert await restore_series_snapshot(db, 1, snapshot) == 1
+    assert (await db.scalar(select(ConfigValue))).model_id == 12
