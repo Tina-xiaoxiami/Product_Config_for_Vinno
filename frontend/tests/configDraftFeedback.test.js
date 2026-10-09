@@ -6,33 +6,49 @@ import { draftBaseline, draftWorkingValue, updateDraftStats } from '../src/utils
 const source = readFileSync(new URL('../src/views/Config.vue', import.meta.url), 'utf8')
 const ref = value => ({ value })
 
-function draftEditor({ createDraft, batchReady = true, change } = {}) {
-  const row = { id: 1, model_values: { 2: { final_config: 'attempted' } } }
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
+function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change, rowValue = 'attempted' } = {}) {
+  const row = { id: 1, model_values: { 2: { final_config: rowValue } } }
+  const originalRow = { id: 1, model_values: { 2: { final_config: 'published' } } }
   const messages = []
+  const draftChanges = ref(new Map(change ? [['1_2_final_config', change]] : []))
+  const tableData = ref([row])
   const context = {
-    originalDataMap: ref(new Map([[1, { id: 1, model_values: { 2: { final_config: 'published' } } }]])),
+    editingCell: ref(null),
+    originalData: ref([originalRow]),
+    originalDataMap: ref(new Map([[1, originalRow]])),
+    isValueChanged: (oldValue, newValue) => oldValue !== newValue,
     draftWorkingValue,
-    draftChanges: ref(new Map(change ? [['1_2_final_config', change]] : [])),
-    tableData: ref([row]),
+    draftChanges,
+    tableData,
     findSeriesIdByModelId: () => 10,
     draftBatchMap: ref(batchReady ? new Map([[10, 20]]) : new Map()),
     ElMessage: { error: message => messages.push(message) },
     console: { error() {} },
-    deleteDraftByKey: async () => {},
+    deleteDraftByKey: deleteDraftByKey || (async () => {}),
     draftStats: { total: change ? 1 : 0, create: 0, update: change ? 1 : 0, delete: 0 },
     updateDraftStats,
     draftBaseline,
     createDraft: createDraft || (async () => ({ draft_id: 30 }))
   }
   const code = source.slice(
-    source.indexOf('const restoreWorkingCell ='),
+    source.indexOf('const finishEdit ='),
     source.indexOf('// 多文件上传处理')
   )
-  const { handleCellChange } = new Function(
+  const { finishEdit, removeDraftChange, handleCellChange } = new Function(
     ...Object.keys(context),
-    `${code}\nreturn { handleCellChange }`
+    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange }`
   )(...Object.values(context))
-  return { handleCellChange, messages, row }
+  return { finishEdit, removeDraftChange, handleCellChange, messages, row, tableData, draftChanges }
 }
 
 function clearCellAction(handleCellChange) {
@@ -119,4 +135,79 @@ test('bulk actions report only successfully saved cells', async () => {
   const saved = dragFillAction(async () => true)
   await saved.performDragFill()
   assert.deepEqual(saved.messages, ['已填充 1 个单元格'])
+})
+
+test('an older failed save cannot roll back a newer successful save', async () => {
+  const first = deferred()
+  const second = deferred()
+  const requests = [first, second]
+  const app = draftEditor({
+    rowValue: 'new',
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    createDraft: () => requests.shift().promise
+  })
+
+  const olderSave = app.handleCellChange(app.row, 2, 'final_config', 'new', 'working')
+  const newerSave = app.handleCellChange(app.row, 2, 'final_config', 'new', 'working')
+  first.reject(new Error('older request failed'))
+  assert.equal(await olderSave, false)
+  second.resolve({ draft_id: 31 })
+  assert.equal(await newerSave, true)
+
+  assert.equal(app.row.model_values[2].final_config, 'new')
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'new')
+})
+
+test('undo queued while the first save is pending deletes the saved draft', async () => {
+  const saveRequest = deferred()
+  let deleteCount = 0
+  const app = draftEditor({
+    createDraft: () => saveRequest.promise,
+    deleteDraftByKey: async () => { deleteCount++ }
+  })
+
+  const save = app.finishEdit(app.row, 2, 'final_config', 'attempted')
+  app.row.model_values[2].final_config = 'published'
+  const undo = app.finishEdit(app.row, 2, 'final_config', 'published')
+  saveRequest.resolve({ draft_id: 30 })
+  await Promise.all([save, undo])
+
+  assert.equal(deleteCount, 1)
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+  assert.equal(app.row.model_values[2].final_config, 'published')
+})
+
+test('a failed undo cannot roll back a newer queued save', async () => {
+  const deleteRequest = deferred()
+  const saveRequest = deferred()
+  const app = draftEditor({
+    rowValue: 'new',
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    deleteDraftByKey: () => deleteRequest.promise,
+    createDraft: () => saveRequest.promise
+  })
+
+  const undo = app.removeDraftChange(1, 2, 'final_config', '1_2_final_config')
+  const save = app.handleCellChange(app.row, 2, 'final_config', 'new', 'working')
+  deleteRequest.reject(new Error('delete failed'))
+  await undo
+  await Promise.resolve()
+  saveRequest.resolve({ draft_id: 32 })
+  assert.equal(await save, true)
+
+  assert.equal(app.row.model_values[2].final_config, 'new')
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'new')
+})
+
+test('a stale save failure does not modify a replacement row with recycled ids', async () => {
+  const saveRequest = deferred()
+  const app = draftEditor({ createDraft: () => saveRequest.promise })
+  const save = app.handleCellChange(app.row, 2, 'final_config', 'attempted', 'published')
+  const replacement = { id: 1, model_values: { 2: { final_config: 'replacement' } } }
+  app.tableData.value = [replacement]
+
+  saveRequest.reject(new Error('old scope failed'))
+  assert.equal(await save, false)
+
+  assert.equal(replacement.model_values[2].final_config, 'replacement')
 })
