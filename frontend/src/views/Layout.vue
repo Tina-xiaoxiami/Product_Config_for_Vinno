@@ -1,10 +1,17 @@
 <template>
   <div class="layout">
     <el-container>
-      <el-aside width="200px">
-        <div class="logo">产品配置管理</div>
+      <el-aside :width="sidebarCollapsed ? '64px' : '180px'" :class="{ collapsed: sidebarCollapsed }">
+        <div class="logo">
+          <span v-if="!sidebarCollapsed">产品配置管理</span>
+          <el-button text class="sidebar-toggle" :aria-label="sidebarCollapsed ? '展开导航' : '收起导航'" :title="sidebarCollapsed ? '展开导航' : '收起导航'" @click="toggleSidebar">
+            <el-icon><Expand v-if="sidebarCollapsed" /><Fold v-else /></el-icon>
+          </el-button>
+        </div>
         <el-menu
           :default-active="$route.path"
+          :collapse="sidebarCollapsed"
+          :collapse-transition="false"
           router
           background-color="#304156"
           text-color="#bfcbd9"
@@ -12,11 +19,11 @@
         >
           <el-menu-item index="/knowledge">
             <el-icon><Collection /></el-icon>
-            <span>产品知识库</span>
+            <template #title>产品知识库</template>
           </el-menu-item>
           <el-menu-item index="/release">
             <el-icon><Promotion /></el-icon>
-            <span>功能发布</span>
+            <template #title>功能发布</template>
           </el-menu-item>
           <el-sub-menu index="/manage">
             <template #title>
@@ -86,7 +93,16 @@
 </template>
 
 <script setup>
-import { Document, DataAnalysis, Setting, Collection, Promotion } from '@element-plus/icons-vue'
+import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand } from '@element-plus/icons-vue'
+
+const sidebarCollapsed = ref(false)
+try { sidebarCollapsed.value = localStorage.getItem('config_sidebar_collapsed') === 'true' } catch (error) { console.warn('读取导航设置失败', error) }
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try { localStorage.setItem('config_sidebar_collapsed', String(sidebarCollapsed.value)) } catch { ElMessage.warning('导航已切换，但浏览器未能保存设置') }
+}
 </script>
 
 <style scoped>
@@ -101,24 +117,34 @@ import { Document, DataAnalysis, Setting, Collection, Promotion } from '@element
 .el-aside {
   background-color: #304156;
   color: #fff;
+  flex-shrink: 0;
+  overflow-x: hidden;
+  transition: width 0.15s ease;
 }
 
 .logo {
-  height: 60px;
-  line-height: 60px;
-  text-align: center;
-  font-size: 18px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 15px;
   font-weight: bold;
-  color: #fff;
+  white-space: nowrap;
   background-color: #263445;
 }
+.collapsed .logo { justify-content: center; padding: 0; }
+.sidebar-toggle { color: #dce5ef; padding: 8px; }
+.sidebar-toggle:hover { color: #fff; background-color: #40546c; }
+.el-menu { --el-menu-item-height: 44px; --el-menu-sub-item-height: 38px; }
 
 .el-menu {
   border-right: none;
 }
 
 .el-main {
-  padding: 20px;
+  padding: 12px;
+  min-width: 0;
   background-color: #f0f2f5;
 }
 </style>
