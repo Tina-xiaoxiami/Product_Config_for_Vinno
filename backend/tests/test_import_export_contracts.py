@@ -147,6 +147,56 @@ async def _seed_config(db, *, with_snapshot: bool = False):
     return model, item
 
 
+async def _seed_matrix(db):
+    series = ProductSeries(id=1, name="China")
+    models = [
+        ProductModel(id=1, series_id=1, name="M1", sort_order=0),
+        ProductModel(id=2, series_id=1, name="M2", sort_order=1),
+    ]
+    items = [
+        ConfigItem(id=1, category="Optional Features", row_index=5, rd_name="F1", ipn="100"),
+        ConfigItem(id=2, category="Optional Features", row_index=6, rd_name="F2", ipn="200"),
+    ]
+    db.add_all([series, *models, *items])
+    await db.flush()
+    values = []
+    snapshot_items = []
+    for item in items:
+        item_values = {}
+        for model in models:
+            text = f"{item.ipn}-{model.name}"
+            fields = {
+                "final_config": f"FINAL-{text}",
+                "current_config": text,
+                "selection_config": f"SELECT-{text}",
+                "rd_status": f"STATUS-{text}",
+            }
+            values.append(ConfigValue(item_id=item.id, model_id=model.id, **fields))
+            item_values[str(model.id)] = fields
+        snapshot_items.append(
+            {
+                "id": item.id,
+                "ipn": item.ipn,
+                "category": item.category,
+                "values": item_values,
+            }
+        )
+    db.add_all(values)
+    db.add(
+        ConfigVersion(
+            series_id=1,
+            version_number="1.0.0",
+            snapshot_data=json.dumps(
+                {
+                    "models": [{"id": model.id, "name": model.name} for model in models],
+                    "items": snapshot_items,
+                }
+            ),
+        )
+    )
+    await db.commit()
+
+
 async def _response_bytes(response) -> bytes:
     chunks = []
     async for chunk in response.body_iterator:
@@ -185,6 +235,21 @@ async def test_preview_rejects_uuid_identity_conflict_without_writing(db):
 
 
 @pytest.mark.asyncio
+async def test_preview_of_new_valid_identity_has_no_database_side_effects(db):
+    db.add(ProductSeries(id=1, name="China"))
+    await db.commit()
+
+    result = await preview_import(
+        _upload(_workbook([("China", f"New model//{SOURCE_UUID}")])),
+        db,
+    )
+
+    assert result["series"][0]["models"] == ["New model"]
+    assert await db.scalar(select(func.count()).select_from(ProductModel)) == 0
+    assert await db.scalar(select(func.count()).select_from(ProductModelIdentity)) == 0
+
+
+@pytest.mark.asyncio
 async def test_partial_one_column_export_roundtrip_preserves_hidden_fields(db):
     await _seed_config(db, with_snapshot=True)
     exported = await export_excel(
@@ -218,47 +283,14 @@ async def test_partial_one_column_export_roundtrip_preserves_hidden_fields(db):
 
 
 @pytest.mark.asyncio
-async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models(db):
-    series = ProductSeries(id=1, name="China")
-    models = [
-        ProductModel(id=1, series_id=1, name="M1", sort_order=0),
-        ProductModel(id=2, series_id=1, name="M2", sort_order=1),
-    ]
-    items = [
-        ConfigItem(id=1, category="Optional Features", row_index=5, rd_name="F1", ipn="100"),
-        ConfigItem(id=2, category="Optional Features", row_index=6, rd_name="F2", ipn="200"),
-    ]
-    db.add_all([series, *models, *items])
-    await db.flush()
-    values = []
-    snapshot_items = []
-    for item in items:
-        item_values = {}
-        for model in models:
-            text = f"{item.ipn}-{model.name}"
-            values.append(ConfigValue(item_id=item.id, model_id=model.id, current_config=text))
-            item_values[str(model.id)] = {"current_config": text}
-        snapshot_items.append(
-            {
-                "id": item.id,
-                "ipn": item.ipn,
-                "category": item.category,
-                "values": item_values,
-            }
-        )
-    db.add_all(values)
-    db.add(
-        ConfigVersion(
-            series_id=1,
-            version_number="1.0.0",
-            snapshot_data=json.dumps(
-                {
-                    "models": [{"id": model.id, "name": model.name} for model in models],
-                    "items": snapshot_items,
-                }
-            ),
-        )
-    )
+async def test_patch_roundtrip_does_not_turn_empty_placeholder_into_a_change(db):
+    await _seed_config(db, with_snapshot=True)
+    value = await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1))
+    value.current_config = None
+    version = await db.scalar(select(ConfigVersion))
+    snapshot = json.loads(version.snapshot_data)
+    snapshot["items"][0]["values"]["1"]["current_config"] = None
+    version.snapshot_data = json.dumps(snapshot)
     await db.commit()
 
     exported = await export_excel(
@@ -271,8 +303,36 @@ async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models
         db,
     )
     payload = await _response_bytes(exported)
+    assert openpyxl.load_workbook(io.BytesIO(payload)).active["F6"].value == "-"
+
     await import_excel(
-        UploadFile(filename="filtered.xlsx", file=io.BytesIO(payload)),
+        UploadFile(filename="empty-roundtrip.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    await db.refresh(value)
+    assert value.current_config is None
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+
+
+@pytest.mark.asyncio
+async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models(db):
+    await _seed_matrix(db)
+
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+        ),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    exported_workbook = openpyxl.load_workbook(io.BytesIO(payload))
+    assert exported_workbook["__VINNO_CONFIG_META__"].sheet_state == "veryHidden"
+    await import_excel(
+        UploadFile(filename="renamed-by-user.xlsx", file=io.BytesIO(payload)),
         series_name=None,
         db=db,
     )
@@ -286,6 +346,37 @@ async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models
         (1, 2, "100-M2"),
         (2, 1, "200-M1"),
         (2, 2, "200-M2"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata_change", ["remove", "unsupported-version"])
+async def test_external_or_unsupported_metadata_workbook_keeps_full_sync_semantics(
+    db,
+    metadata_change,
+):
+    await _seed_matrix(db)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    if metadata_change == "remove":
+        del workbook["__VINNO_CONFIG_META__"]
+    else:
+        metadata = workbook["__VINNO_CONFIG_META__"]
+        version_row = next(
+            row
+            for row in range(1, metadata.max_row + 1)
+            if metadata.cell(row, 1).value == "version"
+        )
+        metadata.cell(version_row, 2, "999")
+
+    await import_excel(_upload(workbook, "external.xlsx"), series_name=None, db=db)
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
+        ("delete", 2, 1)
     ]
 
 
