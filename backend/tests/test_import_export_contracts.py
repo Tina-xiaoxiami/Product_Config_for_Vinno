@@ -526,6 +526,47 @@ async def test_patch_roundtrip_reuses_exported_item_without_ipn(db):
 
 
 @pytest.mark.asyncio
+async def test_no_ipn_patch_roundtrip_uses_published_snapshot_baseline(db):
+    await _seed_config(db, with_snapshot=True)
+    item = await db.get(ConfigItem, 1)
+    item.ipn = None
+    version = await db.scalar(select(ConfigVersion))
+    snapshot = json.loads(version.snapshot_data)
+    snapshot["items"][0].update(
+        {
+            "ipn": None,
+            "row_index": 5,
+            "rd_name": "Feature",
+            "v_code": "V1",
+            "zh_desc": "功能",
+            "en_desc": "Feature",
+        }
+    )
+    version.snapshot_data = json.dumps(snapshot)
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+        ),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="no-ipn-baseline.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+    value = await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1))
+    assert value.current_config == "CURRENT"
+
+
+@pytest.mark.asyncio
 async def test_patch_rejects_recycled_item_id_metadata(db):
     await _seed_config(db)
     item = await db.get(ConfigItem, 1)
@@ -556,6 +597,46 @@ async def test_patch_rejects_recycled_item_id_metadata(db):
 
 
 @pytest.mark.asyncio
+async def test_patch_rejects_rows_moved_away_from_their_identity_metadata(db):
+    await _seed_config(db)
+    first = await db.get(ConfigItem, 1)
+    first.ipn = None
+    second = ConfigItem(
+        id=2,
+        category="Optional Features",
+        row_index=6,
+        rd_name="Second",
+        v_code="V2",
+        ipn=None,
+        zh_desc="第二项",
+        en_desc="Second",
+    )
+    db.add(second)
+    await db.flush()
+    db.add(ConfigValue(item_id=2, model_id=1, current_config="SECOND"))
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1,2", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    worksheet = workbook.active
+    first_row = [worksheet.cell(6, column).value for column in range(1, 10)]
+    second_row = [worksheet.cell(7, column).value for column in range(1, 10)]
+    for column, value in enumerate(second_row, 1):
+        worksheet.cell(6, column, value)
+    for column, value in enumerate(first_row, 1):
+        worksheet.cell(7, column, value)
+
+    with pytest.raises(HTTPException, match="配置项身份") as error:
+        await import_excel(_upload(workbook, "moved-rows.xlsx"), series_name=None, db=db)
+
+    assert error.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 2
+
+
+@pytest.mark.asyncio
 async def test_patch_roundtrip_preserves_database_row_and_model_span(db):
     model, item = await _seed_config(db, with_snapshot=True)
     item.row_index = 100
@@ -583,6 +664,23 @@ async def test_patch_roundtrip_preserves_database_row_and_model_span(db):
     await db.refresh(model)
     assert item.row_index == 100
     assert (model.column_start, model.column_end) == (20, 23)
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_model_outside_declared_export_scope(db):
+    await _seed_config(db)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    workbook.active["F2"] = f"Injected//{OTHER_UUID}"
+
+    with pytest.raises(HTTPException, match="机型范围") as error:
+        await import_excel(_upload(workbook, "changed-model.xlsx"), series_name=None, db=db)
+
+    assert error.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ProductModel)) == 1
 
 
 @pytest.mark.asyncio
@@ -672,6 +770,113 @@ async def test_reimport_converts_delete_back_to_update_without_stale_draft(db):
 
 
 @pytest.mark.asyncio
+async def test_reimport_removes_stale_create_when_pair_returns_to_empty(db):
+    await _seed_config(db, with_snapshot=True)
+    item = ConfigItem(
+        id=2,
+        category="Optional Features",
+        row_index=6,
+        rd_name="New pair",
+        ipn="200",
+    )
+    db.add(item)
+    await db.flush()
+    db.add(
+        ConfigValue(
+            item_id=2,
+            model_id=1,
+            final_config="NEW",
+            current_config="NEW",
+            selection_config="NEW",
+            rd_status="NEW",
+        )
+    )
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="2", model_ids="1"),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="new-pair.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
+        ("create", 2, 1)
+    ]
+
+    workbook = openpyxl.load_workbook(io.BytesIO(payload))
+    for column in range(6, 10):
+        workbook.active.cell(6, column, "-")
+    await import_excel(_upload(workbook, "empty-pair.xlsx"), series_name=None, db=db)
+
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_patch_does_not_remove_create_draft_for_hidden_values(db):
+    await _seed_config(db, with_snapshot=True)
+    item = ConfigItem(
+        id=2,
+        category="Optional Features",
+        row_index=6,
+        rd_name="New pair",
+        ipn="200",
+    )
+    db.add(item)
+    await db.flush()
+    db.add(
+        ConfigValue(
+            item_id=2,
+            model_id=1,
+            final_config="HIDDEN",
+            current_config=None,
+            selection_config=None,
+            rd_status=None,
+        )
+    )
+    await db.commit()
+
+    full_export = await export_excel(
+        ExportRequest(series_id=1, item_ids="2", model_ids="1"),
+        db,
+    )
+    await import_excel(
+        UploadFile(
+            filename="create-pair.xlsx",
+            file=io.BytesIO(await _response_bytes(full_export)),
+        ),
+        series_name=None,
+        db=db,
+    )
+    partial_export = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="2",
+            model_ids="1",
+            visible_fields="current_config",
+        ),
+        db,
+    )
+    await import_excel(
+        UploadFile(
+            filename="partial-create-pair.xlsx",
+            file=io.BytesIO(await _response_bytes(partial_export)),
+        ),
+        series_name=None,
+        db=db,
+    )
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
+        ("create", 2, 1)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_draft_export_keeps_truthful_cells_and_excludes_deleted_rows(db):
     await _seed_config(db, with_snapshot=True)
     value = await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1))
@@ -726,3 +931,50 @@ async def test_draft_export_keeps_truthful_cells_and_excludes_deleted_rows(db):
         if metadata.cell(row, 1).value == "item_ids"
     )
     assert metadata.cell(item_ids_row, 2).value in (None, "")
+
+
+@pytest.mark.asyncio
+async def test_mixed_deleted_pair_roundtrip_preserves_delete_draft_and_working_value(db):
+    await _seed_matrix(db)
+    batch = DraftBatch(id="mixed-delete", series_id=1, status="draft")
+    db.add(batch)
+    db.add(
+        ConfigDraft(
+            series_id=1,
+            batch_id=batch.id,
+            change_type="delete",
+            item_id=1,
+            model_id=1,
+        )
+    )
+    await db.commit()
+    before = await db.scalar(
+        select(ConfigValue).where(
+            ConfigValue.item_id == 1,
+            ConfigValue.model_id == 1,
+        )
+    )
+    before_fields = {field: getattr(before, field) for field in CONFIG_FIELDS}
+
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1,2",
+            deleted_items=json.dumps({"1_1": before_fields}),
+        ),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="mixed-delete.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
+        ("delete", 1, 1)
+    ]
+    await db.refresh(before)
+    assert {field: getattr(before, field) for field in CONFIG_FIELDS} == before_fields
