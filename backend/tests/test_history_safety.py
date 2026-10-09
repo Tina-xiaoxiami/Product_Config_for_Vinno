@@ -344,3 +344,17 @@ async def test_rollback_stores_restored_snapshot_with_canonical_ids_and_preserve
             "rd_status": None,
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_restore_rejects_recycled_no_ipn_id_with_conflicting_feature_identity(db):
+    china, *_ = await seed_models(db)
+    unrelated = ConfigItem(id=1, category='Optional', row_index=100, rd_name='Unrelated feature', v_code='VNEW')
+    db.add(unrelated)
+    await db.flush()
+    db.add(ConfigValue(item_id=1, model_id=china.id, current_config='keep'))
+    await db.flush()
+    snapshot = {'models': [{'id': china.id, 'name': china.name}], 'items': [{'id': 1, 'category': 'Optional', 'row_index': 5, 'rd_name': 'Old feature', 'v_code': 'VOLD', 'ipn': None, 'values': {str(china.id): {'current_config': 'X'}}}]}
+    with pytest.raises(ValueError, match='身份|冲突|无法确认'):
+        await restore_series_snapshot(db, 1, snapshot)
+    assert (await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1, ConfigValue.model_id == china.id))).current_config == 'keep'
