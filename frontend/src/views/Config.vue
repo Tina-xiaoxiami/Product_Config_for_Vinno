@@ -1,6 +1,6 @@
 <template>
-  <el-config-provider :size="compactView ? 'small' : 'default'">
-  <div ref="configPageRef" class="config-page" :class="{ 'compact-view': compactView }">
+  <el-config-provider size="small">
+  <div ref="configPageRef" class="config-page compact-view">
     <!-- 工具栏 -->
     <el-card class="toolbar-card" shadow="never">
       <div class="toolbar" :inert="applyingModelGroup">
@@ -109,10 +109,6 @@
             @keyup.enter="onFilterChange"
             @clear="onFilterChange"
           />
-
-          <el-button :type="modelFocusBackup ? 'primary' : 'default'" title="仅保留研发名称和IPN号，把更多空间留给机型配置；再次点击恢复" @click="toggleModelFocus">{{ modelFocusBackup ? '恢复信息列' : '聚焦机型' }}</el-button>
-
-          <el-switch v-model="compactView" active-text="紧凑" aria-label="紧凑显示" @change="saveCompactView" />
 
           <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @hide="applyTempColumns">
             <template #reference>
@@ -373,13 +369,13 @@
         @mouseup="onConfigMouseUp"
         row-key="id"
       >
-        <el-table-column type="selection" :width="compactView ? 40 : 50" fixed />
+        <el-table-column type="selection" width="40" fixed />
 
-        <el-table-column v-if="visibleColumns.rd_name" :fixed="fixedColumns.rd_name ? 'left' : false" prop="rd_name" label="研发名称" :width="compactView ? 220 : 280" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.rd_name" :fixed="fixedColumns.rd_name ? 'left' : false" prop="rd_name" label="研发名称" width="220" show-overflow-tooltip />
         <el-table-column v-if="visibleColumns.v_code" :fixed="fixedColumns.v_code ? 'left' : false" prop="v_code" label="V代码" width="100" show-overflow-tooltip />
         <el-table-column v-if="visibleColumns.ipn" :fixed="fixedColumns.ipn ? 'left' : false" prop="ipn" label="IPN号" width="120" show-overflow-tooltip />
-        <el-table-column v-if="visibleColumns.zh_desc" :fixed="fixedColumns.zh_desc ? 'left' : false" prop="zh_desc" label="中文描述" :width="compactView ? 160 : 200" show-overflow-tooltip />
-        <el-table-column v-if="visibleColumns.en_desc" :fixed="fixedColumns.en_desc ? 'left' : false" prop="en_desc" label="英文描述" :width="compactView ? 160 : 200" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.zh_desc" :fixed="fixedColumns.zh_desc ? 'left' : false" prop="zh_desc" label="中文描述" width="160" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.en_desc" :fixed="fixedColumns.en_desc ? 'left' : false" prop="en_desc" label="英文描述" width="160" show-overflow-tooltip />
 
         <template v-for="group in groupedSelectedModels" :key="group.seriesId">
           <el-table-column :label="group.seriesName">
@@ -1044,11 +1040,6 @@ import {
 
 const tableRef = ref(null)
 const configPageRef = ref(null)
-const compactView = ref(true)
-try { compactView.value = localStorage.getItem('config_compact_view') !== 'false' } catch (error) { console.warn('读取显示设置失败', error) }
-const saveCompactView = () => {
-  try { localStorage.setItem('config_compact_view', String(compactView.value)) } catch { ElMessage.warning('显示已切换，但浏览器未能保存设置') }
-}
 let configResizeObserver
 
 // 数据
@@ -1533,20 +1524,6 @@ const defaultFixedColumns = {
   ipn: false,
   zh_desc: false,
   en_desc: false
-}
-
-const modelFocusBackup = ref(null)
-const toggleModelFocus = () => {
-  if (modelFocusBackup.value) {
-    Object.assign(visibleColumns, modelFocusBackup.value.visible)
-    Object.assign(fixedColumns, modelFocusBackup.value.fixed)
-    modelFocusBackup.value = null
-  } else {
-    modelFocusBackup.value = { visible: { ...visibleColumns }, fixed: { ...fixedColumns } }
-    Object.assign(visibleColumns, { rd_name: true, ipn: true, v_code: false, zh_desc: false, en_desc: false })
-    Object.assign(fixedColumns, { rd_name: true, ipn: false, v_code: false, zh_desc: false, en_desc: false })
-  }
-  nextTick(calculateTableHeight)
 }
 
 // 从 localStorage 加载设置
