@@ -2750,8 +2750,8 @@ const finishEdit = async (row, modelId, field, newValue) => {
   // 检查值是否真正变化
   if (!isValueChanged(oldValue, newValue)) {
     // 值改回原值，删除草稿
-    if (draftChanges.value.has(key)) {
-      await removeDraftChange(row.id, modelId, field, key)
+    if (draftChanges.value.has(key) || hasPendingDraftCellOperation(row, modelId, field)) {
+      await removeDraftChange(row, modelId, field, key)
     }
     return
   }
@@ -2759,87 +2759,163 @@ const finishEdit = async (row, modelId, field, newValue) => {
   await handleCellChange(row, modelId, field, newValue, oldValue)
 }
 
-const restoreWorkingCell = (rowId, modelId, field) => {
-  const key = `${rowId}_${modelId}_${field}`
-  const fallback = originalDataMap.value.get(rowId)?.model_values?.[modelId]?.[field]
-  const value = draftWorkingValue(draftChanges.value.get(key), fallback)
-  const row = tableData.value.find(item => item.id === rowId)
-  if (row?.model_values?.[modelId]) row.model_values[modelId][field] = value
+// 同一单元格的保存和撤销必须按用户操作顺序到达后端。
+const draftCellOperations = new Map()
+const draftRowOperationIds = new WeakMap()
+let nextDraftRowOperationId = 1
+
+const getDraftCellOperationKey = (row, modelId, field) => {
+  if (!draftRowOperationIds.has(row)) draftRowOperationIds.set(row, nextDraftRowOperationId++)
+  return `${draftRowOperationIds.get(row)}_${modelId}_${field}`
+}
+
+const hasPendingDraftCellOperation = (row, modelId, field) => {
+  const state = draftCellOperations.get(getDraftCellOperationKey(row, modelId, field))
+  return Boolean(state?.pending)
+}
+
+const enqueueDraftCellOperation = (context, operation) => {
+  let state = draftCellOperations.get(context.operationKey)
+  if (!state) {
+    state = {
+      tail: Promise.resolve(),
+      generation: 0,
+      pending: 0,
+      serverHasDraft: draftChanges.value.has(context.key)
+    }
+    draftCellOperations.set(context.operationKey, state)
+  }
+
+  const generation = ++state.generation
+  state.pending++
+  const isLatest = () => draftCellOperations.get(context.operationKey) === state && state.generation === generation
+  const result = state.tail.then(() => operation(isLatest, state))
+  state.tail = result.catch(() => undefined)
+  return result.finally(() => {
+    state.pending--
+    if (state.pending === 0 && draftCellOperations.get(context.operationKey) === state) {
+      draftCellOperations.delete(context.operationKey)
+    }
+  })
+}
+
+const captureDraftCellContext = (row, modelId, field, key) => {
+  const seriesId = findSeriesIdByModelId(modelId)
+  return {
+    row,
+    modelId,
+    field,
+    key,
+    seriesId,
+    batchId: seriesId ? draftBatchMap.value.get(seriesId) : undefined,
+    originalRow: originalDataMap.value.get(row.id),
+    operationKey: getDraftCellOperationKey(row, modelId, field)
+  }
+}
+
+const isDraftCellContextCurrent = (context) => {
+  if (!tableData.value.includes(context.row)) return false
+  if (context.seriesId && findSeriesIdByModelId(context.modelId) !== context.seriesId) return false
+  if (context.batchId !== undefined && draftBatchMap.value.get(context.seriesId) !== context.batchId) return false
+  return true
+}
+
+const restoreWorkingCell = (context, isLatest = () => true) => {
+  if (!isLatest() || !isDraftCellContextCurrent(context)) return
+  const fallback = context.originalRow?.model_values?.[context.modelId]?.[context.field]
+  const value = draftWorkingValue(draftChanges.value.get(context.key), fallback)
+  if (context.row.model_values?.[context.modelId]) {
+    context.row.model_values[context.modelId][context.field] = value
+  }
 }
 
 // 删除草稿变更
-const removeDraftChange = async (rowId, modelId, field, key) => {
-  const seriesId = findSeriesIdByModelId(modelId)
-  if (!seriesId || !draftBatchMap.value.has(seriesId)) {
-    restoreWorkingCell(rowId, modelId, field)
+const removeDraftChange = (row, modelId, field, key) => {
+  const context = captureDraftCellContext(row, modelId, field, key)
+  if (!context.seriesId || context.batchId === undefined) {
+    restoreWorkingCell(context)
     ElMessage.error('草稿批次未准备好，请重新加载后编辑')
-    return
+    return Promise.resolve(false)
   }
 
-  const batchId = draftBatchMap.value.get(seriesId)
-  try {
+  return enqueueDraftCellOperation(context, async (isLatest, state) => {
     const change = draftChanges.value.get(key)
-    await deleteDraftByKey(batchId, rowId, modelId, field)
-    for (const rows of [tableData.value, originalData.value]) {
-      const row = rows.find(item => item.id === rowId)
-      if (row?.model_values?.[modelId]) row.model_values[modelId][field] = change?.oldValue
+    if (!state.serverHasDraft) {
+      restoreWorkingCell(context, isLatest)
+      return true
     }
-    draftChanges.value.delete(key)
-    Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
-  } catch (error) {
-    restoreWorkingCell(rowId, modelId, field)
-    console.error('删除草稿失败:', error)
-    ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
-  }
+
+    try {
+      await deleteDraftByKey(context.batchId, row.id, modelId, field)
+      state.serverHasDraft = false
+      if (isDraftCellContextCurrent(context)) {
+        const baselineValue = draftBaseline(change, context.originalRow?.model_values?.[modelId]?.[field])
+        if (context.originalRow?.model_values?.[modelId]) {
+          context.originalRow.model_values[modelId][field] = baselineValue
+        }
+        draftChanges.value.delete(key)
+        Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
+        if (isLatest() && row.model_values?.[modelId]) row.model_values[modelId][field] = baselineValue
+      }
+      return true
+    } catch (error) {
+      restoreWorkingCell(context, isLatest)
+      console.error('删除草稿失败:', error)
+      if (isLatest()) ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
+      return false
+    }
+  })
 }
 
 // 单元格变更
-const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
-  const seriesId = findSeriesIdByModelId(modelId)
-  if (!seriesId || !draftBatchMap.value.has(seriesId)) {
-    restoreWorkingCell(row.id, modelId, field)
-    ElMessage.error('草稿批次未准备好，请重新加载后编辑')
-    return false
-  }
-
-  const batchId = draftBatchMap.value.get(seriesId)
+const handleCellChange = (row, modelId, field, newValue, oldValue) => {
   const key = `${row.id}_${modelId}_${field}`
-  oldValue = draftBaseline(draftChanges.value.get(key), oldValue !== undefined
-    ? oldValue
-    : originalDataMap.value.get(row.id)?.model_values?.[modelId]?.[field])
-
-  try {
-    const isValueEmpty = (v) => !v || v === '-' || v === 'N/A' || v === '未定义' || v === ''
-    const changeType = isValueEmpty(oldValue) ? 'create' : 'update'
-
-    const res = await createDraft({
-      series_id: seriesId,
-      batch_id: batchId,
-      change_type: changeType,
-      item_id: row.id,
-      model_id: modelId,
-      field_name: field,
-      new_value: newValue,
-      old_value: oldValue
-    })
-
-    // 记录变更用于UI高亮
-    const previousType = draftChanges.value.get(key)?.changeType
-    draftChanges.value.set(key, {
-      oldValue,
-      newValue,
-      draftId: res.draft_id,
-      changeType
-    })
-
-    Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
-    return true
-  } catch (error) {
-    restoreWorkingCell(row.id, modelId, field)
-    console.error('保存草稿失败:', error)
-    ElMessage.error('保存失败: ' + (error.response?.data?.detail || '请重试'))
-    return false
+  const context = captureDraftCellContext(row, modelId, field, key)
+  if (!context.seriesId || context.batchId === undefined) {
+    restoreWorkingCell(context)
+    ElMessage.error('草稿批次未准备好，请重新加载后编辑')
+    return Promise.resolve(false)
   }
+
+  return enqueueDraftCellOperation(context, async (isLatest, state) => {
+    const originalValue = context.originalRow?.model_values?.[modelId]?.[field]
+    oldValue = draftBaseline(draftChanges.value.get(key), originalValue !== undefined ? originalValue : oldValue)
+
+    try {
+      const isValueEmpty = (v) => !v || v === '-' || v === 'N/A' || v === '未定义' || v === ''
+      const changeType = isValueEmpty(oldValue) ? 'create' : 'update'
+
+      const res = await createDraft({
+        series_id: context.seriesId,
+        batch_id: context.batchId,
+        change_type: changeType,
+        item_id: row.id,
+        model_id: modelId,
+        field_name: field,
+        new_value: newValue,
+        old_value: oldValue
+      })
+
+      state.serverHasDraft = true
+      if (isDraftCellContextCurrent(context)) {
+        // 记录变更用于UI高亮
+        const previousType = draftChanges.value.get(key)?.changeType
+        draftChanges.value.set(key, {
+          oldValue,
+          newValue,
+          draftId: res.draft_id,
+          changeType
+        })
+        Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
+      }
+      return true
+    } catch (error) {
+      restoreWorkingCell(context, isLatest)
+      console.error('保存草稿失败:', error)
+      if (isLatest()) ElMessage.error('保存失败: ' + (error.response?.data?.detail || '请重试'))
+      return false
+    }
+  })
 }
 
 // 多文件上传处理（自定义 http-request）
