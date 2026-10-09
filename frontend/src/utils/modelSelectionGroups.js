@@ -5,7 +5,7 @@ export function buildModelSelectionGroup(name, selectedIds, models, id = crypto.
   if (!trimmed || trimmed.length > 60) throw new Error('分组名称须为 1–60 个字符')
   const selected = [...new Set(selectedIds)].map(key => models.get(key)).filter(Boolean)
   if (!selected.length) throw new Error('请先选择至少一个机型')
-  return { id, name: trimmed, models: selected.map(({ id, name, seriesId, seriesName }) => ({ id, name, seriesId, seriesName })) }
+  return { id, name: trimmed, models: selected.map(({ id, name, seriesId, seriesName, source_uuid }) => ({ id, name, seriesId, seriesName, ...(source_uuid ? { source_uuid } : {}) })) }
 }
 
 export function resolveGroupSeries(group, series) {
@@ -24,7 +24,7 @@ export function resolveGroupModels(group, models) {
   const ids = []
   let missing = 0
   for (const saved of group.models) {
-    const matches = [...models.values()].filter(model => model.seriesName === saved.seriesName && model.name === saved.name)
+    const matches = [...models.values()].filter(model => model.seriesName === saved.seriesName && (saved.source_uuid ? model.source_uuid === saved.source_uuid : (model.name === saved.name || model.aliases?.includes(saved.name))))
     if (matches.length === 1) ids.push(matches[0].id)
     else missing++
   }

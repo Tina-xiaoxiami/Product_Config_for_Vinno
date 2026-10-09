@@ -42,6 +42,8 @@ class ProductModelResponse(ProductModelBase):
     series_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    source_uuid: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
     registration_packages: List[ProductModelRegistrationPackage] = Field(
         default_factory=list
     )

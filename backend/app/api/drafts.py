@@ -19,6 +19,8 @@ from app.schemas.draft import (
 )
 from app.utils import generate_next_version
 
+from app.services.model_identity import active_model_filter, normalize_snapshot
+
 router = APIRouter()
 
 
@@ -396,7 +398,7 @@ async def submit_draft_batch(
     if delete_drafts:
         delete_item_ids = [d.item_id for d in delete_drafts]
         models_in_series = await db.execute(
-            select(ProductModel).where(ProductModel.series_id == batch.series_id)
+            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
         )
         series_model_ids = [m.id for m in models_in_series.scalars().all()]
         if series_model_ids:
@@ -443,7 +445,7 @@ async def submit_draft_batch(
 
     # 获取当前数据创建快照
     models_result = await db.execute(
-        select(ProductModel).where(ProductModel.series_id == batch.series_id)
+        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
     )
     models = models_result.scalars().all()
     model_ids = [m.id for m in models]
@@ -570,7 +572,7 @@ async def _process_single_batch_submit(
     if delete_drafts:
         delete_item_ids = [d.item_id for d in delete_drafts]
         models_in_series = await db.execute(
-            select(ProductModel).where(ProductModel.series_id == batch.series_id)
+            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
         )
         series_model_ids = [m.id for m in models_in_series.scalars().all()]
         if series_model_ids:
@@ -617,7 +619,7 @@ async def _process_single_batch_submit(
 
     # 获取当前数据创建快照
     models_result = await db.execute(
-        select(ProductModel).where(ProductModel.series_id == batch.series_id)
+        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
     )
     models = models_result.scalars().all()
     model_ids = [m.id for m in models]
@@ -714,7 +716,7 @@ async def batch_discard_drafts(
 
             # 查询该系列下所有机型
             models_result = await db.execute(
-                select(ProductModel).where(ProductModel.series_id == series_id)
+                select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
             )
             models = models_result.scalars().all()
             series_model_ids = [m.id for m in models]
@@ -729,7 +731,7 @@ async def batch_discard_drafts(
             last_version = last_version_result.scalar_one_or_none()
 
             if last_version and last_version.snapshot_data:
-                snapshot = json.loads(last_version.snapshot_data)
+                snapshot = await normalize_snapshot(db, series_id, json.loads(last_version.snapshot_data))
 
                 if series_model_ids:
                     vals_to_del = await db.execute(
@@ -914,7 +916,7 @@ async def discard_draft_batch(
 
         # 查询该系列下所有机型
         models_result = await db.execute(
-            select(ProductModel).where(ProductModel.series_id == series_id)
+            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
         )
         models = models_result.scalars().all()
         series_model_ids = [m.id for m in models]
@@ -937,7 +939,7 @@ async def discard_draft_batch(
 
         if last_version and last_version.snapshot_data:
             # 有快照：恢复到最近一次提交版本的状态
-            snapshot = json.loads(last_version.snapshot_data)
+            snapshot = await normalize_snapshot(db, series_id, json.loads(last_version.snapshot_data))
 
             # 删除该系列所有机型的 ConfigValue
             if series_model_ids:

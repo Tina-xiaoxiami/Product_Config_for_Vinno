@@ -18,6 +18,8 @@ from app.schemas.version import (
 )
 from app.utils import generate_next_version
 
+from app.services.model_identity import active_model_filter, normalize_snapshot
+
 router = APIRouter()
 
 
@@ -260,7 +262,7 @@ async def create_version(
 
     # 获取当前数据快照
     models_result = await db.execute(
-        select(ProductModel).where(ProductModel.series_id == data.series_id)
+        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == data.series_id)
     )
     models = models_result.scalars().all()
     model_ids = [m.id for m in models]
@@ -288,7 +290,7 @@ async def create_version(
     # 如果已有版本，对比数据是否有变化
     if last_version and last_version.snapshot_data:
         try:
-            prev_snapshot = json.loads(last_version.snapshot_data)
+            prev_snapshot = await normalize_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
             prev_value_map = {}
             for item in prev_snapshot.get("items", []):
                 iid = item["id"]
@@ -360,8 +362,8 @@ async def compare_versions(
         raise HTTPException(status_code=404, detail="版本不存在")
 
     # 解析快照
-    snapshot1 = json.loads(version1.snapshot_data)
-    snapshot2 = json.loads(version2.snapshot_data)
+    snapshot1 = await normalize_snapshot(db, version1.series_id, json.loads(version1.snapshot_data))
+    snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
 
     # 构建索引
     def build_index(snapshot):
@@ -519,11 +521,11 @@ async def rollback_version(
         raise HTTPException(status_code=404, detail="目标版本不存在")
 
     # 解析目标版本快照
-    snapshot = json.loads(target_version.snapshot_data)
+    snapshot = await normalize_snapshot(db, target_version.series_id, json.loads(target_version.snapshot_data))
 
     # 获取当前型号
     models_result = await db.execute(
-        select(ProductModel).where(ProductModel.series_id == target_version.series_id)
+        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == target_version.series_id)
     )
     current_models = {m.id: m for m in models_result.scalars().all()}
 
@@ -630,8 +632,8 @@ async def export_version_compare(
         raise HTTPException(status_code=404, detail="版本不存在")
 
     # 解析快照
-    snapshot1 = json.loads(version1.snapshot_data)
-    snapshot2 = json.loads(version2.snapshot_data)
+    snapshot1 = await normalize_snapshot(db, version1.series_id, json.loads(version1.snapshot_data))
+    snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
 
     # 构建索引
     def build_index(snapshot):
