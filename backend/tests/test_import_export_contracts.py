@@ -484,3 +484,16 @@ async def test_duplicate_cleanup_is_read_only_and_reports_candidates(db):
             await db.execute(select(ConfigValue).order_by(ConfigValue.model_id))
         ).scalars()
     ] == [(10, "DOMESTIC"), (20, "OVERSEAS")]
+
+
+@pytest.mark.asyncio
+async def test_export_accepts_chinese_series_names_in_download_headers(db):
+    from urllib.parse import unquote
+    await _seed_config(db)
+    series = await db.get(ProductSeries, 1)
+    series.name = '回归测试-国内'
+    await db.commit()
+    response = await export_excel(ExportRequest(series_id=1), db)
+    header = response.headers['content-disposition']
+    header.encode('ascii')
+    assert '回归测试-国内' in unquote(header)
