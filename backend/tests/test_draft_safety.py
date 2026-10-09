@@ -761,3 +761,160 @@ async def test_discard_without_published_version_restores_values_only_and_preser
     assert value is None
     assert batch.status == "discarded"
     assert (batch.total_count, batch.create_count, batch.update_count, batch.delete_count) == (0, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True])
+@pytest.mark.parametrize("old_status", ["submitted", "discarded"])
+async def test_discard_rejects_closed_batch_without_overwriting_newer_working_values(
+    tmp_path, bulk, old_status
+):
+    client, session_factory, engine = await _draft_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        session.add_all(
+            [
+                ConfigVersion(
+                    series_id=1,
+                    version_number="1.0.0",
+                    snapshot_data=json.dumps(_snapshot()),
+                    row_count=2,
+                ),
+                DraftBatch(id="old-batch", series_id=1, status=old_status),
+                DraftBatch(id="active-batch", series_id=1, status="draft", total_count=1, update_count=1),
+                ConfigValue(item_id=100, model_id=10, current_config="newer working value"),
+                ConfigDraft(
+                    series_id=1,
+                    batch_id="active-batch",
+                    change_type="update",
+                    item_id=100,
+                    model_id=10,
+                    field_name="current_config",
+                    old_value="baseline-cpu",
+                    new_value="newer working value",
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with client:
+        if bulk:
+            response = await client.post(
+                "/api/drafts/batch/discard", json={"batch_ids": ["old-batch"]}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["discarded_count"] == 0
+            assert response.json()["results"][0]["success"] is False
+        else:
+            response = await client.delete("/api/drafts/batch/old-batch")
+            assert response.status_code == 400, response.text
+
+    async with session_factory() as session:
+        value = await session.scalar(
+            select(ConfigValue).where(ConfigValue.item_id == 100, ConfigValue.model_id == 10)
+        )
+        active_draft_count = await session.scalar(
+            select(func.count()).select_from(ConfigDraft).where(
+                ConfigDraft.batch_id == "active-batch"
+            )
+        )
+        old_batch = await session.get(DraftBatch, "old-batch")
+    await engine.dispose()
+
+    assert value.current_config == "newer working value"
+    assert active_draft_count == 1
+    assert old_batch.status == old_status
+
+
+@pytest.mark.asyncio
+async def test_partial_snapshot_matches_no_ipn_item_by_stable_identity_not_reused_id(tmp_path):
+    client, session_factory, engine = await _draft_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        current_item = await session.get(ConfigItem, 100)
+        current_item.ipn = None
+        current_item.rd_name = "New identity"
+        current_item.v_code = "VNEW"
+        snapshot = {
+            "models": [{"id": 10, "name": "V10"}],
+            "items": [
+                {
+                    "id": 100,
+                    "category": "Main Unit",
+                    "row_index": 90,
+                    "rd_name": "Old unrelated identity",
+                    "v_code": "VOLD",
+                    "ipn": None,
+                    "values": {"10": {"current_config": "WRONG BASELINE"}},
+                },
+                {
+                    "id": 999,
+                    "category": "Main Unit",
+                    "row_index": 1,
+                    "rd_name": "New identity",
+                    "v_code": "VNEW",
+                    "ipn": None,
+                    "values": {"10": {"current_config": "RIGHT BASELINE"}},
+                },
+                {
+                    "id": 101,
+                    "category": "Main Unit",
+                    "row_index": 2,
+                    "rd_name": "GPU",
+                    "v_code": None,
+                    "ipn": "IPN-101",
+                    "values": {"10": {"current_config": "baseline-gpu"}},
+                },
+            ],
+        }
+        session.add_all(
+            [
+                ConfigVersion(
+                    series_id=1,
+                    version_number="1.0.0",
+                    snapshot_data=json.dumps(snapshot),
+                    row_count=3,
+                ),
+                DraftBatch(id="batch-1", series_id=1, status="draft", total_count=2, update_count=2),
+                ConfigValue(item_id=100, model_id=10, current_config="working-new"),
+                ConfigValue(item_id=101, model_id=10, current_config="working-gpu"),
+                ConfigDraft(
+                    series_id=1,
+                    batch_id="batch-1",
+                    change_type="update",
+                    item_id=100,
+                    model_id=10,
+                    field_name="current_config",
+                    old_value="RIGHT BASELINE",
+                    new_value="working-new",
+                ),
+                ConfigDraft(
+                    series_id=1,
+                    batch_id="batch-1",
+                    change_type="update",
+                    item_id=101,
+                    model_id=10,
+                    field_name="current_config",
+                    old_value="baseline-gpu",
+                    new_value="working-gpu",
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/drafts/batch/batch-1/submit",
+            json={"item_ids": [101], "version_number": "1.1.0"},
+        )
+    assert response.status_code == 200, response.text
+
+    async with session_factory() as session:
+        version = await session.scalar(
+            select(ConfigVersion).where(ConfigVersion.version_number == "1.1.0")
+        )
+        published = json.loads(version.snapshot_data)
+        item = next(entry for entry in published["items"] if entry["v_code"] == "VNEW")
+    await engine.dispose()
+
+    assert item["values"]["10"]["current_config"] == "RIGHT BASELINE"
