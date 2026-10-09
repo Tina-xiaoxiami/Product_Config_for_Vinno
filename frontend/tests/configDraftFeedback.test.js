@@ -156,6 +156,7 @@ test('an older failed save cannot roll back a newer successful save', async () =
 
   assert.equal(app.row.model_values[2].final_config, 'new')
   assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'new')
+  assert.deepEqual(app.messages, [])
 })
 
 test('undo queued while the first save is pending deletes the saved draft', async () => {
@@ -197,6 +198,7 @@ test('a failed undo cannot roll back a newer queued save', async () => {
 
   assert.equal(app.row.model_values[2].final_config, 'new')
   assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'new')
+  assert.deepEqual(app.messages, [])
 })
 
 test('a stale save failure does not modify a replacement row with recycled ids', async () => {
