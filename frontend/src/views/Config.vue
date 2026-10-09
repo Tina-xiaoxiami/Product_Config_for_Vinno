@@ -736,7 +736,6 @@
         </div>
       </div>
       <template #footer>
-        <el-checkbox v-model="clearBeforeImport" style="float: left">导入前清除已有数据</el-checkbox>
         <el-button @click="previewDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="confirmImport" :loading="importing">确认导入</el-button>
       </template>
@@ -1023,6 +1022,7 @@
 </template>
 
 <script setup>
+import { draftBaseline, updateDraftStats } from '../utils/configDraftHelpers'
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
@@ -2068,7 +2068,6 @@ const previewDialogVisible = ref(false)
 
 const previewData = ref(null)
 const previewFiles = ref([])  // 支持多文件
-const clearBeforeImport = ref(false)
 const importing = ref(false)
 const importProgress = ref({ current: 0, total: 0 })  // 导入进度
 
@@ -2745,8 +2744,8 @@ const finishEdit = async (row, modelId, field, newValue) => {
 
   // 获取原始值
   const originalRow = originalData.value.find(r => r.id === row.id)
-  const oldValue = originalRow?.model_values?.[modelId]?.[field]
   const key = `${row.id}_${modelId}_${field}`
+  const oldValue = draftBaseline(draftChanges.value.get(key), originalRow?.model_values?.[modelId]?.[field])
 
   // 检查值是否真正变化
   if (!isValueChanged(oldValue, newValue)) {
@@ -2767,13 +2766,17 @@ const removeDraftChange = async (rowId, modelId, field, key) => {
 
   const batchId = draftBatchMap.value.get(seriesId)
   try {
+    const change = draftChanges.value.get(key)
     await deleteDraftByKey(batchId, rowId, modelId, field)
+    for (const rows of [tableData.value, originalData.value]) {
+      const row = rows.find(item => item.id === rowId)
+      if (row?.model_values?.[modelId]) row.model_values[modelId][field] = change?.oldValue
+    }
     draftChanges.value.delete(key)
-    // 本地递减 stats
-    if (draftStats.update > 0) draftStats.update--
-    if (draftStats.total > 0) draftStats.total--
+    Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
   } catch (error) {
     console.error('删除草稿失败:', error)
+    ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
   }
 }
 
@@ -2784,6 +2787,9 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
 
   const batchId = draftBatchMap.value.get(seriesId)
   const key = `${row.id}_${modelId}_${field}`
+  oldValue = draftBaseline(draftChanges.value.get(key), oldValue !== undefined
+    ? oldValue
+    : originalDataMap.value.get(row.id)?.model_values?.[modelId]?.[field])
 
   try {
     const isValueEmpty = (v) => !v || v === '-' || v === 'N/A' || v === '未定义' || v === ''
@@ -2801,7 +2807,7 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
     })
 
     // 记录变更用于UI高亮
-    const isNew = !draftChanges.value.has(key)
+    const previousType = draftChanges.value.get(key)?.changeType
     draftChanges.value.set(key, {
       oldValue,
       newValue,
@@ -2809,14 +2815,7 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
       changeType
     })
 
-    if (isNew) {
-      draftStats.total++
-      if (changeType === 'create') {
-        draftStats.create++
-      } else {
-        draftStats.update++
-      }
-    }
+    Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
   } catch (error) {
     console.error('保存草稿失败:', error)
     ElMessage.error('保存失败')
@@ -2903,7 +2902,7 @@ const confirmImport = async () => {
     formData.append('file', file)
 
     try {
-      const res = await importExcel(formData, { clear_existing: clearBeforeImport.value && i === 0 })
+      const res = await importExcel(formData)
       results.push({ filename: file.name, success: true, message: res.message })
     } catch (error) {
       console.error('导入失败:', error)
@@ -3740,7 +3739,7 @@ const handleBatchDiscardDrafts = async () => {
   for (const seriesId of selectedSeries.value) {
     try {
       const res = await getCurrentDraftBatch(seriesId)
-      if (res.exists) {
+      if (res.exists && res.batch.total_count > 0) {
         const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || `系列 ${seriesId}`
         batchInfo.push({
           seriesId,
