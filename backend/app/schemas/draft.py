@@ -3,7 +3,16 @@
 """
 from datetime import datetime
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List
+
+
+ConfigFieldName = Literal[
+    "current_config",
+    "final_config",
+    "selection_config",
+    "rd_status",
+]
+DraftChangeType = Literal["create", "update", "delete"]
 
 
 class DraftBatchBase(BaseModel):
@@ -38,8 +47,8 @@ class DraftSubmitRequest(BaseModel):
 class ConfigDraftBase(BaseModel):
     item_id: Optional[int] = None
     model_id: Optional[int] = None
-    change_type: str
-    field_name: Optional[str] = None
+    change_type: DraftChangeType
+    field_name: Optional[ConfigFieldName] = None
     new_value: Optional[str] = None
     old_value: Optional[str] = None
 

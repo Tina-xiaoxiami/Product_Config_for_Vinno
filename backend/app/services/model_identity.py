@@ -149,32 +149,52 @@ async def normalize_snapshot(db: AsyncSession, series_id: int, snapshot: dict) -
     result = deepcopy(snapshot)
     records = await identity_records(db, series_id)
     by_uuid = {record.source_uuid: (record, model) for record, model in records}
-    by_id: dict[int, tuple[ProductModelIdentity, ProductModel]] = {}
-    by_name: dict[str, list[tuple[ProductModelIdentity, ProductModel]]] = {}
-    for record, model in records:
-        for model_id in [model.id, *json.loads(record.historical_ids_json)]:
-            if model_id in by_id and by_id[model_id][1].id != model.id:
-                raise ValueError(f"历史机型编号 {model_id} 对应多个身份")
-            by_id[model_id] = (record, model)
-        for name in set([model.name, *json.loads(record.aliases_json)]):
+    by_id: dict[int, list[tuple[ProductModelIdentity | None, ProductModel]]] = {}
+    by_name: dict[str, list[tuple[ProductModelIdentity | None, ProductModel]]] = {}
+    registered_ids = {model.id for _, model in records}
+    candidates = list(records)
+    current_models = (await db.execute(select(ProductModel).where(
+        ProductModel.series_id == series_id, active_model_filter()
+    ))).scalars().all()
+    candidates.extend((None, model) for model in current_models if model.id not in registered_ids)
+    for record, model in candidates:
+        historical_ids = json.loads(record.historical_ids_json) if record else []
+        aliases = json.loads(record.aliases_json) if record else []
+        for model_id in set([model.id, *historical_ids]):
+            by_id.setdefault(model_id, []).append((record, model))
+        for name in set([model.name, *aliases]):
             by_name.setdefault(name, []).append((record, model))
     original_ids = {int(entry["id"]) for entry in result.get("models", [])}
     id_map = {}
     normalized_models = {}
     for entry in result.get("models", []):
         old_id = int(entry["id"])
-        known = by_id.get(old_id) or by_uuid.get(entry.get("source_uuid"))
+        source_uuid = entry.get("source_uuid")
+        name_matches = by_name.get(entry.get("name"), [])
+        # A source UUID survives recycled database IDs. Legacy IDs require a
+        # matching name or recorded alias before they can establish identity.
+        known = by_uuid.get(source_uuid) if source_uuid else None
         if known is None:
-            matches = by_name.get(entry.get("name"), [])
-            if len(matches) > 1:
-                raise ValueError(f"历史机型名称 {entry.get('name')} 对应多个身份")
-            known = matches[0] if matches else None
+            id_matches = [candidate for candidate in by_id.get(old_id, [])
+                          if candidate in name_matches]
+            if len(id_matches) > 1:
+                raise ValueError(f"历史机型编号 {old_id} 对应多个身份")
+            if id_matches:
+                known = id_matches[0]
+            else:
+                if len(name_matches) > 1:
+                    raise ValueError(f"历史机型名称 {entry.get('name')} 对应多个身份")
+                known = name_matches[0] if name_matches else None
         if known:
             identity, model = known
-            if entry.get("source_uuid") and entry["source_uuid"] != identity.source_uuid:
+            if identity and source_uuid and source_uuid != identity.source_uuid:
                 raise ValueError(f"历史机型 {entry.get('name')} 的编号与源身份冲突")
-            canonical = {**entry, "id": model.id, "name": model.name, "source_uuid": identity.source_uuid}
+            canonical = {**entry, "id": model.id, "name": model.name}
+            if identity:
+                canonical["source_uuid"] = identity.source_uuid
         else:
+            if old_id in by_id:
+                raise ValueError(f"历史机型 {entry.get('name')} 的编号身份冲突，无法确认目标机型")
             canonical = entry
         new_id = int(canonical["id"])
         id_map[old_id] = new_id

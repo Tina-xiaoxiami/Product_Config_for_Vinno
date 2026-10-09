@@ -3,14 +3,20 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func
-from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from sqlalchemy import select, func
+from typing import Optional
 import json
-import uuid
 
 from app.database import get_db
-from app.models import ConfigVersion, ProductSeries, ConfigItem, ConfigValue, ProductModel, ChangeLog
+from app.models import (
+    ChangeLog,
+    ConfigDraft,
+    ConfigItem,
+    ConfigVersion,
+    DraftBatch,
+    ProductModel,
+    ProductSeries,
+)
 from app.schemas.version import (
     ConfigVersionCreate, ConfigVersionResponse,
     VersionCompareRequest, VersionCompareResponse, VersionDiffDetail,
@@ -18,9 +24,27 @@ from app.schemas.version import (
 )
 from app.utils import generate_next_version
 
-from app.services.model_identity import active_model_filter, normalize_snapshot
+from app.services.config_history import build_series_snapshot, restore_series_snapshot
+from app.services.model_identity import normalize_snapshot
 
 router = APIRouter()
+
+
+async def _ensure_no_pending_drafts(db: AsyncSession, series_id: int) -> None:
+    pending = await db.scalar(
+        select(ConfigDraft.id)
+        .join(DraftBatch, DraftBatch.id == ConfigDraft.batch_id)
+        .where(
+            ConfigDraft.series_id == series_id,
+            DraftBatch.status == "draft",
+        )
+        .limit(1)
+    )
+    if pending is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="当前系列存在未提交草稿，请先提交或废弃草稿",
+        )
 
 
 @router.get("", response_model=ConfigVersionListResponse)
@@ -241,6 +265,7 @@ async def create_version(
     result = await db.execute(select(ProductSeries).where(ProductSeries.id == data.series_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="产品系列不存在")
+    await _ensure_no_pending_drafts(db, data.series_id)
 
     # 获取最新版本号
     last_version_result = await db.execute(
@@ -260,32 +285,11 @@ async def create_version(
         else:
             version_number = "1.0.0"
 
-    # 获取当前数据快照
-    models_result = await db.execute(
-        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == data.series_id)
-    )
-    models = models_result.scalars().all()
-    model_ids = [m.id for m in models]
-
-    items_result = await db.execute(select(ConfigItem).order_by(ConfigItem.row_index))
-    items = items_result.scalars().all()
-
-    values_result = await db.execute(
-        select(ConfigValue).where(ConfigValue.model_id.in_(model_ids))
-    )
-    values = values_result.scalars().all()
-
-    # 构建快照数据
-    value_map = {}
-    for v in values:
-        if v.item_id not in value_map:
-            value_map[v.item_id] = {}
-        value_map[v.item_id][v.model_id] = {
-            "current_config": v.current_config,
-            "final_config": v.final_config,
-            "selection_config": v.selection_config,
-            "rd_status": v.rd_status
-        }
+    snapshot = await build_series_snapshot(db, data.series_id)
+    value_map = {
+        item["id"]: {int(model_id): values for model_id, values in item["values"].items()}
+        for item in snapshot["items"]
+    }
 
     # 如果已有版本，对比数据是否有变化
     if last_version and last_version.snapshot_data:
@@ -310,24 +314,6 @@ async def create_version(
         except Exception:
             pass  # 快照解析失败则跳过对比
 
-    snapshot = {
-        "models": [{"id": m.id, "name": m.name} for m in models],
-        "items": [
-            {
-                "id": item.id,
-                "category": item.category,
-                "row_index": item.row_index,
-                "rd_name": item.rd_name,
-                "v_code": item.v_code,
-                "ipn": item.ipn,
-                "zh_desc": item.zh_desc,
-                "en_desc": item.en_desc,
-                "values": value_map.get(item.id, {})
-            }
-            for item in items
-        ]
-    }
-
     # 创建版本
     version = ConfigVersion(
         series_id=data.series_id,
@@ -335,7 +321,7 @@ async def create_version(
         version_name=data.version_name,
         description=data.description,
         snapshot_data=json.dumps(snapshot, ensure_ascii=False),
-        row_count=len(items)
+        row_count=len(snapshot["items"])
     )
 
     db.add(version)
@@ -520,64 +506,17 @@ async def rollback_version(
     if not target_version:
         raise HTTPException(status_code=404, detail="目标版本不存在")
 
-    # 解析目标版本快照
-    snapshot = await normalize_snapshot(db, target_version.series_id, json.loads(target_version.snapshot_data))
-
-    # 获取当前型号
-    models_result = await db.execute(
-        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == target_version.series_id)
-    )
-    current_models = {m.id: m for m in models_result.scalars().all()}
-
-    # 清空当前配置数据
-    await db.execute(delete(ConfigValue).where(ConfigValue.model_id.in_(current_models.keys())))
-    await db.execute(delete(ConfigItem))
-
-    # 恢复配置项和配置值
-    model_id_map = {}  # 快照中的model_id -> 当前model_id
-    for model_info in snapshot.get("models", []):
-        # 查找或创建型号
-        model = await db.execute(
-            select(ProductModel).where(
-                ProductModel.series_id == target_version.series_id,
-                ProductModel.name == model_info.get("name")
-            )
+    await _ensure_no_pending_drafts(db, target_version.series_id)
+    try:
+        await restore_series_snapshot(
+            db,
+            target_version.series_id,
+            json.loads(target_version.snapshot_data),
         )
-        existing_model = model.scalar_one_or_none()
-        if existing_model:
-            model_id_map[model_info.get("id")] = existing_model.id
-
-    # 恢复配置项和值
-    new_items = []
-    for item_info in snapshot.get("items", []):
-        item = ConfigItem(
-            category=item_info.get("category"),
-            row_index=item_info.get("row_index"),
-            rd_name=item_info.get("rd_name"),
-            v_code=item_info.get("v_code"),
-            ipn=item_info.get("ipn"),
-            zh_desc=item_info.get("zh_desc"),
-            en_desc=item_info.get("en_desc")
-        )
-        db.add(item)
-        await db.flush()
-        new_items.append((item, item_info))
-
-    # 恢复配置值
-    for item, item_info in new_items:
-        values = item_info.get("values", {})
-        for old_model_id, value_info in values.items():
-            new_model_id = model_id_map.get(int(old_model_id))
-            if new_model_id:
-                value = ConfigValue(
-                    item_id=item.id,
-                    model_id=new_model_id,
-                    current_config=value_info.get("current_config"),
-                    final_config=value_info.get("final_config"),
-                    selection_config=value_info.get("selection_config"),
-                    rd_status=value_info.get("rd_status")
-                )
-                db.add(value)
+        snapshot = await build_series_snapshot(db, target_version.series_id)
+    except ValueError as error:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     # 创建新版本
     last_version = await db.execute(
@@ -595,8 +534,8 @@ async def rollback_version(
         version_number=new_version_number,
         version_name=f"回滚自 {target_version.version_number}",
         description=f"回滚自版本 {target_version.version_number}",
-        snapshot_data=target_version.snapshot_data,
-        row_count=len(new_items)
+        snapshot_data=json.dumps(snapshot, ensure_ascii=False),
+        row_count=len(snapshot["items"])
     )
     db.add(new_version)
 
