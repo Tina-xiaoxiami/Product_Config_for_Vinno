@@ -567,6 +567,67 @@ async def test_no_ipn_patch_roundtrip_uses_published_snapshot_baseline(db):
 
 
 @pytest.mark.asyncio
+async def test_full_import_creates_draft_for_new_no_ipn_pair(db):
+    await _seed_config(db, with_snapshot=True)
+    workbook = _workbook([("China", f"M//{SOURCE_UUID}")])
+    worksheet = workbook.active
+    for column, value in enumerate(
+        ["New no IPN", "V2", None, "新功能", "New feature"],
+        1,
+    ):
+        worksheet.cell(6, column, value)
+    for column, value in enumerate(["NEW", "NEW", "NEW", "NEW"], 6):
+        worksheet.cell(6, column, value)
+
+    await import_excel(_upload(workbook), series_name=None, db=db)
+
+    item = await db.scalar(select(ConfigItem).where(ConfigItem.rd_name == "New no IPN"))
+    drafts = (
+        await db.execute(
+            select(ConfigDraft).where(
+                ConfigDraft.item_id == item.id,
+                ConfigDraft.model_id == 1,
+            )
+        )
+    ).scalars().all()
+    assert [(draft.change_type, draft.field_name) for draft in drafts] == [
+        ("create", None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_full_import_creates_delete_draft_for_omitted_no_ipn_pair(db):
+    await _seed_config(db, with_snapshot=True)
+    item = await db.get(ConfigItem, 1)
+    item.ipn = None
+    version = await db.scalar(select(ConfigVersion))
+    snapshot = json.loads(version.snapshot_data)
+    snapshot["items"][0].update(
+        {
+            "ipn": None,
+            "row_index": 5,
+            "rd_name": "Feature",
+            "v_code": "V1",
+            "zh_desc": "功能",
+            "en_desc": "Feature",
+        }
+    )
+    version.snapshot_data = json.dumps(snapshot)
+    await db.commit()
+
+    workbook = _workbook([("China", f"M//{SOURCE_UUID}")])
+    for row in range(5, workbook.active.max_row + 1):
+        for column in range(1, 10):
+            workbook.active.cell(row, column).value = None
+    await import_excel(_upload(workbook), series_name=None, db=db)
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
+        ("delete", 1, 1)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_patch_rejects_recycled_item_id_metadata(db):
     await _seed_config(db)
     item = await db.get(ConfigItem, 1)
