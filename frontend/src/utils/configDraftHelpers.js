@@ -3,6 +3,10 @@ export function draftBaseline(change, fallback) {
   return change && Object.hasOwn(change, 'oldValue') ? change.oldValue : fallback
 }
 
+export function draftWorkingValue(change, fallback) {
+  return change && Object.hasOwn(change, 'newValue') ? change.newValue : fallback
+}
+
 export function updateDraftStats(stats, previousType, nextType) {
   const result = { ...stats }
   if (previousType) {

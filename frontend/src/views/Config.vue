@@ -1022,7 +1022,7 @@
 </template>
 
 <script setup>
-import { draftBaseline, updateDraftStats } from '../utils/configDraftHelpers'
+import { draftBaseline, draftWorkingValue, updateDraftStats } from '../utils/configDraftHelpers'
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
@@ -2759,10 +2759,22 @@ const finishEdit = async (row, modelId, field, newValue) => {
   await handleCellChange(row, modelId, field, newValue, oldValue)
 }
 
+const restoreWorkingCell = (rowId, modelId, field) => {
+  const key = `${rowId}_${modelId}_${field}`
+  const fallback = originalDataMap.value.get(rowId)?.model_values?.[modelId]?.[field]
+  const value = draftWorkingValue(draftChanges.value.get(key), fallback)
+  const row = tableData.value.find(item => item.id === rowId)
+  if (row?.model_values?.[modelId]) row.model_values[modelId][field] = value
+}
+
 // 删除草稿变更
 const removeDraftChange = async (rowId, modelId, field, key) => {
   const seriesId = findSeriesIdByModelId(modelId)
-  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) {
+    restoreWorkingCell(rowId, modelId, field)
+    ElMessage.error('草稿批次未准备好，请重新加载后编辑')
+    return
+  }
 
   const batchId = draftBatchMap.value.get(seriesId)
   try {
@@ -2775,6 +2787,7 @@ const removeDraftChange = async (rowId, modelId, field, key) => {
     draftChanges.value.delete(key)
     Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
   } catch (error) {
+    restoreWorkingCell(rowId, modelId, field)
     console.error('删除草稿失败:', error)
     ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
   }
@@ -2783,7 +2796,11 @@ const removeDraftChange = async (rowId, modelId, field, key) => {
 // 单元格变更
 const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
   const seriesId = findSeriesIdByModelId(modelId)
-  if (!seriesId || !draftBatchMap.value.has(seriesId)) return
+  if (!seriesId || !draftBatchMap.value.has(seriesId)) {
+    restoreWorkingCell(row.id, modelId, field)
+    ElMessage.error('草稿批次未准备好，请重新加载后编辑')
+    return false
+  }
 
   const batchId = draftBatchMap.value.get(seriesId)
   const key = `${row.id}_${modelId}_${field}`
@@ -2816,9 +2833,12 @@ const handleCellChange = async (row, modelId, field, newValue, oldValue) => {
     })
 
     Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
+    return true
   } catch (error) {
+    restoreWorkingCell(row.id, modelId, field)
     console.error('保存草稿失败:', error)
-    ElMessage.error('保存失败')
+    ElMessage.error('保存失败: ' + (error.response?.data?.detail || '请重试'))
+    return false
   }
 }
 
@@ -3129,14 +3149,15 @@ const confirmBatchEdit = async () => {
       for (const modelId of selectedModels.value) {
         if (row.model_values[modelId]) {
           row.model_values[modelId][batchEditForm.field] = batchEditForm.value
-          await handleCellChange(row, modelId, batchEditForm.field, batchEditForm.value)
-          count++
+          if (await handleCellChange(row, modelId, batchEditForm.field, batchEditForm.value)) count++
         }
       }
     }
 
-    ElMessage.success(`已修改 ${count} 处`)
-    batchEditDialogVisible.value = false
+    if (count > 0) {
+      ElMessage.success(`已修改 ${count} 处`)
+      batchEditDialogVisible.value = false
+    }
   } catch (error) {
     console.error('批量修改失败:', error)
     ElMessage.error('批量修改失败')
@@ -3239,8 +3260,8 @@ const handleBatchCompleteRdStatus = async () => {
   }
 
   try {
-    await Promise.all(promises)
-    ElMessage.success(`已完成 ${count} 项研发状态设置为"已完成"`)
+    const successCount = (await Promise.all(promises)).filter(Boolean).length
+    if (successCount > 0) ElMessage.success(`已完成 ${successCount} 项研发状态设置为"已完成"`)
   } catch (error) {
     console.error('批量完成研发状态失败:', error)
     ElMessage.error('部分操作失败，请刷新后重试')
@@ -3333,7 +3354,6 @@ const confirmApplyToAll = async () => {
   const scope = applyToAllDialog.scope
 
   try {
-    let count = 0
     const promises = []
 
     if (scope === 'field') {
@@ -3345,7 +3365,6 @@ const confirmApplyToAll = async () => {
             row.model_values[modelId][field] = value
             // 并行发送请求，不等待
             promises.push(handleCellChange(row, modelId, field, value, oldValue))
-            count++
           }
         }
       }
@@ -3363,7 +3382,6 @@ const confirmApplyToAll = async () => {
               row.model_values[modelId][f] = sourceValue
               // 并行发送请求，不等待
               promises.push(handleCellChange(row, modelId, f, sourceValue, oldValue))
-              count++
             }
           }
         }
@@ -3372,8 +3390,8 @@ const confirmApplyToAll = async () => {
 
     // 并行执行所有请求
     if (promises.length > 0) {
-      await Promise.all(promises)
-      ElMessage.success(`已应用到 ${count} 处`)
+      const successCount = (await Promise.all(promises)).filter(Boolean).length
+      if (successCount > 0) ElMessage.success(`已应用到 ${successCount} 处`)
     } else {
       ElMessage.info('没有需要更新的内容')
     }
@@ -3403,7 +3421,6 @@ const handleApplyValueToAllFields = async () => {
 
   const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
   const promises = []
-  let count = 0
 
   try {
     for (const field of fields) {
@@ -3413,13 +3430,12 @@ const handleApplyValueToAllFields = async () => {
       if (isValueChanged(oldValue, value)) {
         row.model_values[modelId][field] = value
         promises.push(handleCellChange(row, modelId, field, value, oldValue))
-        count++
       }
     }
 
     if (promises.length > 0) {
-      await Promise.all(promises)
-      ElMessage.success(`已将值应用到该机型其他 ${count} 个字段`)
+      const successCount = (await Promise.all(promises)).filter(Boolean).length
+      if (successCount > 0) ElMessage.success(`已将值应用到该机型其他 ${successCount} 个字段`)
     } else {
       ElMessage.info('其他字段已经是相同值')
     }
@@ -3444,8 +3460,7 @@ const handleClearCell = async () => {
 
   try {
     row.model_values[modelId][field] = null
-    await handleCellChange(row, modelId, field, null, oldValue)
-    ElMessage.success('已清空')
+    if (await handleCellChange(row, modelId, field, null, oldValue)) ElMessage.success('已清空')
   } catch (error) {
     console.error('清空失败:', error)
     ElMessage.error('清空失败')
@@ -3564,7 +3579,6 @@ const confirmPasteRowConfig = async () => {
   }
 
   const sourceConfig = copiedRowConfig.value.config
-  let count = 0
   const promises = []
 
   try {
@@ -3578,15 +3592,14 @@ const confirmPasteRowConfig = async () => {
           if (isValueChanged(oldValue, newValue)) {
             targetRow.model_values[modelId][field] = newValue
             promises.push(handleCellChange(targetRow, modelId, field, newValue, oldValue))
-            count++
           }
         }
       }
     }
 
     if (promises.length > 0) {
-      await Promise.all(promises)
-      ElMessage.success(`已粘贴到目标行，共修改 ${count} 处`)
+      const successCount = (await Promise.all(promises)).filter(Boolean).length
+      if (successCount > 0) ElMessage.success(`已粘贴到目标行，共修改 ${successCount} 处`)
     }
     pasteRowDialog.visible = false
     copiedRowConfig.value = null
@@ -4065,7 +4078,6 @@ const performDragFill = async () => {
 
   const source = dragSource.value
   const value = source.value
-  let count = 0
   const promises = []
 
   try {
@@ -4080,13 +4092,12 @@ const performDragFill = async () => {
       if (isValueChanged(oldValue, value)) {
         targetRow.model_values[cell.modelId][cell.field] = value
         promises.push(handleCellChange(targetRow, cell.modelId, cell.field, value, oldValue))
-        count++
       }
     }
 
     if (promises.length > 0) {
-      await Promise.all(promises)
-      ElMessage.success(`已填充 ${count} 个单元格`)
+      const successCount = (await Promise.all(promises)).filter(Boolean).length
+      if (successCount > 0) ElMessage.success(`已填充 ${successCount} 个单元格`)
     }
   } catch (error) {
     console.error('拖拽填充失败:', error)
@@ -4342,8 +4353,7 @@ const pasteCell = async (targetRow, targetModelId, targetField) => {
 
   try {
     targetRow.model_values[targetModelId][targetField] = newValue
-    await handleCellChange(targetRow, targetModelId, targetField, newValue, oldValue)
-    ElMessage.success('已粘贴')
+    if (await handleCellChange(targetRow, targetModelId, targetField, newValue, oldValue)) ElMessage.success('已粘贴')
   } catch (error) {
     console.error('粘贴失败:', error)
     ElMessage.error('粘贴失败')
@@ -4371,7 +4381,6 @@ const pasteToSelectedCells = async () => {
   if (!copiedCell.value || selectedCells.value.length === 0) return
 
   const source = copiedCell.value
-  let count = 0
   const promises = []
 
   try {
@@ -4388,13 +4397,12 @@ const pasteToSelectedCells = async () => {
       if (isValueChanged(oldValue, source.value)) {
         targetRow.model_values[cell.modelId][cell.field] = source.value
         promises.push(handleCellChange(targetRow, cell.modelId, cell.field, source.value, oldValue))
-        count++
       }
     }
 
     if (promises.length > 0) {
-      await Promise.all(promises)
-      ElMessage.success(`已粘贴到 ${count} 个单元格`)
+      const successCount = (await Promise.all(promises)).filter(Boolean).length
+      if (successCount > 0) ElMessage.success(`已粘贴到 ${successCount} 个单元格`)
     }
   } catch (error) {
     console.error('批量粘贴失败:', error)

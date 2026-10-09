@@ -17,6 +17,7 @@ function draftEditor({ createDraft, batchReady = true, change } = {}) {
     findSeriesIdByModelId: () => 10,
     draftBatchMap: ref(batchReady ? new Map([[10, 20]]) : new Map()),
     ElMessage: { error: message => messages.push(message) },
+    console: { error() {} },
     deleteDraftByKey: async () => {},
     draftStats: { total: change ? 1 : 0, create: 0, update: change ? 1 : 0, delete: 0 },
     updateDraftStats,
