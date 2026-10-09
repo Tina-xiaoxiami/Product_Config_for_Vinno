@@ -40,7 +40,12 @@ async def identity_records(db: AsyncSession, series_id: int | None = None):
     return list((await db.execute(query)).all())
 
 
-async def resolve_import_model(db: AsyncSession, series_id: int, raw: str, start: int, end: int, order: int) -> ProductModel:
+async def inspect_import_model(
+    db: AsyncSession,
+    series_id: int,
+    raw: str,
+) -> tuple[str, str | None, ProductModel | None, ProductModelIdentity | None]:
+    """Resolve an import header and validate identity conflicts without writing."""
     name, source_uuid = parse_model_header(raw)
     records = await identity_records(db, series_id)
     known = next(((identity, model) for identity, model in records if source_uuid and identity.source_uuid == source_uuid), None)
@@ -64,13 +69,24 @@ async def resolve_import_model(db: AsyncSession, series_id: int, raw: str, start
         identity = next((identity for identity, candidate in records if model is not None and candidate.id == model.id), None)
         if identity is not None and source_uuid and identity.source_uuid != source_uuid:
             raise ValueError(f"同名机型 {name} 的源编号不同，不能自动合并")
-        if model is None:
-            model = ProductModel(series_id=series_id, name=name, sort_order=order)
-            db.add(model)
-            await db.flush()
-        if identity is None and source_uuid:
-            identity = ProductModelIdentity(series_id=series_id, model_id=model.id, source_uuid=source_uuid, aliases_json="[]", historical_ids_json="[]")
-            db.add(identity)
+    return name, source_uuid, model, identity
+
+
+async def resolve_import_model_readonly(db: AsyncSession, series_id: int, raw: str) -> ProductModel | None:
+    """Validate the same identity rules as import, without creating or changing rows."""
+    _, _, model, _ = await inspect_import_model(db, series_id, raw)
+    return model
+
+
+async def resolve_import_model(db: AsyncSession, series_id: int, raw: str, start: int, end: int, order: int) -> ProductModel:
+    name, source_uuid, model, identity = await inspect_import_model(db, series_id, raw)
+    if model is None:
+        model = ProductModel(series_id=series_id, name=name, sort_order=order)
+        db.add(model)
+        await db.flush()
+    if identity is None and source_uuid:
+        identity = ProductModelIdentity(series_id=series_id, model_id=model.id, source_uuid=source_uuid, aliases_json="[]", historical_ids_json="[]")
+        db.add(identity)
     if identity is not None:
         aliases = list(dict.fromkeys([*json.loads(identity.aliases_json), model.name, name]))
         identity.aliases_json = json.dumps(aliases, ensure_ascii=False)
