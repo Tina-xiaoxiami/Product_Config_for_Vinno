@@ -187,7 +187,7 @@ test('a failed undo cannot roll back a newer queued save', async () => {
     createDraft: () => saveRequest.promise
   })
 
-  const undo = app.removeDraftChange(1, 2, 'final_config', '1_2_final_config')
+  const undo = app.removeDraftChange(app.row, 2, 'final_config', '1_2_final_config')
   const save = app.handleCellChange(app.row, 2, 'final_config', 'new', 'working')
   deleteRequest.reject(new Error('delete failed'))
   await undo
@@ -209,5 +209,25 @@ test('a stale save failure does not modify a replacement row with recycled ids',
   saveRequest.reject(new Error('old scope failed'))
   assert.equal(await save, false)
 
+  assert.equal(replacement.model_values[2].final_config, 'replacement')
+})
+
+test('a queued undo still deletes an old-scope save after the table is replaced', async () => {
+  const saveRequest = deferred()
+  let deleteCount = 0
+  const app = draftEditor({
+    createDraft: () => saveRequest.promise,
+    deleteDraftByKey: async () => { deleteCount++ }
+  })
+
+  const save = app.finishEdit(app.row, 2, 'final_config', 'attempted')
+  app.row.model_values[2].final_config = 'published'
+  const undo = app.finishEdit(app.row, 2, 'final_config', 'published')
+  const replacement = { id: 1, model_values: { 2: { final_config: 'replacement' } } }
+  app.tableData.value = [replacement]
+  saveRequest.resolve({ draft_id: 30 })
+  await Promise.all([save, undo])
+
+  assert.equal(deleteCount, 1)
   assert.equal(replacement.model_values[2].final_config, 'replacement')
 })
