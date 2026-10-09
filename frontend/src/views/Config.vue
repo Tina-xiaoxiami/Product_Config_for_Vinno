@@ -1,11 +1,12 @@
 <template>
-  <div class="config-page">
+  <el-config-provider :size="compactView ? 'small' : 'default'">
+  <div ref="configPageRef" class="config-page" :class="{ 'compact-view': compactView }">
     <!-- 工具栏 -->
     <el-card class="toolbar-card" shadow="never">
-      <div class="toolbar">
+      <div class="toolbar" :inert="applyingModelGroup">
         <div class="left">
           <div class="select-all-wrapper" :class="{ 'hide-tags': selectedSeries.length === seriesList.length && seriesList.length > 0 }">
-            <el-select v-model="selectedSeries" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 200px">
+            <el-select v-model="selectedSeries" :disabled="applyingModelGroup" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 200px">
             <template #header>
               <div style="display: flex; justify-content: space-between; padding: 4px 12px; gap: 8px;">
                 <el-button size="small" @click="selectAllSeries" :disabled="selectedSeries.length === seriesList.length && seriesList.length > 0">全选</el-button>
@@ -20,6 +21,7 @@
           <div class="select-all-wrapper" :class="{ 'hide-tags': tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0 }">
           <el-select
             v-model="tempSelectedModels"
+            :disabled="applyingModelGroup"
             multiple
             collapse-tags
             collapse-tags-tooltip
@@ -61,9 +63,27 @@
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
           </div>
 
+          <el-popover ref="modelGroupsPopover" placement="bottom-start" :width="420" trigger="click">
+            <template #reference><el-button :loading="applyingModelGroup">机型分组</el-button></template>
+            <div class="model-groups-panel">
+              <div class="model-groups-heading"><strong>机型分组</strong><span>保存在当前浏览器</span></div>
+              <el-empty v-if="!savedModelGroups.length" description="选好机型后，保存为常用分组" :image-size="48" />
+              <div v-for="group in savedModelGroups" :key="group.id" class="model-group-row">
+                <el-button text class="model-group-name" :disabled="applyingModelGroup" :title="group.name" @click="applyModelGroup(group)">{{ group.name }} · {{ group.models.length }} 个</el-button>
+                <div class="model-group-actions">
+                  <el-button text :aria-label="'重命名分组 ' + group.name" @click="renameModelGroup(group)">重命名</el-button>
+                  <el-button text :disabled="!selectedModels.length" :aria-label="'更新分组 ' + group.name" @click="updateModelGroup(group)">更新</el-button>
+                  <el-button text type="danger" :aria-label="'删除分组 ' + group.name" @click="deleteModelGroup(group)">删除</el-button>
+                </div>
+              </div>
+              <el-button type="primary" :disabled="!selectedModels.length || applyingModelGroup" @click="saveCurrentModelGroup">保存当前选中机型</el-button>
+            </div>
+          </el-popover>
+
           <div class="select-all-wrapper" :class="{ 'hide-tags': selectedCategories.length === categoryOptions.length && categoryOptions.length > 0 }">
           <el-select
             v-model="selectedCategories"
+            :disabled="applyingModelGroup"
             multiple
             collapse-tags
             collapse-tags-tooltip
@@ -82,12 +102,17 @@
 
           <el-input
             v-model="searchText"
+            :disabled="applyingModelGroup"
             placeholder="搜索研发名称/IPN号"
             style="width: 200px"
             clearable
             @keyup.enter="onFilterChange"
             @clear="onFilterChange"
           />
+
+          <el-button :type="modelFocusBackup ? 'primary' : 'default'" title="仅保留研发名称和IPN号，把更多空间留给机型配置；再次点击恢复" @click="toggleModelFocus">{{ modelFocusBackup ? '恢复信息列' : '聚焦机型' }}</el-button>
+
+          <el-switch v-model="compactView" active-text="紧凑" aria-label="紧凑显示" @change="saveCompactView" />
 
           <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @hide="applyTempColumns">
             <template #reference>
@@ -195,7 +220,7 @@
 
     <!-- 草稿状态栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never">
+      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="applyingModelGroup || loading">
         <div class="draft-info">
           <el-icon><EditPen /></el-icon>
           <span>当前有 <strong>{{ draftItemSummary.total }}</strong> 项有变更：</span>
@@ -323,7 +348,7 @@
 
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never">
+      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="applyingModelGroup || loading">
         <div class="batch-info">
           <span v-if="selectedRows.length > 0">已选择 <strong>{{ selectedRows.length }}</strong> 行</span>
           <span v-if="false">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
@@ -335,26 +360,26 @@
     </transition>
 
     <!-- 数据表格 -->
-    <el-card shadow="never">
+    <el-card class="config-table-card" shadow="never">
       <el-table
         ref="tableRef"
         :data="paginatedTableData"
         border
         stripe
         :height="tableMaxHeight"
-        v-loading="loading"
+        v-loading="loading || applyingModelGroup"
         @selection-change="handleSelectionChange"
         @header-dragend="onConfigDragEnd"
         @mouseup="onConfigMouseUp"
         row-key="id"
       >
-        <el-table-column type="selection" width="50" fixed />
+        <el-table-column type="selection" :width="compactView ? 40 : 50" fixed />
 
-        <el-table-column v-if="visibleColumns.rd_name" :fixed="fixedColumns.rd_name ? 'left' : false" prop="rd_name" label="研发名称" width="280" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.rd_name" :fixed="fixedColumns.rd_name ? 'left' : false" prop="rd_name" label="研发名称" :width="compactView ? 220 : 280" show-overflow-tooltip />
         <el-table-column v-if="visibleColumns.v_code" :fixed="fixedColumns.v_code ? 'left' : false" prop="v_code" label="V代码" width="100" show-overflow-tooltip />
         <el-table-column v-if="visibleColumns.ipn" :fixed="fixedColumns.ipn ? 'left' : false" prop="ipn" label="IPN号" width="120" show-overflow-tooltip />
-        <el-table-column v-if="visibleColumns.zh_desc" :fixed="fixedColumns.zh_desc ? 'left' : false" prop="zh_desc" label="中文描述" width="200" show-overflow-tooltip />
-        <el-table-column v-if="visibleColumns.en_desc" :fixed="fixedColumns.en_desc ? 'left' : false" prop="en_desc" label="英文描述" width="200" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.zh_desc" :fixed="fixedColumns.zh_desc ? 'left' : false" prop="zh_desc" label="中文描述" :width="compactView ? 160 : 200" show-overflow-tooltip />
+        <el-table-column v-if="visibleColumns.en_desc" :fixed="fixedColumns.en_desc ? 'left' : false" prop="en_desc" label="英文描述" :width="compactView ? 160 : 200" show-overflow-tooltip />
 
         <template v-for="group in groupedSelectedModels" :key="group.seriesId">
           <el-table-column :label="group.seriesName">
@@ -998,6 +1023,7 @@
       </template>
     </el-dialog>
   </div>
+  </el-config-provider>
 </template>
 
 <script setup>
@@ -1006,6 +1032,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
 import { getModelShortName as _getModelShortName, groupModelsBySeries, findSeriesIdByModelId as _findSeriesIdByModelId, isValueChanged as _isValueChanged, isEmptyValue as _isEmptyValue, normalizeValue } from '../utils/modelHelpers'
 import { useDraftFilter } from '../utils/useDraftFilter'
+import { buildModelSelectionGroup, resolveGroupSeries, resolveGroupModels, loadModelSelectionGroups, saveModelSelectionGroups } from '../utils/modelSelectionGroups'
 import {
   getSeriesList, getModels, getConfigRows,
   getCurrentDraftBatch, createDraftBatch, createDraft,
@@ -1014,6 +1041,15 @@ import {
   getEnumValues, previewImport,
   batchDiscardDrafts, batchSubmitDrafts
 } from '../api/data'
+
+const tableRef = ref(null)
+const configPageRef = ref(null)
+const compactView = ref(true)
+try { compactView.value = localStorage.getItem('config_compact_view') !== 'false' } catch (error) { console.warn('读取显示设置失败', error) }
+const saveCompactView = () => {
+  try { localStorage.setItem('config_compact_view', String(compactView.value)) } catch { ElMessage.warning('显示已切换，但浏览器未能保存设置') }
+}
+let configResizeObserver
 
 // 数据
 const seriesList = ref([])
@@ -1387,6 +1423,81 @@ const applyFieldFilterPopover = (field, modelId) => {
 }
 
 const tempSelectedModels = ref([])  // 机型下拉临时选择，收起时才同步到 selectedModels
+const savedModelGroups = ref([])
+const modelGroupsPopover = ref(null)
+const applyingModelGroup = ref(false)
+try { savedModelGroups.value = loadModelSelectionGroups() } catch (error) { console.error('读取机型分组失败', error); ElMessage.warning('无法读取已保存的机型分组，请检查浏览器存储设置') }
+
+const persistModelGroups = (groups) => {
+  try {
+    saveModelSelectionGroups(groups)
+    savedModelGroups.value = groups
+    return true
+  } catch (error) {
+    console.error('保存机型分组失败', error)
+    ElMessage.error('分组未保存，请检查浏览器存储空间和权限')
+    return false
+  }
+}
+const askModelGroupName = (group) => ElMessageBox.prompt('请输入分组名称', group ? '重命名机型分组' : '保存机型分组', {
+  inputValue: group?.name || '',
+  inputPlaceholder: '例如：9E 科研版、常用对比机型',
+  confirmButtonText: '保存', cancelButtonText: '取消',
+  inputValidator: value => {
+    const name = (value || '').trim()
+    if (!name || name.length > 60) return '请输入 1–60 个字符的名称'
+    if (savedModelGroups.value.some(item => item.id !== group?.id && item.name === name)) return '该名称已存在，请换一个名称'
+    return true
+  }
+})
+const saveCurrentModelGroup = async () => {
+  modelGroupsPopover.value?.hide()
+  const ids = [...selectedModels.value]
+  const models = new Map(allModelsMap.value)
+  try {
+    const { value } = await askModelGroupName()
+    const group = buildModelSelectionGroup(value, ids, models)
+    if (persistModelGroups([...savedModelGroups.value, group])) ElMessage.success('机型分组已保存')
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '保存机型分组失败') }
+}
+const renameModelGroup = async (group) => {
+  modelGroupsPopover.value?.hide()
+  try {
+    const { value } = await askModelGroupName(group)
+    if (persistModelGroups(savedModelGroups.value.map(item => item.id === group.id ? { ...item, name: value.trim() } : item))) ElMessage.success('分组已重命名')
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '重命名失败') }
+}
+const updateModelGroup = (group) => {
+  try {
+    const updated = buildModelSelectionGroup(group.name, selectedModels.value, allModelsMap.value, group.id)
+    if (persistModelGroups(savedModelGroups.value.map(item => item.id === group.id ? updated : item))) ElMessage.success('已用当前选中机型更新分组')
+  } catch (error) { ElMessage.error(error.message) }
+}
+const deleteModelGroup = async (group) => {
+  modelGroupsPopover.value?.hide()
+  try {
+    await ElMessageBox.confirm(`删除分组“${group.name}”？`, '删除机型分组', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+    if (persistModelGroups(savedModelGroups.value.filter(item => item.id !== group.id))) ElMessage.success('分组已删除')
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error('删除分组失败') }
+}
+const applyModelGroup = async (group) => {
+  if (applyingModelGroup.value) return
+  const { ids } = resolveGroupSeries(group, seriesList.value)
+  if (!ids.length) { ElMessage.warning('该分组的产品系列已不存在'); return }
+  const previousSeries = [...selectedSeries.value]
+  const previousModels = allModelsMap.value
+  applyingModelGroup.value = true
+  modelGroupsPopover.value?.hide()
+  selectedSeries.value = ids
+  currentPage.value = 1
+  modelFilterText.value = ''
+  try {
+    const success = await loadModels({ modelGroup: group })
+    if (success) { saveSeriesSelection(); saveModelOrder() }
+    else if (allModelsMap.value === previousModels && ids.length === selectedSeries.value.length && ids.every((id, i) => id === selectedSeries.value[i])) selectedSeries.value = previousSeries
+  } finally { applyingModelGroup.value = false }
+}
+
 const categoryOptions = ['Optional Features', 'Optional peripherals', '*Optional peripherals(Preassemble in Factory)', 'Probes', 'Biopsy guide']
 const selectedCategories = ref([...categoryOptions])
 const searchText = ref('')
@@ -1422,6 +1533,20 @@ const defaultFixedColumns = {
   ipn: false,
   zh_desc: false,
   en_desc: false
+}
+
+const modelFocusBackup = ref(null)
+const toggleModelFocus = () => {
+  if (modelFocusBackup.value) {
+    Object.assign(visibleColumns, modelFocusBackup.value.visible)
+    Object.assign(fixedColumns, modelFocusBackup.value.fixed)
+    modelFocusBackup.value = null
+  } else {
+    modelFocusBackup.value = { visible: { ...visibleColumns }, fixed: { ...fixedColumns } }
+    Object.assign(visibleColumns, { rd_name: true, ipn: true, v_code: false, zh_desc: false, en_desc: false })
+    Object.assign(fixedColumns, { rd_name: true, ipn: false, v_code: false, zh_desc: false, en_desc: false })
+  }
+  nextTick(calculateTableHeight)
 }
 
 // 从 localStorage 加载设置
@@ -2235,52 +2360,66 @@ const handleSeriesSelect = (val) => {
 }
 
 // 加载产品型号（从所有选中系列并行加载）
-const loadModels = async () => {
-  allModelsMap.value.clear()
-  if (selectedSeries.value.length === 0) {
+let modelLoadRequest = 0
+const loadModels = async ({ modelGroup } = {}) => {
+  const request = ++modelLoadRequest
+  const seriesIds = [...selectedSeries.value]
+  if (!seriesIds.length) {
+    allModelsMap.value.clear()
     selectedModels.value = []
     tempSelectedModels.value = []
-    return
+    return false
   }
-
   try {
-    const results = await Promise.all(
-      selectedSeries.value.map(sid => getModels(sid))
-    )
+    const results = await Promise.all(seriesIds.map(sid => getModels(sid)))
+    if (request !== modelLoadRequest || seriesIds.length !== selectedSeries.value.length || seriesIds.some((id, i) => id !== selectedSeries.value[i])) return false
+    const models = new Map()
     results.forEach((res, idx) => {
-      const seriesId = selectedSeries.value[idx]
+      const seriesId = seriesIds[idx]
       const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
-      for (const m of (res.items || [])) {
-        allModelsMap.value.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
-      }
+      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
     })
-    // 清除无效的已选型号，自动全选所有型号
-    // 只清除已不存在的型号，不再自动全选
-    selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
-    // 应用保存的机型列顺序
-    applySavedOrder(selectedModels.value)
+    const selection = modelGroup ? resolveGroupModels(modelGroup, models) : null
+    if (selection && !selection.ids.length) { ElMessage.warning('该分组的机型已不存在或名称不唯一，请更新分组'); return false }
+    allModelsMap.value = models
+    selectedModels.value = selection ? selection.ids : selectedModels.value.filter(mid => models.has(mid))
+    if (!modelGroup) applySavedOrder(selectedModels.value)
     showDiffOnly.value = false
-  referenceModel.value = null
-    tempSelectedModels.value = [...selectedModels.value]  // 同步临时选择
-    await loadData()
-    await initDraft()
+    referenceModel.value = null
+    tempSelectedModels.value = [...selectedModels.value]
+    if (!await loadData()) return false
+    if (request !== modelLoadRequest) return false
+    const draftLoaded = await initDraft()
+    if (request !== modelLoadRequest) return false
+    if (!draftLoaded) {
+      tableData.value = []
+      originalData.value = []
+      ElMessage.error('草稿状态加载失败，请重新选择系列或分组后再编辑')
+      return false
+    }
+    if (selection?.missing) ElMessage.warning(`已恢复 ${selection.ids.length} 个机型，${selection.missing} 个机型未找到或名称不唯一`)
+    return true
   } catch (error) {
     console.error('加载产品型号失败:', error)
-    // 如果404错误，说明系列已被删除，刷新系列列表
     if (error.response?.status === 404) {
       ElMessage.warning('当前选中的系列已被删除，请重新选择')
-      await loadSeries()
-    }
+      if (!modelGroup) await loadSeries()
+    } else ElMessage.error('加载产品型号失败，请重试')
+    return false
   }
 }
 
 // 加载配置数据（从所有选中系列并行加载，按 IPN 合并）
+let dataLoadRequest = 0
 const loadData = async () => {
   if (selectedSeries.value.length === 0) {
     tableData.value = []
-    return
+    originalData.value = []
+    return true
   }
 
+  const seriesIds = [...selectedSeries.value]
+  const request = ++dataLoadRequest
   loading.value = true
   try {
     // 加载全部数据（limit: 99999），前端分页
@@ -2293,13 +2432,15 @@ const loadData = async () => {
     }
 
     const results = await Promise.all(
-      selectedSeries.value.map(sid => getConfigRows({ ...paramsBase, series_id: sid }))
+      seriesIds.map(sid => getConfigRows({ ...paramsBase, series_id: sid }))
     )
+
+    if (request !== dataLoadRequest || seriesIds.length !== selectedSeries.value.length || seriesIds.some((id, i) => id !== selectedSeries.value[i])) return false
 
     // 按 IPN 合并 model_values
     const mergedMap = new Map() // ipn -> mergedRow
     results.forEach((res, idx) => {
-      const seriesId = selectedSeries.value[idx]
+      const seriesId = seriesIds[idx]
       for (const item of (res.items || [])) {
         const ipn = item.ipn || `__no_ipn_${item.id}`
         if (!mergedMap.has(ipn)) {
@@ -2331,17 +2472,22 @@ const loadData = async () => {
     tableData.value = Array.from(mergedMap.values())
     // 深拷贝保存原始数据
     originalData.value = JSON.parse(JSON.stringify(tableData.value))
+    return true
   } catch (error) {
+    if (request !== dataLoadRequest) return false
+    tableData.value = []
+    originalData.value = []
     console.error('加载配置数据失败:', error)
     if (error.response?.status === 404) {
       ElMessage.warning('当前选中的系列已被删除，请重新选择')
       tableData.value = []
-      await loadSeries()
+      if (!applyingModelGroup.value) await loadSeries()
     } else {
       ElMessage.error('加载数据失败')
     }
+    return false
   } finally {
-    loading.value = false
+    if (request === dataLoadRequest) loading.value = false
   }
 }
 
@@ -2449,13 +2595,18 @@ const isValueChanged = (oldVal, newVal) => _isValueChanged(oldVal, newVal)
 
 // 筛选条件变更时立即刷新
 const onFilterChange = async () => {
+  if (applyingModelGroup.value) return
   currentPage.value = 1
   await loadData()
 }
 
 // 初始化草稿批次（多系列）
+let draftLoadRequest = 0
 const initDraft = async () => {
-  if (selectedSeries.value.length === 0) return
+  const request = ++draftLoadRequest
+  const seriesIds = [...selectedSeries.value]
+  const isCurrent = () => request === draftLoadRequest && seriesIds.length === selectedSeries.value.length && seriesIds.every((id, i) => id === selectedSeries.value[i])
+  if (!seriesIds.length) return true
 
   // 先清空旧状态
   draftChanges.value.clear()
@@ -2471,17 +2622,19 @@ const initDraft = async () => {
   draftStats.update = 0
   draftStats.delete = 0
 
+  let success = true
   const newBatchMap = new Map()
   const createModelMap = new Map()
   const deleteModelMap = new Map()
   const infoMap = new Map()
   const modelIdSet = new Set()
 
-  for (const seriesId of selectedSeries.value) {
+  for (const seriesId of seriesIds) {
     try {
       let batchId
       try {
         const res = await getCurrentDraftBatch(seriesId)
+        if (!isCurrent()) return false
         if (res?.exists) {
           batchId = res.batch.id
           // 恢复草稿变更记录
@@ -2541,18 +2694,22 @@ const initDraft = async () => {
             }
           }
         }
-      } catch (e) { /* no existing batch */ }
+      } catch (error) { if (error.response?.status !== 404) throw error }
 
       if (!batchId) {
         const batchRes = await createDraftBatch(seriesId)
+        if (!isCurrent()) return false
         batchId = batchRes.id
       }
       newBatchMap.set(seriesId, batchId)
     } catch (error) {
+      if (!isCurrent()) return false
+      success = false
       console.error(`系列 ${seriesId} 初始化草稿失败:`, error)
     }
   }
 
+  if (!isCurrent()) return false
   draftBatchMap.value = newBatchMap
   draftItemInfo.value = infoMap
   newItemModelMap.value = createModelMap
@@ -2560,6 +2717,7 @@ const initDraft = async () => {
   newItemIds.value = new Set(createModelMap.keys())
   deletedItemIds.value = new Set(deleteModelMap.keys())
   draftModelIdSet.value = modelIdSet
+  return success
 }
 
 // 获取型号名称（跨系列格式：seriesName / modelName，用于下拉显示等）
@@ -3770,8 +3928,13 @@ const confirmBatchSubmit = async () => {
 
 // 计算表格高度
 const calculateTableHeight = () => {
-  const windowHeight = window.innerHeight
-  tableMaxHeight.value = windowHeight - 320
+  const table = tableRef.value?.$el
+  if (!table || !table.getClientRects().length) return
+  const pagination = configPageRef.value?.querySelector('.pagination-wrapper')
+  const footerHeight = (pagination?.getBoundingClientRect().height || 32) + 36
+  const height = Math.max(180, window.innerHeight - table.getBoundingClientRect().top - footerHeight)
+  if (tableMaxHeight.value !== height) tableMaxHeight.value = height
+  tableRef.value?.doLayout()
 }
 
 // 列筛选方法
@@ -4269,6 +4432,8 @@ onMounted(() => {
   loadEnumValues()
   calculateTableHeight()
   window.addEventListener('resize', calculateTableHeight)
+  configResizeObserver = new ResizeObserver(() => nextTick(calculateTableHeight))
+  if (configPageRef.value) configResizeObserver.observe(configPageRef.value)
   // Excel-like keyboard events removed
   nextTick(() => {
     syncHeaderTitles()
@@ -4279,6 +4444,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', calculateTableHeight)
+  configResizeObserver?.disconnect()
   // Excel-like keyboard events removed
 })
 
@@ -4343,15 +4509,36 @@ onMounted(() => {
 }
 
 .toolbar-card {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
+
+.toolbar-card :deep(.el-card__body), .config-table-card :deep(.el-card__body) { padding: 10px; }
+.toolbar :deep(.el-button + .el-button) { margin-left: 0; }
+.select-item label { white-space: nowrap; }
+.compact-view :deep(.el-table) { font-size: 12px; }
+.compact-view :deep(.el-table th.el-table__cell) { padding: 2px 0; }
+.compact-view :deep(.el-table th .cell) { padding: 2px 6px; line-height: 20px; }
+.compact-view :deep(.el-table td.el-table__cell) { padding: 0; }
+.compact-view :deep(.el-table__body-wrapper .el-table__body tr.el-table__row) { height: 30px; }
+.compact-view :deep(.el-table__body-wrapper .cell) { padding: 1px 6px; line-height: 24px; }
+.compact-view .cell-value { min-height: 24px; padding: 0; }
+.compact-view .draft-info { gap: 8px; font-size: 12px; }
+.compact-view .draft-actions { flex-wrap: wrap; }
+.model-groups-panel { display: flex; flex-direction: column; gap: 8px; }
+.model-groups-heading { display: flex; justify-content: space-between; align-items: center; }
+.model-groups-heading span { color: #909399; font-size: 12px; }
+.model-group-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; border-bottom: 1px solid #ebeef5; padding: 4px 0; }
+.model-group-name { flex: 1; min-width: 0; justify-content: flex-start; }
+.model-group-name :deep(span) { display: block; overflow: hidden; text-overflow: ellipsis; }
+.model-group-actions { display: flex; flex-shrink: 0; }
+.model-group-actions :deep(.el-button) { margin-left: 0; padding: 4px 6px; }
 
 .select-item {
   display: inline-flex;
@@ -4385,23 +4572,24 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   flex: 1 1 100%;
 }
 
 .toolbar .right {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .draft-bar {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .draft-bar :deep(.el-card__body) {
-  padding: 12px 20px;
+  padding: 8px 12px;
 }
 
 .draft-info {
@@ -4426,7 +4614,7 @@ onMounted(() => {
 }
 
 .draft-info strong {
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .draft-actions {
@@ -4554,7 +4742,7 @@ onMounted(() => {
 }
 
 .pagination-wrapper {
-  margin-top: 16px;
+  margin-top: 8px;
   display: flex;
   justify-content: flex-end;
 }
@@ -4596,7 +4784,7 @@ onMounted(() => {
 .column-filter .column-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .column-filter .column-row .el-checkbox:first-child {
