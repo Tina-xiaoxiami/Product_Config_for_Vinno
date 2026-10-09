@@ -350,27 +350,14 @@ async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("metadata_change", ["remove", "unsupported-version"])
-async def test_external_or_unsupported_metadata_workbook_keeps_full_sync_semantics(
-    db,
-    metadata_change,
-):
+async def test_external_workbook_without_metadata_keeps_full_sync_semantics(db):
     await _seed_matrix(db)
     exported = await export_excel(
         ExportRequest(series_id=1, item_ids="1", model_ids="1"),
         db,
     )
     workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
-    if metadata_change == "remove":
-        del workbook["__VINNO_CONFIG_META__"]
-    else:
-        metadata = workbook["__VINNO_CONFIG_META__"]
-        version_row = next(
-            row
-            for row in range(1, metadata.max_row + 1)
-            if metadata.cell(row, 1).value == "version"
-        )
-        metadata.cell(version_row, 2, "999")
+    del workbook["__VINNO_CONFIG_META__"]
 
     await import_excel(_upload(workbook, "external.xlsx"), series_name=None, db=db)
 
@@ -378,6 +365,29 @@ async def test_external_or_unsupported_metadata_workbook_keeps_full_sync_semanti
     assert [(draft.change_type, draft.item_id, draft.model_id) for draft in drafts] == [
         ("delete", 2, 1)
     ]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_application_metadata_is_rejected_instead_of_full_sync(db):
+    await _seed_matrix(db)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    metadata = workbook["__VINNO_CONFIG_META__"]
+    version_row = next(
+        row
+        for row in range(1, metadata.max_row + 1)
+        if metadata.cell(row, 1).value == "version"
+    )
+    metadata.cell(version_row, 2, "999")
+
+    with pytest.raises(HTTPException, match="元数据") as error:
+        await import_excel(_upload(workbook, "unsupported.xlsx"), series_name=None, db=db)
+
+    assert error.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
 
 
 @pytest.mark.asyncio
