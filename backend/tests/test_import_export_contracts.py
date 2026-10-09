@@ -23,6 +23,7 @@ from app.models import (
     ConfigItem,
     ConfigValue,
     ConfigVersion,
+    DraftBatch,
     ProductModel,
     ProductSeries,
 )
@@ -497,3 +498,231 @@ async def test_export_accepts_chinese_series_names_in_download_headers(db):
     header = response.headers['content-disposition']
     header.encode('ascii')
     assert '回归测试-国内' in unquote(header)
+
+
+@pytest.mark.asyncio
+async def test_patch_roundtrip_reuses_exported_item_without_ipn(db):
+    await _seed_config(db)
+    item = await db.get(ConfigItem, 1)
+    item.ipn = None
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="no-ipn.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    items = (await db.execute(select(ConfigItem).order_by(ConfigItem.id))).scalars().all()
+    assert [(entry.id, entry.rd_name, entry.ipn) for entry in items] == [
+        (1, "Feature", None)
+    ]
+    assert await db.scalar(select(func.count()).select_from(ConfigValue)) == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_recycled_item_id_metadata(db):
+    await _seed_config(db)
+    item = await db.get(ConfigItem, 1)
+    item.ipn = None
+    await db.commit()
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    payload = await _response_bytes(exported)
+
+    item.rd_name = "Recycled record"
+    item.v_code = "OTHER"
+    item.zh_desc = "另一条记录"
+    item.en_desc = "Another record"
+    await db.commit()
+
+    with pytest.raises(HTTPException, match="配置项身份") as error:
+        await import_excel(
+            UploadFile(filename="stale-export.xlsx", file=io.BytesIO(payload)),
+            series_name=None,
+            db=db,
+        )
+
+    assert error.value.status_code == 400
+    await db.refresh(item)
+    assert item.rd_name == "Recycled record"
+
+
+@pytest.mark.asyncio
+async def test_patch_roundtrip_preserves_database_row_and_model_span(db):
+    model, item = await _seed_config(db, with_snapshot=True)
+    item.row_index = 100
+    model.column_start = 20
+    model.column_end = 23
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+        ),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="filtered.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    await db.refresh(item)
+    await db.refresh(model)
+    assert item.row_index == 100
+    assert (model.column_start, model.column_end) == (20, 23)
+
+
+@pytest.mark.asyncio
+async def test_reimport_reconciles_touched_draft_and_keeps_untouched_draft(db):
+    await _seed_config(db, with_snapshot=True)
+
+    async def import_current(value):
+        workbook = _workbook(
+            [("China", f"M//{SOURCE_UUID}")],
+            labels=["当前配置"],
+            values=[value],
+        )
+        await import_excel(_upload(workbook), series_name=None, db=db)
+
+    await import_current("B")
+    batch = await db.scalar(select(DraftBatch).where(DraftBatch.status == "draft"))
+    db.add(
+        ConfigDraft(
+            series_id=1,
+            batch_id=batch.id,
+            change_type="update",
+            item_id=1,
+            model_id=1,
+            field_name="rd_status",
+            old_value="DONE",
+            new_value="MANUAL",
+        )
+    )
+    await db.commit()
+
+    await import_current("C")
+    drafts = (
+        await db.execute(select(ConfigDraft).order_by(ConfigDraft.field_name))
+    ).scalars().all()
+    assert [
+        (draft.field_name, draft.old_value, draft.new_value)
+        for draft in drafts
+    ] == [
+        ("current_config", "CURRENT", "C"),
+        ("rd_status", "DONE", "MANUAL"),
+    ]
+
+    await import_current("CURRENT")
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [
+        (draft.field_name, draft.old_value, draft.new_value)
+        for draft in drafts
+    ] == [("rd_status", "DONE", "MANUAL")]
+
+
+@pytest.mark.asyncio
+async def test_reimport_converts_delete_back_to_update_without_stale_draft(db):
+    await _seed_config(db, with_snapshot=True)
+
+    await import_excel(
+        _upload(
+            _workbook(
+                [("China", f"M//{SOURCE_UUID}")],
+                labels=list(CONFIG_FIELDS),
+                values=["-", "-", "-", "-"],
+            )
+        ),
+        series_name=None,
+        db=db,
+    )
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [(draft.change_type, draft.field_name) for draft in drafts] == [
+        ("delete", None)
+    ]
+
+    await import_excel(
+        _upload(
+            _workbook(
+                [("China", f"M//{SOURCE_UUID}")],
+                labels=list(CONFIG_FIELDS),
+                values=["REVISED", "CURRENT", "SELECT", "DONE"],
+            )
+        ),
+        series_name=None,
+        db=db,
+    )
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [
+        (draft.change_type, draft.field_name, draft.old_value, draft.new_value)
+        for draft in drafts
+    ] == [("update", "final_config", "FINAL", "REVISED")]
+
+
+@pytest.mark.asyncio
+async def test_draft_export_keeps_truthful_cells_and_excludes_deleted_rows(db):
+    await _seed_config(db, with_snapshot=True)
+    value = await db.scalar(select(ConfigValue).where(ConfigValue.item_id == 1))
+    value.current_config = "B"
+    await db.commit()
+
+    updated = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+            draft_changes=json.dumps(
+                {
+                    "1_1_current_config": {
+                        "changeType": "update",
+                        "oldValue": "CURRENT",
+                        "newValue": "B",
+                    }
+                }
+            ),
+        ),
+        db,
+    )
+    updated_workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(updated)))
+    updated_cell = updated_workbook.active["F6"]
+    assert updated_cell.value == "B"
+    assert updated_cell.comment is not None
+    assert "CURRENT" in updated_cell.comment.text
+
+    deleted = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+            deleted_items=json.dumps(
+                {"1_1": {"current_config": "CURRENT"}}
+            ),
+        ),
+        db,
+    )
+    deleted_workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(deleted)))
+    assert "Feature" not in [
+        deleted_workbook.active.cell(row, 1).value
+        for row in range(1, deleted_workbook.active.max_row + 1)
+    ]
+    metadata = deleted_workbook["__VINNO_CONFIG_META__"]
+    item_ids_row = next(
+        row
+        for row in range(1, metadata.max_row + 1)
+        if metadata.cell(row, 1).value == "item_ids"
+    )
+    assert metadata.cell(item_ids_row, 2).value in (None, "")
