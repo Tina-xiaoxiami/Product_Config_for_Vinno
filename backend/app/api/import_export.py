@@ -35,6 +35,8 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
+from app.services.model_identity import active_model_filter, resolve_import_model, normalize_snapshot, model_identity_metadata
+
 router = APIRouter()
 
 
@@ -156,6 +158,35 @@ async def import_excel(
                 db.add(series)
                 await db.flush()
 
+            # 解析产品型号（第2行），遍历该系列的所有子列范围
+            models = []
+            for range_start, range_end in series_info.get('ranges', [(col_start, col_end)]):
+                col = range_start
+                while col <= range_end:
+                    cell = ws.cell(row=2, column=col)
+                    model_name = None
+
+                    # 检查是否是合并单元格的起始
+                    if (2, col) in merged_info:
+                        info = merged_info[(2, col)]
+                        raw_value = info['value']
+                        model_end_col = info['max_col']
+                    else:
+                        raw_value = cell.value
+                        model_end_col = col + 3  # 默认4列
+
+                    if raw_value:
+                        try:
+                            model = await resolve_import_model(db, series.id, str(raw_value), col, model_end_col, len(models))
+                        except ValueError as error:
+                            raise HTTPException(status_code=400, detail=str(error)) from error
+                        if model.id in {entry.id for entry in models}:
+                            raise HTTPException(status_code=400, detail=f"机型 {model.name} 在同一系列的文件中出现多次")
+                        models.append(model)
+                        col = model_end_col + 1
+                    else:
+                        col += 1
+
             # 获取最后发布的版本快照（用于对照变更）
             last_version_result = await db.execute(
                 select(ConfigVersion)
@@ -171,7 +202,7 @@ async def import_excel(
             # 快照中的 (IPN, 型号名称) 对集合，用于判定新增/删除/修改
             snapshot_pairs = set()
             if last_version and last_version.snapshot_data:
-                snapshot_raw_data = json.loads(last_version.snapshot_data)
+                snapshot_raw_data = await normalize_snapshot(db, series.id, json.loads(last_version.snapshot_data))
                 # 构建快照中型号ID→名称映射（回滚后model_id也会变，需用名称匹配）
                 snapshot_model_name_map = {}
                 for m in snapshot_raw_data.get("models", []):
@@ -206,74 +237,6 @@ async def import_excel(
                 )
                 if all_na:
                     snapshot_all_na_pairs.add((ipn_str, snap_model_name))
-
-            # 预加载所有已存在的型号（跨系列），避免重复创建
-            existing_models_map = {}
-            all_models_result = await db.execute(select(ProductModel))
-            for m in all_models_result.scalars().all():
-                if m.name not in existing_models_map:
-                    existing_models_map[m.name] = []
-                existing_models_map[m.name].append(m)
-
-            # 解析产品型号（第2行），遍历该系列的所有子列范围
-            models = []
-            for range_start, range_end in series_info.get('ranges', [(col_start, col_end)]):
-                col = range_start
-                while col <= range_end:
-                    cell = ws.cell(row=2, column=col)
-                    model_name = None
-
-                    # 检查是否是合并单元格的起始
-                    if (2, col) in merged_info:
-                        info = merged_info[(2, col)]
-                        raw_value = info['value']
-                        model_end_col = info['max_col']
-                    else:
-                        raw_value = cell.value
-                        model_end_col = col + 3  # 默认4列
-
-                    if raw_value:
-                        # 处理格式：型号名//uuid
-                        model_name = str(raw_value).split('//')[0].strip()
-
-                        # 检查当前系列内是否已有该型号
-                        model_result = await db.execute(
-                            select(ProductModel).where(
-                                ProductModel.series_id == series.id,
-                                ProductModel.name == model_name
-                            )
-                        )
-                        model = model_result.scalar_one_or_none()
-
-                        if not model:
-                            # 检查其他系列是否已有同名型号
-                            if model_name in existing_models_map:
-                                existing_series = [m.series_id for m in existing_models_map[model_name]]
-                                print(f"  注意: 型号 {model_name} 在系列 {existing_series} 中已存在，将在当前系列创建新实例")
-
-                            model = ProductModel(
-                                series_id=series.id,
-                                name=model_name,
-                                column_start=col,
-                                column_end=model_end_col,
-                                sort_order=len(models)
-                            )
-                            db.add(model)
-                            await db.flush()
-
-                            # 更新预加载的map
-                            if model_name not in existing_models_map:
-                                existing_models_map[model_name] = []
-                            existing_models_map[model_name].append(model)
-                        else:
-                            # 重用已有型号时，更新列范围以匹配当前 Excel 中的实际位置
-                            model.column_start = col
-                            model.column_end = model_end_col
-
-                        models.append(model)
-                        col = model_end_col + 1
-                    else:
-                        col += 1
 
             # 解析配置数据（从第5行开始）
             current_category = None
@@ -586,7 +549,7 @@ async def import_excel(
             # 补充该系列所有型号到 models 列表和 excel_pairs
             # 确保后续变更检测覆盖该系列所有型号，而不是仅限于当前文件列范围
             series_models_from_db = await db.execute(
-                select(ProductModel).where(ProductModel.series_id == series.id)
+                select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series.id)
             )
             series_model_names = {m.name for m in models}
             for m in series_models_from_db.scalars().all():
@@ -1039,7 +1002,7 @@ async def export_excel(
         raise HTTPException(status_code=404, detail="产品系列不存在")
 
     # 获取型号（支持按 model_ids 筛选）
-    models_query = select(ProductModel).where(ProductModel.series_id == series_id)
+    models_query = select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
     if model_ids:
         id_list = [int(x.strip()) for x in model_ids.split(',') if x.strip()]
         if id_list:
@@ -1050,6 +1013,8 @@ async def export_excel(
 
     if not models:
         raise HTTPException(status_code=400, detail="该系列下没有产品型号")
+
+    identity_metadata = await model_identity_metadata(db, [m.id for m in models])
 
     # 获取配置项（按 item_ids 筛选——所见即所得；无 item_ids 时回退到 categories/search）
     items_query = select(ConfigItem).order_by(ConfigItem.row_index)
@@ -1128,7 +1093,8 @@ async def export_excel(
     # 第2行：产品型号
     col = 6
     for model in models:
-        ws.cell(row=2, column=col, value=model.name)
+        source_uuid = identity_metadata.get(model.id, {}).get("source_uuid")
+        ws.cell(row=2, column=col, value=f"{model.name}//{source_uuid}" if source_uuid else model.name)
         ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col + field_count - 1)
         col += field_count
 

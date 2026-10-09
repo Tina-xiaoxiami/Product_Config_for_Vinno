@@ -10,6 +10,8 @@ from app.database import get_db
 from app.models import ProductSeries, ProductModel
 from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate
 
+from app.services.model_identity import active_model_filter, model_identity_metadata
+
 router = APIRouter()
 
 
@@ -53,9 +55,10 @@ async def _registration_mappings_by_product_model(
     return grouped
 
 
-def _model_response(model: ProductModel, mappings: list[dict]) -> dict:
+def _model_response(model: ProductModel, mappings: list[dict], identity: dict | None = None) -> dict:
     item = ProductModelResponse.model_validate(model).model_dump()
     item["registration_packages"] = mappings
+    item.update(identity or {})
     return item
 
 
@@ -67,7 +70,7 @@ async def get_models(
     db: AsyncSession = Depends(get_db)
 ):
     """获取产品型号列表"""
-    query = select(ProductModel)
+    query = select(ProductModel).where(active_model_filter())
 
     if series_id:
         query = query.where(ProductModel.series_id == series_id)
@@ -80,14 +83,15 @@ async def get_models(
         [int(item.id) for item in items],
     )
 
-    count_query = select(func.count()).select_from(ProductModel)
+    count_query = select(func.count()).select_from(ProductModel).where(active_model_filter())
     if series_id:
         count_query = count_query.where(ProductModel.series_id == series_id)
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
+    identities = await model_identity_metadata(db, [int(item.id) for item in items])
     return ProductModelListResponse(
-        items=[_model_response(item, mappings.get(int(item.id), [])) for item in items],
+        items=[_model_response(item, mappings.get(int(item.id), []), identities.get(int(item.id))) for item in items],
         total=total,
     )
 

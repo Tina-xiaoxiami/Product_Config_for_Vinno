@@ -32,3 +32,10 @@ test('surfaces invalid storage and quota errors instead of pretending to save', 
  assert.throws(() => loadModelSelectionGroups({ getItem: () => 'broken' })); assert.throws(() => loadModelSelectionGroups({ getItem: () => '{"name":"wrong"}' }))
  assert.throws(() => saveModelSelectionGroups([group()], { setItem: () => { throw new Error('full') } }), /full/)
 })
+
+test('saved old-name groups resolve a renamed model through source identity or alias', () => {
+ const renamed = new Map([[77, { id: 77, name: 'VINNO 9 综合版', seriesName: 'China', source_uuid: 'same-source', aliases: ['VINNO 9_Private', 'VINNO 9 综合版'] }]])
+ assert.deepEqual(resolveGroupModels({ models: [{ name: 'VINNO 9_Private', seriesName: 'China' }] }, renamed), { ids: [77], missing: 0 })
+ assert.deepEqual(resolveGroupModels({ models: [{ name: 'anything', seriesName: 'China', source_uuid: 'same-source' }] }, renamed), { ids: [77], missing: 0 })
+ assert.deepEqual(resolveGroupModels({ models: [{ name: 'VINNO 9 综合版', seriesName: 'China', source_uuid: 'different-source' }] }, renamed), { ids: [], missing: 1 })
+})

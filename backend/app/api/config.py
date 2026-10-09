@@ -22,6 +22,8 @@ from app.schemas.config import (
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
+from app.services.model_identity import active_model_filter, normalize_snapshot
+
 router = APIRouter()
 
 
@@ -43,7 +45,7 @@ async def get_config_rows(
     """
     # 获取该系列下的所有型号
     models_result = await db.execute(
-        select(ProductModel).where(ProductModel.series_id == series_id)
+        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
     )
     models = models_result.scalars().all()
     model_ids = [m.id for m in models]

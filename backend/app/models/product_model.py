@@ -1,7 +1,7 @@
 """
 产品型号模型
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -28,3 +28,16 @@ class ProductModel(Base):
     series = relationship("ProductSeries", back_populates="product_models")
     config_values = relationship("ConfigValue", back_populates="model", cascade="all, delete-orphan")
     config_drafts = relationship("ConfigDraft", back_populates="model")
+
+
+class ProductModelIdentity(Base):
+    """Source UUID and aliases; retired model rows remain available to history."""
+    __tablename__ = "product_model_identities"
+    id = Column(Integer, primary_key=True)
+    series_id = Column(Integer, ForeignKey("product_series.id", ondelete="CASCADE"), nullable=False)
+    model_id = Column(Integer, ForeignKey("product_models.id", ondelete="CASCADE"), nullable=False, unique=True)
+    source_uuid = Column(String(36), nullable=False)
+    aliases_json = Column(Text, nullable=False, default="[]")
+    historical_ids_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, default=utcnow)
+    __table_args__ = (UniqueConstraint("series_id", "source_uuid", name="uq_model_source_identity"),)

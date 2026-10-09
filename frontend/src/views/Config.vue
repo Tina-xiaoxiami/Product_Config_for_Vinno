@@ -2354,7 +2354,7 @@ const loadModels = async ({ modelGroup } = {}) => {
     results.forEach((res, idx) => {
       const seriesId = seriesIds[idx]
       const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
-      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
+      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName, source_uuid: m.source_uuid, aliases: m.aliases || [] })
     })
     const selection = modelGroup ? resolveGroupModels(modelGroup, models) : null
     if (selection && !selection.ids.length) { ElMessage.warning('该分组的机型已不存在或名称不唯一，请更新分组'); return false }
