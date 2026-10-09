@@ -218,6 +218,78 @@ async def test_partial_one_column_export_roundtrip_preserves_hidden_fields(db):
 
 
 @pytest.mark.asyncio
+async def test_filtered_export_roundtrip_does_not_delete_omitted_items_or_models(db):
+    series = ProductSeries(id=1, name="China")
+    models = [
+        ProductModel(id=1, series_id=1, name="M1", sort_order=0),
+        ProductModel(id=2, series_id=1, name="M2", sort_order=1),
+    ]
+    items = [
+        ConfigItem(id=1, category="Optional Features", row_index=5, rd_name="F1", ipn="100"),
+        ConfigItem(id=2, category="Optional Features", row_index=6, rd_name="F2", ipn="200"),
+    ]
+    db.add_all([series, *models, *items])
+    await db.flush()
+    values = []
+    snapshot_items = []
+    for item in items:
+        item_values = {}
+        for model in models:
+            text = f"{item.ipn}-{model.name}"
+            values.append(ConfigValue(item_id=item.id, model_id=model.id, current_config=text))
+            item_values[str(model.id)] = {"current_config": text}
+        snapshot_items.append(
+            {
+                "id": item.id,
+                "ipn": item.ipn,
+                "category": item.category,
+                "values": item_values,
+            }
+        )
+    db.add_all(values)
+    db.add(
+        ConfigVersion(
+            series_id=1,
+            version_number="1.0.0",
+            snapshot_data=json.dumps(
+                {
+                    "models": [{"id": model.id, "name": model.name} for model in models],
+                    "items": snapshot_items,
+                }
+            ),
+        )
+    )
+    await db.commit()
+
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+        ),
+        db,
+    )
+    payload = await _response_bytes(exported)
+    await import_excel(
+        UploadFile(filename="filtered.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+    stored = (
+        await db.execute(select(ConfigValue).order_by(ConfigValue.item_id, ConfigValue.model_id))
+    ).scalars().all()
+    assert [(value.item_id, value.model_id, value.current_config) for value in stored] == [
+        (1, 1, "100-M1"),
+        (1, 2, "100-M2"),
+        (2, 1, "200-M1"),
+        (2, 2, "200-M2"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_import_maps_recognized_row_three_labels_and_preserves_omitted_fields(db):
     await _seed_config(db, with_snapshot=True)
     workbook = _workbook(
