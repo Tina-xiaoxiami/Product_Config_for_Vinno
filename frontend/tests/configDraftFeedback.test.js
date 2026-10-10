@@ -233,3 +233,46 @@ test('a queued undo still deletes an old-scope save after the table is replaced'
   assert.equal(deleteCount, 1)
   assert.equal(replacement.model_values[2].final_config, 'replacement')
 })
+
+test('table refresh keeps requests for the same backend cell serialized', async () => {
+  const first = deferred()
+  let requestCount = 0
+  let backendValue = 'published'
+  const app = draftEditor({ createDraft: async payload => {
+    requestCount++
+    if (requestCount === 1) await first.promise
+    backendValue = payload.new_value
+    return { draft_id: 30 }
+  } })
+  const olderSave = app.handleCellChange(app.row, 2, 'final_config', 'older', 'published')
+  await Promise.resolve()
+  const replacement = { id: 1, model_values: { 2: { final_config: 'newer' } } }
+  app.tableData.value = [replacement]
+  const newerSave = app.handleCellChange(replacement, 2, 'final_config', 'newer', 'published')
+  await Promise.resolve()
+  assert.equal(requestCount, 1)
+  first.resolve()
+  await Promise.all([olderSave, newerSave])
+  assert.equal(backendValue, 'newer')
+  assert.equal(replacement.model_values[2].final_config, 'newer')
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'newer')
+})
+
+test('failed replacement-row save restores the last successful same-scope value', async () => {
+  const first = deferred()
+  let requestCount = 0
+  const app = draftEditor({ createDraft: async () => {
+    if (++requestCount === 1) { await first.promise; return { draft_id: 30 } }
+    throw new Error('latest failed')
+  } })
+  const olderSave = app.handleCellChange(app.row, 2, 'final_config', 'older', 'published')
+  await Promise.resolve()
+  const replacement = { id: 1, model_values: { 2: { final_config: 'newer' } } }
+  app.tableData.value = [replacement]
+  const newerSave = app.handleCellChange(replacement, 2, 'final_config', 'newer', 'published')
+  first.resolve()
+  assert.equal(await olderSave, true)
+  assert.equal(await newerSave, false)
+  assert.equal(replacement.model_values[2].final_config, 'older')
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'older')
+})
