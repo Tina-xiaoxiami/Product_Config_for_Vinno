@@ -25,7 +25,10 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
   const context = {
     reactive: value => value,
     selectedSeries: ref([10]),
-    editingCell: ref(null),
+    editingCell: ref(null), editSelectRef: ref(null),
+    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false),
+    currentPage: ref(1), pageSize: ref(20), selectedModels: ref([2]), visibleConfigFields: ref(['final_config']),
+    paginatedTableData: tableData, nextTick() {}, setTimeout, clearTimeout,
     originalData: ref([originalRow]),
     originalDataMap: ref(new Map([[1, originalRow]])),
     isValueChanged: (oldValue, newValue) => oldValue !== newValue,
@@ -43,15 +46,18 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     createDraft: createDraft || (async () => ({ draft_id: 30 }))
   }
   const code = source.slice(
-    source.indexOf('const finishEdit ='),
+    source.indexOf('let editSessionSequence ='),
     source.indexOf('// 多文件上传处理')
   )
-  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell } = new Function(
+  const { startEdit, finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell } = new Function(
     ...Object.keys(context),
-    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell }`
+    `${code}\nreturn { startEdit, finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell }`
   )(...Object.values(context))
   return {
-    finishEdit,
+    finishEdit: (target, modelId, field, value) => {
+      startEdit(target, modelId, field)
+      return finishEdit(target, modelId, field, value, context.editingCell.value)
+    },
     draftSaveFeedback,
     retryFailedCell,
     refreshSaveFeedback,
@@ -102,25 +108,23 @@ function draftLoadingController({ getModels, loadData, initDraft }) {
 
 function cellEditor({ ready = true, loading = false, applyingModelGroup = false } = {}) {
   const context = {
-    configReady: ref(ready),
-    loading: ref(loading),
-    applyingModelGroup: ref(applyingModelGroup),
-    submitDialogVisible: ref(false),
-    batchSubmitDialog: { visible: false },
-    editingCell: ref(null),
-    nextTick: callback => callback(),
-    editSelectRef: ref(null),
-    setTimeout
+    configReady: ref(ready), loading: ref(loading), applyingModelGroup: ref(applyingModelGroup),
+    reviewInteractionLocked: ref(false), editingCell: ref(null),
+    nextTick: callback => callback(), editSelectRef: ref(null), setTimeout, clearTimeout,
+    currentPage: ref(1), pageSize: ref(20), selectedModels: ref([2]), visibleConfigFields: ref(['final_config']),
+    paginatedTableData: ref([]),
+    captureDraftCellContext: row => ({ row }), isDraftCellContextCurrent: () => true
   }
-  const code = source.slice(
-    source.indexOf('const startEdit ='),
-    source.indexOf('// 结束编辑单元格')
-  )
-  const startEdit = new Function(
-    ...Object.keys(context),
-    `${code}\nreturn startEdit`
-  )(...Object.values(context))
-  return { startEdit, editingCell: context.editingCell }
+  const code = source.slice(source.indexOf('let editSessionSequence ='), source.indexOf('// 结束编辑单元格'))
+  const startEdit = new Function(...Object.keys(context), `${code}\nreturn startEdit`)(...Object.values(context))
+  return {
+    startEdit: (row, modelId, field) => {
+      row.model_values ||= { [modelId]: { [field]: '' } }
+      context.paginatedTableData.value = [row]
+      return startEdit(row, modelId, field)
+    },
+    editingCell: context.editingCell
+  }
 }
 
 function clearCellAction(handleCellChange) {
@@ -496,7 +500,9 @@ test('cell editing is gated by aggregate configuration readiness', () => {
 
   const ready = cellEditor()
   ready.startEdit({ id: 1 }, 2, 'final_config')
-  assert.deepEqual(ready.editingCell.value, { rowId: 1, modelId: 2, field: 'final_config' })
+  assert.equal(ready.editingCell.value.rowId, 1)
+  assert.equal(ready.editingCell.value.modelId, 2)
+  assert.equal(ready.editingCell.value.field, 'final_config')
 })
 
 

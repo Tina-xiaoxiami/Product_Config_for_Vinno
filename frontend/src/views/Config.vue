@@ -114,7 +114,7 @@
 
           <el-button v-if="hasActiveFilters" link type="primary" @click="resetActiveFilters">清除筛选</el-button>
 
-          <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @hide="applyTempColumns">
+          <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @before-leave="applyTempColumns">
             <template #reference>
               <el-button :icon="Setting">列筛选</el-button>
             </template>
@@ -405,11 +405,11 @@
             <template #header>
               <div class="column-header-with-filter">
                 <span>最终配置</span>
-                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('final_config', modelId)" @hide="applyFieldFilterPopover('final_config', modelId)">
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @before-enter="openFieldFilterPopover('final_config', modelId)" @before-leave="applyFieldFilterPopover('final_config', modelId)">
                   <template #reference>
-                    <span class="filter-icon" :class="{ active: hasFieldFilter('final_config', modelId) }" @click.stop>
+                    <button type="button" class="filter-icon" :class="{ active: hasFieldFilter('final_config', modelId) }" :aria-label="`筛选 ${getModelName(modelId)} 的最终配置`" :title="`筛选最终配置`" @click.stop>
                       <el-icon><Filter /></el-icon>
-                    </span>
+                    </button>
                   </template>
                   <div class="filter-body">
                     <div class="filter-actions">
@@ -448,14 +448,16 @@
               >
                 <template v-if="editingCell?.rowId === row.id && editingCell?.modelId === modelId && editingCell?.field === 'final_config'">
                   <el-select
-                    v-model="row.model_values[modelId].final_config"
+                    v-for="session in [editingCell]"
+                    :key="session.id"
+                    v-model="session.value"
                     size="small"
                     placeholder="-"
                     clearable
                     filterable
                     allow-create
-                    @change="finishEdit(row, modelId, 'final_config', row.model_values[modelId].final_config)"
-                    @blur="finishEdit(row, modelId, 'final_config', row.model_values[modelId].final_config)"
+                    @change="finishEdit(row, modelId, 'final_config', session.value, session)"
+                    @blur="finishEdit(row, modelId, 'final_config', session.value, session)"
                     ref="editSelectRef"
                   >
                     <el-option v-for="v in enumValues.configValues" :key="v" :label="v" :value="v" />
@@ -478,11 +480,11 @@
             <template #header>
               <div class="column-header-with-filter">
                 <span>当前配置</span>
-                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('current_config', modelId)" @hide="applyFieldFilterPopover('current_config', modelId)">
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @before-enter="openFieldFilterPopover('current_config', modelId)" @before-leave="applyFieldFilterPopover('current_config', modelId)">
                   <template #reference>
-                    <span class="filter-icon" :class="{ active: hasFieldFilter('current_config', modelId) }" @click.stop>
+                    <button type="button" class="filter-icon" :class="{ active: hasFieldFilter('current_config', modelId) }" :aria-label="`筛选 ${getModelName(modelId)} 的当前配置`" :title="`筛选当前配置`" @click.stop>
                       <el-icon><Filter /></el-icon>
-                    </span>
+                    </button>
                   </template>
                   <div class="filter-body">
                     <div class="filter-actions">
@@ -522,14 +524,16 @@
                 <template v-if="editingCell?.rowId === row.id && editingCell?.modelId === modelId && editingCell?.field === 'current_config'">
                   <el-select
                     ref="editSelectRef"
-                    v-model="row.model_values[modelId].current_config"
+                    v-for="session in [editingCell]"
+                    :key="session.id"
+                    v-model="session.value"
                     size="small"
                     placeholder="-"
                     clearable
                     filterable
                     allow-create
-                    @change="finishEdit(row, modelId, 'current_config', row.model_values[modelId].current_config)"
-                    @blur="finishEdit(row, modelId, 'current_config', row.model_values[modelId].current_config)"
+                    @change="finishEdit(row, modelId, 'current_config', session.value, session)"
+                    @blur="finishEdit(row, modelId, 'current_config', session.value, session)"
                   >
                     <el-option v-for="v in enumValues.configValues" :key="v" :label="v" :value="v" />
                   </el-select>
@@ -551,11 +555,11 @@
             <template #header>
               <div class="column-header-with-filter">
                 <span>选型类别</span>
-                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('selection_config', modelId)" @hide="applyFieldFilterPopover('selection_config', modelId)">
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @before-enter="openFieldFilterPopover('selection_config', modelId)" @before-leave="applyFieldFilterPopover('selection_config', modelId)">
                   <template #reference>
-                    <span class="filter-icon" :class="{ active: hasFieldFilter('selection_config', modelId) }" @click.stop>
+                    <button type="button" class="filter-icon" :class="{ active: hasFieldFilter('selection_config', modelId) }" :aria-label="`筛选 ${getModelName(modelId)} 的选型类别`" :title="`筛选选型类别`" @click.stop>
                       <el-icon><Filter /></el-icon>
-                    </span>
+                    </button>
                   </template>
                   <div class="filter-body">
                     <div class="filter-actions">
@@ -595,14 +599,16 @@
                 <template v-if="editingCell?.rowId === row.id && editingCell?.modelId === modelId && editingCell?.field === 'selection_config'">
                   <el-select
                     ref="editSelectRef"
-                    v-model="row.model_values[modelId].selection_config"
+                    v-for="session in [editingCell]"
+                    :key="session.id"
+                    v-model="session.value"
                     size="small"
                     placeholder="-"
                     clearable
                     filterable
                     allow-create
-                    @change="finishEdit(row, modelId, 'selection_config', row.model_values[modelId].selection_config)"
-                    @blur="finishEdit(row, modelId, 'selection_config', row.model_values[modelId].selection_config)"
+                    @change="finishEdit(row, modelId, 'selection_config', session.value, session)"
+                    @blur="finishEdit(row, modelId, 'selection_config', session.value, session)"
                   >
                     <el-option v-for="v in enumValues.selectionTypes" :key="v" :label="v" :value="v" />
                   </el-select>
@@ -624,11 +630,11 @@
             <template #header>
               <div class="column-header-with-filter">
                 <span>研发状态</span>
-                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @show="openFieldFilterPopover('rd_status', modelId)" @hide="applyFieldFilterPopover('rd_status', modelId)">
+                <el-popover placement="bottom" :width="220" trigger="click" teleported popper-class="field-filter-popover" @before-enter="openFieldFilterPopover('rd_status', modelId)" @before-leave="applyFieldFilterPopover('rd_status', modelId)">
                   <template #reference>
-                    <span class="filter-icon" :class="{ active: hasFieldFilter('rd_status', modelId) }" @click.stop>
+                    <button type="button" class="filter-icon" :class="{ active: hasFieldFilter('rd_status', modelId) }" :aria-label="`筛选 ${getModelName(modelId)} 的研发状态`" :title="`筛选研发状态`" @click.stop>
                       <el-icon><Filter /></el-icon>
-                    </span>
+                    </button>
                   </template>
                   <div class="filter-body">
                     <div class="filter-actions">
@@ -669,14 +675,16 @@
                 <template v-if="editingCell?.rowId === row.id && editingCell?.modelId === modelId && editingCell?.field === 'rd_status'">
                   <el-select
                     ref="editSelectRef"
-                    v-model="row.model_values[modelId].rd_status"
+                    v-for="session in [editingCell]"
+                    :key="session.id"
+                    v-model="session.value"
                     size="small"
                     placeholder="-"
                     clearable
                     filterable
                     allow-create
-                    @change="finishEdit(row, modelId, 'rd_status', row.model_values[modelId].rd_status)"
-                    @blur="finishEdit(row, modelId, 'rd_status', row.model_values[modelId].rd_status)"
+                    @change="finishEdit(row, modelId, 'rd_status', session.value, session)"
+                    @blur="finishEdit(row, modelId, 'rd_status', session.value, session)"
                   >
                     <el-option v-for="v in enumValues.rdStatuses" :key="v" :label="v" :value="v" />
                   </el-select>
@@ -2877,48 +2885,67 @@ const handleSelectionChange = (rows) => {
   selectedRows.value = rows
 }
 
+let editSessionSequence = 0
+let editOpenTimer = null
+const getEditSelect = () => Array.isArray(editSelectRef.value) ? editSelectRef.value[0] : editSelectRef.value
+const cancelEditSession = () => {
+  clearTimeout(editOpenTimer)
+  editOpenTimer = null
+  editingCell.value = null
+}
+const isEditSessionCurrent = session => Boolean(session) && editingCell.value === session &&
+  !session.committed && configReady.value && !loading.value && !applyingModelGroup.value &&
+  !reviewInteractionLocked.value && currentPage.value === session.page && pageSize.value === session.pageSize &&
+  selectedModels.value.includes(session.modelId) && visibleConfigFields.value.includes(session.field) &&
+  paginatedTableData.value.includes(session.row) && isDraftCellContextCurrent(session.context)
+
 // 开始编辑单元格
 const startEdit = (row, modelId, field) => {
-  if (!configReady.value || loading.value || applyingModelGroup.value || submitDialogVisible.value || batchSubmitDialog.visible) return false
-  editingCell.value = { rowId: row.id, modelId, field }
-  // 自动展开下拉框
+  if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+      !paginatedTableData.value.includes(row) || !selectedModels.value.includes(modelId) ||
+      !visibleConfigFields.value.includes(field)) return false
+  const current = editingCell.value
+  if (isEditSessionCurrent(current) && current.row === row && current.modelId === modelId && current.field === field) return true
+  cancelEditSession()
+  const key = `${row.id}_${modelId}_${field}`
+  editingCell.value = {
+    id: ++editSessionSequence, row, rowId: row.id, modelId, field,
+    context: captureDraftCellContext(row, modelId, field, key),
+    value: row.model_values?.[modelId]?.[field], committed: false,
+    page: currentPage.value, pageSize: pageSize.value
+  }
+  const session = editingCell.value
   nextTick(() => {
-    if (editSelectRef.value) {
-      // el-select 的 ref 可能是数组或单个元素
-      const select = Array.isArray(editSelectRef.value) ? editSelectRef.value[0] : editSelectRef.value
-      if (select) {
-        select.focus()
-        // 延迟调用 toggleMenu 确保组件已渲染
-        setTimeout(() => {
-          if (select.toggleMenu) {
-            select.toggleMenu()
-          }
-        }, 50)
-      }
-    }
+    if (!isEditSessionCurrent(session)) return
+    const select = getEditSelect()
+    if (!select) return
+    select.focus()
+    editOpenTimer = setTimeout(() => {
+      editOpenTimer = null
+      if (!isEditSessionCurrent(session) || getEditSelect() !== select || select.expanded) return
+      select.toggleMenu?.()
+    }, 50)
   })
   return true
 }
 
 // 结束编辑单元格
-const finishEdit = async (row, modelId, field, newValue) => {
-  editingCell.value = null
-
-  // 获取原始值
-  const originalRow = originalData.value.find(r => r.id === row.id)
-  const key = `${row.id}_${modelId}_${field}`
-  const oldValue = draftBaseline(draftChanges.value.get(key), originalRow?.model_values?.[modelId]?.[field])
-
-  // 检查值是否真正变化
+const finishEdit = async (row, modelId, field, newValue, session) => {
+  if (!isEditSessionCurrent(session) || session.row !== row || session.modelId !== modelId || session.field !== field) return false
+  session.committed = true
+  cancelEditSession()
+  const context = session.context
+  const key = context.key
+  const oldValue = draftBaseline(draftChanges.value.get(key), context.originalRow?.model_values?.[modelId]?.[field])
+  // 编辑器先保存会话值，提交后才更新行，避免筛选移走正在编辑的行。
+  row.model_values[modelId][field] = newValue
   if (!isValueChanged(oldValue, newValue)) {
-    // 值改回原值，删除草稿
     if (draftChanges.value.has(key) || hasPendingDraftCellOperation(row, modelId, field)) {
-      await removeDraftChange(row, modelId, field, key)
+      return await removeDraftChange(row, modelId, field, key, context)
     }
-    return
+    return true
   }
-
-  await handleCellChange(row, modelId, field, newValue, oldValue)
+  return await handleCellChange(row, modelId, field, newValue, oldValue, context)
 }
 
 const draftSaveFeedback = reactive({ pending: 0, message: '', lastCell: null, failedCell: null, failures: new Map(), successes: new Map(), sequence: 0 })
@@ -3055,8 +3082,8 @@ const restoreWorkingCell = (context, isLatest = () => true) => {
 }
 
 // 删除草稿变更
-const removeDraftChange = (row, modelId, field, key) => {
-  const context = captureDraftCellContext(row, modelId, field, key)
+const removeDraftChange = (row, modelId, field, key, frozenContext = null) => {
+  const context = frozenContext || captureDraftCellContext(row, modelId, field, key)
   context.action = 'undo'
   if (!context.seriesId || context.batchId === undefined) {
     restoreWorkingCell(context)
@@ -4143,29 +4170,20 @@ const initTempColumns = () => {
 }
 
 const applyTempColumns = () => {
-  // 关闭弹窗时，应用临时配置
+  const hasFixedColumn = Object.keys(tempFixedColumns).some(key => tempFixedColumns[key] && tempVisibleColumns[key])
+  if (!hasFixedColumn) {
+    ElMessage.warning('至少需要显示并固定一列，已保留原来的列设置')
+    return false
+  }
   Object.assign(visibleColumns, tempVisibleColumns)
   Object.assign(fixedColumns, tempFixedColumns)
-  // 保存到 localStorage
   saveColumnSettings()
+  return true
 }
 
 const applyTempColumnsAndClose = () => {
-  // 检查至少有一列固定（且该列是显示的）
-  const hasFixedColumn = Object.keys(tempFixedColumns).some(
-    key => tempFixedColumns[key] && tempVisibleColumns[key]
-  )
-
-  if (!hasFixedColumn) {
-    ElMessage.warning('至少需要固定一列')
-    return
-  }
-
-  applyTempColumns()
-  // 关闭popover
-  if (popoverRef.value) {
-    popoverRef.value.hide()
-  }
+  if (!applyTempColumns()) return
+  popoverRef.value?.hide()
 }
 
 const resetTempColumns = () => {
@@ -4615,12 +4633,22 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelEditSession()
   clearTimeout(searchTimer)
   clearTimeout(processTimer)
   window.removeEventListener('resize', calculateTableHeight)
   configResizeObserver?.disconnect()
   // Excel-like keyboard events removed
 })
+
+// 编辑会话范围清理
+watch(() => [editingCell.value, currentPage.value, pageSize.value,
+  [...selectedModels.value], [...visibleConfigFields.value], paginatedTableData.value,
+  configReady.value, loading.value, applyingModelGroup.value, reviewInteractionLocked.value,
+  editingCell.value ? isDraftCellScopeCurrent(editingCell.value.context) : true], () => {
+  if (editingCell.value && !isEditSessionCurrent(editingCell.value)) cancelEditSession()
+}, { flush: 'sync' })
+// 编辑会话范围清理结束
 
 watch([selectedSeries, draftBatchMap, allModelsMap], () => refreshSaveFeedback(), { deep: true })
 
@@ -5360,6 +5388,10 @@ th.is-drag-over-after {
   min-width: 0;
 }
 .filter-icon {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5372,6 +5404,7 @@ th.is-drag-over-after {
   flex-shrink: 0;
   color: #999;
 }
+.filter-icon:focus-visible { outline: 2px solid #409eff; outline-offset: 1px; opacity: 1; }
 .filter-icon:hover {
   opacity: 0.8;
   color: #409eff;
