@@ -714,7 +714,7 @@
     <el-dialog v-model="previewDialogVisible" title="导入影响预览" width="85%" top="5vh" :close-on-click-modal="!importing" :close-on-press-escape="!importing" :show-close="!importing">
       <div v-if="previewData" class="preview-content">
         <el-alert
-          :title="`共选择 ${previewData.totalFiles} 个文件 - ${previewData.totalModels} 个型号，${previewData.totalItems} 条配置项`"
+          :title="`共选择 ${previewData.totalFiles} 个文件；文件内累计 ${previewData.totalModels} 个型号、${previewData.totalItems} 条配置行`"
           type="info"
           show-icon
           :closable="false"
