@@ -152,3 +152,45 @@ async def test_shared_description_preview_is_separate_from_model_pair_counts(db)
     assert impact["item_changes"][0]["old_value"] == "功能"
     assert impact["item_changes"][0]["new_value"] == "新描述"
     assert await _database_state(db) == before
+
+
+@pytest.mark.asyncio
+async def test_preview_restoring_pending_deletion_reports_working_addition(db):
+    await _seed_config(db, with_snapshot=True)
+    db.add(DraftBatch(id="deleted", series_id=1, status="draft"))
+    db.add(ConfigDraft(batch_id="deleted", series_id=1, item_id=1, model_id=1,
+                       change_type="delete"))
+    await db.commit()
+    before = await _database_state(db)
+    impact = (await preview_import(_upload(_workbook([("China", "M")])), db))["impact"]
+    assert (impact["added"], impact["modified"], impact["deleted"]) == (1, 0, 0)
+    assert all(change["old_value"] is None for change in impact["changes"])
+    assert await _database_state(db) == before
+
+
+@pytest.mark.asyncio
+async def test_preview_does_not_commit_caller_pending_transaction(db):
+    await _seed_config(db, with_snapshot=True)
+    value = await db.scalar(select(ConfigValue))
+    value.current_config = "UNCOMMITTED"
+    await preview_import(_upload(_workbook([("China", "M")],
+                         values=["FINAL", "OTHER", "SELECT", "DONE"])), db)
+    assert await db.scalar(select(ConfigValue.current_config)) == "UNCOMMITTED"
+    await db.rollback()
+    assert await db.scalar(select(ConfigValue.current_config)) == "CURRENT"
+
+
+def test_import_impact_detail_cap_keeps_exact_counts_and_declares_truncation():
+    before = {"pairs": {}, "items": {}}
+    pairs = {
+        (item_id, 1): {"series_name": "China", "model_id": 1, "model_name": "M",
+                       "rd_name": f"F{item_id}", "ipn": str(item_id),
+                       "values": {"current_config": "X"}}
+        for item_id in range(250)
+    }
+    after = {"pairs": pairs, "items": {}}
+    impact = import_export._import_impact(before, after, set(pairs))
+    assert impact["added"] == 250
+    assert impact["total_changes"] == 250
+    assert len(impact["changes"]) == impact["detail_limit"] == 200
+    assert impact["truncated"] is True

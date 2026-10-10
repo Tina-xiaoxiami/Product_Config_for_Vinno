@@ -170,6 +170,18 @@ async def import_excel(
     series_name: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
+    result = await _execute_import(file, series_name, db, commit=True)
+    result.pop("_touched_pairs", None)
+    return result
+
+
+async def _execute_import(
+    file: UploadFile,
+    series_name: Optional[str],
+    db: AsyncSession,
+    *,
+    commit: bool,
+):
     """
     导入Excel文件
 
@@ -209,6 +221,7 @@ async def import_excel(
 
     results = []
     change_log = []  # 变更记录
+    all_touched_pairs = set()
 
     try:
         for series_info, parsed_models in structure:
@@ -1176,22 +1189,30 @@ async def import_excel(
                     draft_batch.update_count = u
                     draft_batch.delete_count = d
 
-        await db.commit()
+            all_touched_pairs.update(touched_pair_ids)
+
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
 
     except HTTPException:
         # 重新抛出HTTP异常
-        await db.rollback()
+        if commit:
+            await db.rollback()
         raise
     except Exception as e:
-        # 其他异常，回滚事务
-        await db.rollback()
+        # 预览的外层 savepoint 负责回滚，不能回滚调用者事务。
+        if commit:
+            await db.rollback()
         raise HTTPException(status_code=500, detail=f"导入失败：{str(e)}")
 
     return {
         "message": "导入成功",
         "details": results,
         "total_series": len(results),
-        "change_log": change_log
+        "change_log": change_log,
+        "_touched_pairs": all_touched_pairs,
     }
 
 
@@ -1600,10 +1621,9 @@ async def download_template():
     )
 
 
-@router.post("/preview")
-async def preview_import(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+async def _preview_workbook_summary(
+    file: UploadFile,
+    db: AsyncSession,
 ):
     """
     预览导入Excel文件（不实际导入）
@@ -1698,3 +1718,197 @@ async def preview_import(
     preview_result['summary']['categories'] = list(set(preview_result['summary']['categories']))
 
     return preview_result
+
+
+_IMPORT_EMPTY_VALUES = {None, "", "N/A", "-", "None", "null", "未定义"}
+_IMPORT_METADATA_FIELDS = ("rd_name", "v_code", "ipn", "zh_desc", "en_desc", "category", "row_index")
+_IMPORT_IMPACT_DETAIL_LIMIT = 200
+
+
+def _impact_value(value):
+    text = str(value).strip() if value is not None else None
+    return None if text in _IMPORT_EMPTY_VALUES else text
+
+
+async def _working_import_state(db: AsyncSession) -> dict:
+    """Capture displayed work values and shared item attributes as plain data."""
+    items = {
+        item.id: {field: getattr(item, field) for field in _IMPORT_METADATA_FIELDS}
+        for item in (await db.execute(select(ConfigItem))).scalars()
+    }
+    rows = await db.execute(
+        select(ConfigValue, ConfigItem, ProductModel, ProductSeries)
+        .join(ConfigItem, ConfigValue.item_id == ConfigItem.id)
+        .join(ProductModel, ConfigValue.model_id == ProductModel.id)
+        .join(ProductSeries, ProductModel.series_id == ProductSeries.id)
+        .where(active_model_filter())
+    )
+    pairs = {}
+    for value, item, model, series in rows:
+        if item.category == "Main Unit":
+            continue
+        pairs[(item.id, model.id)] = {
+            "series_name": series.name,
+            "model_id": model.id,
+            "model_name": model.name,
+            "rd_name": item.rd_name,
+            "ipn": item.ipn,
+            "values": {field: _impact_value(getattr(value, field)) for field in CONFIG_FIELDS},
+        }
+    drafts = await db.execute(
+        select(ConfigDraft)
+        .join(DraftBatch, ConfigDraft.batch_id == DraftBatch.id)
+        .where(DraftBatch.status == "draft")
+        .order_by(ConfigDraft.id)
+    )
+    deleted_pairs = set()
+    for draft in drafts.scalars():
+        key = (draft.item_id, draft.model_id)
+        entry = pairs.get(key)
+        if entry is None:
+            continue
+        if draft.change_type == "delete":
+            deleted_pairs.add(key)
+        elif draft.change_type == "update" and draft.field_name in CONFIG_FIELDS:
+            entry["values"][draft.field_name] = _impact_value(draft.new_value)
+    for key in deleted_pairs:
+        pairs[key]["values"] = {field: None for field in CONFIG_FIELDS}
+    return {"pairs": pairs, "items": items}
+
+
+def _import_impact(before: dict, after: dict, touched_pairs: set) -> dict:
+    """Count actual item × model changes separately from shared item updates."""
+    impact = {
+        "unit": "item_model_pairs",
+        "added": 0, "modified": 0, "deleted": 0, "unchanged": 0,
+        "item_counts": {"added": 0, "modified": 0, "deleted": 0},
+        "item_changes": [], "changed_item_fields": 0,
+        "changed_cells": 0, "total_changes": 0,
+        "detail_limit": _IMPORT_IMPACT_DETAIL_LIMIT, "truncated": False,
+        "models": [], "fields": [], "changes": [],
+    }
+    affected_models = {}
+    affected_fields = set()
+
+    def include_model(entry):
+        affected_models[entry["model_id"]] = {
+            "model_id": entry["model_id"], "model_name": entry["model_name"],
+            "series_name": entry["series_name"],
+        }
+
+    def include_change(entry, field, old_value, new_value, kind, *, shared=False):
+        affected_fields.add(field)
+        impact["total_changes"] += 1
+        if shared:
+            impact["changed_item_fields"] += 1
+        else:
+            impact["changed_cells"] += 1
+        if len(impact["changes"]) >= _IMPORT_IMPACT_DETAIL_LIMIT:
+            return
+        change = {
+            "series_name": entry["series_name"], "model_name": entry["model_name"],
+            "rd_name": entry["rd_name"], "ipn": entry["ipn"],
+            "field_name": field, "old_value": old_value,
+            "new_value": new_value, "change_type": kind,
+        }
+        impact["changes"].append(change)
+        if shared:
+            impact["item_changes"].append(change)
+
+    before_pairs, after_pairs = before["pairs"], after["pairs"]
+    for key in sorted(before_pairs.keys() | after_pairs.keys() | touched_pairs):
+        old_entry = before_pairs.get(key)
+        new_entry = after_pairs.get(key)
+        old_values = old_entry["values"] if old_entry else {}
+        new_values = new_entry["values"] if new_entry else {}
+        changed_fields = [
+            field for field in CONFIG_FIELDS
+            if old_values.get(field) != new_values.get(field)
+        ]
+        if not changed_fields:
+            if key in touched_pairs:
+                impact["unchanged"] += 1
+            continue
+        old_present = any(old_values.values())
+        new_present = any(new_values.values())
+        kind = "added" if not old_present and new_present else (
+            "deleted" if old_present and not new_present else "modified"
+        )
+        impact[kind] += 1
+        entry = new_entry or old_entry
+        include_model(entry)
+        for field in changed_fields:
+            include_change(entry, field, old_values.get(field), new_values.get(field), kind)
+
+    before_items, after_items = before["items"], after["items"]
+    for item_id in sorted(before_items.keys() | after_items.keys()):
+        old_data = before_items.get(item_id, {})
+        new_data = after_items.get(item_id, {})
+        fields = [field for field in _IMPORT_METADATA_FIELDS if old_data.get(field) != new_data.get(field)]
+        if not fields:
+            continue
+        kind = "added" if item_id not in before_items else (
+            "deleted" if item_id not in after_items else "modified"
+        )
+        impact["item_counts"][kind] += 1
+        related = [entry for key, entry in (before_pairs | after_pairs).items() if key[0] == item_id]
+        for entry in related:
+            include_model(entry)
+        metadata = new_data or old_data
+        entry = {
+            "series_name": "、".join(sorted({entry["series_name"] for entry in related})),
+            "model_name": "共享基础信息", "rd_name": metadata.get("rd_name"), "ipn": metadata.get("ipn"),
+        }
+        for field in fields:
+            include_change(entry, field, old_data.get(field), new_data.get(field), kind, shared=True)
+
+    impact["truncated"] = impact["total_changes"] > len(impact["changes"])
+    impact["models"] = list(affected_models.values())
+    impact["fields"] = sorted(affected_fields)
+    return impact
+
+
+@router.post("/preview-batch")
+async def preview_import_batch(
+    files: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute the ordered files inside a savepoint that is always rolled back.
+
+    The production import executor supplies all identity, scope and draft rules.
+    Per-file impacts use the preceding file's working result; the batch impact
+    compares initial to final state, so repeated edits are never double counted.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="请至少选择一个 Excel 文件")
+    transaction = await db.begin_nested()
+    try:
+        initial = await _working_import_state(db)
+        current = initial
+        previews = []
+        all_touched = set()
+        for file in files:
+            await file.seek(0)
+            preview = await _preview_workbook_summary(file, db)
+            await file.seek(0)
+            execution = await _execute_import(file, None, db, commit=False)
+            following = await _working_import_state(db)
+            touched = execution["_touched_pairs"]
+            preview["impact"] = _import_impact(current, following, touched)
+            previews.append(preview)
+            all_touched.update(touched)
+            current = following
+        return {"files": previews, "impact": _import_impact(initial, current, all_touched)}
+    finally:
+        # Covers validation errors, unexpected errors and task cancellation.
+        # Never commit/release the preview savepoint or roll back the caller.
+        await transaction.rollback()
+
+
+@router.post("/preview")
+async def preview_import(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await preview_import_batch([file], db)
+    return result["files"][0]
