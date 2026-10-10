@@ -23,6 +23,7 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
   const draftChanges = ref(new Map(change ? [['1_2_final_config', change]] : []))
   const tableData = ref([row])
   const context = {
+    reactive: value => value,
     editingCell: ref(null),
     originalData: ref([originalRow]),
     originalDataMap: ref(new Map([[1, originalRow]])),
@@ -44,12 +45,14 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     source.indexOf('const finishEdit ='),
     source.indexOf('// 多文件上传处理')
   )
-  const { finishEdit, removeDraftChange, handleCellChange } = new Function(
+  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell } = new Function(
     ...Object.keys(context),
-    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange }`
+    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell }`
   )(...Object.values(context))
   return {
     finishEdit,
+    draftSaveFeedback,
+    retryFailedCell,
     removeDraftChange,
     handleCellChange,
     messages,
@@ -98,6 +101,8 @@ function cellEditor({ ready = true, loading = false, applyingModelGroup = false 
     configReady: ref(ready),
     loading: ref(loading),
     applyingModelGroup: ref(applyingModelGroup),
+    submitDialogVisible: ref(false),
+    batchSubmitDialog: { visible: false },
     editingCell: ref(null),
     nextTick: callback => callback(),
     editSelectRef: ref(null),
@@ -484,4 +489,16 @@ test('cell editing is gated by aggregate configuration readiness', () => {
   const ready = cellEditor()
   ready.startEdit({ id: 1 }, 2, 'final_config')
   assert.deepEqual(ready.editingCell.value, { rowId: 1, modelId: 2, field: 'final_config' })
+})
+
+
+test('failed undo exposes an undo retry rather than an unavailable save retry', async () => {
+  let calls = 0
+  const app = draftEditor({ change: { oldValue: 'published', newValue: 'working', changeType: 'update' }, deleteDraftByKey: async () => { if (++calls === 1) throw new Error('offline') } })
+  assert.equal(await app.removeDraftChange(app.row, 2, 'final_config', '1_2_final_config'), false)
+  assert.equal(app.draftSaveFeedback.failedCell.action, 'undo')
+  await app.retryFailedCell()
+  assert.equal(calls, 2)
+  assert.equal(app.draftSaveFeedback.lastCell, null)
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
 })
