@@ -44,7 +44,7 @@ async def test_clear_then_restore_removes_field_draft_without_touching_other_cha
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('baseline,new_value,kind', [('X', 'X', 'update'), (None, 'N/A', 'create'), ('', None, 'create')])
+@pytest.mark.parametrize('baseline,new_value,kind', [('X', 'X', 'update'), (None, 'N/A', 'create'), ('', None, 'create'), (None, None, 'delete')])
 async def test_first_semantically_unchanged_field_request_creates_no_draft_or_version(tmp_path, baseline, new_value, kind):
     client, sessions, engine = await _draft_harness(tmp_path)
     await _seed_catalog(sessions)
@@ -90,4 +90,29 @@ async def test_field_create_restoring_semantic_empty_removes_original_draft(tmp_
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
         assert await db.scalar(select(ConfigValue.current_config)) == baseline
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['create', 'delete'])
+async def test_structural_pair_requests_remain_drafts_even_with_empty_values(tmp_path, kind):
+    client, sessions, engine = await _draft_harness(tmp_path)
+    await _seed_catalog(sessions)
+    async with sessions() as db:
+        db.add_all([DraftBatch(id='batch-1', series_id=1, status='draft'),
+                    ConfigValue(item_id=100, model_id=10, current_config='X')])
+        await db.commit()
+    async with client:
+        response = await client.post('/api/drafts/draft', json=_draft_payload(field_name=None,
+                                     old_value=None, new_value=None, change_type=kind))
+        assert response.status_code == 200, response.text
+        assert response.json()['draft_id'] is not None
+    async with sessions() as db:
+        draft = await db.scalar(select(ConfigDraft))
+        assert draft.change_type == kind
+        assert draft.field_name is None
+        assert await db.scalar(select(ConfigValue.current_config)) == 'X'
+        batch = await db.get(DraftBatch, 'batch-1')
+        assert batch.total_count == 1
+        assert getattr(batch, f'{kind}_count') == 1
     await engine.dispose()

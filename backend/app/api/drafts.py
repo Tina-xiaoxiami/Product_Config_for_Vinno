@@ -23,6 +23,7 @@ from app.utils import generate_next_version
 
 from app.services.config_history import (
     build_series_snapshot,
+    normalize_config_comparison_value,
     resolve_snapshot_item,
     restore_series_snapshot,
 )
@@ -380,6 +381,21 @@ async def create_draft(
         )
     )
     if existing:
+        if data.field_name is not None and (
+            normalize_config_comparison_value(data.new_value)
+            == normalize_config_comparison_value(existing.old_value)
+        ):
+            original_value = existing.old_value
+            await _sync_config_value(
+                db, data.model_copy(update={"new_value": original_value})
+            )
+            await db.delete(existing)
+            await _refresh_batch_counts(db, batch)
+            await db.commit()
+            return {
+                "message": "已恢复原值，草稿已移除", "draft_id": None,
+                "removed": True, "current_value": original_value,
+            }
         # old_value 是首次编辑前的权威基线，重复编辑不可覆盖。
         existing.new_value = data.new_value
         existing.change_type = data.change_type
@@ -398,6 +414,22 @@ async def create_draft(
                 await _latest_snapshot(db, batch.series_id), item, data.model_id
             )
             old_value = baseline.get(data.field_name) if baseline else None
+        if (
+            normalize_config_comparison_value(data.new_value)
+            == normalize_config_comparison_value(old_value)
+        ):
+            # Preserve the authority's raw empty representation and skip a false
+            # field draft. A missing working row may still need its snapshot value.
+            if value is None and old_value is not None:
+                await _sync_config_value(
+                    db, data.model_copy(update={"new_value": old_value})
+                )
+            await _refresh_batch_counts(db, batch)
+            await db.commit()
+            return {
+                "message": "配置未变化", "draft_id": None,
+                "unchanged": True, "current_value": old_value,
+            }
     draft = ConfigDraft(
         series_id=batch.series_id,
         batch_id=batch.id,
