@@ -351,7 +351,7 @@
     <div v-if="draftSaveFeedback.pending || draftSaveFeedback.message" class="save-feedback" :inert="reviewInteractionLocked" role="status" aria-live="polite">
       <span>{{ draftSaveFeedback.pending ? `正在保存 ${draftSaveFeedback.pending} 处…` : draftSaveFeedback.message }}</span>
       <el-button v-if="draftSaveFeedback.lastCell && !draftSaveFeedback.pending" link type="primary" @click="undoLastCell">撤销该单元格草稿</el-button>
-      <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" :title="`${draftSaveFeedback.failedCell.row.rd_name || '配置项 ' + draftSaveFeedback.failedCell.row.id} / ${getModelName(draftSaveFeedback.failedCell.modelId)} / ${fieldLabels[draftSaveFeedback.failedCell.field]}" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销一处' : '重试保存一处' }}</el-button>
+      <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" :title="`${draftSaveFeedback.failedCell.row.rd_name || '配置项 ' + draftSaveFeedback.failedCell.row.id} / ${getModelName(draftSaveFeedback.failedCell.modelId)} / ${fieldLabels[draftSaveFeedback.failedCell.field]}`" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销一处' : '重试保存一处' }}</el-button>
     </div>
 
     <!-- 批量操作栏 -->
