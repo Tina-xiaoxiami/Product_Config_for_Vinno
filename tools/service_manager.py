@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import json
 import os
 from pathlib import Path
@@ -47,14 +48,18 @@ def services() -> list[Service]:
 
 
 def port_is_free(port: int) -> bool:
-    # Check both address families. A foreign localhost/IPv6 listener must not be displaced.
+    # Check active listeners, not bind availability: closed TCP connections may
+    # remain in TIME_WAIT even though the application's server can restart.
+    unavailable = {errno.ECONNREFUSED, errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL,
+                   errno.ENETUNREACH, errno.EHOSTUNREACH}
     for family, host in [(socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')]:
-        with socket.socket(family, socket.SOCK_STREAM) as connection:
-            try:
-                connection.bind((host, port))
-            except OSError as exc:
-                if family == socket.AF_INET6 and exc.errno in (47, 97, 10047):
-                    continue  # IPv6 unavailable on this system.
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as connection:
+                connection.settimeout(1)
+                connection.connect((host, port))
+                return False
+        except OSError as exc:
+            if exc.errno not in unavailable:
                 return False
     return True
 
