@@ -14,7 +14,7 @@ function app() {
     captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
     ElMessage: { success() {}, error() {} }, console,
   }
-  const code = source.slice(source.indexOf('const handleDragStart ='), source.indexOf('// Phase 3: 键盘导航'))
+  const code = source.slice(source.indexOf('const handleDragStart ='), source.indexOf('const navigateToCell =', source.indexOf('const handleDragStart =')))
   return { ...ctx, ...new Function(...Object.keys(ctx), `${code};return { highlightDragTarget, performDragFill, handleDrop, handleDragStart }`)(...Object.values(ctx)), saved, rows }
 }
 
