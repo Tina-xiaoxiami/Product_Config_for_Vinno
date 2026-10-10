@@ -25,9 +25,11 @@ function dataApp(getConfigRows) {
   return { ...ctx, ...new Function(...Object.keys(ctx), `${code};return {loadData}`)(...Object.values(ctx)) }
 }
 test('model and draft failures expose a persistent recovery message instead of indefinite loading', async () => {
-  const models=modelApp({getModels:async()=>{throw new Error('offline')}})
+  const models=modelApp({tableData:ref([{id:9}]), originalData:ref([{id:9}]), getModels:async()=>{throw new Error('offline')}})
   assert.equal(await models.loadModels(), false)
   assert.match(models.configLoadError.value,/机型/)
+  assert.deepEqual(models.tableData.value,[])
+  assert.deepEqual(models.originalData.value,[])
   const drafts=modelApp({initDraft:async()=>false})
   assert.equal(await drafts.loadModels(),false)
   assert.match(drafts.configLoadError.value,/草稿/)
