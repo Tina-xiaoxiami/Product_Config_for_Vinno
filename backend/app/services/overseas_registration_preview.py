@@ -208,7 +208,11 @@ def _convert_legacy_xls_with_xlrd(path: Path, directory: Path) -> Path:
     import xlrd
     from openpyxl import Workbook
 
-    book = xlrd.open_workbook(str(path))
+    # formatting_info exposes BIFF merged ranges. Configuration workbooks use
+    # those ranges to delimit each series and model, so they must survive the
+    # conversion even though this module's registration parser does not need
+    # them itself.
+    book = xlrd.open_workbook(str(path), formatting_info=True)
     workbook = Workbook()
     workbook.remove(workbook.active)
     for index, sheet in enumerate(book.sheets()):
@@ -222,6 +226,13 @@ def _convert_legacy_xls_with_xlrd(path: Path, directory: Path) -> Path:
                     target.cell(
                         row=row_index + 1, column=column_index + 1, value=value
                     )
+        for row_start, row_end, column_start, column_end in sheet.merged_cells:
+            target.merge_cells(
+                start_row=row_start + 1,
+                end_row=row_end,
+                start_column=column_start + 1,
+                end_column=column_end,
+            )
     converted = directory / f"{path.stem}.xlsx"
     workbook.save(converted)
     return converted

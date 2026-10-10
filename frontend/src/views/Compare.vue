@@ -609,24 +609,46 @@ const loadSeries = async () => {
 }
 
 // 加载产品型号（从所有选中系列）
+let modelLoadRequest = 0
+let pendingModelSelection = null
 const loadModels = async () => {
-  allModelsMap.value.clear()
-  if (selectedSeries.value.length === 0) return
+  const request = ++modelLoadRequest
+  const seriesIds = [...selectedSeries.value]
+  const previousSelectedModels = pendingModelSelection?.models || [...selectedModels.value]
+  const previousReferenceModel = pendingModelSelection?.reference ?? referenceModel.value
+  pendingModelSelection = { models: previousSelectedModels, reference: previousReferenceModel }
+  allModelsMap.value = new Map()
+  selectedModels.value = []
+  referenceModel.value = null
+  modelFilterText.value = ''
+  if (seriesIds.length === 0) {
+    pendingModelSelection = null
+    return
+  }
 
   try {
     const results = await Promise.all(
-      selectedSeries.value.map(sid => getModels(sid))
+      seriesIds.map(sid => getModels(sid))
     )
+    if (request !== modelLoadRequest || seriesIds.length !== selectedSeries.value.length || seriesIds.some((id, index) => id !== selectedSeries.value[index])) return
+    const models = new Map()
     results.forEach((res, idx) => {
-      const seriesId = selectedSeries.value[idx]
+      const seriesId = seriesIds[idx]
       const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
       for (const m of (res.items || [])) {
-        allModelsMap.value.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
+        models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
       }
     })
+    allModelsMap.value = models
     // 清除无效的已选型号（watcher 会自动触发对比）
-    selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
+    selectedModels.value = previousSelectedModels.filter(mid => models.has(mid))
+    referenceModel.value = selectedModels.value.includes(previousReferenceModel)
+      ? previousReferenceModel
+      : selectedModels.value[0] ?? null
+    pendingModelSelection = null
   } catch (error) {
+    if (request !== modelLoadRequest) return
+    pendingModelSelection = null
     console.error('加载产品型号失败:', error)
   }
 }

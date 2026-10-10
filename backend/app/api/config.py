@@ -27,6 +27,28 @@ from app.services.model_identity import active_model_filter, normalize_snapshot
 router = APIRouter()
 
 
+async def _validate_comparison_models(
+    db: AsyncSession,
+    model_ids: List[int],
+) -> dict[int, ProductModel]:
+    if len(model_ids) < 2:
+        raise HTTPException(status_code=400, detail="至少选择2个型号进行对比")
+    if len(set(model_ids)) != len(model_ids):
+        raise HTTPException(status_code=400, detail="对比型号不能重复")
+
+    models_result = await db.execute(
+        select(ProductModel).where(ProductModel.id.in_(model_ids))
+    )
+    models = {model.id: model for model in models_result.scalars().all()}
+    missing_model_ids = [model_id for model_id in model_ids if model_id not in models]
+    if missing_model_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"型号不存在：{missing_model_ids}",
+        )
+    return models
+
+
 @router.get("/rows")
 async def get_config_rows(
     series_id: int,
@@ -157,14 +179,7 @@ async def compare_configs(
     db: AsyncSession = Depends(get_db)
 ):
     """配置对比"""
-    if len(data.model_ids) < 2:
-        raise HTTPException(status_code=400, detail="至少选择2个型号进行对比")
-
-    # 获取型号信息
-    models_result = await db.execute(
-        select(ProductModel).where(ProductModel.id.in_(data.model_ids))
-    )
-    models = {m.id: m for m in models_result.scalars().all()}
+    models = await _validate_comparison_models(db, data.model_ids)
 
     # 获取所有配置项
     items_result = await db.execute(
@@ -346,15 +361,7 @@ async def export_compare_result(
     db: AsyncSession = Depends(get_db)
 ):
     """导出对比结果为Excel"""
-    # 获取对比数据（复用compare_configs的逻辑）
-    if len(data.model_ids) < 2:
-        raise HTTPException(status_code=400, detail="至少选择2个型号进行对比")
-
-    # 获取型号信息
-    models_result = await db.execute(
-        select(ProductModel).where(ProductModel.id.in_(data.model_ids))
-    )
-    models = {m.id: m for m in models_result.scalars().all()}
+    models = await _validate_comparison_models(db, data.model_ids)
 
     # 获取所有配置项
     items_result = await db.execute(

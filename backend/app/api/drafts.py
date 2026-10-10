@@ -3,9 +3,11 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text
-from typing import List, Optional
+from sqlalchemy import select
+from typing import Optional
+from copy import deepcopy
 import json
+import hashlib
 import uuid
 
 from app.database import get_db
@@ -13,15 +15,156 @@ from app.utils.time import utcnow
 from app.models import DraftBatch, ConfigDraft, ProductSeries, ConfigItem, ConfigValue, ProductModel, ConfigVersion
 from app.schemas.draft import (
     DraftBatchResponse, DraftSubmitRequest,
-    ConfigDraftCreate, ConfigDraftResponse, DraftStatsResponse,
+    ConfigDraftCreate, DraftStatsResponse,
     BatchDiscardRequest, BatchDiscardResponse, BatchDiscardResult,
     BatchSubmitRequest, BatchSubmitResponse, BatchSubmitResult
 )
 from app.utils import generate_next_version
 
-from app.services.model_identity import active_model_filter, normalize_snapshot
+from app.services.config_history import (
+    build_series_snapshot,
+    resolve_snapshot_item,
+    restore_series_snapshot,
+)
+from app.services.model_identity import MERGED_STATUS, normalize_snapshot
 
 router = APIRouter()
+
+CONFIG_FIELDS = (
+    "current_config", "final_config", "selection_config", "rd_status"
+)
+CHANGE_TYPES = ("create", "update", "delete")
+
+
+async def _drafts_for_batch(db: AsyncSession, batch_id: str) -> list[ConfigDraft]:
+    result = await db.execute(
+        select(ConfigDraft)
+        .where(ConfigDraft.batch_id == batch_id)
+        .order_by(ConfigDraft.id)
+    )
+    return list(result.scalars().all())
+
+
+def _draft_counts(drafts: list[ConfigDraft]) -> dict[str, int]:
+    counts = {"total": len(drafts), "create": 0, "update": 0, "delete": 0}
+    for draft in drafts:
+        if draft.change_type in CHANGE_TYPES:
+            counts[draft.change_type] += 1
+    return counts
+
+
+def _set_batch_counts(batch: DraftBatch, counts: dict[str, int]) -> None:
+    batch.total_count = counts["total"]
+    batch.create_count = counts["create"]
+    batch.update_count = counts["update"]
+    batch.delete_count = counts["delete"]
+
+
+async def _refresh_batch_counts(db: AsyncSession, batch: DraftBatch) -> dict[str, int]:
+    await db.flush()
+    counts = _draft_counts(await _drafts_for_batch(db, batch.id))
+    _set_batch_counts(batch, counts)
+    return counts
+
+
+async def _latest_version(db: AsyncSession, series_id: int) -> Optional[ConfigVersion]:
+    return await db.scalar(
+        select(ConfigVersion)
+        .where(ConfigVersion.series_id == series_id)
+        .order_by(ConfigVersion.id.desc())
+        .limit(1)
+    )
+
+
+async def _latest_snapshot(db: AsyncSession, series_id: int) -> dict:
+    version = await _latest_version(db, series_id)
+    if not version or not version.snapshot_data:
+        return {"models": [], "items": []}
+    return await normalize_snapshot(db, series_id, json.loads(version.snapshot_data))
+
+
+def _snapshot_item(snapshot: dict, item: ConfigItem) -> Optional[dict]:
+    try:
+        return resolve_snapshot_item(item, snapshot)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _snapshot_pair(snapshot: dict, item: ConfigItem, model_id: int) -> Optional[dict]:
+    snapshot_item = _snapshot_item(snapshot, item)
+    if not snapshot_item:
+        return None
+    values = snapshot_item.get("values") or {}
+    value = values.get(str(model_id), values.get(model_id))
+    return deepcopy(value) if value is not None else None
+
+
+def _set_snapshot_pair(
+    snapshot: dict, item: ConfigItem, model_id: int, value: Optional[dict]
+) -> None:
+    snapshot_item = _snapshot_item(snapshot, item)
+    if not snapshot_item:
+        return
+    values = snapshot_item.setdefault("values", {})
+    values.pop(model_id, None)
+    values.pop(str(model_id), None)
+    if value is not None:
+        values[str(model_id)] = deepcopy(value)
+
+
+async def _config_value(
+    db: AsyncSession, item_id: int, model_id: int
+) -> Optional[ConfigValue]:
+    return await db.scalar(
+        select(ConfigValue).where(
+            ConfigValue.item_id == item_id,
+            ConfigValue.model_id == model_id,
+        )
+    )
+
+
+async def _validate_target(
+    db: AsyncSession,
+    batch: DraftBatch,
+    series_id: int,
+    item_id: Optional[int],
+    model_id: Optional[int],
+) -> tuple[ConfigItem, ProductModel]:
+    if batch.status != "draft":
+        raise HTTPException(status_code=400, detail="草稿批次不是待编辑状态")
+    if series_id != batch.series_id:
+        raise HTTPException(status_code=400, detail="草稿系列与批次系列不一致")
+    if item_id is None or model_id is None:
+        raise HTTPException(status_code=400, detail="草稿必须指定配置项和机型")
+    item = await db.get(ConfigItem, item_id)
+    model = await db.get(ProductModel, model_id)
+    if not item:
+        raise HTTPException(status_code=400, detail="配置项不存在")
+    if not model:
+        raise HTTPException(status_code=400, detail="机型不存在")
+    if model.series_id != batch.series_id:
+        raise HTTPException(status_code=400, detail="机型不属于草稿批次系列")
+    if model.status == MERGED_STATUS:
+        raise HTTPException(status_code=400, detail="已合并机型不能创建草稿")
+    return item, model
+
+
+async def _validate_stored_drafts(
+    db: AsyncSession, batch: DraftBatch, drafts: list[ConfigDraft]
+) -> dict[int, ConfigItem]:
+    items = {}
+    for draft in drafts:
+        if draft.change_type not in CHANGE_TYPES:
+            raise HTTPException(status_code=400, detail=f"草稿 {draft.id} 的变更类型无效")
+        if draft.change_type == "update" and draft.field_name not in CONFIG_FIELDS:
+            raise HTTPException(status_code=400, detail=f"草稿 {draft.id} 的字段无效")
+        if draft.field_name is not None and draft.field_name not in CONFIG_FIELDS:
+            raise HTTPException(status_code=400, detail=f"草稿 {draft.id} 的字段无效")
+        item, _ = await _validate_target(
+            db, batch, draft.series_id, draft.item_id, draft.model_id
+        )
+        items[item.id] = item
+    return items
 
 
 @router.get("/batch/current/{series_id}")
@@ -47,12 +190,9 @@ async def get_current_draft_batch(
 
     # 获取草稿列表（限制最多 5000 条，避免响应过大）
     DRAFT_LIMIT = 5000
-    drafts_result = await db.execute(
-        select(ConfigDraft)
-        .where(ConfigDraft.batch_id == batch.id)
-        .limit(DRAFT_LIMIT)
-    )
-    drafts = drafts_result.scalars().all()
+    all_drafts = await _drafts_for_batch(db, batch.id)
+    counts = _draft_counts(all_drafts)
+    drafts = all_drafts[:DRAFT_LIMIT]
 
     # 批量查询配置项名称
     item_ids = [d.item_id for d in drafts if d.item_id]
@@ -63,31 +203,16 @@ async def get_current_draft_batch(
         )
         items_map = {i.id: {"rd_name": i.rd_name, "ipn": i.ipn} for i in items_result.scalars().all()}
 
-    # 为删除草稿构建当前值索引：直接从数据库读取当前 ConfigValue
-    # （delete 草稿的 (item_id, model_id) 对，current_config/final_config/selection_config/rd_status 即为旧值）
+    # 删除草稿的旧值来自最近发布版本；工作区可能已经移除了该配置对。
     snapshot_values_map = {}
-    delete_item_model_pairs = set()
+    baseline = await _latest_snapshot(db, series_id)
     for d in drafts:
-        if d.change_type == "delete" and d.item_id and d.model_id:
-            delete_item_model_pairs.add((d.item_id, d.model_id))
-    if delete_item_model_pairs:
-        # 分批查询避免 SQL 过大
-        for item_id, model_id in delete_item_model_pairs:
-            cv_result = await db.execute(
-                select(ConfigValue).where(
-                    ConfigValue.item_id == item_id,
-                    ConfigValue.model_id == model_id
-                )
-            )
-            cv = cv_result.scalar_one_or_none()
-            if cv:
-                # 用 (item_id, model_id) 做 key，因为 IPN 可能为空
-                snapshot_values_map[(item_id, model_id)] = {
-                    "current_config": cv.current_config,
-                    "final_config": cv.final_config,
-                    "selection_config": cv.selection_config,
-                    "rd_status": cv.rd_status
-                }
+        item = items_map.get(d.item_id)
+        if d.change_type == "delete" and item and d.model_id:
+            db_item = await db.get(ConfigItem, d.item_id)
+            pair = _snapshot_pair(baseline, db_item, d.model_id)
+            if pair is not None:
+                snapshot_values_map[(d.item_id, d.model_id)] = pair
 
     return {
         "exists": True,
@@ -95,10 +220,10 @@ async def get_current_draft_batch(
             "id": batch.id,
             "series_id": batch.series_id,
             "status": batch.status,
-            "total_count": batch.total_count,
-            "create_count": batch.create_count,
-            "update_count": batch.update_count,
-            "delete_count": batch.delete_count,
+            "total_count": counts["total"],
+            "create_count": counts["create"],
+            "update_count": counts["update"],
+            "delete_count": counts["delete"],
             "created_at": batch.created_at.isoformat() if batch.created_at else None
         },
         "drafts": [
@@ -138,6 +263,7 @@ async def get_draft_batch(
     if not batch:
         raise HTTPException(status_code=404, detail="草稿批次不存在")
 
+    _set_batch_counts(batch, _draft_counts(await _drafts_for_batch(db, batch_id)))
     return batch
 
 
@@ -153,12 +279,7 @@ async def get_draft_stats(
     if not batch:
         raise HTTPException(status_code=404, detail="草稿批次不存在")
 
-    return DraftStatsResponse(
-        total=batch.total_count,
-        create=batch.create_count,
-        update=batch.update_count,
-        delete=batch.delete_count
-    )
+    return DraftStatsResponse(**_draft_counts(await _drafts_for_batch(db, batch_id)))
 
 
 @router.get("/batch/{batch_id}/drafts")
@@ -207,6 +328,8 @@ async def create_draft_batch(
     db: AsyncSession = Depends(get_db)
 ):
     """创建草稿批次"""
+    if not await db.get(ProductSeries, series_id):
+        raise HTTPException(status_code=404, detail="产品系列不存在")
     # 检查是否有未提交的草稿
     result = await db.execute(
         select(DraftBatch)
@@ -215,6 +338,9 @@ async def create_draft_batch(
     existing = result.scalar_one_or_none()
 
     if existing:
+        _set_batch_counts(
+            existing, _draft_counts(await _drafts_for_batch(db, existing.id))
+        )
         return existing
 
     batch = DraftBatch(
@@ -236,15 +362,16 @@ async def create_draft(
     db: AsyncSession = Depends(get_db)
 ):
     """创建草稿项"""
-    # 检查批次是否存在
-    batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == data.batch_id))
-    batch = batch_result.scalar_one_or_none()
-
+    batch = await db.get(DraftBatch, data.batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="草稿批次不存在")
+    item, _ = await _validate_target(
+        db, batch, data.series_id, data.item_id, data.model_id
+    )
+    if data.change_type == "update" and data.field_name is None:
+        raise HTTPException(status_code=400, detail="更新草稿必须指定配置字段")
 
-    # 检查是否已存在相同的草稿
-    existing_result = await db.execute(
+    existing = await db.scalar(
         select(ConfigDraft).where(
             ConfigDraft.batch_id == data.batch_id,
             ConfigDraft.item_id == data.item_id,
@@ -252,70 +379,186 @@ async def create_draft(
             ConfigDraft.field_name == data.field_name
         )
     )
-    existing = existing_result.scalar_one_or_none()
-
     if existing:
-        # 更新现有草稿
+        # old_value 是首次编辑前的权威基线，重复编辑不可覆盖。
         existing.new_value = data.new_value
-        existing.old_value = data.old_value
         existing.change_type = data.change_type
-        # 同步更新 DB ConfigValue
         await _sync_config_value(db, data)
+        await _refresh_batch_counts(db, batch)
         await db.commit()
         return {"message": "草稿已更新", "draft_id": existing.id}
-    else:
-        # 创建新草稿
-        draft = ConfigDraft(
-            series_id=data.series_id,
-            batch_id=data.batch_id,
-            change_type=data.change_type,
-            item_id=data.item_id,
-            model_id=data.model_id,
-            field_name=data.field_name,
-            new_value=data.new_value,
-            old_value=data.old_value
-        )
-        db.add(draft)
 
-        # 更新批次统计
-        if data.change_type == "create":
-            batch.create_count += 1
-        elif data.change_type == "update":
-            batch.update_count += 1
-        elif data.change_type == "delete":
-            batch.delete_count += 1
-        batch.total_count += 1
-
-        # 同步更新 DB ConfigValue
-        await _sync_config_value(db, data)
-        await db.commit()
-        await db.refresh(draft)
-        return {"message": "草稿已保存", "draft_id": draft.id}
+    old_value = None
+    if data.field_name is not None:
+        value = await _config_value(db, data.item_id, data.model_id)
+        if value is not None:
+            old_value = getattr(value, data.field_name)
+        else:
+            baseline = _snapshot_pair(
+                await _latest_snapshot(db, batch.series_id), item, data.model_id
+            )
+            old_value = baseline.get(data.field_name) if baseline else None
+    draft = ConfigDraft(
+        series_id=batch.series_id,
+        batch_id=batch.id,
+        change_type=data.change_type,
+        item_id=data.item_id,
+        model_id=data.model_id,
+        field_name=data.field_name,
+        new_value=data.new_value,
+        old_value=old_value
+    )
+    db.add(draft)
+    await _sync_config_value(db, data)
+    await _refresh_batch_counts(db, batch)
+    await db.commit()
+    await db.refresh(draft)
+    return {"message": "草稿已保存", "draft_id": draft.id}
 
 
 async def _sync_config_value(db, data):
     """将草稿的 new_value 同步写入 DB ConfigValue"""
-    if not data.field_name or data.field_name not in (
-        "final_config", "current_config", "selection_config", "rd_status"
-    ):
+    if not data.field_name:
         return
-    result = await db.execute(
-        select(ConfigValue).where(
-            ConfigValue.item_id == data.item_id,
-            ConfigValue.model_id == data.model_id,
-        )
-    )
-    cv = result.scalar_one_or_none()
+    cv = await _config_value(db, data.item_id, data.model_id)
     if cv:
         setattr(cv, data.field_name, data.new_value)
     else:
-        # 无现有 ConfigValue → 创建
         cv = ConfigValue(
             item_id=data.item_id,
             model_id=data.model_id,
         )
         setattr(cv, data.field_name, data.new_value)
         db.add(cv)
+
+
+async def _rewind_snapshot_for_remaining_drafts(
+    db: AsyncSession,
+    series_id: int,
+    snapshot: dict,
+    remaining: list[ConfigDraft],
+    items: dict[int, ConfigItem],
+) -> dict:
+    """从 working snapshot 撤除尚未提交的草稿变更。"""
+    if not remaining:
+        return snapshot
+    baseline = await _latest_snapshot(db, series_id)
+    for draft in remaining:
+        item = items[draft.item_id]
+        baseline_pair = _snapshot_pair(baseline, item, draft.model_id)
+        if draft.change_type == "create" and draft.field_name is None:
+            _set_snapshot_pair(snapshot, item, draft.model_id, None)
+        elif draft.change_type == "delete" and draft.field_name is None:
+            _set_snapshot_pair(snapshot, item, draft.model_id, baseline_pair)
+        else:
+            pair = _snapshot_pair(snapshot, item, draft.model_id) or {
+                field: None for field in CONFIG_FIELDS
+            }
+            pair[draft.field_name] = (
+                baseline_pair.get(draft.field_name)
+                if baseline_pair is not None
+                else draft.old_value
+            )
+            _set_snapshot_pair(snapshot, item, draft.model_id, pair)
+    return snapshot
+
+
+async def _resolve_version_number(
+    db: AsyncSession, series_id: int, requested: Optional[str]
+) -> str:
+    last_version = await _latest_version(db, series_id)
+    version_number = requested or generate_next_version(
+        last_version.version_number if last_version else None
+    )
+    duplicate = await db.scalar(
+        select(ConfigVersion.id).where(
+            ConfigVersion.series_id == series_id,
+            ConfigVersion.version_number == version_number,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"版本号 {version_number} 在该系列中已存在",
+        )
+    return version_number
+
+
+def _select_submission_drafts(all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> list[ConfigDraft]:
+    """Use the same explicit item/model scope for preview and publication."""
+    item_ids = set(data.item_ids) if data.item_ids is not None else None
+    model_ids = set(data.model_ids) if data.model_ids is not None else None
+    if item_ids == set() or model_ids == set():
+        return []
+    return [draft for draft in all_drafts
+            if (item_ids is None or draft.item_id in item_ids)
+            and (model_ids is None or draft.model_id is None or draft.model_id in model_ids)]
+
+
+async def _submission_signature(db: AsyncSession, batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest, *, working_snapshot: Optional[dict] = None) -> str:
+    """Detect additions, edits, removals and scope changes after user review."""
+    latest = await _latest_version(db, batch.series_id)
+    payload = {
+        "working_snapshot": working_snapshot if working_snapshot is not None else await build_series_snapshot(db, batch.series_id),
+        "baseline": [latest.id, latest.snapshot_data] if latest else None,
+        "batch": [batch.id, batch.series_id, batch.status],
+        "items": sorted(set(data.item_ids)) if data.item_ids is not None else None,
+        "models": sorted(set(data.model_ids)) if data.model_ids is not None else None,
+        "drafts": [[draft.id, draft.series_id, draft.item_id, draft.model_id,
+                    draft.change_type, draft.field_name, draft.old_value, draft.new_value]
+                   for draft in sorted(all_drafts, key=lambda draft: draft.id)],
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _submission_preview_records(selected, items, model_names, working_snapshot, baseline):
+    records = []
+    for draft in selected:
+        item = items[draft.item_id]
+        record = {"item_id": draft.item_id, "model_id": draft.model_id,
+                  "field_name": draft.field_name, "change_type": draft.change_type,
+                  "rd_name": item.rd_name, "model_name": model_names.get(draft.model_id),
+                  "old_value": draft.old_value, "new_value": draft.new_value}
+        if draft.field_name is None:
+            empty = {field: None for field in CONFIG_FIELDS}
+            current_pair = _snapshot_pair(working_snapshot, item, draft.model_id) or empty
+            baseline_pair = _snapshot_pair(baseline, item, draft.model_id)
+            record["old_values"] = baseline_pair or (current_pair if draft.change_type == "delete" else empty)
+            record["new_values"] = empty if draft.change_type == "delete" else current_pair
+        records.append(record)
+    return records
+
+
+@router.post("/batch/{batch_id}/submit-preview")
+async def preview_draft_submission(batch_id: str, data: DraftSubmitRequest, db: AsyncSession = Depends(get_db)):
+    batch = await db.get(DraftBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="草稿批次不存在")
+    if batch.status != "draft":
+        raise HTTPException(status_code=400, detail="草稿已提交或已废弃")
+    all_drafts = await _drafts_for_batch(db, batch_id)
+    items = await _validate_stored_drafts(db, batch, all_drafts)
+    selected = _select_submission_drafts(all_drafts, data)
+    model_ids = {draft.model_id for draft in selected if draft.model_id is not None}
+    models = list((await db.execute(select(ProductModel).where(ProductModel.id.in_(model_ids)))).scalars().all()) if model_ids else []
+    model_names = {model.id: model.name for model in models}
+    series = await db.get(ProductSeries, batch.series_id)
+    fields = {field for draft in selected for field in ((draft.field_name,) if draft.field_name else CONFIG_FIELDS)}
+    counts = _draft_counts(selected)
+    working_snapshot = await build_series_snapshot(db, batch.series_id)
+    baseline = await _latest_snapshot(db, batch.series_id) if any(draft.field_name is None for draft in selected) else {"items": []}
+    return {
+        "batch_id": batch.id, "series_id": batch.series_id,
+        "series_name": series.name if series else str(batch.series_id),
+        "signature": await _submission_signature(db, batch, all_drafts, data, working_snapshot=working_snapshot),
+        "total_items": len({draft.item_id for draft in selected}),
+        "total_changes": len(selected), "total_models": len(model_ids),
+        "fields": [field for field in CONFIG_FIELDS if field in fields],
+        "models": [{"id": model.id, "name": model.name} for model in models],
+        "change_counts": {kind: counts[kind] for kind in CHANGE_TYPES},
+        "remaining_changes": len(all_drafts) - len(selected),
+        "drafts": _submission_preview_records(selected, items, model_names, working_snapshot, baseline),
+    }
 
 
 @router.post("/batch/{batch_id}/submit")
@@ -342,30 +585,17 @@ async def submit_draft_batch(
 
     if not all_drafts:
         raise HTTPException(status_code=400, detail="没有待提交的草稿")
+    validated_items = await _validate_stored_drafts(db, batch, all_drafts)
 
-    # 部分提交：根据 item_ids / model_ids 过滤要处理的草稿
-    item_ids_filter = set(data.item_ids) if data.item_ids else None
-    model_ids_filter = set(data.model_ids) if data.model_ids else None
-    is_partial = bool(item_ids_filter or model_ids_filter)
-
-    if model_ids_filter and not item_ids_filter:
-        # 按机型过滤：model_id=None（旧数据/全局变更）则包含，否则按 model_id 匹配
-        drafts = [
-            d for d in all_drafts
-            if d.model_id is None or d.model_id in model_ids_filter
-        ]
-    elif item_ids_filter and not model_ids_filter:
-        # 按配置项过滤
-        drafts = [d for d in all_drafts if d.item_id in item_ids_filter]
-    elif item_ids_filter and model_ids_filter:
-        # 同时按配置项和机型过滤：model_id=None 也包含
-        drafts = [
-            d for d in all_drafts
-            if d.item_id in item_ids_filter and (d.model_id is None or d.model_id in model_ids_filter)
-        ]
-    else:
-        drafts = all_drafts
+    if data.expected_signature is not None and data.expected_signature != await _submission_signature(db, batch, all_drafts, data):
+        raise HTTPException(status_code=409, detail="草稿或提交范围已变化，请重新核对发布预览")
+    drafts = _select_submission_drafts(all_drafts, data)
     processed_count = len(drafts)
+    if not drafts:
+        raise HTTPException(status_code=400, detail="筛选条件没有匹配的草稿")
+    version_number = await _resolve_version_number(
+        db, batch.series_id, data.version_number
+    )
 
     # 提取所有需要更新的 (item_id, model_id) 组合
     update_drafts = [
@@ -396,97 +626,24 @@ async def submit_draft_batch(
         if d.change_type == "delete" and d.item_id
     ]
     if delete_drafts:
-        delete_item_ids = [d.item_id for d in delete_drafts]
-        models_in_series = await db.execute(
-            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
-        )
-        series_model_ids = [m.id for m in models_in_series.scalars().all()]
-        if series_model_ids:
-            delete_values_result = await db.execute(
-                select(ConfigValue).where(
-                    ConfigValue.item_id.in_(delete_item_ids),
-                    ConfigValue.model_id.in_(series_model_ids)
-                )
-            )
-            for val in delete_values_result.scalars().all():
-                val.final_config = None
-                val.current_config = None
-                val.selection_config = None
-                val.rd_status = None
+        for draft in delete_drafts:
+            val = await _config_value(db, draft.item_id, draft.model_id)
+            if val:
+                fields = (draft.field_name,) if draft.field_name else CONFIG_FIELDS
+                for field in fields:
+                    setattr(val, field, None)
 
     # 删除已处理的草稿（部分提交时去除已提交项，全量提交时清除全部）
     for draft in drafts:
         await db.delete(draft)
 
-    # 部分提交：更新批次统计
-    if is_partial:
-        remaining_result = await db.execute(
-            select(ConfigDraft.change_type, func.count()).where(
-                ConfigDraft.batch_id == batch_id
-            ).group_by(ConfigDraft.change_type)
-        )
-        type_counts = dict(remaining_result.all())
-        batch.create_count = type_counts.get("create", 0)
-        batch.update_count = type_counts.get("update", 0)
-        batch.delete_count = type_counts.get("delete", 0)
-        batch.total_count = sum(type_counts.values())
+    counts = await _refresh_batch_counts(db, batch)
+    remaining_drafts = await _drafts_for_batch(db, batch_id)
 
-    # 创建版本
-    version_number = data.version_number
-    if not version_number:
-        last_version_result = await db.execute(
-            select(ConfigVersion)
-            .where(ConfigVersion.series_id == batch.series_id)
-            .order_by(ConfigVersion.id.desc())
-            .limit(1)
-        )
-        last_version = last_version_result.scalar_one_or_none()
-        version_number = generate_next_version(last_version.version_number if last_version else None)
-
-    # 获取当前数据创建快照
-    models_result = await db.execute(
-        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
+    snapshot = await build_series_snapshot(db, batch.series_id)
+    snapshot = await _rewind_snapshot_for_remaining_drafts(
+        db, batch.series_id, snapshot, remaining_drafts, validated_items
     )
-    models = models_result.scalars().all()
-    model_ids = [m.id for m in models]
-
-    items_result = await db.execute(select(ConfigItem).order_by(ConfigItem.row_index))
-    items = items_result.scalars().all()
-
-    values_result = await db.execute(
-        select(ConfigValue).where(ConfigValue.model_id.in_(model_ids))
-    )
-    values = values_result.scalars().all()
-
-    # 构建快照数据
-    value_map = {}
-    for v in values:
-        if v.item_id not in value_map:
-            value_map[v.item_id] = {}
-        value_map[v.item_id][v.model_id] = {
-            "current_config": v.current_config,
-            "final_config": v.final_config,
-            "selection_config": v.selection_config,
-            "rd_status": v.rd_status
-        }
-
-    snapshot = {
-        "models": [{"id": m.id, "name": m.name} for m in models],
-        "items": [
-            {
-                "id": item.id,
-                "category": item.category,
-                "row_index": item.row_index,
-                "rd_name": item.rd_name,
-                "v_code": item.v_code,
-                "ipn": item.ipn,
-                "zh_desc": item.zh_desc,
-                "en_desc": item.en_desc,
-                "values": value_map.get(item.id, {})
-            }
-            for item in items
-        ]
-    }
 
     # 创建版本记录
     version = ConfigVersion(
@@ -495,14 +652,13 @@ async def submit_draft_batch(
         version_name=data.version_name,
         description=data.description,
         snapshot_data=json.dumps(snapshot, ensure_ascii=False),
-        row_count=len(items),
+        row_count=len(snapshot.get("items", [])),
         published_by="system"
     )
     db.add(version)
 
     # 更新批次状态（部分提交后若还有剩余草稿则不标记为 submitted）
-    remaining_count = batch.total_count  # 已重算
-    if remaining_count == 0:
+    if counts["total"] == 0:
         batch.status = "submitted"
         batch.submitted_at = utcnow()
     # 有剩余草稿时保持 draft 状态
@@ -522,7 +678,8 @@ async def _process_single_batch_submit(
     description: Optional[str] = None,
     version_name: Optional[str] = None,
     version_number: Optional[str] = None,
-    db: AsyncSession = None
+    db: AsyncSession = None,
+    expected_signature: Optional[str] = None
 ) -> dict:
     """处理单个批次提交（提取公共逻辑供批量使用）"""
     result = await db.execute(select(DraftBatch).where(DraftBatch.id == batch_id))
@@ -541,6 +698,15 @@ async def _process_single_batch_submit(
     all_drafts = drafts_result.scalars().all()
     if not all_drafts:
         return {"success": False, "message": "草稿批次中没有草稿项"}
+    if expected_signature is not None and expected_signature != await _submission_signature(db, batch, all_drafts, DraftSubmitRequest()):
+        return {"success": False, "message": "草稿已变化，请重新核对发布预览"}
+    try:
+        await _validate_stored_drafts(db, batch, all_drafts)
+        version_number = await _resolve_version_number(
+            db, batch.series_id, version_number
+        )
+    except HTTPException as error:
+        return {"success": False, "message": error.detail}
 
     # 处理更新类型的草稿
     update_drafts = [
@@ -570,97 +736,18 @@ async def _process_single_batch_submit(
         if d.change_type == "delete" and d.item_id
     ]
     if delete_drafts:
-        delete_item_ids = [d.item_id for d in delete_drafts]
-        models_in_series = await db.execute(
-            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
-        )
-        series_model_ids = [m.id for m in models_in_series.scalars().all()]
-        if series_model_ids:
-            delete_values_result = await db.execute(
-                select(ConfigValue).where(
-                    ConfigValue.item_id.in_(delete_item_ids),
-                    ConfigValue.model_id.in_(series_model_ids)
-                )
-            )
-            for val in delete_values_result.scalars().all():
-                val.final_config = None
-                val.current_config = None
-                val.selection_config = None
-                val.rd_status = None
+        for draft in delete_drafts:
+            val = await _config_value(db, draft.item_id, draft.model_id)
+            if val:
+                fields = (draft.field_name,) if draft.field_name else CONFIG_FIELDS
+                for field in fields:
+                    setattr(val, field, None)
 
     # 删除所有草稿
     for draft in all_drafts:
         await db.delete(draft)
 
-    # 生成版本号
-    last_version_result = await db.execute(
-        select(ConfigVersion)
-        .where(ConfigVersion.series_id == batch.series_id)
-        .order_by(ConfigVersion.id.desc())
-        .limit(1)
-    )
-    last_version = last_version_result.scalar_one_or_none()
-
-    if version_number:
-        # 用户指定了版本号，检查是否与系列内已有版本号重复
-        existing = await db.execute(
-            select(ConfigVersion).where(
-                ConfigVersion.series_id == batch.series_id,
-                ConfigVersion.version_number == version_number
-            ).limit(1)
-        )
-        if existing.scalar_one_or_none():
-            return {
-                "success": False,
-                "message": f"版本号 {version_number} 在该系列中已存在"
-            }
-    else:
-        version_number = generate_next_version(last_version.version_number if last_version else None)
-
-    # 获取当前数据创建快照
-    models_result = await db.execute(
-        select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == batch.series_id)
-    )
-    models = models_result.scalars().all()
-    model_ids = [m.id for m in models]
-
-    items_result = await db.execute(select(ConfigItem).order_by(ConfigItem.row_index))
-    items = items_result.scalars().all()
-
-    values_result = await db.execute(
-        select(ConfigValue).where(ConfigValue.model_id.in_(model_ids))
-    )
-    values = values_result.scalars().all()
-
-    # 构建快照数据
-    value_map = {}
-    for v in values:
-        if v.item_id not in value_map:
-            value_map[v.item_id] = {}
-        value_map[v.item_id][v.model_id] = {
-            "current_config": v.current_config,
-            "final_config": v.final_config,
-            "selection_config": v.selection_config,
-            "rd_status": v.rd_status
-        }
-
-    snapshot = {
-        "models": [{"id": m.id, "name": m.name} for m in models],
-        "items": [
-            {
-                "id": item.id,
-                "category": item.category,
-                "row_index": item.row_index,
-                "rd_name": item.rd_name,
-                "v_code": item.v_code,
-                "ipn": item.ipn,
-                "zh_desc": item.zh_desc,
-                "en_desc": item.en_desc,
-                "values": value_map.get(item.id, {})
-            }
-            for item in items
-        ]
-    }
+    snapshot = await build_series_snapshot(db, batch.series_id)
 
     # 创建版本记录
     version = ConfigVersion(
@@ -669,7 +756,7 @@ async def _process_single_batch_submit(
         version_name=version_name,
         description=description,
         snapshot_data=json.dumps(snapshot, ensure_ascii=False),
-        row_count=len(items),
+        row_count=len(snapshot.get("items", [])),
         published_by="system"
     )
     db.add(version)
@@ -711,107 +798,18 @@ async def batch_discard_drafts(
                     success=False, message="草稿批次不存在"
                 ))
                 continue
+            if batch.status != "draft":
+                results.append(BatchDiscardResult(
+                    batch_id=batch_id,
+                    series_id=batch.series_id,
+                    success=False,
+                    message=f"草稿已提交或已废弃 (status={batch.status})",
+                ))
+                continue
 
             series_id = batch.series_id
 
-            # 查询该系列下所有机型
-            models_result = await db.execute(
-                select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
-            )
-            models = models_result.scalars().all()
-            series_model_ids = [m.id for m in models]
-
-            # 查询最后一个已提交的 ConfigVersion
-            last_version_result = await db.execute(
-                select(ConfigVersion)
-                .where(ConfigVersion.series_id == series_id)
-                .order_by(ConfigVersion.id.desc())
-                .limit(1)
-            )
-            last_version = last_version_result.scalar_one_or_none()
-
-            if last_version and last_version.snapshot_data:
-                snapshot = await normalize_snapshot(db, series_id, json.loads(last_version.snapshot_data))
-
-                if series_model_ids:
-                    vals_to_del = await db.execute(
-                        select(ConfigValue).where(ConfigValue.model_id.in_(series_model_ids))
-                    )
-                    for val in vals_to_del.scalars().all():
-                        await db.delete(val)
-                    await db.flush()
-
-                # 用 IPN 匹配重建 ConfigValue（同 discard_draft_batch）
-                db_items_result = await db.execute(select(ConfigItem))
-                ipn_to_db_item = {}
-                for item in db_items_result.scalars().all():
-                    if item.ipn:
-                        ipn_to_db_item[str(item.ipn).strip()] = item
-
-                snapshot_ipns = set()
-                for item_data in snapshot.get("items", []):
-                    ipn = str(item_data.get("ipn", "")).strip() if item_data.get("ipn") else None
-                    if not ipn:
-                        continue
-                    snapshot_ipns.add(ipn)
-                    db_item = ipn_to_db_item.get(ipn)
-                    if not db_item:
-                        db_item = ConfigItem(
-                            category=item_data.get("category"),
-                            row_index=item_data.get("row_index"),
-                            rd_name=item_data.get("rd_name"),
-                            v_code=item_data.get("v_code"),
-                            ipn=item_data.get("ipn"),
-                            zh_desc=item_data.get("zh_desc"),
-                            en_desc=item_data.get("en_desc"),
-                        )
-                        db.add(db_item)
-                        await db.flush()
-                        ipn_to_db_item[ipn] = db_item
-                    for field in ("category", "rd_name", "v_code", "zh_desc", "en_desc", "row_index"):
-                        snap_val = item_data.get(field)
-                        if snap_val is not None:
-                            setattr(db_item, field, snap_val)
-                    for model_id_str, value_data in (item_data.get("values") or {}).items():
-                        model_id = int(model_id_str)
-                        if model_id not in series_model_ids:
-                            continue
-                        new_value = ConfigValue(
-                            item_id=db_item.id,
-                            model_id=model_id,
-                            current_config=value_data.get("current_config"),
-                            final_config=value_data.get("final_config"),
-                            selection_config=value_data.get("selection_config"),
-                            rd_status=value_data.get("rd_status")
-                        )
-                        db.add(new_value)
-
-                # 清理快照中没有的 ConfigItem（未被其他系列引用才删）
-                all_items = await db.execute(select(ConfigItem))
-                for item in all_items.scalars().all():
-                    item_ipn = str(item.ipn).strip() if item.ipn else None
-                    if item_ipn and item_ipn in snapshot_ipns:
-                        continue
-                    remaining = await db.execute(
-                        select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
-                    )
-                    if not remaining.scalar_one_or_none():
-                        await db.delete(item)
-            else:
-                if series_model_ids:
-                    vals_to_del = await db.execute(
-                        select(ConfigValue).where(ConfigValue.model_id.in_(series_model_ids))
-                    )
-                    for val in vals_to_del.scalars().all():
-                        await db.delete(val)
-
-                all_items = await db.execute(select(ConfigItem))
-                for item in all_items.scalars().all():
-                    remaining = await db.execute(
-                        select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
-                    )
-                    if not remaining.scalar_one_or_none():
-                        await db.delete(item)
+            await restore_series_snapshot(db, series_id, await _latest_snapshot(db, series_id))
 
             # 删除该批次的所有 ConfigDraft
             drafts_to_del = await db.execute(
@@ -826,6 +824,7 @@ async def batch_discard_drafts(
             batch.update_count = 0
             batch.delete_count = 0
             batch.status = "discarded"
+            await db.commit()
 
             results.append(BatchDiscardResult(
                 batch_id=batch_id, series_id=series_id,
@@ -837,8 +836,6 @@ async def batch_discard_drafts(
                 success=False, message=str(e)
             ))
             await db.rollback()  # 回滚事务以便后续继续
-
-    await db.commit()
 
     return BatchDiscardResponse(
         discarded_count=sum(1 for r in results if r.success),
@@ -856,14 +853,18 @@ async def batch_submit_drafts(
 
     for batch_id in data.batch_ids:
         try:
+            if data.expected_signatures is not None and batch_id not in data.expected_signatures:
+                raise HTTPException(status_code=409, detail="缺少该系列发布预览，请重新核对")
             result = await _process_single_batch_submit(
                 batch_id=batch_id,
                 description=data.description,
                 version_name=data.version_name,
                 version_number=data.version_number,
-                db=db
+                db=db,
+                expected_signature=data.expected_signatures.get(batch_id) if data.expected_signatures is not None else None
             )
             if result["success"]:
+                await db.commit()
                 results.append(BatchSubmitResult(
                     batch_id=batch_id,
                     series_id=result["series_id"],
@@ -873,6 +874,7 @@ async def batch_submit_drafts(
                     message=result["message"]
                 ))
             else:
+                await db.rollback()
                 results.append(BatchSubmitResult(
                     batch_id=batch_id,
                     series_id=0,
@@ -882,6 +884,7 @@ async def batch_submit_drafts(
                     message=result["message"]
                 ))
         except Exception as e:
+            await db.rollback()
             results.append(BatchSubmitResult(
                 batch_id=batch_id,
                 series_id=0,
@@ -890,8 +893,6 @@ async def batch_submit_drafts(
                 success=False,
                 message=str(e)
             ))
-
-    await db.commit()
 
     return BatchSubmitResponse(
         submitted_count=sum(1 for r in results if r.success),
@@ -911,24 +912,10 @@ async def discard_draft_batch(
 
         if not batch:
             raise HTTPException(status_code=404, detail="草稿批次不存在")
+        if batch.status != "draft":
+            raise HTTPException(status_code=400, detail="草稿已提交或已废弃")
 
         series_id = batch.series_id
-
-        # 查询该系列下所有机型
-        models_result = await db.execute(
-            select(ProductModel).where(active_model_filter()).where(ProductModel.series_id == series_id)
-        )
-        models = models_result.scalars().all()
-        series_model_ids = [m.id for m in models]
-
-        # 查询该系列最后一个已提交的 ConfigVersion
-        last_version_result = await db.execute(
-            select(ConfigVersion)
-            .where(ConfigVersion.series_id == series_id)
-            .order_by(ConfigVersion.id.desc())
-            .limit(1)
-        )
-        last_version = last_version_result.scalar_one_or_none()
 
         # 先删草稿（避免后续操作受 FK 约束影响）
         drafts_to_delete = await db.execute(
@@ -937,102 +924,7 @@ async def discard_draft_batch(
         for draft in drafts_to_delete.scalars().all():
             await db.delete(draft)
 
-        if last_version and last_version.snapshot_data:
-            # 有快照：恢复到最近一次提交版本的状态
-            snapshot = await normalize_snapshot(db, series_id, json.loads(last_version.snapshot_data))
-
-            # 删除该系列所有机型的 ConfigValue
-            if series_model_ids:
-                delete_values = await db.execute(
-                    select(ConfigValue).where(ConfigValue.model_id.in_(series_model_ids))
-                )
-                for val in delete_values.scalars().all():
-                    await db.delete(val)
-                await db.flush()  # 确保删除先提交，避免重建时 UNIQUE 约束冲突
-
-            # 从快照重建 ConfigValue（用 IPN 匹配，不再依赖自增 ID）
-            # 构建：当前 DB 中 IPN → ConfigItem 映射
-            db_items_result = await db.execute(select(ConfigItem))
-            ipn_to_db_item = {}
-            for item in db_items_result.scalars().all():
-                if item.ipn:
-                    ipn_to_db_item[str(item.ipn).strip()] = item
-
-            snapshot_ipns = set()
-            for item_data in snapshot.get("items", []):
-                ipn = str(item_data.get("ipn", "")).strip() if item_data.get("ipn") else None
-                if not ipn:
-                    continue
-                snapshot_ipns.add(ipn)
-                # 用 IPN 查找当前 DB 中对应的 ConfigItem
-                db_item = ipn_to_db_item.get(ipn)
-                if not db_item:
-                    # DB 中不存在 → 从快照创建
-                    db_item = ConfigItem(
-                        category=item_data.get("category"),
-                        row_index=item_data.get("row_index"),
-                        rd_name=item_data.get("rd_name"),
-                        v_code=item_data.get("v_code"),
-                        ipn=item_data.get("ipn"),
-                        zh_desc=item_data.get("zh_desc"),
-                        en_desc=item_data.get("en_desc"),
-                    )
-                    db.add(db_item)
-                    await db.flush()
-                    ipn_to_db_item[ipn] = db_item
-
-                db_item_id = db_item.id
-                # 更新 ConfigItem 字段到快照版本
-                for field in ("category", "rd_name", "v_code", "zh_desc", "en_desc", "row_index"):
-                    snap_val = item_data.get(field)
-                    if snap_val is not None:
-                        setattr(db_item, field, snap_val)
-
-                # 重建 ConfigValues
-                values_map = item_data.get("values", {})
-                for model_id_str, value_data in values_map.items():
-                    model_id = int(model_id_str)
-                    if model_id not in series_model_ids:
-                        continue
-                    new_value = ConfigValue(
-                        item_id=db_item_id,
-                        model_id=model_id,
-                        current_config=value_data.get("current_config"),
-                        final_config=value_data.get("final_config"),
-                        selection_config=value_data.get("selection_config"),
-                        rd_status=value_data.get("rd_status")
-                    )
-                    db.add(new_value)
-
-            # 清理 DB 中存在但快照中没有的 ConfigItem（未被其他系列引用才删）
-            all_items = await db.execute(select(ConfigItem))
-            for item in all_items.scalars().all():
-                item_ipn = str(item.ipn).strip() if item.ipn else None
-                if item_ipn and item_ipn in snapshot_ipns:
-                    continue  # 在快照中，保留
-                # 不在快照中 → 检查是否被其他系列引用
-                remaining = await db.execute(
-                    select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
-                )
-                if not remaining.scalar_one_or_none():
-                    await db.delete(item)
-        else:
-            # 没有快照（从未提交过版本）：删除该系列所有相关数据
-            if series_model_ids:
-                values_to_delete = await db.execute(
-                    select(ConfigValue).where(ConfigValue.model_id.in_(series_model_ids))
-                )
-                for val in values_to_delete.scalars().all():
-                    await db.delete(val)
-
-            # 删除所有没有其他系列引用的 ConfigItem
-            all_items = await db.execute(select(ConfigItem))
-            for item in all_items.scalars().all():
-                remaining = await db.execute(
-                    select(ConfigValue).where(ConfigValue.item_id == item.id).limit(1)
-                )
-                if not remaining.scalar_one_or_none():
-                    await db.delete(item)
+        await restore_series_snapshot(db, series_id, await _latest_snapshot(db, series_id))
 
         # 重置批次统计
         batch.total_count = 0
@@ -1054,6 +946,72 @@ async def discard_draft_batch(
         raise HTTPException(status_code=500, detail=f"废弃失败: {str(e)}")
 
 
+async def _restore_then_delete_draft(db: AsyncSession, draft: ConfigDraft) -> None:
+    """撤销单条草稿对 working ConfigValue 的同步改动。"""
+    batch = await db.get(DraftBatch, draft.batch_id)
+    if not batch or batch.status != "draft":
+        raise HTTPException(status_code=400, detail="草稿批次不是待编辑状态")
+    value = await _config_value(db, draft.item_id, draft.model_id)
+    if draft.change_type == "update" and draft.field_name in CONFIG_FIELDS:
+        if value is None:
+            value = ConfigValue(item_id=draft.item_id, model_id=draft.model_id)
+            db.add(value)
+        setattr(value, draft.field_name, draft.old_value)
+    elif draft.change_type == "create" and value is not None:
+        if draft.field_name:
+            setattr(value, draft.field_name, draft.old_value)
+        else:
+            await db.delete(value)
+    elif draft.change_type == "delete":
+        item = await db.get(ConfigItem, draft.item_id)
+        baseline = (
+            _snapshot_pair(await _latest_snapshot(db, draft.series_id), item, draft.model_id)
+            if item else None
+        )
+        if baseline is None:
+            if value is not None:
+                if draft.field_name:
+                    setattr(value, draft.field_name, draft.old_value)
+                else:
+                    await db.delete(value)
+        else:
+            if value is None:
+                value = ConfigValue(item_id=draft.item_id, model_id=draft.model_id)
+                db.add(value)
+            fields = (draft.field_name,) if draft.field_name else CONFIG_FIELDS
+            for field in fields:
+                setattr(value, field, baseline.get(field))
+    await db.delete(draft)
+    await _refresh_batch_counts(db, batch)
+
+
+# 静态路由必须声明在 /draft/{draft_id} 前。
+@router.delete("/draft/by-key")
+async def delete_draft_by_key(
+    batch_id: str,
+    item_id: int,
+    model_id: int,
+    field_name: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """根据条件删除草稿并恢复 working value。"""
+    if field_name not in CONFIG_FIELDS:
+        raise HTTPException(status_code=422, detail="配置字段无效")
+    draft = await db.scalar(
+        select(ConfigDraft).where(
+            ConfigDraft.batch_id == batch_id,
+            ConfigDraft.item_id == item_id,
+            ConfigDraft.model_id == model_id,
+            ConfigDraft.field_name == field_name
+        )
+    )
+    if not draft:
+        return {"message": "草稿不存在", "deleted": False}
+    await _restore_then_delete_draft(db, draft)
+    await db.commit()
+    return {"message": "删除成功", "deleted": True}
+
+
 @router.delete("/draft/{draft_id}")
 async def delete_draft(
     draft_id: int,
@@ -1066,61 +1024,7 @@ async def delete_draft(
     if not draft:
         raise HTTPException(status_code=404, detail="草稿不存在")
 
-    # 更新批次统计
-    batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == draft.batch_id))
-    batch = batch_result.scalar_one_or_none()
-
-    if batch:
-        if draft.change_type == "create":
-            batch.create_count = max(0, batch.create_count - 1)
-        elif draft.change_type == "update":
-            batch.update_count = max(0, batch.update_count - 1)
-        elif draft.change_type == "delete":
-            batch.delete_count = max(0, batch.delete_count - 1)
-        batch.total_count = max(0, batch.total_count - 1)
-
-    await db.delete(draft)
+    await _restore_then_delete_draft(db, draft)
     await db.commit()
 
     return {"message": "删除成功"}
-
-
-@router.delete("/draft/by-key")
-async def delete_draft_by_key(
-    batch_id: str,
-    item_id: int,
-    model_id: int,
-    field_name: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """根据条件删除草稿"""
-    result = await db.execute(
-        select(ConfigDraft).where(
-            ConfigDraft.batch_id == batch_id,
-            ConfigDraft.item_id == item_id,
-            ConfigDraft.model_id == model_id,
-            ConfigDraft.field_name == field_name
-        )
-    )
-    draft = result.scalar_one_or_none()
-
-    if not draft:
-        return {"message": "草稿不存在", "deleted": False}
-
-    # 更新批次统计
-    batch_result = await db.execute(select(DraftBatch).where(DraftBatch.id == draft.batch_id))
-    batch = batch_result.scalar_one_or_none()
-
-    if batch:
-        if draft.change_type == "create":
-            batch.create_count = max(0, batch.create_count - 1)
-        elif draft.change_type == "update":
-            batch.update_count = max(0, batch.update_count - 1)
-        elif draft.change_type == "delete":
-            batch.delete_count = max(0, batch.delete_count - 1)
-        batch.total_count = max(0, batch.total_count - 1)
-
-    await db.delete(draft)
-    await db.commit()
-
-    return {"message": "删除成功", "deleted": True}

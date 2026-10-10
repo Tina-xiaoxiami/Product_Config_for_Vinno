@@ -1,4 +1,4 @@
-# 产品配置管理系统 - Windows 安装指南
+# 产品配置管理系统 - 安装与启动指南
 
 ## 环境准备（一次性）
 
@@ -6,7 +6,7 @@
 
 下载地址：https://www.python.org/downloads/
 
-- 选择 **Python 3.10 或更高版本**
+- 选择 **Python 3.11（自动测试使用此版本）**
 - 安装时 **勾选 "Add Python to PATH"**（非常重要）
 
 安装完成后打开命令提示符（Win+R 输入 `cmd`），验证：
@@ -49,7 +49,7 @@ cd ..
 
 ```
 cd frontend
-npm install
+npm ci
 cd ..
 ```
 
@@ -61,8 +61,12 @@ cd ..
 
 ## 日常使用
 
-- **启动**：双击 `start.bat`，浏览器会自动打开
-- **停止**：双击 `stop.bat`
+- **macOS 启动**：双击 `start.command`，或使用桌面的「产品配置管理系统.app」。
+- **Windows 启动**：双击 `start.bat`。
+- **停止**：macOS 双击 `stop.command`；Windows 双击 `stop.bat`。
+- 健康服务已运行时会直接打开页面；关闭启动终端不影响后台服务。
+- 端口被其他程序占用时会报错，不会结束其他程序。
+- 日志保存在项目的 `.runtime/backend.log` 和 `.runtime/frontend.log`，状态检查：`python tools/service_manager.py status`。
 
 启动后访问：http://localhost:3006
 
@@ -135,3 +139,19 @@ python3 scripts/migrate_registration_packages.py \
 
 普通成对登记只生成“待确认草稿”，不会替换当前生效注册红线。确认机型映射并通过跨注册证冲突校验后，草稿才能原子发布为该注册证的当前版；不同注册证不合并、不互相覆盖。
 两份资料始终作为一对保存，但允许仅其中一份发生换版：例如注册证更新而差异表及结构化快照不变时，新版本会继续引用同一个差异表快照并记录“仅注册证变化”。
+
+
+## 自动测试
+
+GitHub Actions 在 Pull Request 和 `main` / `codex/**` 分支提交时检查后端、启动管理回归、前端测试及构建。后端测试使用临时数据库，不使用正式数据库。
+
+本地复现：
+
+```bash
+python -m pip install -r backend/requirements-test.txt
+python -m pytest backend/tests tests -q
+cd frontend
+npm ci
+npm test
+npm run build
+```
