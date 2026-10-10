@@ -2983,6 +2983,7 @@ const refreshSaveFeedback = (context = null) => {
   draftSaveFeedback.message = draftSaveFeedback.failures.size
     ? `仍有 ${draftSaveFeedback.failures.size} 处保存或撤销失败，可逐一重试`
     : isFeedbackCellScopeCurrent(context) && context.action === 'undo' ? '已撤销单元格草稿'
+    : isFeedbackCellScopeCurrent(context) && context.action === 'unchanged' ? '配置未变化，无新增草稿'
     : draftSaveFeedback.lastCell ? '草稿已保存' : ''
 }
 const undoLastCell = async () => {
@@ -3042,7 +3043,7 @@ const enqueueDraftCellOperation = (context, operation) => {
     if (isLatest() && isFeedbackCellScopeCurrent(context)) {
       if (success) {
         draftSaveFeedback.failures.delete(context.operationKey)
-        if (context.action === 'undo') draftSaveFeedback.successes.delete(context.operationKey)
+        if (context.action === 'undo' || context.action === 'unchanged') draftSaveFeedback.successes.delete(context.operationKey)
         else draftSaveFeedback.successes.set(context.operationKey, { ...context })
       } else {
         draftSaveFeedback.failures.set(context.operationKey, { ...context })
@@ -3174,18 +3175,29 @@ const handleCellChange = (row, modelId, field, newValue, oldValue, frozenContext
         old_value: oldValue
       })
 
-      state.serverHasDraft = true
+      const noDraft = res?.draft_id === null
+      if (res?.draft_id === undefined || (noDraft && !Object.hasOwn(res, 'current_value'))) {
+        throw new Error('保存响应缺少草稿或当前值')
+      }
+      state.serverHasDraft = !noDraft
       if (isDraftCellScopeCurrent(context)) {
-        // 记录变更用于UI高亮
         const previousType = draftChanges.value.get(key)?.changeType
-        draftChanges.value.set(key, {
-          oldValue,
-          newValue,
-          draftId: res.draft_id,
-          changeType
-        })
-        Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
-        reconcileCurrentDraftCell(context, newValue, isLatest)
+        if (noDraft) {
+          // 后端确认恢复了基线或配置未变化，不创建无 id 的草稿标记。
+          context.action = (previousType || res.removed) ? 'undo' : 'unchanged'
+          draftChanges.value.delete(key)
+          if (context.originalRow?.model_values?.[modelId]) {
+            context.originalRow.model_values[modelId][field] = res.current_value
+          }
+          const currentOriginalRow = originalDataMap.value.get(row.id)
+          if (currentOriginalRow?.model_values?.[modelId]) {
+            currentOriginalRow.model_values[modelId][field] = res.current_value
+          }
+        } else {
+          draftChanges.value.set(key, { oldValue, newValue, draftId: res.draft_id, changeType })
+        }
+        Object.assign(draftStats, updateDraftStats(draftStats, previousType, noDraft ? null : changeType))
+        reconcileCurrentDraftCell(context, noDraft ? res.current_value : newValue, isLatest)
       }
       return true
     } catch (error) {
