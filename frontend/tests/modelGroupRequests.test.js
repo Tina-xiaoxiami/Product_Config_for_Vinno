@@ -40,7 +40,7 @@ test('failed superseded group request preserves newer user series choice', async
   applyingModelGroup: ref(false), resolveGroupSeries,
   seriesList: ref([{ id: 1, name: 'Original' }, { id: 2, name: 'Group' }, { id: 3, name: 'Latest' }]),
   selectedSeries: ref([1]), allModelsMap: ref(new Map()), currentPage: ref(4), modelFilterText: ref('query'),
-  modelGroupsPopover: ref(null), loadModels: () => pending.promise,
+  modelGroupsPopover: ref(null), configReady: ref(true), loadModels: () => pending.promise,
   ElMessage: { warning() {} }, saveSeriesSelection() {}, saveModelOrder() {}
  }
  const code = source.slice(source.indexOf('const applyModelGroup ='), source.indexOf('const categoryOptions ='))
@@ -52,6 +52,38 @@ test('failed superseded group request preserves newer user series choice', async
  await result
  assert.deepEqual(context.selectedSeries.value, [3])
  assert.equal(context.applyingModelGroup.value, false)
+})
+test('failed model group restores readiness only when configuration state was not replaced', async () => {
+ const createApp = (replaceModels) => {
+  const previousModels = new Map([[1, { id: 1, name: 'Original model' }]])
+  const context = {
+   applyingModelGroup: ref(false), configReady: ref(true), resolveGroupSeries,
+   seriesList: ref([{ id: 1, name: 'Original' }, { id: 2, name: 'Group' }]),
+   selectedSeries: ref([1]), allModelsMap: ref(previousModels), currentPage: ref(4), modelFilterText: ref('query'),
+   modelGroupsPopover: ref(null),
+   loadModels: async () => {
+    context.configReady.value = false
+    if (replaceModels) context.allModelsMap.value = new Map([[2, { id: 2, name: 'Partial group model' }]])
+    return false
+   },
+   ElMessage: { warning() {} }, saveSeriesSelection() {}, saveModelOrder() {}
+  }
+  const code = source.slice(source.indexOf('const applyModelGroup ='), source.indexOf('const categoryOptions ='))
+  const apply = new Function(...Object.keys(context), code + '\nreturn applyModelGroup')(...Object.values(context))
+  return { apply, context, previousModels }
+ }
+
+ const unchanged = createApp(false)
+ await unchanged.apply({ models: [{ seriesName: 'Group' }] })
+ assert.deepEqual(unchanged.context.selectedSeries.value, [1])
+ assert.equal(unchanged.context.allModelsMap.value, unchanged.previousModels)
+ assert.equal(unchanged.context.configReady.value, true)
+
+ const replaced = createApp(true)
+ await replaced.apply({ models: [{ seriesName: 'Group' }] })
+ assert.deepEqual(replaced.context.selectedSeries.value, [2])
+ assert.notEqual(replaced.context.allModelsMap.value, replaced.previousModels)
+ assert.equal(replaced.context.configReady.value, false)
 })
 test('stale draft failure cannot clear a newer series table', async () => {
  const oldDraft = deferred()
