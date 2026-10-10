@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel
 import io
 import json
+from pathlib import Path
 
 
 class ExportRequest(BaseModel):
@@ -103,7 +104,7 @@ async def import_excel(
     # 解析合并单元格
     merged_info = parse_merged_cells(ws)
 
-    fallback_name = series_name or file.filename.replace('.xlsx', '').replace('.xls', '')
+    fallback_name = series_name or Path(file.filename).stem
     series_list = parse_series_columns(
         ws,
         fallback_name=fallback_name,
@@ -1586,7 +1587,7 @@ async def preview_import(
 
     series_list = parse_series_columns(
         ws,
-        fallback_name=file.filename.replace('.xlsx', '').replace('.xls', ''),
+        fallback_name=Path(file.filename).stem,
         merged_info=merged_info,
     )
 

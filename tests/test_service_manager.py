@@ -64,7 +64,7 @@ def test_spawn_is_detached_and_uses_explicit_service_directory(tmp_path):
 
 def test_entrypoints_never_kill_processes_by_port():
     for name in ['start.command', 'start.sh', 'start.bat', 'stop.command', 'stop.bat']:
-        source = (ROOT / name).read_text()
+        source = (ROOT / name).read_text(encoding="utf-8")
         assert 'service_manager.py' in source
         assert 'taskkill' not in source
         assert 'pkill' not in source
