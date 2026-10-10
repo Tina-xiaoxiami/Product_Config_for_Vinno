@@ -369,6 +369,7 @@ const openCompareDialog = async (version) => {
     const idx = options.findIndex(v => v.id === version.id)
     compareVersion2.value = idx >= 0 && idx < options.length - 1 ? options[idx + 1].id : null
   } catch (error) {
+    if (request !== compareRequest || selectedSeries.value !== seriesId) return
     console.error('加载完整版本列表失败:', error)
     ElMessage.error('加载完整版本列表失败')
   }

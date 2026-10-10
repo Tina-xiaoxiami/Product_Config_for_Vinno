@@ -613,9 +613,13 @@ let modelLoadRequest = 0
 const loadModels = async () => {
   const request = ++modelLoadRequest
   const seriesIds = [...selectedSeries.value]
+  const previousSelectedModels = [...selectedModels.value]
+  const previousReferenceModel = referenceModel.value
+  allModelsMap.value = new Map()
+  selectedModels.value = []
+  referenceModel.value = null
+  modelFilterText.value = ''
   if (seriesIds.length === 0) {
-    allModelsMap.value = new Map()
-    selectedModels.value = []
     return
   }
 
@@ -634,7 +638,10 @@ const loadModels = async () => {
     })
     allModelsMap.value = models
     // 清除无效的已选型号（watcher 会自动触发对比）
-    selectedModels.value = selectedModels.value.filter(mid => models.has(mid))
+    selectedModels.value = previousSelectedModels.filter(mid => models.has(mid))
+    referenceModel.value = selectedModels.value.includes(previousReferenceModel)
+      ? previousReferenceModel
+      : selectedModels.value[0] ?? null
   } catch (error) {
     if (request !== modelLoadRequest) return
     console.error('加载产品型号失败:', error)
