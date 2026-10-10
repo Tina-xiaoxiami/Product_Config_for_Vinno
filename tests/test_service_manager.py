@@ -330,3 +330,33 @@ def test_windows_connection_refusal_means_no_active_listener(monkeypatch):
 
     monkeypatch.setattr(module.socket, 'socket', lambda family, kind: RefusedConnection(family))
     assert module.port_is_free(18886) is True
+
+
+def test_pending_windows_connect_checks_completed_socket_result(monkeypatch):
+    module = manager()
+    checked = []
+
+    class PendingConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def setblocking(self, blocking):
+            assert blocking is False
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            raise OSError(10035, 'operation would block')
+
+        def getsockopt(self, level, option):
+            checked.append((level, option))
+            return 10061
+
+    monkeypatch.setattr(module.socket, 'socket', lambda family, kind: PendingConnection())
+    monkeypatch.setattr(module, 'select', SimpleNamespace(select=lambda *args: ([], args[1], [])), raising=False)
+    assert module.port_is_free(18886) is True
+    assert len(checked) == 2
