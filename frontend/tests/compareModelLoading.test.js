@@ -95,3 +95,19 @@ test('a current Compare model load clears stale choices while pending and after 
   assert.deepEqual(app.selectedModels.value, [])
   assert.equal(app.referenceModel.value, null)
 })
+
+test('a successful reload restores selected models still present in the current series', async () => {
+  const pending = deferred()
+  const app = modelLoader(() => pending.promise)
+  app.allModelsMap.value = new Map([[11, { id: 11, name: 'Model One', seriesId: 1, seriesName: 'One' }]])
+  app.selectedModels.value = [11]
+  app.referenceModel.value = 11
+
+  const load = app.loadModels()
+  assert.deepEqual(app.selectedModels.value, [])
+  pending.resolve({ items: [{ id: 11, name: 'Model One' }, { id: 12, name: 'Model Twelve' }] })
+  await load
+
+  assert.deepEqual(app.selectedModels.value, [11])
+  assert.equal(app.referenceModel.value, 11)
+})
