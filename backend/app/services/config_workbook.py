@@ -1,6 +1,9 @@
 """Shared structural parsing for configuration import/export workbooks."""
 
 from dataclasses import dataclass
+import hashlib
+import json
+from collections.abc import Mapping
 
 
 CONFIG_FIELDS = ("final_config", "current_config", "selection_config", "rd_status")
@@ -50,6 +53,8 @@ def write_patch_metadata(
     item_ids: list[int],
     model_ids: list[int],
     fields: list[str],
+    item_refs: dict[int, dict] | None = None,
+    excluded_pairs: list[tuple[int, int]] | None = None,
 ) -> None:
     """Mark an application export as a partial update workbook."""
     metadata = workbook.create_sheet(METADATA_SHEET)
@@ -61,6 +66,8 @@ def write_patch_metadata(
         ("item_ids", ",".join(str(item_id) for item_id in item_ids)),
         ("model_ids", ",".join(str(model_id) for model_id in model_ids)),
         ("fields", ",".join(fields)),
+        ("item_refs", json.dumps(item_refs or {}, sort_keys=True)),
+        ("excluded_pairs", json.dumps(excluded_pairs or [])),
     )
     for row, (key, value) in enumerate(rows, 1):
         metadata.cell(row, 1, key)
@@ -68,10 +75,10 @@ def write_patch_metadata(
     metadata.sheet_state = "veryHidden"
 
 
-def workbook_import_mode(workbook) -> str:
-    """Read application metadata; reject unknown formats instead of deleting data."""
+def read_patch_metadata(workbook) -> dict | None:
+    """Return validated application patch metadata, if present."""
     if METADATA_SHEET not in workbook.sheetnames:
-        return "full"
+        return None
     metadata = workbook[METADATA_SHEET]
     values = {
         str(metadata.cell(row, 1).value or "").strip():
@@ -83,8 +90,71 @@ def workbook_import_mode(workbook) -> str:
         and values.get("version") == METADATA_VERSION
         and values.get("mode") == "patch"
     ):
-        return "patch"
+        try:
+            model_ids = [
+                int(value)
+                for value in values.get("model_ids", "").split(",")
+                if value
+            ]
+            fields = [
+                value
+                for value in values.get("fields", "").split(",")
+                if value
+            ]
+            if (
+                not model_ids
+                or len(model_ids) != len(set(model_ids))
+                or not fields
+                or len(fields) != len(set(fields))
+                or any(field not in CONFIG_FIELDS for field in fields)
+            ):
+                raise ValueError
+            item_refs = json.loads(values.get("item_refs") or "{}")
+            normalized_refs = {}
+            for raw_row, raw_ref in item_refs.items():
+                row = int(raw_row)
+                item_id = int(raw_ref["id"])
+                fingerprint = str(raw_ref["fingerprint"])
+                if row < 1 or item_id < 1 or len(fingerprint) != 64:
+                    raise ValueError
+                normalized_refs[row] = {
+                    "id": item_id,
+                    "fingerprint": fingerprint,
+                }
+            raw_excluded_pairs = json.loads(values.get("excluded_pairs") or "[]")
+            excluded_pairs = set()
+            for raw_pair in raw_excluded_pairs:
+                if not isinstance(raw_pair, list) or len(raw_pair) != 2:
+                    raise ValueError
+                item_id, model_id = (int(value) for value in raw_pair)
+                if item_id < 1 or model_id < 1:
+                    raise ValueError
+                excluded_pairs.add((item_id, model_id))
+            return {
+                "series_id": int(values["series_id"]),
+                "item_refs": normalized_refs,
+                "model_ids": model_ids,
+                "fields": fields,
+                "excluded_pairs": excluded_pairs,
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("工作簿包含无效的配置项身份元数据，请重新导出后再导入") from error
     raise ValueError("工作簿包含不受支持的导入元数据格式，请重新导出后再导入")
+
+
+def workbook_import_mode(workbook) -> str:
+    """Read application metadata; reject unknown formats instead of deleting data."""
+    return "patch" if read_patch_metadata(workbook) is not None else "full"
+
+
+def config_item_fingerprint(item) -> str:
+    """Fingerprint exported identity fields so recycled database IDs are rejected."""
+    payload = {
+        field: item.get(field) if isinstance(item, Mapping) else getattr(item, field, None)
+        for field in ("category", "rd_name", "v_code", "ipn", "zh_desc", "en_desc")
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def merged_cell_starts(worksheet) -> dict[tuple[int, int], dict]:

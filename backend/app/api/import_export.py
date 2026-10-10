@@ -25,6 +25,7 @@ class ExportRequest(BaseModel):
     new_items: Optional[str] = None
 import uuid
 from datetime import datetime
+from urllib.parse import quote
 
 from app.database import get_db
 from app.models import (
@@ -34,12 +35,15 @@ from app.models import (
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.comments import Comment
 
 from app.services.config_workbook import (
     CONFIG_FIELDS,
+    config_item_fingerprint,
     merged_cell_starts,
     parse_model_columns,
     parse_series_columns,
+    read_patch_metadata,
     workbook_import_mode,
     write_patch_metadata,
 )
@@ -51,6 +55,7 @@ from app.services.model_identity import (
     resolve_import_model,
     resolve_import_model_readonly,
 )
+from app.services.config_history import resolve_snapshot_item
 
 router = APIRouter()
 
@@ -87,6 +92,7 @@ async def import_excel(
     ws = wb.active
     try:
         import_mode = workbook_import_mode(wb)
+        patch_metadata = read_patch_metadata(wb)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -117,6 +123,8 @@ async def import_excel(
                 series = ProductSeries(name=current_series_name)
                 db.add(series)
                 await db.flush()
+            if patch_metadata and patch_metadata["series_id"] != series.id:
+                raise HTTPException(status_code=400, detail="补丁工作簿与目标产品系列不一致")
 
             # 解析产品型号和第3行字段标签，非连续系列范围保持独立。
             models = []
@@ -124,14 +132,36 @@ async def import_excel(
             model_allows_pair_delete = {}
             for model_columns in parse_model_columns(ws, series_info.ranges, merged_info=merged_info):
                 try:
-                    model = await resolve_import_model(
-                        db,
-                        series.id,
-                        model_columns.raw_header,
-                        model_columns.start,
-                        model_columns.end,
-                        len(models),
-                    )
+                    model = None
+                    if import_mode == "patch":
+                        model = await resolve_import_model_readonly(
+                            db, series.id, model_columns.raw_header
+                        )
+                        expected_ids = patch_metadata["model_ids"]
+                        expected_id = (
+                            expected_ids[len(models)]
+                            if len(models) < len(expected_ids)
+                            else None
+                        )
+                        if model is None or model.id != expected_id:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="补丁工作簿机型范围已改变，请重新导出后再导入",
+                            )
+                        if set(model_columns.field_columns) != set(patch_metadata["fields"]):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="补丁工作簿字段范围已改变，请重新导出后再导入",
+                            )
+                    else:
+                        model = await resolve_import_model(
+                            db,
+                            series.id,
+                            model_columns.raw_header,
+                            model_columns.start,
+                            model_columns.end,
+                            len(models),
+                        )
                 except ValueError as error:
                     raise HTTPException(status_code=400, detail=str(error)) from error
                 if model.id in {entry.id for entry in models}:
@@ -139,6 +169,11 @@ async def import_excel(
                 models.append(model)
                 model_fields[model.id] = model_columns.field_columns
                 model_allows_pair_delete[model.id] = model_columns.supports_pair_deletion
+            if patch_metadata and [model.id for model in models] != patch_metadata["model_ids"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="补丁工作簿机型范围已改变，请重新导出后再导入",
+                )
 
             # 获取最后发布的版本快照（用于对照变更）
             last_version_result = await db.execute(
@@ -152,12 +187,14 @@ async def import_excel(
             snapshot_raw_data = None
             # 预计算快照值字典：{(ipn_str, 型号名称, 字段名): value}，O(1) 查询
             snapshot_values = {}
+            snapshot_no_ipn_values = {}
             # 快照中的 (IPN, 型号名称) 对集合，用于判定新增/删除/修改
             snapshot_pairs = set()
+            snapshot_no_ipn_pairs = set()
+            snapshot_model_name_map = {}
             if last_version and last_version.snapshot_data:
                 snapshot_raw_data = await normalize_snapshot(db, series.id, json.loads(last_version.snapshot_data))
                 # 构建快照中型号ID→名称映射（回滚后model_id也会变，需用名称匹配）
-                snapshot_model_name_map = {}
                 for m in snapshot_raw_data.get("models", []):
                     mid = m.get("id")
                     if mid:
@@ -194,6 +231,7 @@ async def import_excel(
                 return normalized
 
             snapshot_all_na_pairs = set()
+            snapshot_no_ipn_all_na_pairs = set()
             for ipn_str, snap_model_name in snapshot_pairs:
                 all_na = all(
                     snapshot_values.get((ipn_str, snap_model_name, f)) in NA_VALUES
@@ -201,6 +239,61 @@ async def import_excel(
                 )
                 if all_na:
                     snapshot_all_na_pairs.add((ipn_str, snap_model_name))
+
+            # Resolve every current no-IPN item through the canonical snapshot rules.
+            # This supplies safe identities for full-sync reuse and omission detection.
+            resolved_no_ipn_items = {}
+            no_ipn_items_by_import_identity = {}
+            if snapshot_raw_data and models:
+                current_items_result = await db.execute(
+                    select(ConfigItem)
+                    .join(ConfigValue, ConfigValue.item_id == ConfigItem.id)
+                    .where(ConfigValue.model_id.in_([model.id for model in models]))
+                    .distinct()
+                )
+                for current_item in current_items_result.scalars().all():
+                    if current_item.ipn:
+                        continue
+                    try:
+                        snapshot_item = resolve_snapshot_item(
+                            current_item, snapshot_raw_data
+                        )
+                    except ValueError as error:
+                        raise HTTPException(status_code=400, detail=str(error)) from error
+                    if not snapshot_item:
+                        continue
+                    resolved_no_ipn_items[current_item.id] = current_item
+                    identity = (
+                        snapshot_item.get("category"),
+                        snapshot_item.get("row_index"),
+                        snapshot_item.get("rd_name"),
+                        snapshot_item.get("v_code"),
+                    )
+                    if identity in no_ipn_items_by_import_identity:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="发布快照中无 IPN 配置项身份不唯一",
+                        )
+                    no_ipn_items_by_import_identity[identity] = current_item
+                    for snapshot_model_id, model_values in (
+                        snapshot_item.get("values") or {}
+                    ).items():
+                        model_name = snapshot_model_name_map.get(int(snapshot_model_id))
+                        if not model_name:
+                            continue
+                        pair = (current_item.id, model_name)
+                        snapshot_no_ipn_pairs.add(pair)
+                        for field in CONFIG_FIELDS:
+                            snapshot_no_ipn_values[
+                                (current_item.id, model_name, field)
+                            ] = model_values.get(field) if model_values else None
+                        if all(
+                            snapshot_no_ipn_values.get(
+                                (current_item.id, model_name, field)
+                            ) in NA_VALUES
+                            for field in CONFIG_FIELDS
+                        ):
+                            snapshot_no_ipn_all_na_pairs.add(pair)
 
             # 解析配置数据（从第5行开始）
             current_category = None
@@ -268,6 +361,29 @@ async def import_excel(
                 )
                 for item in existing_items_result.scalars().all():
                     existing_items_map[item.ipn] = item
+            patch_items_by_row = {}
+            if patch_metadata:
+                refs = patch_metadata["item_refs"]
+                ref_ids = {ref["id"] for ref in refs.values()}
+                referenced_items = {}
+                if ref_ids:
+                    rows = await db.execute(select(ConfigItem).where(ConfigItem.id.in_(ref_ids)))
+                    referenced_items = {item.id: item for item in rows.scalars().all()}
+                for row_idx, ref in refs.items():
+                    item = referenced_items.get(ref["id"])
+                    if item is None or config_item_fingerprint(item) != ref["fingerprint"]:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"第 {row_idx} 行配置项身份已失效，请重新导出后再导入",
+                        )
+                    patch_items_by_row[row_idx] = item
+                for item_data in items_to_create:
+                    ref = refs.get(item_data["row_idx"])
+                    if ref and config_item_fingerprint(item_data) != ref["fingerprint"]:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"第 {item_data['row_idx']} 行配置项身份与导出记录不一致",
+                        )
 
             # 批量创建配置项
             created_items = []
@@ -278,11 +394,28 @@ async def import_excel(
             for item_data in items_to_create:
                 ipn_str = item_data['ipn']
                 change_type = None
+                patch_item = patch_items_by_row.get(item_data["row_idx"])
+                no_ipn_snapshot_item = None
+                if not ipn_str and patch_item is None:
+                    no_ipn_snapshot_item = no_ipn_items_by_import_identity.get(
+                        (
+                            item_data["category"],
+                            item_data["row_idx"],
+                            item_data["rd_name"],
+                            item_data["v_code"],
+                        )
+                    )
 
                 # 检查是否已存在（数据库中或本次导入中）
-                if ipn_str and (ipn_str in existing_items_map or ipn_str in processed_ipns):
+                if patch_item is not None or no_ipn_snapshot_item is not None or (
+                    ipn_str and (ipn_str in existing_items_map or ipn_str in processed_ipns)
+                ):
                     # 优先使用数据库中已存在的，否则使用本次导入创建的
-                    if ipn_str in existing_items_map:
+                    if patch_item is not None:
+                        item = patch_item
+                    elif no_ipn_snapshot_item is not None:
+                        item = no_ipn_snapshot_item
+                    elif ipn_str in existing_items_map:
                         item = existing_items_map[ipn_str]
                     else:
                         item = processed_ipns[ipn_str]
@@ -312,7 +445,8 @@ async def import_excel(
                     item.v_code = item_data['v_code']
                     item.zh_desc = item_data['zh_desc']
                     item.en_desc = item_data['en_desc']
-                    item.row_index = item_data['row_idx']
+                    if import_mode != "patch":
+                        item.row_index = item_data['row_idx']
                     item.category = item_data['category']
                 else:
                     # 创建新的配置项
@@ -349,6 +483,37 @@ async def import_excel(
                         "message": f"新建配置项: {item_info['data'].get('rd_name')} ({item_info['data'].get('ipn') or '无IPN'})"
                     })
 
+            # 无 IPN 项通过共享快照身份解析器定位发布基线，避免 recycled ID 误配。
+            if snapshot_raw_data:
+                for item_info in created_items:
+                    item = item_info["item"]
+                    if item.ipn:
+                        continue
+                    try:
+                        snapshot_item = resolve_snapshot_item(item, snapshot_raw_data)
+                    except ValueError as error:
+                        raise HTTPException(status_code=400, detail=str(error)) from error
+                    if not snapshot_item:
+                        continue
+                    for snapshot_model_id, model_values in (
+                        snapshot_item.get("values") or {}
+                    ).items():
+                        model_name = snapshot_model_name_map.get(int(snapshot_model_id))
+                        if not model_name:
+                            continue
+                        pair = (item.id, model_name)
+                        snapshot_no_ipn_pairs.add(pair)
+                        for field in CONFIG_FIELDS:
+                            snapshot_no_ipn_values[(item.id, model_name, field)] = (
+                                model_values.get(field) if model_values else None
+                            )
+                        if all(
+                            snapshot_no_ipn_values.get((item.id, model_name, field))
+                            in NA_VALUES
+                            for field in CONFIG_FIELDS
+                        ):
+                            snapshot_no_ipn_all_na_pairs.add(pair)
+
             # 批量查询已存在的 ConfigValue（按 item_id + model_id）
             item_ids = [item_info["item"].id for item_info in created_items if item_info["item"].id]
             model_ids = [m.id for m in models if m.id]
@@ -368,6 +533,13 @@ async def import_excel(
             # 批量创建配置值 - 使用字典避免重复
             values_to_create = {}  # key: (item_id, model_id), value: ConfigValue
             excel_pairs = set()  # 跟踪Excel中所有 (IPN, 型号名) 对
+            excel_no_ipn_pairs = set()
+            touched_field_keys = set()
+            touched_pair_ids = set()
+            authoritative_pair_ids = set()
+            excluded_pair_ids = (
+                patch_metadata["excluded_pairs"] if patch_metadata else set()
+            )
 
             for item_info in created_items:
                 item = item_info["item"]
@@ -375,6 +547,8 @@ async def import_excel(
                 item_ipn = str(item.ipn).strip() if item and item.ipn else None
 
                 for model in models:
+                    if (item.id, model.id) in excluded_pair_ids:
+                        continue
                     imported_values = {
                         field_name: ws.cell(
                             row=item_data['row_idx'],
@@ -382,21 +556,34 @@ async def import_excel(
                         ).value
                         for field_name, column in model_fields[model.id].items()
                     }
+                    touched_pair_ids.add((item.id, model.id))
+                    if model_allows_pair_delete.get(model.id, False):
+                        authoritative_pair_ids.add((item.id, model.id))
+                    touched_field_keys.update(
+                        (item.id, model.id, field_name)
+                        for field_name in imported_values
+                    )
 
                     # 追踪Excel中的 (IPN, 型号名) 对
                     # 部分字段工作簿不能据此推断整项删除；已有配对始终视为仍存在。
                     pair_key = (item_ipn, model.name) if item_ipn else None
+                    no_ipn_pair_key = (item.id, model.name) if not item_ipn else None
+                    excel_values = [
+                        str(value).strip() if value is not None else None
+                        for value in imported_values.values()
+                    ]
+                    has_meaningful = any(v and v not in NA_VALUES for v in excel_values)
                     if pair_key:
-                        excel_values = [
-                            str(value).strip() if value is not None else None
-                            for value in imported_values.values()
-                        ]
-                        has_meaningful = any(v and v not in NA_VALUES for v in excel_values)
                         if has_meaningful or (
                             pair_key in snapshot_pairs
                             and not model_allows_pair_delete[model.id]
                         ):
                             excel_pairs.add(pair_key)
+                    elif has_meaningful or (
+                        no_ipn_pair_key in snapshot_no_ipn_pairs
+                        and not model_allows_pair_delete[model.id]
+                    ):
+                        excel_no_ipn_pairs.add(no_ipn_pair_key)
 
                     key = (item.id, model.id)
                     if key in existing_values_map:
@@ -409,17 +596,30 @@ async def import_excel(
                                 # 注意：仍要更新ConfigValue（不跳过），仅跳过草稿创建
                                 pass
                             # 快照中该配对4字段全为N/A：更新ConfigValue但不产生修改草稿（归类为"新增"）
-                            skip_draft = (
-                                (pair_key and pair_key not in snapshot_pairs) or
-                                (pair_key and pair_key in snapshot_all_na_pairs)
+                            has_snapshot_pair = (
+                                pair_key in snapshot_pairs
+                                if pair_key
+                                else no_ipn_pair_key in snapshot_no_ipn_pairs
                             )
+                            snapshot_pair_is_empty = (
+                                pair_key in snapshot_all_na_pairs
+                                if pair_key
+                                else no_ipn_pair_key in snapshot_no_ipn_all_na_pairs
+                            )
+                            skip_draft = not has_snapshot_pair or snapshot_pair_is_empty
                             # Patch 中的 N/A 占位符与已有空值语义相同，不改写原始表示。
                             if normalize_import_value(getattr(val, field_name)) != new_val:
                                 setattr(val, field_name, new_val)
                             if skip_draft:
                                 continue
                             # 快照对比仅用于决定是否产生草稿
-                            snap_val = snapshot_values.get((item_ipn, model.name, field_name))
+                            snap_val = (
+                                snapshot_values.get((item_ipn, model.name, field_name))
+                                if item_ipn
+                                else snapshot_no_ipn_values.get(
+                                    (item.id, model.name, field_name)
+                                )
+                            )
                             snap_val_str = normalize_import_value(snap_val)
                             if snap_val_str != new_val:
                                 draft_changes.append({
@@ -443,15 +643,26 @@ async def import_excel(
                         )
                         for field_name, excel_value in imported_values.items():
                             new_val = normalize_import_value(excel_value)
-                            # 如果该 (IPN, 型号) 对在快照中不存在，则不创建"修改"草稿
-                            # 该对会由下面的"新增"逻辑处理
-                            if pair_key and pair_key not in snapshot_pairs:
-                                continue
-                            # 快照中该配对4字段全为N/A，视为无数据，不产生修改草稿
-                            if pair_key and pair_key in snapshot_all_na_pairs:
+                            has_snapshot_pair = (
+                                pair_key in snapshot_pairs
+                                if pair_key
+                                else no_ipn_pair_key in snapshot_no_ipn_pairs
+                            )
+                            snapshot_pair_is_empty = (
+                                pair_key in snapshot_all_na_pairs
+                                if pair_key
+                                else no_ipn_pair_key in snapshot_no_ipn_all_na_pairs
+                            )
+                            if not has_snapshot_pair or snapshot_pair_is_empty:
                                 continue
                             # 从预计算快照值字典O(1)取值
-                            snap_val = snapshot_values.get((item_ipn, model.name, field_name))
+                            snap_val = (
+                                snapshot_values.get((item_ipn, model.name, field_name))
+                                if item_ipn
+                                else snapshot_no_ipn_values.get(
+                                    (item.id, model.name, field_name)
+                                )
+                            )
                             old_val_str = normalize_import_value(snap_val)
                             if old_val_str == new_val:
                                 continue  # 快照值和Excel值相同，不创建草稿
@@ -497,6 +708,10 @@ async def import_excel(
             for item in processed_ipns.values():
                 if item and item.id:
                     all_items_by_id[item.id] = item
+            for item_info in created_items:
+                item = item_info["item"]
+                if item and item.id:
+                    all_items_by_id[item.id] = item
 
             # 保存 Excel 中原有的型号列表（用于删除检测，不包含 DB 补充的）
             excel_models = list(models)
@@ -516,27 +731,46 @@ async def import_excel(
 
             # 创建草稿批次和草稿记录（用于前端展示变更）
             real_create_pairs = (excel_pairs - snapshot_pairs) | (excel_pairs & snapshot_all_na_pairs)
+            real_no_ipn_create_pairs = (
+                (excel_no_ipn_pairs - snapshot_no_ipn_pairs)
+                | (excel_no_ipn_pairs & snapshot_no_ipn_all_na_pairs)
+            )
             deletable_model_names = {
                 model.name
                 for model in excel_models
                 if model_allows_pair_delete.get(model.id, False)
             }
             real_delete_pairs = set()
+            real_no_ipn_delete_pairs = set()
             if import_mode == "full":
                 real_delete_pairs = {
                     pair
                     for pair in (snapshot_pairs - excel_pairs) - snapshot_all_na_pairs
                     if pair[1] in deletable_model_names
                 }
-            need_draft = bool(draft_changes) or bool(real_create_pairs) or bool(real_delete_pairs)
-            if need_draft:
-                draft_result = await db.execute(
-                    select(DraftBatch).where(
-                        DraftBatch.series_id == series.id,
-                        DraftBatch.status == "draft"
-                    ).order_by(DraftBatch.created_at.desc()).limit(1)
-                )
-                draft_batch = draft_result.scalar_one_or_none()
+                real_no_ipn_delete_pairs = {
+                    pair
+                    for pair in (
+                        (snapshot_no_ipn_pairs - excel_no_ipn_pairs)
+                        - snapshot_no_ipn_all_na_pairs
+                    )
+                    if pair[1] in deletable_model_names
+                }
+            need_draft = (
+                bool(draft_changes)
+                or bool(real_create_pairs)
+                or bool(real_delete_pairs)
+                or bool(real_no_ipn_create_pairs)
+                or bool(real_no_ipn_delete_pairs)
+            )
+            draft_result = await db.execute(
+                select(DraftBatch).where(
+                    DraftBatch.series_id == series.id,
+                    DraftBatch.status == "draft"
+                ).order_by(DraftBatch.created_at.desc()).limit(1)
+            )
+            draft_batch = draft_result.scalar_one_or_none()
+            if need_draft or draft_batch is not None:
 
                 if not draft_batch:
                     draft_batch = DraftBatch(
@@ -565,13 +799,15 @@ async def import_excel(
                         draft_batch.delete_count = 0
 
                 # 非新增批次：保留旧草稿，导入产生的新变更去重后追加
-                existing_drafts_by_key = set()  # (change_type, item_id, model_id, field_name)
+                existing_drafts_by_key = {}  # (change_type, item_id, model_id, field_name) -> draft
                 if not batch_is_new:
                     old_drafts = await db.execute(
                         select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
                     )
                     for d in old_drafts.scalars().all():
-                        existing_drafts_by_key.add((d.change_type, d.item_id, d.model_id, d.field_name))
+                        existing_drafts_by_key[
+                            (d.change_type, d.item_id, d.model_id, d.field_name)
+                        ] = d
 
                 # === 先筛选draft_changes：将"Excel全N/A但快照有有效值"的配对转为删除 ===
                 # 必须在创建DB草稿之前完成，避免update草稿和delete草稿同时存在
@@ -621,22 +857,80 @@ async def import_excel(
 
                 draft_changes = filtered_changes
 
-                # === 创建更新草稿（已排除应转为删除的配对） ===
+                # 以本次工作簿触及的字段/配对为边界，对现有草稿做替换式协调。
+                # 未触及字段继续保留；同一字段最初的 old_value 始终保留。
+                desired_updates = {
+                    ("update", entry["item_id"], entry["model_id"], entry["field_name"]): entry
+                    for entry in draft_changes
+                }
+                models_by_name = {m.name: m for m in models}
+                pairs_to_create = (excel_pairs - snapshot_pairs) | (
+                    excel_pairs & snapshot_all_na_pairs
+                )
+                desired_pair_types = {
+                    (pair_item.id, models_by_name[pair_model_name].id): "create"
+                    for pair_ipn, pair_model_name in pairs_to_create
+                    if (pair_item := (
+                        existing_items_map.get(pair_ipn)
+                        or processed_ipns.get(pair_ipn)
+                    )) is not None
+                    and pair_item.id
+                    and pair_model_name in models_by_name
+                }
+                desired_pair_types.update({
+                    (item_id, models_by_name[model_name].id): "create"
+                    for item_id, model_name in real_no_ipn_create_pairs
+                    if model_name in models_by_name
+                })
+                desired_pair_types.update({
+                    (item_id, model_id): "delete"
+                    for item_id, model_id in update_to_delete
+                })
+                desired_pair_types.update({
+                    (item_id, models_by_name[model_name].id): "delete"
+                    for item_id, model_name in real_no_ipn_delete_pairs
+                    if model_name in models_by_name
+                })
+
+                for key, existing_draft in list(existing_drafts_by_key.items()):
+                    change_type, item_id, model_id, field_name = key
+                    pair_id = (item_id, model_id)
+                    should_remove = False
+                    if change_type == "update":
+                        should_remove = (
+                            pair_id in desired_pair_types
+                            or (
+                                (item_id, model_id, field_name) in touched_field_keys
+                                and key not in desired_updates
+                            )
+                        )
+                    elif (
+                        pair_id in touched_pair_ids
+                        and pair_id in authoritative_pair_ids
+                    ):
+                        should_remove = desired_pair_types.get(pair_id) != change_type
+                    if should_remove:
+                        await db.delete(existing_draft)
+                        existing_drafts_by_key.pop(key)
+
+                # === 创建或更新字段草稿（已排除应转为新增/删除的配对） ===
                 for entry in draft_changes:
                     draft_key = ("update", entry["item_id"], entry["model_id"], entry["field_name"])
-                    if draft_key in existing_drafts_by_key:
-                        continue
-                    draft = ConfigDraft(
-                        series_id=series.id,
-                        batch_id=draft_batch.id,
-                        change_type=entry["change_type"],
-                        item_id=entry["item_id"],
-                        model_id=entry["model_id"],
-                        field_name=entry["field_name"],
-                        old_value=entry["old_value"],
-                        new_value=entry["new_value"]
-                    )
-                    db.add(draft)
+                    existing_draft = existing_drafts_by_key.get(draft_key)
+                    if existing_draft is not None:
+                        existing_draft.new_value = entry["new_value"]
+                    else:
+                        draft = ConfigDraft(
+                            series_id=series.id,
+                            batch_id=draft_batch.id,
+                            change_type=entry["change_type"],
+                            item_id=entry["item_id"],
+                            model_id=entry["model_id"],
+                            field_name=entry["field_name"],
+                            old_value=entry["old_value"],
+                            new_value=entry["new_value"]
+                        )
+                        db.add(draft)
 
                 # 为"全部Excel值为N/A"的配对创建删除草稿
                 for (del_item_id, del_model_id) in update_to_delete:
@@ -657,8 +951,6 @@ async def import_excel(
 
                 # 按机型创建"新增"草稿：每个 (IPN, 型号名) 对在 Excel 中有但快照中没有的
                 # 或被快照标记为"全 N/A"（视为无数据）的配对
-                models_by_name = {m.name: m for m in models}
-                pairs_to_create = (excel_pairs - snapshot_pairs) | (excel_pairs & snapshot_all_na_pairs)
                 for (pair_ipn, pair_model_name) in pairs_to_create:
                     # 查找 ConfigItem
                     pair_item = existing_items_map.get(pair_ipn) or processed_ipns.get(pair_ipn)
@@ -682,6 +974,27 @@ async def import_excel(
                         new_value=pair_item.rd_name
                     )
                     db.add(create_draft)
+
+                for pair_item_id, pair_model_name in real_no_ipn_create_pairs:
+                    pair_item = all_items_by_id.get(pair_item_id)
+                    pair_model = models_by_name.get(pair_model_name)
+                    if not pair_item or not pair_model:
+                        continue
+                    draft_key = ("create", pair_item.id, pair_model.id, None)
+                    if draft_key in existing_drafts_by_key:
+                        continue
+                    db.add(
+                        ConfigDraft(
+                            series_id=series.id,
+                            batch_id=draft_batch.id,
+                            change_type="create",
+                            item_id=pair_item.id,
+                            model_id=pair_model.id,
+                            field_name=None,
+                            old_value=None,
+                            new_value=pair_item.rd_name,
+                        )
+                    )
 
                 # 按机型创建"删除"草稿：快照中有但 Excel 中没有的配对
                 # 排除快照中所有字段均为 N/A 的配对（视为无数据，不产生删除）
@@ -781,8 +1094,30 @@ async def import_excel(
                         )
                         db.add(delete_draft)
 
+                for del_item_id, del_model_name in real_no_ipn_delete_pairs:
+                    del_item = resolved_no_ipn_items.get(del_item_id)
+                    del_model = models_by_name.get(del_model_name)
+                    if not del_item or not del_model:
+                        continue
+                    delete_key = ("delete", del_item.id, del_model.id, None)
+                    if delete_key in existing_drafts_by_key:
+                        continue
+                    db.add(
+                        ConfigDraft(
+                            series_id=series.id,
+                            batch_id=draft_batch.id,
+                            change_type="delete",
+                            item_id=del_item.id,
+                            model_id=del_model.id,
+                            field_name=None,
+                            old_value=None,
+                            new_value=None,
+                        )
+                    )
+
                 # 统一统计该批次所有草稿，更新计数器
-                if need_draft and draft_batch:
+                if draft_batch:
+                    await db.flush()
                     all_drafts = await db.execute(
                         select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
                     )
@@ -977,6 +1312,17 @@ async def export_excel(
 
     items_result = await db.execute(items_query)
     items = items_result.scalars().all()
+    items = [
+        item
+        for item in items
+        if not all(f"{item.id}_{model.id}" in deleted_items_map for model in models)
+    ]
+    excluded_pairs = [
+        (item.id, model.id)
+        for item in items
+        for model in models
+        if f"{item.id}_{model.id}" in deleted_items_map
+    ]
 
     # 获取配置值
     model_id_list = [m.id for m in models]
@@ -1060,6 +1406,7 @@ async def export_excel(
     # 写入数据
     row_idx = 5
     current_category = None
+    item_refs = {}
 
     for item in items:
         # 如果分类变化，插入分类行
@@ -1078,6 +1425,10 @@ async def export_excel(
         ws.cell(row=row_idx, column=3, value=item.ipn)
         ws.cell(row=row_idx, column=4, value=item.zh_desc)
         ws.cell(row=row_idx, column=5, value=item.en_desc)
+        item_refs[row_idx] = {
+            "id": item.id,
+            "fingerprint": config_item_fingerprint(item),
+        }
 
         # 写入配置值（仅可见列，含样式：绿=新增，红+删除线=删除，黄=修改）
         col = 6
@@ -1090,8 +1441,7 @@ async def export_excel(
                 cell = ws.cell(row=row_idx, column=col + fi)
                 # 基础值：优先从删除快照取（因为删除了，DB值可能已不可靠）
                 if is_deleted:
-                    snap = deleted_items_map[item_model_key]
-                    raw_value = snap.get(field_name, '') if isinstance(snap, dict) else ''
+                    raw_value = None
                 else:
                     raw_value = getattr(model_val, field_name, '') if model_val else ''
                 # 检查是否有逐格草稿变更
@@ -1103,10 +1453,11 @@ async def export_excel(
                     if dc.get('changeType') == 'update' and dc.get('oldValue') is not None:
                         old_val = dc.get('oldValue', '') or '-'
                         new_val = dc.get('newValue', raw_value) or '-'
-                        if old_val != '-':
-                            raw_value = f"{old_val} → {new_val}"
-                        else:
-                            raw_value = new_val
+                        raw_value = new_val
+                        cell.comment = Comment(
+                            f"草稿变更：{old_val} → {new_val}",
+                            "VINNO",
+                        )
                         has_update_change = True
                     elif dc.get('changeType') == 'create':
                         raw_value = dc.get('newValue', raw_value) or '-'
@@ -1153,6 +1504,8 @@ async def export_excel(
         item_ids=[item.id for item in items],
         model_ids=[model.id for model in models],
         fields=field_list,
+        item_refs=item_refs,
+        excluded_pairs=excluded_pairs,
     )
 
     # 保存到内存
@@ -1166,7 +1519,7 @@ async def export_excel(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}"
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
         }
     )
 
