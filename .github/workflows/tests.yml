@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+aiosqlite:///${{ runner.temp }}/config-ci.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: 'backend/requirements*.txt'
+      - run: python -m pip install -r backend/requirements-test.txt
+      - name: Backend and service manager regressions
+        run: >-
+          python -m pytest backend/tests tests -q
+          --cov=app.services.config_history
+          --cov=app.services.model_identity
+          --cov=app.services.config_workbook
+          --cov-report=term-missing --cov-fail-under=80
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
