@@ -1039,3 +1039,21 @@ async def test_mixed_deleted_pair_roundtrip_preserves_delete_draft_and_working_v
     ]
     await db.refresh(before)
     assert {field: getattr(before, field) for field in CONFIG_FIELDS} == before_fields
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('metadata_key, invalid_json', [
+    ('item_refs', '[]'), ('item_refs', 'null'), ('item_refs', '"invalid"'),
+    ('item_refs', '42'), ('excluded_pairs', '{}'), ('excluded_pairs', 'null'),
+])
+async def test_patch_rejects_invalid_metadata_container_shapes(db, metadata_key, invalid_json):
+    await _seed_config(db, with_snapshot=True)
+    exported = await export_excel(ExportRequest(series_id=1, model_ids='1'), db)
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    sheet = workbook['__VINNO_CONFIG_META__']
+    row = next(row for row in range(1, sheet.max_row + 1) if sheet.cell(row, 1).value == metadata_key)
+    sheet.cell(row, 2, invalid_json)
+    with pytest.raises(HTTPException) as exc_info:
+        await import_excel(_upload(workbook, 'invalid-metadata.xlsx'), series_name=None, db=db)
+    assert exc_info.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 1
