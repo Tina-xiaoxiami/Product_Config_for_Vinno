@@ -34,11 +34,11 @@ async def test_preview_impact_compares_current_work_not_published_baseline(db):
                        old_value="CURRENT", new_value="WORKING"))
     await db.commit()
     before = await _database_state(db)
-    same = await preview_import(_upload(_workbook([("China", f"M [UUID:{SOURCE_UUID}]")],
+    same = await preview_import(_upload(_workbook([("China", f"M//{SOURCE_UUID}")],
                                values=["FINAL", "WORKING", "SELECT", "DONE"])), db)
     assert same["impact"]["unchanged"] == 1
     assert same["impact"]["modified"] == 0
-    changed = await preview_import(_upload(_workbook([("China", f"M [UUID:{SOURCE_UUID}]")],
+    changed = await preview_import(_upload(_workbook([("China", f"M//{SOURCE_UUID}")],
                                   values=["FINAL", "NEXT", "SELECT", "DONE"])), db)
     impact = changed["impact"]
     assert (impact["added"], impact["modified"], impact["deleted"], impact["unchanged"]) == (0, 1, 0, 0)
@@ -134,4 +134,21 @@ async def test_preview_cancellation_rolls_back_import_execution(db, monkeypatch)
     with pytest.raises(asyncio.CancelledError):
         await preview_import(_upload(_workbook([("China", "M")],
                              values=["FINAL", "CHANGED", "SELECT", "DONE"])), db)
+    assert await _database_state(db) == before
+
+
+@pytest.mark.asyncio
+async def test_shared_description_preview_is_separate_from_model_pair_counts(db):
+    await _seed_config(db, with_snapshot=True)
+    workbook = _workbook([("China", "M")])
+    workbook.active.cell(5, 4).value = "新描述"
+    before = await _database_state(db)
+    impact = (await preview_import(_upload(workbook), db))["impact"]
+    assert impact["modified"] == 0
+    assert impact["unchanged"] == 1
+    assert impact["item_counts"] == {"added": 0, "modified": 1, "deleted": 0}
+    assert impact["changed_cells"] == 0
+    assert impact["item_changes"][0]["field_name"] == "zh_desc"
+    assert impact["item_changes"][0]["old_value"] == "功能"
+    assert impact["item_changes"][0]["new_value"] == "新描述"
     assert await _database_state(db) == before
