@@ -291,3 +291,27 @@ def test_recently_closed_listener_does_not_block_restart():
     worker.join(timeout=2)
     assert not worker.is_alive()
     assert module.port_is_free(port) is True
+
+
+def test_windows_connection_refusal_means_no_active_listener(monkeypatch):
+    module = manager()
+
+    class RefusedConnection:
+        def __init__(self, family):
+            self.family = family
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, address):
+            code = 10061 if self.family == module.socket.AF_INET else 10047
+            raise OSError(code, 'Windows socket unavailable')
+
+    monkeypatch.setattr(module.socket, 'socket', lambda family, kind: RefusedConnection(family))
+    assert module.port_is_free(18886) is True
