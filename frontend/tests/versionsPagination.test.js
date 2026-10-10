@@ -41,7 +41,7 @@ function versionLoader({ getVersions, getModels = async () => ({ items: [] }) })
   return { loadVersions, ...context }
 }
 
-function versionCompareController(compareVersions) {
+function versionCompareController(compareVersions, { loadAllVersionOptions, errors = [] } = {}) {
   const context = {
     compareRequest: 0,
     selectedSeries: ref(10),
@@ -50,7 +50,7 @@ function versionCompareController(compareVersions) {
     versionOptions: ref([]),
     versionOptionLoadRequest: 0,
     loadVersions() {},
-    loadAllVersionOptions: async () => [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+    loadAllVersionOptions: loadAllVersionOptions || (async () => [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]),
     compareDialogVisible: ref(true),
     compareVersion1: ref(1),
     compareVersion2: ref(2),
@@ -59,7 +59,7 @@ function versionCompareController(compareVersions) {
     selectedModels: ref([]),
     activeTab: ref('modified'),
     compareVersions,
-    ElMessage: { warning() {}, error() {} },
+    ElMessage: { warning() {}, error: message => errors.push(message) },
     console: { error() {} }
   }
   const seriesCode = source.slice(
@@ -78,7 +78,7 @@ function versionCompareController(compareVersions) {
     ...Object.keys(context),
     `${seriesCode}\n${openCode}\n${compareCode}\nreturn { handleSeriesChange, openCompareDialog, executeCompare }`
   )(...Object.values(context))
-  return { ...functions, ...context }
+  return { ...functions, ...context, errors }
 }
 
 test('version history requests the selected server page and renders pagination', () => {
@@ -178,4 +178,23 @@ test('series changes and reopening the dialog invalidate an in-flight version co
   assert.equal(dialogApp.compareResult.value, null)
   assert.equal(dialogApp.compareVersion1.value, 3)
   assert.equal(dialogApp.compareLoading.value, false)
+})
+
+test('a stale failed dialog load cannot report an error after a newer dialog succeeds', async () => {
+  const staleOptions = deferred()
+  let calls = 0
+  const app = versionCompareController(async () => ({ summary: {}, added: [], modified: [], deleted: [] }), {
+    loadAllVersionOptions: () => ++calls === 1
+      ? staleOptions.promise
+      : Promise.resolve([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }])
+  })
+
+  const staleOpen = app.openCompareDialog({ id: 1 })
+  await app.openCompareDialog({ id: 3 })
+  staleOptions.reject(new Error('old dialog failed'))
+  await staleOpen
+
+  assert.deepEqual(app.errors, [])
+  assert.equal(app.compareVersion1.value, 3)
+  assert.equal(app.compareVersion2.value, 4)
 })

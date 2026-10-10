@@ -7,8 +7,12 @@ const ref = value => ({ value })
 
 function deferred() {
   let resolve
-  const promise = new Promise(onResolve => { resolve = onResolve })
-  return { promise, resolve }
+  let reject
+  const promise = new Promise((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
 }
 
 function modelLoader(getModels) {
@@ -18,6 +22,8 @@ function modelLoader(getModels) {
     seriesList: ref([{ id: 1, name: 'One' }, { id: 2, name: 'Two' }]),
     allModelsMap: ref(new Map()),
     selectedModels: ref([]),
+    referenceModel: ref(null),
+    modelFilterText: ref(''),
     getModels,
     console: { error() {} }
   }
@@ -63,4 +69,29 @@ test('clearing Compare series invalidates an older model request', async () => {
   await oldLoad
 
   assert.equal(app.allModelsMap.value.size, 0)
+})
+
+test('a current Compare model load clears stale choices while pending and after failure', async () => {
+  const pending = deferred()
+  const app = modelLoader(() => pending.promise)
+  app.allModelsMap.value = new Map([
+    [11, { id: 11, name: 'Old One', seriesId: 1, seriesName: 'One' }],
+    [12, { id: 12, name: 'Old Two', seriesId: 1, seriesName: 'One' }]
+  ])
+  app.selectedModels.value = [11, 12]
+  app.referenceModel.value = 11
+  app.modelFilterText.value = 'Old'
+  app.selectedSeries.value = [2]
+
+  const load = app.loadModels()
+  assert.equal(app.allModelsMap.value.size, 0)
+  assert.deepEqual(app.selectedModels.value, [])
+  assert.equal(app.referenceModel.value, null)
+  assert.equal(app.modelFilterText.value, '')
+
+  pending.reject(new Error('offline'))
+  await load
+  assert.equal(app.allModelsMap.value.size, 0)
+  assert.deepEqual(app.selectedModels.value, [])
+  assert.equal(app.referenceModel.value, null)
 })
