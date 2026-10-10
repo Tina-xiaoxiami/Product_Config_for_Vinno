@@ -332,7 +332,7 @@ async def _execute_import(
                             snapshot_values[(ipn_str, snap_model_name, field)] = val
 
             # 计算快照中所有字段均为 N/A 值的配对 —— 这些应视为"新增"而非"修改"
-            NA_VALUES = {'N/A', '', None, '-', 'None', 'null', '未定义'}
+            NA_VALUES = _IMPORT_EMPTY_VALUES
 
             def normalize_import_value(value):
                 if value is None:
@@ -1762,15 +1762,21 @@ async def _working_import_state(db: AsyncSession) -> dict:
         .order_by(ConfigDraft.id)
     )
     deleted_pairs = set()
+    deleted_fields = set()
     for draft in drafts.scalars():
         key = (draft.item_id, draft.model_id)
         entry = pairs.get(key)
         if entry is None:
             continue
         if draft.change_type == "delete":
-            deleted_pairs.add(key)
+            if draft.field_name in CONFIG_FIELDS:
+                deleted_fields.add((key, draft.field_name))
+            elif not draft.field_name:
+                deleted_pairs.add(key)
         elif draft.change_type == "update" and draft.field_name in CONFIG_FIELDS:
             entry["values"][draft.field_name] = _impact_value(draft.new_value)
+    for key, field in deleted_fields:
+        pairs[key]["values"][field] = None
     for key in deleted_pairs:
         pairs[key]["values"] = {field: None for field in CONFIG_FIELDS}
     return {"pairs": pairs, "items": items}
