@@ -210,10 +210,11 @@ def test_stop_and_status_can_identify_services_when_node_is_missing(monkeypatch)
     assert [service.name for service in module.services()] == ['backend', 'frontend']
 
 
-def test_start_requires_frontend_dependencies(monkeypatch):
+def test_new_frontend_process_requires_dependencies(monkeypatch, tmp_path):
     module = manager()
     monkeypatch.setattr(module.shutil, "which", lambda name: None)
-    with pytest.raises(module.LaunchError, match="依赖"): module.services(require_dependencies=True)
+    with pytest.raises(module.LaunchError, match="依赖"):
+        module.spawn_service(module.services()[1], tmp_path)
 
 
 def test_start_reuses_healthy_services_even_without_node(monkeypatch, tmp_path):
