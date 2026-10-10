@@ -216,7 +216,7 @@
 
     <!-- 草稿状态栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="applyingModelGroup || loading">
+      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="configLoading">
         <div class="draft-info">
           <el-icon><EditPen /></el-icon>
           <span>当前有 <strong>{{ draftItemSummary.total }}</strong> 项有变更：</span>
@@ -344,7 +344,7 @@
 
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="applyingModelGroup || loading">
+      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="configLoading">
         <div class="batch-info">
           <span v-if="selectedRows.length > 0">已选择 <strong>{{ selectedRows.length }}</strong> 行</span>
           <span v-if="false">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
@@ -363,7 +363,7 @@
         border
         stripe
         :height="tableMaxHeight"
-        v-loading="loading || applyingModelGroup"
+        v-loading="configLoading"
         @selection-change="handleSelectionChange"
         @header-dragend="onConfigDragEnd"
         @mouseup="onConfigMouseUp"
@@ -1048,6 +1048,7 @@ const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesN
 const tableData = ref([])
 const originalData = ref([])  // 存储原始数据，用于比较变化
 const loading = ref(false)
+const configReady = ref(false)
 const selectedRows = ref([])
 
 // 按系列分组的型号列表（用于 optgroup 下拉）
@@ -1417,6 +1418,11 @@ const tempSelectedModels = ref([])  // 机型下拉临时选择，收起时才�
 const savedModelGroups = ref([])
 const modelGroupsPopover = ref(null)
 const applyingModelGroup = ref(false)
+const configLoading = computed(() => (
+  loading.value ||
+  applyingModelGroup.value ||
+  (selectedSeries.value.length > 0 && !configReady.value)
+))
 try { savedModelGroups.value = loadModelSelectionGroups() } catch (error) { console.error('读取机型分组失败', error); ElMessage.warning('无法读取已保存的机型分组，请检查浏览器存储设置') }
 
 const persistModelGroups = (groups) => {
@@ -2340,10 +2346,14 @@ let modelLoadRequest = 0
 const loadModels = async ({ modelGroup } = {}) => {
   const request = ++modelLoadRequest
   const seriesIds = [...selectedSeries.value]
+  configReady.value = false
   if (!seriesIds.length) {
     allModelsMap.value.clear()
     selectedModels.value = []
     tempSelectedModels.value = []
+    tableData.value = []
+    originalData.value = []
+    configReady.value = true
     return false
   }
   try {
@@ -2373,6 +2383,7 @@ const loadModels = async ({ modelGroup } = {}) => {
       ElMessage.error('草稿状态加载失败，请重新选择系列或分组后再编辑')
       return false
     }
+    configReady.value = true
     if (selection?.missing) ElMessage.warning(`已恢复 ${selection.ids.length} 个机型，${selection.missing} 个机型未找到或名称不唯一`)
     return true
   } catch (error) {
@@ -2582,7 +2593,11 @@ const initDraft = async () => {
   const request = ++draftLoadRequest
   const seriesIds = [...selectedSeries.value]
   const isCurrent = () => request === draftLoadRequest && seriesIds.length === selectedSeries.value.length && seriesIds.every((id, i) => id === selectedSeries.value[i])
-  if (!seriesIds.length) return true
+  configReady.value = false
+  if (!seriesIds.length) {
+    configReady.value = true
+    return true
+  }
 
   // 先清空旧状态
   draftChanges.value.clear()
@@ -2693,6 +2708,7 @@ const initDraft = async () => {
   newItemIds.value = new Set(createModelMap.keys())
   deletedItemIds.value = new Set(deleteModelMap.keys())
   draftModelIdSet.value = modelIdSet
+  configReady.value = success
   return success
 }
 
@@ -2719,6 +2735,7 @@ const handleSelectionChange = (rows) => {
 
 // 开始编辑单元格
 const startEdit = (row, modelId, field) => {
+  if (!configReady.value || loading.value || applyingModelGroup.value) return false
   editingCell.value = { rowId: row.id, modelId, field }
   // 自动展开下拉框
   nextTick(() => {
@@ -2736,6 +2753,7 @@ const startEdit = (row, modelId, field) => {
       }
     }
   })
+  return true
 }
 
 // 结束编辑单元格
@@ -2821,6 +2839,14 @@ const isDraftCellContextCurrent = (context) => {
   return tableData.value.includes(context.row) && isDraftCellScopeCurrent(context)
 }
 
+const reconcileCurrentDraftCell = (context, value, isLatest = () => true) => {
+  if (!isLatest() || !isDraftCellScopeCurrent(context)) return
+  const currentRow = tableData.value.find(row => row.id === context.row.id)
+  if (currentRow?.model_values?.[context.modelId]) {
+    currentRow.model_values[context.modelId][context.field] = value
+  }
+}
+
 const restoreWorkingCell = (context, isLatest = () => true) => {
   if (!isLatest() || !isDraftCellContextCurrent(context)) return
   const fallback = context.originalRow?.model_values?.[context.modelId]?.[context.field]
@@ -2860,7 +2886,7 @@ const removeDraftChange = (row, modelId, field, key) => {
         }
         draftChanges.value.delete(key)
         Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
-        if (isLatest() && isDraftCellContextCurrent(context) && row.model_values?.[modelId]) row.model_values[modelId][field] = baselineValue
+        reconcileCurrentDraftCell(context, baselineValue, isLatest)
       }
       return true
     } catch (error) {
@@ -2912,6 +2938,7 @@ const handleCellChange = (row, modelId, field, newValue, oldValue) => {
           changeType
         })
         Object.assign(draftStats, updateDraftStats(draftStats, previousType, changeType))
+        reconcileCurrentDraftCell(context, newValue, isLatest)
       }
       return true
     } catch (error) {

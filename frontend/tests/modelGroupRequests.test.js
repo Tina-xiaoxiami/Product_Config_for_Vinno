@@ -59,7 +59,7 @@ test('stale draft failure cannot clear a newer series table', async () => {
  const context = {
   selectedSeries: ref([1]), seriesList: ref([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]),
   allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]),
-  tableData: ref([]), originalData: ref([]), showDiffOnly: ref(false), referenceModel: ref(null),
+  tableData: ref([]), originalData: ref([]), configReady: ref(true), showDiffOnly: ref(false), referenceModel: ref(null),
   getModels: async sid => ({ items: [{ id: sid, name: 'model' }] }),
   resolveGroupModels() {}, applySavedOrder() {},
   loadData: async () => { context.tableData.value = [{ id: context.selectedSeries.value[0] }]; return true },

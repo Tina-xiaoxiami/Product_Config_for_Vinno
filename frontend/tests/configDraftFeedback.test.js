@@ -290,6 +290,7 @@ test('a queued undo still deletes an old-scope save after the table is replaced'
   const undo = app.finishEdit(app.row, 2, 'final_config', 'published')
   const replacement = { id: 1, model_values: { 2: { final_config: 'replacement' } } }
   app.tableData.value = [replacement]
+  app.draftBatchMap.value = new Map([[10, 21]])
   saveRequest.resolve({ draft_id: 30 })
   await Promise.all([save, undo])
 

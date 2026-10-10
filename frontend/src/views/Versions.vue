@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>版本历史</span>
-          <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="loadVersions" style="width: 200px">
+          <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="handleSeriesChange" style="width: 200px">
             <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </div>
@@ -43,6 +43,18 @@
       </el-timeline>
 
       <el-empty v-else description="暂无版本记录" />
+
+      <div class="pagination-wrapper" v-if="total > 0">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          @size-change="handlePageSizeChange"
+          @current-change="loadVersions"
+        />
+      </div>
     </el-card>
 
     <!-- 版本详情对话框 -->
@@ -86,13 +98,13 @@
 
     <!-- 版本对比对话框 -->
     <el-dialog v-model="compareDialogVisible" title="版本对比" width="90%" top="5vh">
-      <div class="compare-select" v-if="versions.length > 1">
+      <div class="compare-select" v-if="versionOptions.length > 1" v-loading="versionOptionsLoading">
         <el-select v-model="compareVersion1" placeholder="选择版本1" style="width: 200px">
-          <el-option v-for="v in versions" :key="v.id" :label="v.version_number" :value="v.id" />
+          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
         </el-select>
         <span class="compare-vs">VS</span>
         <el-select v-model="compareVersion2" placeholder="选择版本2" style="width: 200px">
-          <el-option v-for="v in versions" :key="v.id" :label="v.version_number" :value="v.id" />
+          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
         </el-select>
         <el-select
           v-model="selectedModels"
@@ -194,6 +206,9 @@ const router = useRouter()
 const seriesList = ref([])
 const selectedSeries = ref(null)
 const versions = ref([])
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 const modelList = ref([])  // 机型列表
 const selectedModels = ref([])  // 选中的机型
 
@@ -208,7 +223,12 @@ const compareVersion1 = ref(null)
 const compareVersion2 = ref(null)
 const compareResult = ref(null)
 const compareLoading = ref(false)
+const versionOptions = ref([])
+const versionOptionsLoading = ref(false)
 const activeTab = ref('modified')
+const VERSION_OPTION_PAGE_SIZE = 100
+let versionLoadRequest = 0
+let versionOptionLoadRequest = 0
 
 // 编辑版本对话框
 const editDialogVisible = ref(false)
@@ -236,21 +256,66 @@ const loadSeries = async () => {
 // 加载版本列表
 const loadVersions = async () => {
   if (!selectedSeries.value) return
+  const request = ++versionLoadRequest
+  const seriesId = selectedSeries.value
 
   // 切换筛选时先重置数据，避免显示旧数据
   versions.value = []
   modelList.value = []
 
   try {
-    const res = await getVersions(selectedSeries.value)
+    const res = await getVersions(selectedSeries.value, {
+      skip: (currentPage.value - 1) * pageSize.value,
+      limit: pageSize.value
+    })
+    if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
     versions.value = res.items || []
+    total.value = res.total || 0
+    versionOptions.value = []
 
     // 加载机型列表
-    const modelRes = await getModels(selectedSeries.value)
+    const modelRes = await getModels(seriesId)
+    if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
     modelList.value = modelRes.items || []
   } catch (error) {
+    if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
     console.error('加载版本列表失败:', error)
     ElMessage.error('加载版本列表失败')
+  }
+}
+
+const handleSeriesChange = () => {
+  currentPage.value = 1
+  versionOptions.value = []
+  versionOptionLoadRequest++
+  loadVersions()
+}
+
+const handlePageSizeChange = () => {
+  currentPage.value = 1
+  loadVersions()
+}
+
+const loadAllVersionOptions = async (seriesId) => {
+  const request = ++versionOptionLoadRequest
+  let skip = 0
+  let total = Number.MAX_SAFE_INTEGER
+  const items = []
+  versionOptionsLoading.value = true
+  try {
+    while (skip < total) {
+      const res = await getVersions(seriesId, { skip, limit: VERSION_OPTION_PAGE_SIZE })
+      if (request !== versionOptionLoadRequest || selectedSeries.value !== seriesId) return []
+      const pageItems = res.items || []
+      items.push(...pageItems)
+      total = res.total || 0
+      if (pageItems.length === 0) break
+      skip += pageItems.length
+    }
+    versionOptions.value = items
+    return items
+  } finally {
+    if (request === versionOptionLoadRequest) versionOptionsLoading.value = false
   }
 }
 
@@ -278,16 +343,25 @@ const viewVersion = async (version) => {
 }
 
 // 打开对比对话框
-const openCompareDialog = (version) => {
-  const idx = versions.value.findIndex(v => v.id === version.id)
-
+const openCompareDialog = async (version) => {
+  const seriesId = selectedSeries.value
   compareVersion1.value = version.id
-  compareVersion2.value = idx < versions.value.length - 1 ? versions.value[idx + 1].id : null
-
+  compareVersion2.value = null
   compareResult.value = null
   activeTab.value = 'modified'
   selectedModels.value = []  // 重置机型选择
+  versionOptions.value = [...versions.value]
   compareDialogVisible.value = true
+
+  try {
+    const options = await loadAllVersionOptions(seriesId)
+    if (selectedSeries.value !== seriesId) return
+    const idx = options.findIndex(v => v.id === version.id)
+    compareVersion2.value = idx >= 0 && idx < options.length - 1 ? options[idx + 1].id : null
+  } catch (error) {
+    console.error('加载完整版本列表失败:', error)
+    ElMessage.error('加载完整版本列表失败')
+  }
 }
 
 // 执行版本对比
@@ -461,6 +535,12 @@ onMounted(() => {
 .publisher {
   color: #909399;
   font-size: 13px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .version-detail {
