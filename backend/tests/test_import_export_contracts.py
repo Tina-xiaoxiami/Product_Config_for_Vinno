@@ -517,6 +517,62 @@ async def test_preview_rejects_patch_row_identity_change_like_import(db):
 
 
 @pytest.mark.asyncio
+async def test_preview_and_import_reject_row_appended_outside_patch_item_scope(db):
+    await _seed_config(db, with_snapshot=True)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    injected_row = workbook.active.max_row + 1
+    for column, value in enumerate(
+        ["Injected", "V2", "200", "新增", "Injected", "NEW", "-", "-", "-"],
+        1,
+    ):
+        workbook.active.cell(injected_row, column, value)
+
+    for operation in (
+        lambda: preview_import(_upload(workbook, "injected.xlsx"), db),
+        lambda: import_excel(
+            _upload(workbook, "injected.xlsx"),
+            series_name=None,
+            db=db,
+        ),
+    ):
+        with pytest.raises(HTTPException, match="配置项范围已改变") as error:
+            await operation()
+        assert error.value.status_code == 400
+
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 1
+    assert await db.scalar(select(func.count()).select_from(ConfigValue)) == 1
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("item_ids", ["1,1", "1,2", "bad", "-1"])
+async def test_preview_rejects_invalid_patch_item_id_scope_metadata(db, item_ids):
+    await _seed_config(db, with_snapshot=True)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    metadata = workbook["__VINNO_CONFIG_META__"]
+    item_ids_row = next(
+        row
+        for row in range(1, metadata.max_row + 1)
+        if metadata.cell(row, 1).value == "item_ids"
+    )
+    metadata.cell(item_ids_row, 2, item_ids)
+
+    with pytest.raises(HTTPException, match="身份元数据") as error:
+        await preview_import(_upload(workbook, "invalid-item-scope.xlsx"), db)
+
+    assert error.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 1
+
+
+@pytest.mark.asyncio
 async def test_import_maps_recognized_row_three_labels_and_preserves_omitted_fields(db):
     await _seed_config(db, with_snapshot=True)
     workbook = _workbook(
