@@ -299,11 +299,12 @@ async def create_version(
     }
 
     # 如果已有版本，对比数据是否有变化
-    if last_version and last_version.snapshot_data:
+    if last_version:
         try:
             prev_snapshot = await normalize_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
             prev_value_map = {}
-            for item in prev_snapshot.get("items", []):
+            prev_item_index = build_snapshot_item_comparison_index(prev_snapshot)
+            for item in prev_item_index.values():
                 iid = item["id"]
                 for mid_str, vals in item.get("values", {}).items():
                     mid = int(mid_str)
@@ -609,9 +610,15 @@ async def export_version_compare(
         values1 = item1.get("values", {})
         values2 = item2.get("values", {})
 
-        for model_id in set(values1.keys()) | set(values2.keys()):
-            v1 = values1.get(model_id, {})
-            v2 = values2.get(model_id, {})
+        model_ids_to_check = (
+            data.model_ids
+            if data.model_ids
+            else list(set(values1.keys()) | set(values2.keys()))
+        )
+        for model_id in model_ids_to_check:
+            model_id_str = str(model_id)
+            v1 = values1.get(model_id_str, {})
+            v2 = values2.get(model_id_str, {})
 
             for field in ["current_config", "final_config", "selection_config", "rd_status"]:
                 old = v1.get(field)
@@ -622,7 +629,7 @@ async def export_version_compare(
                 if old_normalized != new_normalized:
                     model_name = ""
                     for m in snapshot2.get("models", []):
-                        if str(m.get("id")) == str(model_id):
+                        if str(m.get("id")) == model_id_str:
                             model_name = m.get("name", "")
                             break
 
