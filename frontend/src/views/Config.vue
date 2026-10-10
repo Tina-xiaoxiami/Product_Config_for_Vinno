@@ -2777,6 +2777,7 @@ const initDraft = async () => {
 
   if (!isCurrent()) return false
   draftBatchMap.value = newBatchMap
+  refreshSaveFeedback()
   draftItemInfo.value = infoMap
   newItemModelMap.value = createModelMap
   deletedItemModelMap.value = deleteModelMap
@@ -2853,24 +2854,32 @@ const finishEdit = async (row, modelId, field, newValue) => {
 }
 
 const draftSaveFeedback = reactive({ pending: 0, message: '', lastCell: null, failedCell: null, failures: new Map(), successes: new Map(), sequence: 0 })
-const refreshSaveFeedback = context => {
+const isFeedbackCellScopeCurrent = context => Boolean(context) &&
+  (!context.seriesId || selectedSeries.value.includes(context.seriesId)) && isDraftCellScopeCurrent(context)
+const refreshSaveFeedback = (context = null) => {
+  for (const entries of [draftSaveFeedback.failures, draftSaveFeedback.successes]) {
+    for (const [key, cell] of entries) if (!isFeedbackCellScopeCurrent(cell)) entries.delete(key)
+  }
+  draftSaveFeedback.pending = Array.from(draftCellOperations.values())
+    .filter(state => isFeedbackCellScopeCurrent(state.context)).reduce((total, state) => total + state.pending, 0)
   const latest = entries => Array.from(entries.values()).sort((left, right) => right.sequence - left.sequence)[0] || null
   draftSaveFeedback.lastCell = latest(draftSaveFeedback.successes)
   draftSaveFeedback.failedCell = latest(draftSaveFeedback.failures)
   draftSaveFeedback.message = draftSaveFeedback.failures.size
     ? `仍有 ${draftSaveFeedback.failures.size} 处保存或撤销失败，可逐一重试`
-    : context.action === 'undo' ? '已撤销单元格草稿' : '草稿已保存'
+    : isFeedbackCellScopeCurrent(context) && context.action === 'undo' ? '已撤销单元格草稿'
+    : draftSaveFeedback.lastCell ? '草稿已保存' : ''
 }
 const undoLastCell = async () => {
+  refreshSaveFeedback()
   const cell = draftSaveFeedback.lastCell
   if (!cell || !isDraftCellScopeCurrent(cell)) { ElMessage.warning('操作范围已变化，请在当前单元格上撤销'); return }
   const row = tableData.value.find(row => row.id === cell.row.id)
   if (!row) { ElMessage.warning('该行不在当前筛选中，请清除筛选后撤销'); return }
-  if (await removeDraftChange(row, cell.modelId, cell.field, cell.key)) {
-    refreshSaveFeedback({ action: 'undo' })
-  }
+  await removeDraftChange(row, cell.modelId, cell.field, cell.key)
 }
 const retryFailedCell = async () => {
+  refreshSaveFeedback()
   const cell = draftSaveFeedback.failedCell
   if (!cell || !isDraftCellScopeCurrent(cell)) return
   const row = tableData.value.find(row => row.id === cell.row.id)
@@ -2909,12 +2918,13 @@ const enqueueDraftCellOperation = (context, operation) => {
   const generation = ++state.generation
   context.sequence = ++draftSaveFeedback.sequence
   state.pending++
-  draftSaveFeedback.pending++
+  state.context = context
+  refreshSaveFeedback()
   const isLatest = () => draftCellOperations.get(context.operationKey) === state && state.generation === generation
   const result = state.tail.then(() => operation(isLatest, state))
   state.tail = result.catch(() => undefined)
   return result.then(success => {
-    if (isLatest()) {
+    if (isLatest() && isFeedbackCellScopeCurrent(context)) {
       if (success) {
         draftSaveFeedback.failures.delete(context.operationKey)
         if (context.action === 'undo') draftSaveFeedback.successes.delete(context.operationKey)
@@ -2926,11 +2936,12 @@ const enqueueDraftCellOperation = (context, operation) => {
     }
     return success
   }).finally(() => {
-    draftSaveFeedback.pending--
+    const latestOutcome = isLatest() && isFeedbackCellScopeCurrent(context) ? context : null
     state.pending--
     if (state.pending === 0 && draftCellOperations.get(context.operationKey) === state) {
       draftCellOperations.delete(context.operationKey)
     }
+    refreshSaveFeedback(latestOutcome)
   })
 }
 
@@ -3012,7 +3023,7 @@ const removeDraftChange = (row, modelId, field, key) => {
     } catch (error) {
       restoreWorkingCell(context, isLatest)
       console.error('删除草稿失败:', error)
-      if (isLatest()) ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
+      if (isLatest() && isFeedbackCellScopeCurrent(context)) ElMessage.error('撤销变更失败: ' + (error.response?.data?.detail || '请重试'))
       return false
     }
   })
@@ -3065,7 +3076,7 @@ const handleCellChange = (row, modelId, field, newValue, oldValue, frozenContext
     } catch (error) {
       restoreWorkingCell(context, isLatest)
       console.error('保存草稿失败:', error)
-      if (isLatest()) ElMessage.error('保存失败: ' + (error.response?.data?.detail || '请重试'))
+      if (isLatest() && isFeedbackCellScopeCurrent(context)) ElMessage.error('保存失败: ' + (error.response?.data?.detail || '请重试'))
       return false
     }
   })
@@ -4624,6 +4635,8 @@ onUnmounted(() => {
   configResizeObserver?.disconnect()
   // Excel-like keyboard events removed
 })
+
+watch([selectedSeries, draftBatchMap, allModelsMap], () => refreshSaveFeedback(), { deep: true })
 
 // 数据加载完成后同步表头 title
 watch(loading, (val) => {

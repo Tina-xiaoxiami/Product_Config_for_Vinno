@@ -46,15 +46,16 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     source.indexOf('const finishEdit ='),
     source.indexOf('// 多文件上传处理')
   )
-  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback } = new Function(
+  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell } = new Function(
     ...Object.keys(context),
-    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback }`
+    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback, undoLastCell }`
   )(...Object.values(context))
   return {
     finishEdit,
     draftSaveFeedback,
     retryFailedCell,
     refreshSaveFeedback,
+    undoLastCell,
     removeDraftChange,
     handleCellChange,
     messages,
@@ -542,6 +543,10 @@ test('switching draft batches prunes unavailable retry and undo feedback before 
   assert.equal(app.draftSaveFeedback.failedCell, null)
   assert.equal(app.draftSaveFeedback.lastCell.batchId, 21)
   assert.equal(app.draftSaveFeedback.message, '草稿已保存')
+  app.draftBatchMap.value = new Map([[10, 22]])
+  app.refreshSaveFeedback()
+  assert.equal(app.draftSaveFeedback.lastCell, null)
+  assert.equal(app.draftSaveFeedback.successes.size, 0)
 })
 
 for (const success of [true, false]) {
@@ -560,6 +565,7 @@ for (const success of [true, false]) {
     assert.equal(app.draftSaveFeedback.lastCell, null)
     assert.equal(app.draftSaveFeedback.message, '')
     assert.equal(app.draftSaveFeedback.pending, 0)
+    assert.deepEqual(app.messages, [])
   })
 }
 
@@ -570,4 +576,20 @@ test('same-batch row filtering preserves actionable failed-cell feedback', async
   app.refreshSaveFeedback()
   assert.equal(app.draftSaveFeedback.failedCell.row.id, 1)
   assert.match(app.draftSaveFeedback.message, /失败/)
+})
+
+
+test('late old-batch undo completion cannot show an undo result in the new batch', async () => {
+  const deletion = deferred()
+  const app = draftEditor({ deleteDraftByKey: () => deletion.promise })
+  await app.handleCellChange(app.row, 2, 'final_config', 'saved')
+  const undo = app.undoLastCell()
+  await Promise.resolve()
+  app.draftBatchMap.value = new Map([[10, 21]])
+  app.refreshSaveFeedback()
+  deletion.resolve()
+  await undo
+  assert.equal(app.draftSaveFeedback.message, '')
+  assert.equal(app.draftSaveFeedback.pending, 0)
+  assert.equal(app.draftSaveFeedback.lastCell, null)
 })
