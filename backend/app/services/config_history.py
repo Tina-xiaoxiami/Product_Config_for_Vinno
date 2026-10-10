@@ -133,6 +133,8 @@ def snapshot_item_comparison_identity(item_info: dict) -> tuple:
 
 def build_snapshot_item_comparison_index(snapshot: dict) -> dict[tuple, dict]:
     """Index snapshot items without silently overwriting identity collisions."""
+    if not isinstance(snapshot, dict):
+        raise ValueError("快照格式无效")
     items = snapshot.get("items", [])
     if not isinstance(items, list):
         raise ValueError("快照配置项列表格式无效")
@@ -146,6 +148,51 @@ def build_snapshot_item_comparison_index(snapshot: dict) -> dict[tuple, dict]:
             raise ValueError(f"快照中多个配置项指向同一身份 {identity[1]}")
         index[identity] = item_info
     return index
+
+
+def normalize_config_comparison_value(value):
+    """Apply the empty-value semantics used by configuration comparisons."""
+    return value if value not in [None, "", "N/A"] else None
+
+
+def build_snapshot_semantic_value_index(
+    snapshot: dict,
+    model_ids: Iterable[int] | None = None,
+) -> dict[tuple, dict]:
+    """Index meaningful snapshot values and prune empty model/item entries."""
+    requested_model_ids = (
+        {int(model_id) for model_id in model_ids}
+        if model_ids is not None
+        else None
+    )
+    semantic_index = {}
+    for identity, item_info in build_snapshot_item_comparison_index(snapshot).items():
+        raw_values = item_info.get("values", {})
+        if not isinstance(raw_values, dict):
+            raise ValueError(f"快照配置项 {item_info.get('id')} 的配置值格式无效")
+
+        semantic_values = {}
+        for raw_model_id, value_info in raw_values.items():
+            try:
+                model_id = int(raw_model_id)
+            except (TypeError, ValueError):
+                raise ValueError(f"快照机型编号 {raw_model_id} 无效") from None
+            if requested_model_ids is not None and model_id not in requested_model_ids:
+                continue
+            if not isinstance(value_info, dict):
+                raise ValueError(
+                    f"快照配置项 {item_info.get('id')} 的配置值格式无效"
+                )
+            normalized = {
+                field: normalize_config_comparison_value(value_info.get(field))
+                for field in VALUE_FIELDS
+            }
+            if any(value is not None for value in normalized.values()):
+                semantic_values[str(model_id)] = normalized
+
+        if semantic_values:
+            semantic_index[identity] = {**item_info, "values": semantic_values}
+    return semantic_index
 
 
 def _resolve_existing_item(item_info: dict, items: Iterable[ConfigItem]) -> ConfigItem | None:

@@ -4,6 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import json
 
@@ -26,7 +27,7 @@ from app.utils import generate_next_version
 
 from app.services.config_history import (
     build_series_snapshot,
-    build_snapshot_item_comparison_index,
+    build_snapshot_semantic_value_index,
     restore_series_snapshot,
 )
 from app.services.model_identity import normalize_snapshot
@@ -292,9 +293,19 @@ async def create_version(
         else:
             version_number = "1.0.0"
 
+    if data.version_number:
+        existing_version_id = await db.scalar(
+            select(ConfigVersion.id).where(
+                ConfigVersion.series_id == data.series_id,
+                ConfigVersion.version_number == version_number,
+            )
+        )
+        if existing_version_id is not None:
+            raise HTTPException(status_code=400, detail="版本号已存在")
+
     snapshot = await build_series_snapshot(db, data.series_id)
     try:
-        current_item_index = build_snapshot_item_comparison_index(snapshot)
+        current_item_index = build_snapshot_semantic_value_index(snapshot)
     except ValueError as error:
         raise HTTPException(
             status_code=400,
@@ -312,7 +323,7 @@ async def create_version(
     if last_version:
         try:
             prev_snapshot = await normalize_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
-            prev_item_index = build_snapshot_item_comparison_index(prev_snapshot)
+            prev_item_index = build_snapshot_semantic_value_index(prev_snapshot)
             prev_value_map = {
                 identity: {
                     int(model_id): values
@@ -345,7 +356,14 @@ async def create_version(
     )
 
     db.add(version)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="版本号已存在，请刷新后重试",
+        ) from error
     await db.refresh(version)
 
     return version
@@ -373,8 +391,8 @@ async def compare_versions(
 
     # 构建索引
     try:
-        index1 = build_snapshot_item_comparison_index(snapshot1)
-        index2 = build_snapshot_item_comparison_index(snapshot2)
+        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids)
+        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
@@ -426,11 +444,7 @@ async def compare_versions(
                 old = v1.get(field)
                 new = v2.get(field)
 
-                # 忽略空值和N/A的差异
-                old_normalized = old if old not in [None, "", "N/A"] else None
-                new_normalized = new if new not in [None, "", "N/A"] else None
-
-                if old_normalized != new_normalized:
+                if old != new:
                     modified.append({
                         "type": "modified",
                         "row_index": item1.get("row_index"),
@@ -592,8 +606,8 @@ async def export_version_compare(
 
     # 构建索引
     try:
-        index1 = build_snapshot_item_comparison_index(snapshot1)
-        index2 = build_snapshot_item_comparison_index(snapshot2)
+        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids)
+        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
@@ -632,10 +646,7 @@ async def export_version_compare(
             for field in ["current_config", "final_config", "selection_config", "rd_status"]:
                 old = v1.get(field)
                 new = v2.get(field)
-                old_normalized = old if old not in [None, "", "N/A"] else None
-                new_normalized = new if new not in [None, "", "N/A"] else None
-
-                if old_normalized != new_normalized:
+                if old != new:
                     model_name = ""
                     for m in snapshot2.get("models", []):
                         if str(m.get("id")) == model_id_str:
