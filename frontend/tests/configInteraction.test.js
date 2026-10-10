@@ -41,3 +41,60 @@ test('publish review is backed by server preview and expected signatures for bot
   assert.match(batch, /expected_signatures/)
   assert.doesNotMatch(single, /draftItems\.length/)
 })
+
+function publishApp(overrides = {}) {
+  const messages = []; const requests = []
+  const review = id => ({ batch_id: id, series_name: `系列 ${id}`, total_items: 2, total_changes: 3, total_models: 1, signature: `signature-${id}`, remaining_changes: 1,
+    models: [{ id: 10, name: '机型' }], fields: ['final_config'], drafts: [{ item_id: 1, model_id: 10, field_name: 'final_config' }, { item_id: 2, model_id: 10, field_name: 'final_config' }, { item_id: 1, model_id: 20, field_name: 'final_config' }] })
+  const context = {
+    submitSubmitting: ref(false), submitPreviewLoading: ref(false), submitPreviewError: ref(''), submitPreviews: ref([]), submitResults: ref([]), submitDialogVisible: ref(false), submitScope: ref(null), submitPreviewRequest: 0,
+    submitForm: { version_number: '', description: '', item_ids: null, model_ids: null },
+    batchSubmitDialog: { visible: false, loading: false, error: '', selectedBatchIds: [], availableBatches: [], scope: null }, batchSubmitSubmitting: ref(false), batchSubmitPreviewRequest: 0, batchSubmitResultDialog: { visible: false, results: [] },
+    draftBatchMap: ref(new Map([[100, 200], [101, 201]])), selectedSeries: ref([100, 101]), paginatedTableData: ref([{ id: 1 }]), selectedModels: ref([10]), visibleConfigFields: ref(['final_config']), draftCellOperations: new Map(),
+    previewDraftSubmission: async id => review(id), submitDraftBatch: async (id, params) => { requests.push({ id, params }); return { changes: 3 } },
+    getCurrentDraftBatch: async id => ({ exists: true, batch: { id: id + 100 } }), batchSubmitDrafts: async params => { requests.push({ params }); return { submitted_count: 2, results: params.batch_ids.map(id => ({ batch_id: id, success: true })) } },
+    loadData: async () => true, initDraft: async () => true, ElMessage: { info: m => messages.push(m), success: m => messages.push(m), warning: m => messages.push(m), error: m => messages.push(m) }, ...overrides
+  }
+  const single = source.slice(source.indexOf('const fieldLabels ='), source.indexOf('// 提交选中机型'))
+  const batch = source.slice(source.indexOf('const handleOpenBatchSubmit ='), source.indexOf('// 计算表格高度'))
+  const methods = new Function(...Object.keys(context), `${single}\n${batch};return { handleSubmitDraft, refreshSubmitPreview, confirmSubmitDraft, handleOpenBatchSubmit, confirmBatchSubmit, describeSubmission }`)(...Object.values(context))
+  return { ...context, ...methods, requests, messages, review }
+}
+test('publish preview identifies hidden rows and models and freezes chosen item scope', async () => {
+  const app = publishApp(); const ids = new Set([1]); await app.handleSubmitDraft(ids)
+  ids.add(99); app.draftBatchMap.value = new Map([[999, 999]])
+  assert.equal(app.submitPreviews.value[0].hidden_changes, 2)
+  await app.confirmSubmitDraft()
+  assert.deepEqual(app.requests.map(request => request.id), [200, 201])
+  assert.deepEqual(app.requests[0].params.item_ids, [1])
+  assert.equal(app.requests[0].params.expected_signature, 'signature-200')
+})
+test('pending or failed publish preview cannot submit anything', async () => {
+  const pending = deferred(); const app = publishApp({ previewDraftSubmission: () => pending.promise })
+  const open = app.handleSubmitDraft(); await Promise.resolve(); await app.confirmSubmitDraft(); assert.equal(app.requests.length, 0)
+  pending.resolve({ total_changes: 0, drafts: [] }); await open
+  await app.confirmSubmitDraft(); assert.equal(app.requests.length, 0)
+  const failed = publishApp({ previewDraftSubmission: async () => { throw new Error('offline') } })
+  await failed.handleSubmitDraft(); await failed.confirmSubmitDraft(); assert.equal(failed.requests.length, 0); assert.match(failed.submitPreviewError.value, /无法核验/)
+})
+test('publish freezes text and signatures and ignores a second confirmation', async () => {
+  const pending = deferred(); const requests = []
+  const app = publishApp({ submitDraftBatch: async (id, params) => { requests.push({ id, params }); await pending.promise; return {} } })
+  await app.handleSubmitDraft(); app.submitForm.version_number = 'V1'
+  const first = app.confirmSubmitDraft(); app.submitForm.version_number = 'V2'; await app.confirmSubmitDraft(); pending.resolve(); await first
+  assert.equal(requests.length, 2); assert.equal(requests[1].params.version_number, 'V1')
+})
+test('partial publication reports each outcome and requires a fresh preview before retry', async () => {
+  const app = publishApp({ submitDraftBatch: async id => { if (id === 201) { const error = new Error('stale'); error.response = { data: { detail: '草稿已变化' } }; throw error } return {} } })
+  await app.handleSubmitDraft(); await app.confirmSubmitDraft()
+  assert.equal(app.submitDialogVisible.value, true)
+  assert.deepEqual(app.submitResults.value.map(result => result.success), [true, false])
+  assert.match(app.submitResults.value[1].message, /草稿已变化/)
+  assert.match(app.submitPreviewError.value, /刷新范围/)
+})
+test('batch publication sends only reviewed series and their signatures', async () => {
+  const app = publishApp(); await app.handleOpenBatchSubmit(); app.batchSubmitDialog.selectedBatchIds = [201]
+  await app.confirmBatchSubmit()
+  assert.deepEqual(app.requests[0].params.batch_ids, [201])
+  assert.deepEqual(app.requests[0].params.expected_signatures, { 201: 'signature-201' })
+})

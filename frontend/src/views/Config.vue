@@ -3,7 +3,7 @@
   <div ref="configPageRef" class="config-page compact-view">
     <!-- 工具栏 -->
     <el-card class="toolbar-card" shadow="never">
-      <div class="toolbar" :inert="applyingModelGroup">
+      <div class="toolbar" :inert="applyingModelGroup || reviewInteractionLocked">
         <div class="left">
           <div class="select-all-wrapper" :class="{ 'hide-tags': selectedSeries.length === seriesList.length && seriesList.length > 0 }">
             <el-select v-model="selectedSeries" :disabled="applyingModelGroup" placeholder="选择产品系列（可多选）" @visible-change="onSeriesDropdownVisibleChange" multiple collapse-tags collapse-tags-tooltip style="width: 200px">
@@ -29,6 +29,7 @@
             style="width: 170px"
             popper-class="model-select-dropdown"
             @visible-change="onModelDropdownVisibleChange"
+            @change="applyModelSelection"
           >
             <template #header>
               <div style="padding: 4px 12px 8px;">
@@ -106,9 +107,12 @@
             placeholder="搜索研发名称/IPN号"
             style="width: 200px"
             clearable
-            @keyup.enter="onFilterChange"
-            @clear="onFilterChange"
+            @input="queueSearch"
+            @keyup.enter="flushSearch"
+            @clear="flushSearch"
           />
+
+          <el-button v-if="hasActiveFilters" link type="primary" @click="resetActiveFilters">清除筛选</el-button>
 
           <el-popover ref="popoverRef" placement="bottom" :width="320" trigger="click" @before-enter="initTempColumns" @hide="applyTempColumns">
             <template #reference>
@@ -216,10 +220,10 @@
 
     <!-- 草稿状态栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="configLoading">
+      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="configLoading || reviewInteractionLocked">
         <div class="draft-info">
           <el-icon><EditPen /></el-icon>
-          <span>当前有 <strong>{{ draftItemSummary.total }}</strong> 项有变更：</span>
+          <span>当前筛选内 <strong>{{ draftItemSummary.total }}</strong> 个配置项有变更：</span>
           <el-tag
             :type="getDraftTagType('all')"
             size="small"
@@ -277,6 +281,8 @@
             </el-button>
           </div>
         </div>
+
+        <div class="draft-count-note">配置项按行去重；同一项可同时包含新增、修改或删除，分类数量不能直接相加。</div>
 
         <!-- 机型筛选栏（默认隐藏） -->
         <div v-if="draftModels.length > 0 && showModelBar" class="draft-model-bar">
@@ -342,9 +348,15 @@
       </el-card>
     </transition>
 
+    <div v-if="draftSaveFeedback.pending || draftSaveFeedback.message" class="save-feedback" :inert="reviewInteractionLocked" role="status" aria-live="polite">
+      <span>{{ draftSaveFeedback.pending ? `正在保存 ${draftSaveFeedback.pending} 处…` : draftSaveFeedback.message }}</span>
+      <el-button v-if="draftSaveFeedback.lastCell && !draftSaveFeedback.pending" link type="primary" @click="undoLastCell">撤销该单元格草稿</el-button>
+      <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销' : '重试保存' }}</el-button>
+    </div>
+
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="configLoading">
+      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="configLoading || reviewInteractionLocked">
         <div class="batch-info">
           <span v-if="selectedRows.length > 0">已选择 <strong>{{ selectedRows.length }}</strong> 行</span>
           <span v-if="false">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
@@ -356,7 +368,7 @@
     </transition>
 
     <!-- 数据表格 -->
-    <el-card class="config-table-card" shadow="never">
+    <el-card class="config-table-card" shadow="never" :inert="reviewInteractionLocked">
       <el-table
         ref="tableRef"
         :data="paginatedTableData"
@@ -699,7 +711,7 @@
     </el-card>
 
     <!-- 导入预览对话框 -->
-    <el-dialog v-model="previewDialogVisible" title="导入预览" width="80%" top="5vh">
+    <el-dialog v-model="previewDialogVisible" title="导入影响预览" width="85%" top="5vh" :close-on-click-modal="!importing" :close-on-press-escape="!importing" :show-close="!importing">
       <div v-if="previewData" class="preview-content">
         <el-alert
           :title="`共选择 ${previewData.totalFiles} 个文件 - ${previewData.totalModels} 个型号，${previewData.totalItems} 条配置项`"
@@ -713,12 +725,35 @@
           <el-table-column prop="filename" label="文件名" width="200" />
           <el-table-column prop="summary.totalModels" label="型号数" width="80" />
           <el-table-column prop="summary.totalItems" label="配置项数" width="100" />
+          <el-table-column label="本文件影响（项×机型）" min-width="180"><template #default="{ row }">新增 {{ row.impact?.added || 0 }} / 修改 {{ row.impact?.modified || 0 }} / 删除 {{ row.impact?.deleted || 0 }}</template></el-table-column>
           <el-table-column label="系列">
             <template #default="{ row }">
               <el-tag v-for="s in row.series" :key="s.name" size="small" style="margin: 2px">{{ s.name }}</el-tag>
             </template>
           </el-table-column>
         </el-table>
+
+        <div v-if="previewData.impact" class="import-impact">
+          <el-alert type="warning" :closable="false" title="以下为相对当前工作配置的实际影响；文件按列表顺序导入，后面的文件可能覆盖前面的值。" />
+          <p>配置项 × 机型：新增 <strong>{{ previewData.impact.added }}</strong>，修改 <strong>{{ previewData.impact.modified }}</strong>，删除 <strong>{{ previewData.impact.deleted }}</strong>，未变化 {{ previewData.impact.unchanged }}；共 {{ previewData.impact.changed_cells }} 处配置字段变更。</p>
+          <p>共享基础信息：新增 {{ previewData.impact.item_counts?.added || 0 }} 项，修改 {{ previewData.impact.item_counts?.modified || 0 }} 项，删除 {{ previewData.impact.item_counts?.deleted || 0 }} 项；会影响这些配置项的相关机型。</p>
+          <p class="scope-note">涉及机型：{{ previewData.impact.models.map(model => `${model.series_name} / ${model.model_name}`).join('、') || '无机型配置变更' }}<br>涉及字段：{{ previewData.impact.fields.map(field => fieldLabels[field] || field).join('、') || '无' }}</p>
+          <el-collapse>
+            <el-collapse-item :title="`查看变更明细（${previewData.impact.total_changes} 条）`" name="impact">
+              <el-alert v-if="previewData.impact.truncated" type="info" :closable="false" :title="`明细仅展示前 ${previewData.impact.detail_limit} 条，以上数量包含全部变更。`" />
+              <el-table :data="previewData.impact.changes" max-height="300" size="small">
+                <el-table-column prop="series_name" label="系列" min-width="110" />
+                <el-table-column prop="model_name" label="机型" min-width="120" />
+                <el-table-column prop="rd_name" label="研发名称" min-width="150" />
+                <el-table-column prop="ipn" label="IPN号" width="100" />
+                <el-table-column label="字段" min-width="100"><template #default="{ row }">{{ fieldLabels[row.field_name] || row.field_name }}</template></el-table-column>
+                <el-table-column prop="old_value" label="当前工作值" min-width="100" />
+                <el-table-column prop="new_value" label="导入值" min-width="100" />
+                <el-table-column label="类型" width="75"><template #default="{ row }">{{ { create: '新增', update: '修改', delete: '删除' }[row.change_type] || row.change_type }}</template></el-table-column>
+              </el-table>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
 
         <el-tabs v-if="previewData.files.length === 1">
           <el-tab-pane label="型号列表">
@@ -736,15 +771,15 @@
         </div>
       </div>
       <template #footer>
-        <el-button @click="previewDialogVisible = false">取消</el-button>
+        <el-button :disabled="importing" @click="previewDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="confirmImport" :loading="importing">确认导入</el-button>
       </template>
     </el-dialog>
 
     <!-- 导入变更详情对话框 -->
     <!-- 批量修改对话框 -->
-    <el-dialog v-model="batchEditDialogVisible" title="批量修改" width="500px">
-      <el-form :model="batchEditForm" label-width="100px">
+    <el-dialog v-model="batchEditDialogVisible" title="批量修改" width="540px" :close-on-click-modal="!batchEditSubmitting" :close-on-press-escape="!batchEditSubmitting" :show-close="!batchEditSubmitting">
+      <el-form :model="batchEditForm" label-width="100px" :disabled="batchEditSubmitting">
         <el-form-item label="修改字段">
           <el-select v-model="batchEditForm.field" placeholder="选择要修改的字段">
             <el-option label="最终配置" value="final_config" />
@@ -761,13 +796,15 @@
         <el-form-item label="应用范围">
           <el-radio-group v-model="batchEditForm.scope">
             <el-radio label="selected">仅选中行 ({{ selectedRows.length }}行)</el-radio>
-            <el-radio label="all">所有型号列</el-radio>
+            <el-radio label="filtered">当前筛选结果 ({{ filteredTableData.length }} 行，包含其他页)</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
+      <el-alert :closable="false" type="info" :title="`${batchEditRowCount} 行 × ${selectedModels.length} 个已选机型 × 1 个字段；仅修改这些目标，不包含筛选外行。`" />
+      <p v-if="batchEditResult" role="status">保存成功 {{ batchEditResult.success }} 处，失败 {{ batchEditResult.failed }} 处，值未变 {{ batchEditResult.unchanged }} 处，无该机型配置 {{ batchEditResult.missing }} 处。</p>
       <template #footer>
-        <el-button @click="batchEditDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmBatchEdit">确认修改</el-button>
+        <el-button :disabled="batchEditSubmitting" @click="batchEditDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="batchEditSubmitting" :disabled="!batchEditRowCount || !selectedModels.length" @click="confirmBatchEdit">确认修改</el-button>
       </template>
     </el-dialog>
 
@@ -928,73 +965,69 @@
     </el-dialog>
 
     <!-- 提交草稿对话框 -->
-    <el-dialog v-model="submitDialogVisible" title="提交草稿" width="500px">
-      <div class="submit-info">
-        <template v-if="submitForm.model_ids && submitForm.model_ids.size > 0">
-          按机型过滤提交：<strong>{{ getModelNames(submitForm.model_ids) }}</strong>
-        </template>
-        <template v-else-if="submitForm.item_ids">
-          将提交 <strong>{{ submitForm.item_ids.size }}</strong> 项，剩余 <strong>{{ draftItems.length - submitForm.item_ids.size }}</strong> 项将保留为草稿。
-        </template>
-        <template v-else>
-          将提交 <strong>{{ draftItems.length }}</strong> 项全部变更
-        </template>
+    <el-dialog v-model="submitDialogVisible" title="确认发布范围" width="760px" :close-on-click-modal="!submitSubmitting" :close-on-press-escape="!submitSubmitting" :show-close="!submitSubmitting">
+      <div v-loading="submitPreviewLoading" class="submit-info">
+        <p>{{ submitForm.model_ids ? `仅提交选中机型：${getModelNames(submitForm.model_ids)}` : submitForm.item_ids ? `仅提交选中的 ${submitForm.item_ids.size} 个配置项（所有有变更机型）` : '提交所选系列的全部草稿，包含当前筛选外的变更。' }}</p>
+        <el-alert v-if="submitPreviewError" :title="submitPreviewError" type="error" :closable="false" />
+        <el-table :data="submitPreviews" size="small" max-height="240">
+          <el-table-column prop="series_name" label="系列" min-width="140" />
+          <el-table-column prop="total_items" label="配置项数" width="85" />
+          <el-table-column prop="total_changes" label="变更记录" width="85" />
+          <el-table-column prop="total_models" label="机型数" width="75" />
+          <el-table-column prop="hidden_changes" label="当前页不可见" width="110" />
+          <el-table-column prop="remaining_changes" label="保留草稿" width="90" />
+        </el-table>
+        <p class="scope-note">“不可见”包含筛选外行、其他页、未选机型和隐藏字段。配置项数按行去重；变更记录数包含不同机型和字段。</p>
+        <p v-for="review in submitPreviews" :key="review.batch_id" class="scope-note">{{ review.series_name }}：{{ review.models.map(model => model.name).join('、') || '无机型变更' }}；字段：{{ review.fields.map(field => fieldLabels[field] || field).join('、') || '无' }}</p>
+        <el-collapse v-if="submitPreviews.some(review => review.total_changes)">
+          <el-collapse-item title="查看将发布的变更明细" name="changes">
+            <el-table :data="submitPreviews.flatMap(review => review.drafts.map(draft => ({ ...draft, series_name: review.series_name })))" max-height="240">
+              <el-table-column prop="series_name" label="系列" min-width="110" />
+              <el-table-column prop="rd_name" label="配置项" min-width="130" />
+              <el-table-column prop="model_name" label="机型" min-width="110" />
+              <el-table-column label="字段" width="90"><template #default="{ row }">{{ fieldLabels[row.field_name] || '整项配置' }}</template></el-table-column>
+              <el-table-column prop="old_value" label="原值" width="75" />
+              <el-table-column prop="new_value" label="草稿值" width="75" />
+            </el-table>
+          </el-collapse-item>
+        </el-collapse>
       </div>
-      <el-form :model="submitForm" label-width="100px">
-        <el-form-item label="版本号">
-          <el-input v-model="submitForm.version_number" placeholder="留空则自动生成" />
-        </el-form-item>
-        <el-form-item label="版本说明">
-          <el-input v-model="submitForm.description" type="textarea" :rows="3" />
-        </el-form-item>
+      <el-form :model="submitForm" label-width="100px" :disabled="submitSubmitting || submitPreviewLoading">
+        <el-form-item label="版本号"><el-input v-model="submitForm.version_number" placeholder="留空则自动生成" /></el-form-item>
+        <el-form-item label="版本说明"><el-input v-model="submitForm.description" type="textarea" :rows="3" /></el-form-item>
       </el-form>
+      <el-table v-if="submitResults.length" :data="submitResults" max-height="180">
+        <el-table-column prop="seriesName" label="系列" /><el-table-column prop="message" label="提交结果" />
+      </el-table>
       <template #footer>
-        <el-button @click="submitDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmSubmitDraft">确定提交</el-button>
+        <el-button :disabled="submitSubmitting" @click="submitDialogVisible = false">取消</el-button>
+        <el-button :disabled="submitSubmitting || submitPreviewLoading" @click="refreshSubmitPreview">刷新范围</el-button>
+        <el-button type="primary" :loading="submitSubmitting" :disabled="submitPreviewLoading || !!submitPreviewError || !submitPreviews.some(review => review.total_changes)" @click="confirmSubmitDraft">确认发布</el-button>
       </template>
     </el-dialog>
 
     <!-- 批量操作对话框 -->
-    <el-dialog v-model="batchSubmitDialog.visible" title="批量提交草稿" width="600px">
-      <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
-        <template #title>
-          将提交 <strong>{{ batchSubmitDialog.selectedBatchIds.length }}</strong> 个系列的草稿。
-        </template>
-      </el-alert>
-      <el-form label-width="80px">
+    <el-dialog v-model="batchSubmitDialog.visible" title="确认批量发布范围" width="760px" :close-on-click-modal="!batchSubmitSubmitting" :close-on-press-escape="!batchSubmitSubmitting" :show-close="!batchSubmitSubmitting">
+      <el-alert type="warning" :closable="false" title="提交下列系列的全部草稿，包含当前筛选外和未显示的变更。" />
+      <el-alert v-if="batchSubmitDialog.error" type="error" :closable="false" :title="batchSubmitDialog.error" />
+      <el-form label-width="80px" :disabled="batchSubmitSubmitting || batchSubmitDialog.loading">
         <el-form-item label="提交系列">
-          <div style="max-height: 200px; overflow-y: auto; width: 100%;">
-            <el-checkbox
-              :indeterminate="batchSubmitDialog.selectedBatchIds.length > 0 && batchSubmitDialog.selectedBatchIds.length < batchSubmitDialog.availableBatches.length"
-              :checked="batchSubmitDialog.selectedBatchIds.length === batchSubmitDialog.availableBatches.length"
-              @change="(v) => toggleSubmitAllBatches(v)"
-            >全选</el-checkbox>
-            <div v-for="b in batchSubmitDialog.availableBatches" :key="b.batchId" style="margin: 6px 0;">
-              <el-checkbox
-                :checked="batchSubmitDialog.selectedBatchIds.includes(b.batchId)"
-                @change="(v) => toggleSubmitBatch(b.batchId, v)"
-              >
-                <span>{{ b.seriesName }}</span>
-                <el-tag size="small" type="warning" style="margin-left: 8px;">{{ b.changeCount }} 项变更</el-tag>
-              </el-checkbox>
+          <div v-loading="batchSubmitDialog.loading" style="max-height: 240px; overflow-y: auto; width: 100%;">
+            <el-checkbox :indeterminate="batchSubmitDialog.selectedBatchIds.length > 0 && batchSubmitDialog.selectedBatchIds.length < batchSubmitDialog.availableBatches.length" :checked="batchSubmitDialog.availableBatches.length > 0 && batchSubmitDialog.selectedBatchIds.length === batchSubmitDialog.availableBatches.length" @change="toggleSubmitAllBatches">全选</el-checkbox>
+            <div v-for="review in batchSubmitDialog.availableBatches" :key="review.batch_id" style="margin: 8px 0;">
+              <el-checkbox :checked="batchSubmitDialog.selectedBatchIds.includes(review.batch_id)" @change="checked => toggleSubmitBatch(review.batch_id, checked)">{{ review.series_name }}：{{ review.total_items }} 个配置项 · {{ review.total_changes }} 条变更 · {{ review.total_models }} 个机型</el-checkbox>
+              <div class="scope-note">当前页不可见 {{ review.hidden_changes }} 条；{{ review.models.map(model => model.name).join('、') }}；字段 {{ review.fields.map(field => fieldLabels[field] || field).join('、') }}</div>
             </div>
           </div>
         </el-form-item>
-        <el-form-item label="版本号">
-          <el-input v-model="batchSubmitDialog.versionNumber" placeholder="留空则各系列自动生成" />
-          <div style="color: #909399; font-size: 12px; margin-top: 4px;">
-            指定版本号将应用到所有选中系列。如果某系列已存在相同版本号，该系列提交失败。
-          </div>
-        </el-form-item>
-        <el-form-item label="版本说明">
-          <el-input v-model="batchSubmitDialog.description" type="textarea" :rows="3" placeholder="可选：统一为所有提交的系列添加版本说明" />
-        </el-form-item>
+        <el-form-item label="版本号"><el-input v-model="batchSubmitDialog.versionNumber" placeholder="留空则各系列自动生成" /></el-form-item>
+        <el-form-item label="版本说明"><el-input v-model="batchSubmitDialog.description" type="textarea" :rows="3" /></el-form-item>
       </el-form>
+      <p class="scope-note">指定版本号会用于全部选中系列；已有同名版本的系列会提交失败。每个系列的结果将单独显示。</p>
       <template #footer>
-        <el-button @click="batchSubmitDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="batchSubmitSubmitting" @click="confirmBatchSubmit">
-          确定提交 ({{ batchSubmitDialog.selectedBatchIds.length }})
-        </el-button>
+        <el-button :disabled="batchSubmitSubmitting" @click="batchSubmitDialog.visible = false">取消</el-button>
+        <el-button :disabled="batchSubmitSubmitting || batchSubmitDialog.loading" @click="refreshBatchSubmitPreview">刷新范围</el-button>
+        <el-button type="primary" :loading="batchSubmitSubmitting" :disabled="batchSubmitDialog.loading || !!batchSubmitDialog.error || !batchSubmitDialog.selectedBatchIds.length" @click="confirmBatchSubmit">确认发布 ({{ batchSubmitDialog.selectedBatchIds.length }})</el-button>
       </template>
     </el-dialog>
 
@@ -1034,7 +1067,7 @@ import {
   getCurrentDraftBatch, createDraftBatch, createDraft,
   submitDraftBatch, discardDraftBatch, deleteDraftByKey,
   importExcel, exportExcel, createVersion,
-  getEnumValues, previewImport,
+  getEnumValues, previewImportBatch, previewDraftSubmission,
   batchDiscardDrafts, batchSubmitDrafts
 } from '../api/data'
 
@@ -1518,14 +1551,14 @@ const SERIES_SELECTION_KEY = 'config_series_selection'
 
 const defaultVisibleColumns = {
   rd_name: true,
-  v_code: true,
+  v_code: false,
   ipn: true,
   zh_desc: true,
-  en_desc: true,
+  en_desc: false,
   final_config: true,
-  current_config: true,
-  selection_config: true,
-  rd_status: true
+  current_config: false,
+  selection_config: false,
+  rd_status: false
 }
 
 const defaultFixedColumns = {
@@ -2138,6 +2171,9 @@ const dragTargetCells = ref([]) // { rowId, modelId, field }[]
 
 // 批量修改
 const batchEditDialogVisible = ref(false)
+const batchEditSubmitting = ref(false)
+const batchEditResult = ref(null)
+const batchEditRowCount = computed(() => batchEditForm.scope === 'selected' ? selectedRows.value.length : filteredTableData.value.length)
 const batchEditForm = reactive({
   field: '',
   value: '',
@@ -2147,6 +2183,13 @@ const batchEditForm = reactive({
 // 对话框
 const versionDialogVisible = ref(false)
 const submitDialogVisible = ref(false)
+const submitPreviewLoading = ref(false)
+const submitSubmitting = ref(false)
+const submitPreviews = ref([])
+const submitPreviewError = ref('')
+const submitResults = ref([])
+let submitPreviewRequest = 0
+const submitScope = ref(null)
 const versionForm = reactive({
   version_number: '',
   version_name: '',
@@ -2162,12 +2205,17 @@ const submitForm = reactive({
 // 批量操作
 const batchSubmitDialog = reactive({
   visible: false,
+  loading: false,
+  error: '',
+  scope: null,
   availableBatches: [],  // { batchId, seriesId, seriesName, changeCount }
   selectedBatchIds: [],
   versionNumber: '',
   description: ''
 })
 const batchSubmitSubmitting = ref(false)
+let batchSubmitPreviewRequest = 0
+const reviewInteractionLocked = computed(() => submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value)
 const batchSubmitResultDialog = reactive({
   visible: false,
   results: []  // { seriesName, versionNumber, changes, success, message }
@@ -2267,10 +2315,13 @@ const clearAllSeries = () => {
   saveSeriesSelection()
 }
 
-// 机型下拉 visible-change：收起时才同步到 selectedModels
+// 机型选择即时生效，快捷选择与手动勾选使用相同入口。
+const applyModelSelection = () => { selectedModels.value = [...tempSelectedModels.value]; currentPage.value = 1 }
+
+// 机型下拉打开时同步当前选择
 const onModelDropdownVisibleChange = (visible) => {
   if (!visible) {
-    selectedModels.value = [...tempSelectedModels.value]
+    applyModelSelection()
   } else {
     // 打开时用当前生效的选择初始化临时值
     tempSelectedModels.value = [...selectedModels.value]
@@ -2280,17 +2331,20 @@ const onModelDropdownVisibleChange = (visible) => {
 // 机型全选
 const selectAllModels = () => {
   tempSelectedModels.value = Array.from(allModelsMap.value.keys())
+  applyModelSelection()
 }
 
 // 机型取消全选
 const clearAllModels = () => {
   tempSelectedModels.value = []
+  applyModelSelection()
 }
 
 // 机型反选
 const invertModelSelection = () => {
   const currentSet = new Set(tempSelectedModels.value)
   tempSelectedModels.value = Array.from(allModelsMap.value.keys()).filter(id => !currentSet.has(id))
+  applyModelSelection()
 }
 
 // 选中所有匹配搜索文本的型号
@@ -2307,6 +2361,7 @@ const selectMatchingModels = () => {
     const current = new Set(tempSelectedModels.value)
     for (const id of matched) current.add(id)
     tempSelectedModels.value = Array.from(current)
+    applyModelSelection()
   }
 }
 
@@ -2586,6 +2641,20 @@ window.debugDraft = (rowId, modelId, field) => {
 // 检查值是否真正变化（使用共享方法）
 const isValueChanged = (oldVal, newVal) => _isValueChanged(oldVal, newVal)
 
+let searchTimer
+const queueSearch = () => { clearTimeout(searchTimer); searchTimer = setTimeout(flushSearch, 300) }
+const flushSearch = () => { clearTimeout(searchTimer); onFilterChange() }
+const hasActiveFilters = computed(() => Boolean(searchText.value || selectedCategories.value.length !== categoryOptions.length || draftFilterMode.value || showDiffOnly.value || showRdIncomplete.value || Object.values(fieldFilters).some(values => values.length)))
+const resetActiveFilters = async () => {
+  clearTimeout(searchTimer)
+  searchText.value = ''
+  selectedCategories.value = [...categoryOptions]
+  draftFilterMode.value = false; draftFilters.value = new Set()
+  showDiffOnly.value = false; showRdIncomplete.value = false
+  for (const key of Object.keys(fieldFilters)) { fieldFilters[key] = []; pendingFieldFilters[key] = [] }
+  await onFilterChange()
+}
+
 // 筛选条件变更时立即刷新
 const onFilterChange = async () => {
   if (applyingModelGroup.value) return
@@ -2741,7 +2810,7 @@ const handleSelectionChange = (rows) => {
 
 // 开始编辑单元格
 const startEdit = (row, modelId, field) => {
-  if (!configReady.value || loading.value || applyingModelGroup.value) return false
+  if (!configReady.value || loading.value || applyingModelGroup.value || submitDialogVisible.value || batchSubmitDialog.visible) return false
   editingCell.value = { rowId: row.id, modelId, field }
   // 自动展开下拉框
   nextTick(() => {
@@ -2783,6 +2852,28 @@ const finishEdit = async (row, modelId, field, newValue) => {
   await handleCellChange(row, modelId, field, newValue, oldValue)
 }
 
+const draftSaveFeedback = reactive({ pending: 0, message: '', lastCell: null, failedCell: null })
+const undoLastCell = async () => {
+  const cell = draftSaveFeedback.lastCell
+  if (!cell || !isDraftCellScopeCurrent(cell)) { ElMessage.warning('操作范围已变化，请在当前单元格上撤销'); return }
+  const row = tableData.value.find(row => row.id === cell.row.id)
+  if (!row) { ElMessage.warning('该行不在当前筛选中，请清除筛选后撤销'); return }
+  if (await removeDraftChange(row, cell.modelId, cell.field, cell.key)) {
+    draftSaveFeedback.lastCell = null
+    draftSaveFeedback.message = '已撤销单元格修改'
+  }
+}
+const retryFailedCell = async () => {
+  const cell = draftSaveFeedback.failedCell
+  if (!cell || !isDraftCellScopeCurrent(cell)) return
+  const row = tableData.value.find(row => row.id === cell.row.id)
+  if (!row?.model_values?.[cell.modelId]) { ElMessage.warning('该行不在当前筛选中，请清除筛选后重试'); return }
+  if (cell.action === 'undo') { await removeDraftChange(row, cell.modelId, cell.field, cell.key); return }
+  if (cell.attemptedValue === undefined) return
+  row.model_values[cell.modelId][cell.field] = cell.attemptedValue
+  await handleCellChange(row, cell.modelId, cell.field, cell.attemptedValue)
+}
+
 // 同一单元格的保存和撤销必须按用户操作顺序到达后端。
 const draftCellOperations = new Map()
 const getDraftCellOperationKey = (row, modelId, field) => {
@@ -2810,10 +2901,19 @@ const enqueueDraftCellOperation = (context, operation) => {
 
   const generation = ++state.generation
   state.pending++
+  draftSaveFeedback.pending++
   const isLatest = () => draftCellOperations.get(context.operationKey) === state && state.generation === generation
   const result = state.tail.then(() => operation(isLatest, state))
   state.tail = result.catch(() => undefined)
-  return result.finally(() => {
+  return result.then(success => {
+    if (isLatest()) {
+      draftSaveFeedback.message = context.action === 'undo' ? (success ? '已撤销单元格草稿' : '撤销失败，已保留原草稿') : (success ? '草稿已保存' : '保存失败，已恢复上次保存的值')
+      draftSaveFeedback.lastCell = success && context.action !== 'undo' ? context : null
+      draftSaveFeedback.failedCell = success ? null : { ...context, attemptedValue: context.attemptedValue }
+    }
+    return success
+  }).finally(() => {
+    draftSaveFeedback.pending--
     state.pending--
     if (state.pending === 0 && draftCellOperations.get(context.operationKey) === state) {
       draftCellOperations.delete(context.operationKey)
@@ -2865,6 +2965,7 @@ const restoreWorkingCell = (context, isLatest = () => true) => {
 // 删除草稿变更
 const removeDraftChange = (row, modelId, field, key) => {
   const context = captureDraftCellContext(row, modelId, field, key)
+  context.action = 'undo'
   if (!context.seriesId || context.batchId === undefined) {
     restoreWorkingCell(context)
     ElMessage.error('草稿批次未准备好，请重新加载后编辑')
@@ -2905,15 +3006,16 @@ const removeDraftChange = (row, modelId, field, key) => {
 }
 
 // 单元格变更
-const handleCellChange = (row, modelId, field, newValue, oldValue) => {
+const handleCellChange = (row, modelId, field, newValue, oldValue, frozenContext = null) => {
   const key = `${row.id}_${modelId}_${field}`
-  const context = captureDraftCellContext(row, modelId, field, key)
+  const context = frozenContext || captureDraftCellContext(row, modelId, field, key)
   if (!context.seriesId || context.batchId === undefined) {
     restoreWorkingCell(context)
     ElMessage.error('草稿批次未准备好，请重新加载后编辑')
     return Promise.resolve(false)
   }
 
+  context.attemptedValue = newValue
   return enqueueDraftCellOperation(context, async (isLatest, state) => {
     const originalValue = context.originalRow?.model_values?.[modelId]?.[field]
     oldValue = draftBaseline(draftChanges.value.get(key), originalValue !== undefined ? originalValue : oldValue)
@@ -2979,30 +3081,21 @@ const handleMultiFileUpload = async (options) => {
 
     // 预览所有文件
     try {
-      const allPreviewData = []
-
-      for (const f of validFiles) {
-        const formData = new FormData()
-        formData.append('file', f)
-
-        const res = await previewImport(formData)
-        if (request !== previewRequest) return
-        allPreviewData.push({
-          filename: res.filename,
-          series: res.series || [],
-          summary: {
-            totalModels: res.summary?.total_models || 0,
-            totalItems: res.summary?.total_items || 0,
-            categories: res.summary?.categories || [],
-            totalRows: res.total_rows || 0
-          },
-          raw: res
-        })
-      }
+      const formData = new FormData()
+      for (const file of validFiles) formData.append('files', file)
+      const batch = await previewImportBatch(formData)
+      if (request !== previewRequest) return
+      const allPreviewData = (batch.files || []).map(res => ({
+        filename: res.filename, series: res.series || [], impact: res.impact,
+        summary: { totalModels: res.summary?.total_models || 0, totalItems: res.summary?.total_items || 0,
+          categories: res.summary?.categories || [], totalRows: res.total_rows || 0 }, raw: res
+      }))
+      if (allPreviewData.length !== validFiles.length) throw new Error('预览文件数量不一致，请重新选择文件')
 
       // 合并预览数据
       const nextPreviewData = {
         files: allPreviewData,
+        impact: batch.impact,
         totalFiles: allPreviewData.length,
         totalModels: allPreviewData.reduce((sum, d) => sum + d.summary.totalModels, 0),
         totalItems: allPreviewData.reduce((sum, d) => sum + d.summary.totalItems, 0),
@@ -3024,6 +3117,7 @@ const handleMultiFileUpload = async (options) => {
 
 // 确认导入（支持多文件）
 const confirmImport = async () => {
+  if (importing.value) return
   const request = committedPreviewRequest
   const files = [...previewFiles.value]
   const preview = previewData.value
@@ -3241,41 +3335,38 @@ const handleBatchEdit = () => {
   batchEditForm.field = ''
   batchEditForm.value = ''
   batchEditForm.scope = 'selected'
+  batchEditResult.value = null
   batchEditDialogVisible.value = true
 }
 
 const confirmBatchEdit = async () => {
-  if (!batchEditForm.field || !batchEditForm.value) {
-    ElMessage.warning('请选择修改字段和值')
-    return
-  }
-
-  const rows = batchEditForm.scope === 'selected' ? selectedRows.value : tableData.value
-
-  if (rows.length === 0) {
-    ElMessage.warning('没有要修改的数据')
-    return
-  }
-
+  if (batchEditSubmitting.value) return
+  const { field, value, scope } = batchEditForm
+  if (!field || !value) { ElMessage.warning('请选择修改字段和值'); return }
+  const rows = [...(scope === 'selected' ? selectedRows.value : filteredTableData.value)]
+  const models = [...selectedModels.value]
+  if (!rows.length || !models.length) { ElMessage.warning('没有要修改的数据或机型'); return }
+  const targets = rows.flatMap(row => models.map(modelId => ({
+    row, modelId, oldValue: row.model_values[modelId]?.[field],
+    context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
+  })))
+  batchEditSubmitting.value = true
+  batchEditResult.value = null
+  const result = { success: 0, failed: 0, unchanged: 0, missing: 0 }
   try {
-    let count = 0
-    for (const row of rows) {
-      for (const modelId of selectedModels.value) {
-        if (row.model_values[modelId]) {
-          row.model_values[modelId][batchEditForm.field] = batchEditForm.value
-          if (await handleCellChange(row, modelId, batchEditForm.field, batchEditForm.value)) count++
-        }
-      }
+    for (const { row, modelId, oldValue, context } of targets) {
+      if (!row.model_values[modelId]) { result.missing++; continue }
+      if (!isValueChanged(oldValue, value)) { result.unchanged++; continue }
+      row.model_values[modelId][field] = value
+      try {
+        if (await handleCellChange(row, modelId, field, value, oldValue, context)) result.success++
+        else result.failed++
+      } catch (error) { result.failed++; console.error('批量修改单元格失败:', error) }
     }
-
-    if (count > 0) {
-      ElMessage.success(`已修改 ${count} 处`)
-      batchEditDialogVisible.value = false
-    }
-  } catch (error) {
-    console.error('批量修改失败:', error)
-    ElMessage.error('批量修改失败')
-  }
+    batchEditResult.value = result
+    if (result.failed) ElMessage.warning(`已保存 ${result.success} 处，${result.failed} 处失败；可重新确认修改以重试`)
+    else ElMessage.success(`已保存 ${result.success} 处，跳过 ${result.unchanged + result.missing} 处`)
+  } finally { batchEditSubmitting.value = false }
 }
 
 // 创建版本
@@ -3723,54 +3814,77 @@ const confirmPasteRowConfig = async () => {
   }
 }
 
-const handleSubmitDraft = (itemIds = null, modelIds = null) => {
-  submitForm.version_number = ''
-  submitForm.description = ''
-  submitForm.item_ids = itemIds
-  submitForm.model_ids = modelIds
-  submitDialogVisible.value = true
+const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态', rd_name: '研发名称', v_code: 'V代码', ipn: 'IPN号', zh_desc: '中文描述', en_desc: '英文描述', category: '分类', row_index: '行顺序' }
+const captureVisibleSubmissionScope = () => ({
+  itemIds: new Set(paginatedTableData.value.map(row => row.id)),
+  modelIds: new Set(selectedModels.value), fields: new Set(visibleConfigFields.value)
+})
+const describeSubmission = (review, visible) => ({
+  ...review,
+  hidden_changes: review.drafts.filter(draft => !visible.itemIds.has(draft.item_id) ||
+    (draft.model_id != null && !visible.modelIds.has(draft.model_id)) ||
+    (draft.field_name ? !visible.fields.has(draft.field_name) : ['final_config', 'current_config', 'selection_config', 'rd_status'].some(field => !visible.fields.has(field)))).length
+})
+const waitForDraftSaves = async () => {
+  await Promise.all(Array.from(draftCellOperations.values(), state => state.tail))
 }
-
-const confirmSubmitDraft = async () => {
-  const entries = Array.from(draftBatchMap.value.entries())
-  if (entries.length === 0) return
-
+const handleSubmitDraft = async (itemIds = null, modelIds = null) => {
+  if (submitSubmitting.value || submitPreviewLoading.value || batchSubmitDialog.visible) return
+  submitForm.version_number = ''; submitForm.description = ''
+  submitForm.item_ids = itemIds == null ? null : new Set(itemIds)
+  submitForm.model_ids = modelIds == null ? null : new Set(modelIds)
+  const params = {}
+  if (itemIds != null) params.item_ids = Array.from(itemIds)
+  if (modelIds != null) params.model_ids = Array.from(modelIds)
+  submitScope.value = { entries: Array.from(draftBatchMap.value.entries()), params, visible: captureVisibleSubmissionScope() }
+  submitResults.value = []
+  submitDialogVisible.value = true
+  await refreshSubmitPreview()
+}
+const refreshSubmitPreview = async () => {
+  if (submitSubmitting.value || !submitScope.value) return
+  const request = ++submitPreviewRequest
+  const scope = submitScope.value
+  submitPreviews.value = []; submitPreviewError.value = ''; submitPreviewLoading.value = true
   try {
-    const params = {
-      version_number: submitForm.version_number || undefined,
-      description: submitForm.description || undefined
-    }
-    if (submitForm.item_ids) {
-      params.item_ids = Array.from(submitForm.item_ids)
-    }
-    if (submitForm.model_ids && submitForm.model_ids.size > 0) {
-      params.model_ids = Array.from(submitForm.model_ids)
-    }
-    await Promise.all(entries.map(([seriesId, batchId]) =>
-      submitDraftBatch(batchId, params)
-    ))
-
-    ElMessage.success('提交成功')
-    submitDialogVisible.value = false
-
-    draftStats.total = 0
-    draftStats.create = 0
-    draftStats.update = 0
-    draftStats.delete = 0
-    draftChanges.value.clear()  // 清空变更记录
-    draftFilterMode.value = false; draftFilters.value = new Set()  // 清空筛选
-    draftExpanded.value = false
-    selectedDraftItemIds.value = new Set()
-    selectedDraftModelIds.value = new Set()
-    draftItemInfo.value = new Map()
-    draftBatchMap.value.clear()
-
-    await loadData()  // 重新加载数据
-    await initDraft()
+    await waitForDraftSaves()
+    const reviews = await Promise.all(scope.entries.map(async ([, batchId]) =>
+      describeSubmission(await previewDraftSubmission(batchId, scope.params), scope.visible)))
+    if (request !== submitPreviewRequest || scope !== submitScope.value) return
+    submitPreviews.value = reviews
   } catch (error) {
-    console.error('提交失败:', error)
-    ElMessage.error('提交失败')
-  }
+    if (request === submitPreviewRequest) submitPreviewError.value = '无法核验提交范围：' + (error.response?.data?.detail || '请检查连接后刷新范围')
+  } finally { if (request === submitPreviewRequest) submitPreviewLoading.value = false }
+}
+const confirmSubmitDraft = async () => {
+  if (submitSubmitting.value || submitPreviewLoading.value || submitPreviewError.value || !submitScope.value) return
+  const reviews = submitPreviews.value.filter(review => review.total_changes > 0)
+  if (!reviews.length) { ElMessage.info('当前范围没有要提交的变更'); return }
+  const params = { ...submitScope.value.params, version_number: submitForm.version_number || undefined, description: submitForm.description || undefined }
+  submitSubmitting.value = true
+  submitResults.value = []
+  try {
+    const outcomes = await Promise.all(reviews.map(async review => {
+      try {
+        const res = await submitDraftBatch(review.batch_id, { ...params, expected_signature: review.signature })
+        return { seriesName: review.series_name, success: true, message: `已发布 ${res.changes ?? review.total_changes} 条变更` }
+      } catch (error) {
+        return { seriesName: review.series_name, success: false, message: error.response?.data?.detail || '连接失败，请重试' }
+      }
+    }))
+    submitResults.value = outcomes
+    const succeeded = outcomes.filter(outcome => outcome.success).length
+    if (succeeded) {
+      ElMessage.success(`成功发布 ${succeeded} 个系列`)
+      await loadData(); await initDraft()
+    }
+    if (outcomes.every(outcome => outcome.success)) submitDialogVisible.value = false
+    else {
+      submitPreviewError.value = '部分系列未发布，请核对结果并刷新范围后重试。已成功发布的系列不会重复提交。'
+      ElMessage.warning(submitPreviewError.value)
+      submitScope.value = { ...submitScope.value, entries: Array.from(draftBatchMap.value.entries()) }
+    }
+  } finally { submitSubmitting.value = false }
 }
 
 // 提交选中机型
@@ -3927,106 +4041,63 @@ const handleBatchDiscardDrafts = async () => {
 
 // 打开批量提交对话框
 const handleOpenBatchSubmit = async () => {
-  const availableBatches = []
-  for (const seriesId of selectedSeries.value) {
-    try {
-      const res = await getCurrentDraftBatch(seriesId)
-      if (res.exists && res.batch.total_count > 0) {
-        const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || `系列 ${seriesId}`
-        availableBatches.push({
-          batchId: res.batch.id,
-          seriesId,
-          seriesName,
-          changeCount: res.batch.total_count
-        })
-      }
-    } catch (e) {
-      // 跳过没有草稿的系列
-    }
-  }
-
-  if (availableBatches.length === 0) {
-    ElMessage.info('没有可提交的草稿')
-    return
-  }
-
-  batchSubmitDialog.availableBatches = availableBatches
-  batchSubmitDialog.selectedBatchIds = availableBatches.map(b => b.batchId)
-  batchSubmitDialog.versionNumber = ''
-  batchSubmitDialog.description = ''
+  if (batchSubmitSubmitting.value || batchSubmitDialog.loading || submitDialogVisible.value) return
+  batchSubmitDialog.scope = { seriesIds: [...selectedSeries.value], visible: captureVisibleSubmissionScope() }
+  batchSubmitDialog.versionNumber = ''; batchSubmitDialog.description = ''
   batchSubmitDialog.visible = true
+  await refreshBatchSubmitPreview()
 }
-
-const toggleSubmitAllBatches = (checked) => {
-  batchSubmitDialog.selectedBatchIds = checked
-    ? batchSubmitDialog.availableBatches.map(b => b.batchId)
-    : []
+const refreshBatchSubmitPreview = async () => {
+  if (batchSubmitSubmitting.value || !batchSubmitDialog.scope) return
+  const request = ++batchSubmitPreviewRequest
+  const scope = batchSubmitDialog.scope
+  batchSubmitDialog.loading = true; batchSubmitDialog.error = ''; batchSubmitDialog.availableBatches = []; batchSubmitDialog.selectedBatchIds = []
+  try {
+    await waitForDraftSaves()
+    const reviews = await Promise.all(scope.seriesIds.map(async seriesId => {
+      const res = await getCurrentDraftBatch(seriesId)
+      if (!res.exists) return null
+      return describeSubmission(await previewDraftSubmission(res.batch.id, {}), scope.visible)
+    }))
+    if (request !== batchSubmitPreviewRequest || scope !== batchSubmitDialog.scope) return
+    batchSubmitDialog.availableBatches = reviews.filter(review => review && review.total_changes > 0)
+    batchSubmitDialog.selectedBatchIds = batchSubmitDialog.availableBatches.map(review => review.batch_id)
+    if (!batchSubmitDialog.availableBatches.length) ElMessage.info('所选系列没有可提交的草稿')
+  } catch (error) {
+    if (request === batchSubmitPreviewRequest) batchSubmitDialog.error = '无法核验提交范围：' + (error.response?.data?.detail || '请检查连接后刷新范围')
+  } finally { if (request === batchSubmitPreviewRequest) batchSubmitDialog.loading = false }
 }
-
+const toggleSubmitAllBatches = checked => {
+  batchSubmitDialog.selectedBatchIds = checked ? batchSubmitDialog.availableBatches.map(review => review.batch_id) : []
+}
 const toggleSubmitBatch = (batchId, checked) => {
-  if (checked) {
-    batchSubmitDialog.selectedBatchIds = [...batchSubmitDialog.selectedBatchIds, batchId]
-  } else {
-    batchSubmitDialog.selectedBatchIds = batchSubmitDialog.selectedBatchIds.filter(id => id !== batchId)
-  }
+  batchSubmitDialog.selectedBatchIds = checked
+    ? Array.from(new Set([...batchSubmitDialog.selectedBatchIds, batchId]))
+    : batchSubmitDialog.selectedBatchIds.filter(id => id !== batchId)
 }
-
-// 确认批量提交
 const confirmBatchSubmit = async () => {
-  if (batchSubmitDialog.selectedBatchIds.length === 0) {
-    ElMessage.warning('请至少选择一个系列')
-    return
+  if (batchSubmitSubmitting.value || batchSubmitDialog.loading || batchSubmitDialog.error) return
+  const reviews = batchSubmitDialog.availableBatches.filter(review => batchSubmitDialog.selectedBatchIds.includes(review.batch_id))
+  if (!reviews.length) { ElMessage.warning('请至少选择一个系列'); return }
+  const params = {
+    batch_ids: reviews.map(review => review.batch_id),
+    expected_signatures: Object.fromEntries(reviews.map(review => [review.batch_id, review.signature])),
+    version_number: batchSubmitDialog.versionNumber || undefined, description: batchSubmitDialog.description || undefined
   }
-
   batchSubmitSubmitting.value = true
   try {
-    const res = await batchSubmitDrafts({
-      batch_ids: batchSubmitDialog.selectedBatchIds,
-      version_number: batchSubmitDialog.versionNumber || undefined,
-      description: batchSubmitDialog.description || undefined
-    })
-
-    // 构建结果显示
-    const results = (res.results || []).map(r => {
-      const batchInfo = batchSubmitDialog.availableBatches.find(b => b.batchId === r.batch_id)
-      return {
-        seriesName: batchInfo?.seriesName || `ID: ${r.series_id}`,
-        versionNumber: r.version_number || '-',
-        changes: r.changes || 0,
-        success: r.success,
-        message: r.message
-      }
-    })
-
-    batchSubmitDialog.visible = false
-    batchSubmitResultDialog.results = results
-    batchSubmitResultDialog.visible = true
-
-    const successCount = res.submitted_count || 0
-    if (successCount > 0) {
-      ElMessage.success(`成功提交 ${successCount} 个系列`)
-    }
-
-    // 刷新当前数据
-    draftStats.total = 0
-    draftStats.create = 0
-    draftStats.update = 0
-    draftStats.delete = 0
-    draftChanges.value.clear()
-    draftFilterMode.value = false; draftFilters.value = new Set()
-    draftExpanded.value = false
-    selectedDraftItemIds.value = new Set()
-    selectedDraftModelIds.value = new Set()
-    draftItemInfo.value = new Map()
-
-    await loadData()
-    await initDraft()
+    const res = await batchSubmitDrafts(params)
+    batchSubmitResultDialog.results = (res.results || []).map(result => ({
+      seriesName: reviews.find(review => review.batch_id === result.batch_id)?.series_name || `系列 ${result.series_id}`,
+      versionNumber: result.version_number || '-', changes: result.changes || 0, success: result.success, message: result.message
+    }))
+    batchSubmitDialog.visible = false; batchSubmitResultDialog.visible = true
+    if (res.submitted_count) ElMessage.success(`成功提交 ${res.submitted_count} 个系列`)
+    await loadData(); await initDraft()
   } catch (error) {
-    console.error('批量提交失败:', error)
-    ElMessage.error('批量提交失败')
-  } finally {
-    batchSubmitSubmitting.value = false
-  }
+    batchSubmitDialog.error = '提交失败：' + (error.response?.data?.detail || '请核对结果并刷新范围后重试')
+    ElMessage.error(batchSubmitDialog.error)
+  } finally { batchSubmitSubmitting.value = false }
 }
 
 // 计算表格高度
@@ -4541,6 +4612,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearTimeout(searchTimer)
+  clearTimeout(processTimer)
   window.removeEventListener('resize', calculateTableHeight)
   configResizeObserver?.disconnect()
   // Excel-like keyboard events removed
@@ -4602,6 +4675,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.scope-note { color: #606266; font-size: 12px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
+.draft-count-note { font-size: 12px; color: rgba(255, 255, 255, .86); margin-top: 6px; }
+.save-feedback { display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #f0f7ff; color: #355373; font-size: 12px; }
+
 .config-page {
   padding: 0;
 }
