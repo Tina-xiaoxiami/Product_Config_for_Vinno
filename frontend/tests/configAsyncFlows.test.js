@@ -26,6 +26,7 @@ function previewApp(previewImport) {
     previewData: ref(null),
     previewDialogVisible: ref(false),
     previewImport,
+    previewImportBatch: async data => ({ files: await Promise.all(data.getAll('files').map(file => { const form = new FormData(); form.append('file', file); return previewImport(form) })) }),
     ElMessage: { warning() {}, error() {} },
     console: { error() {} },
     FormData,
@@ -201,4 +202,19 @@ test('export always sends the exact non-empty visible item id set', async () => 
 
   assert.equal(app.getRequest().seriesId, 10)
   assert.equal(app.getRequest().params.item_ids, '3,7')
+})
+
+
+test('multiple-file preview requests one sequential batch and uses server final impact', async () => {
+  let requestCount = 0
+  const app = previewApp(async () => previewResponse('unused.xlsx'))
+  // Instantiate the same controller with a batch-aware endpoint.
+  const context = { ...app, previewImportBatch: async data => { requestCount++; return { files: data.getAll('files').map(file => previewResponse(file.name)), impact: { modified: 1, total_changes: 1 } } } }
+  const code = source.slice(source.indexOf('const handleMultiFileUpload ='), source.indexOf('// 确认导入'))
+  const upload = new Function(...Object.keys(context), `${code};return handleMultiFileUpload`)(...Object.values(context))
+  upload({ file: new File(['A'], 'A.xlsx') }); upload({ file: new File(['B'], 'B.xlsx') })
+  await delay(120)
+  assert.equal(requestCount, 1)
+  assert.equal(app.previewData.value.impact.modified, 1)
+  assert.deepEqual(app.previewData.value.files.map(file => file.filename), ['A.xlsx', 'B.xlsx'])
 })
