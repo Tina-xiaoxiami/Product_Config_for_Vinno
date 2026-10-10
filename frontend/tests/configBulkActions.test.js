@@ -13,6 +13,18 @@ function bulkApp(overrides = {}) {
     applyToAllDialog: { visible:false, saving:false, row:null, request:0, targets:[], retryTargets:null, modelIds:[], result:null },
     pasteRowDialog: { visible:false, saving:false, targetRowId:null, request:0, targets:[], retryTargets:null, result:null, modelIds:[] },
     contextMenu: { row:rows[0], modelId:10, field:'final_config' }, copiedRowConfig: ref(null), hideContextMenu(){},
+    // These tests start from an already-open, validated menu session.
+    takeContextMenuTarget: () => {
+      const { row,modelId,field } = context.contextMenu
+      if (!row) return null
+      const modelIds = [...context.selectedModels.value]
+      const rowTargets = modelIds.flatMap(id => ['final_config','current_config','selection_config','rd_status'].map(targetField => ({
+        row,modelId:id,field:targetField,oldValue:row.model_values[id][targetField],
+        context:context.captureDraftCellContext(row,id,targetField)
+      })))
+      context.contextMenu.row = null
+      return { row,modelId,field,modelIds,rowTargets,sourceValues:{...row.model_values[modelId]} }
+    },
     isValueChanged: (a,b) => a !== b,
     captureDraftCellContext: (row,modelId,field) => ({ row,modelId,field, seriesId:5, batchId: context.draftBatchMap.value.get(5) }),
     isDraftCellScopeCurrent: scope => context.draftBatchMap.value.get(5) === scope.batchId,

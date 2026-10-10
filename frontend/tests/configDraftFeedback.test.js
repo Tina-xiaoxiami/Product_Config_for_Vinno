@@ -136,6 +136,12 @@ function clearCellAction(handleCellChange) {
       modelId: 2,
       field: 'final_config'
     },
+    takeContextMenuTarget: () => {
+      const {row,modelId,field} = context.contextMenu
+      if (!row) return null
+      context.contextMenu.row = null
+      return {row,modelId,field,context:{row,modelId,field,seriesId:10,batchId:20}}
+    },
     handleCellChange,
     ElMessage: {
       success: message => messages.push(message),

@@ -837,19 +837,21 @@
     <!-- 右键菜单 -->
     <div
       v-if="contextMenu.visible"
+      ref="contextMenuRef"
       class="context-menu"
-      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px', visibility: contextMenu.positioned ? 'visible' : 'hidden' }"
+      @click.stop
     >
       <div class="menu-item" @click="handleCopyCell">
         <el-icon><DocumentCopy /></el-icon>
-        <span>复制 (Ctrl+C)</span>
+        <span>复制</span>
       </div>
       <div class="menu-item" @click="handlePasteCell" :class="{ 'menu-disabled': !copiedCell }">
         <el-icon><CopyDocument /></el-icon>
-        <span>粘贴 (Ctrl+V)</span>
+        <span>粘贴</span>
       </div>
       <div class="menu-divider"></div>
-      <div class="menu-item" @click="pasteToSelectedCells" :class="{ 'menu-disabled': !copiedCell || selectedCells.length === 0 }">
+      <div class="menu-item" @click="pasteToSelectedCells" :class="{ 'menu-disabled': !copiedCell || !contextMenu.scope?.selectedTargets.length }">
         <el-icon><CopyDocument /></el-icon>
         <span v-if="false">粘贴到所有选中单元格 ({{ selectedCells.length }}个)</span>
         <span v-else>粘贴到所有选中单元格</span>
@@ -857,11 +859,11 @@
       <div class="menu-divider"></div>
       <div class="menu-item" @click="handleApplyToAllModels('field')">
         <el-icon><CopyDocument /></el-icon>
-        <span>应用到所有机型（仅当前字段）</span>
+        <span>应用到已选机型（仅当前字段）</span>
       </div>
       <div class="menu-item" @click="handleApplyToAllModels('row')">
         <el-icon><CopyDocument /></el-icon>
-        <span>应用到所有机型（整行4个字段）</span>
+        <span>应用到已选机型（整行4个字段）</span>
       </div>
       <div class="menu-item" @click="handleApplyValueToAllFields">
         <el-icon><DocumentCopy /></el-icon>
@@ -2189,8 +2191,12 @@ const contextMenu = reactive({
   y: 0,
   row: null,
   modelId: null,
-  field: null
+  field: null,
+  scope: null,
+  request: 0,
+  positioned: false
 })
+const contextMenuRef = ref(null)
 
 // 应用到所有机型对话框
 const applyToAllDialog = reactive({
@@ -3605,36 +3611,92 @@ const handleBatchCompleteRdStatus = async () => {
 }
 
 // 显示右键菜单
+const isContextMenuTargetCurrent = target => Boolean(target) && configReady.value &&
+  !loading.value && !applyingModelGroup.value && !reviewInteractionLocked.value &&
+  currentPage.value === target.page && pageSize.value === target.pageSize &&
+  selectedModels.value.length === target.modelIds.length && target.modelIds.every((id, index) => id === selectedModels.value[index]) &&
+  selectedSeries.value.length === target.seriesIds.length && target.seriesIds.every((id, index) => id === selectedSeries.value[index]) &&
+  visibleConfigFields.value.length === target.visibleFields.length && target.visibleFields.every((field, index) => field === visibleConfigFields.value[index]) &&
+  selectedModels.value.includes(target.modelId) && visibleConfigFields.value.includes(target.field) &&
+  paginatedTableData.value.includes(target.row) && isDraftCellContextCurrent(target.context) &&
+  target.rowTargets.every(cell => isDraftCellScopeCurrent(cell.context))
+const handleContextMenuOutside = event => {
+  if (!contextMenuRef.value?.contains(event.target)) hideContextMenu()
+}
+const handleContextMenuEscape = event => {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  hideContextMenu()
+}
+const handleContextMenuScroll = event => {
+  // 菜单自己的滚动用于访问小视口中的全部操作。
+  if (contextMenuRef.value?.contains(event.target)) return
+  hideContextMenu()
+}
+const detachContextMenuEvents = () => {
+  document.removeEventListener('pointerdown', handleContextMenuOutside, true)
+  document.removeEventListener('keydown', handleContextMenuEscape, true)
+  window.removeEventListener('scroll', handleContextMenuScroll, true)
+  window.removeEventListener('resize', hideContextMenu)
+}
 const showContextMenu = (event, row, modelId, field) => {
-  // 关闭之前的菜单
-  contextMenu.visible = false
-
-  // 设置菜单位置（相对于视口）
-  const x = event.clientX
-  const y = event.clientY
-
-  // 确保菜单不超出视口边界
-  const menuWidth = 220
-  const menuHeight = 180
-  const viewportWidth = window.innerWidth
-  const viewportHeight = window.innerHeight
-
-  contextMenu.x = Math.min(x, viewportWidth - menuWidth)
-  contextMenu.y = Math.min(y, viewportHeight - menuHeight)
-  contextMenu.row = row
-  contextMenu.modelId = modelId
-  contextMenu.field = field
-  contextMenu.visible = true
-
-  // 点击其他地方关闭菜单
-  setTimeout(() => {
-    document.addEventListener('click', hideContextMenu, { once: true })
-  }, 0)
+  hideContextMenu()
+  if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+      !paginatedTableData.value.includes(row) || !selectedModels.value.includes(modelId) ||
+      !visibleConfigFields.value.includes(field) || !row.model_values[modelId]) return false
+  const modelIds = [...selectedModels.value]
+  const visibleRows = new Map(paginatedTableData.value.map(item => [item.id, item]))
+  const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
+  const target = {
+    row, modelId, field, modelIds, seriesIds: [...selectedSeries.value], visibleFields: [...visibleConfigFields.value],
+    page: currentPage.value, pageSize: pageSize.value,
+    context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`),
+    sourceValues: { ...row.model_values[modelId] },
+    rowTargets: buildShortcutTargets([row], modelIds, fields, () => null),
+    selectedTargets: selectedCells.value.flatMap(cell => {
+      const item = visibleRows.get(cell.rowId)
+      if (!item || !modelIds.includes(cell.modelId) || !visibleConfigFields.value.includes(cell.field)) return []
+      return buildShortcutTargets([item], [cell.modelId], [cell.field], () => null)
+    })
+  }
+  if (!isContextMenuTargetCurrent(target)) return false
+  cancelEditSession()
+  const request = contextMenu.request
+  Object.assign(contextMenu, { row, modelId, field, scope: target, visible: true, positioned: false })
+  const scope = contextMenu.scope
+  document.addEventListener('pointerdown', handleContextMenuOutside, true)
+  document.addEventListener('keydown', handleContextMenuEscape, true)
+  window.addEventListener('scroll', handleContextMenuScroll, true)
+  window.addEventListener('resize', hideContextMenu)
+  nextTick(() => {
+    if (request !== contextMenu.request || contextMenu.scope !== scope || !contextMenu.visible || !isContextMenuTargetCurrent(scope)) return
+    const menu = contextMenuRef.value
+    if (!menu) { hideContextMenu(); return }
+    const rect = menu.getBoundingClientRect()
+    const gap = 8
+    contextMenu.x = Math.max(gap, Math.min(event.clientX, window.innerWidth - rect.width - gap))
+    contextMenu.y = Math.max(gap, Math.min(event.clientY, window.innerHeight - rect.height - gap))
+    contextMenu.positioned = true
+  })
+  return true
 }
 
-// 隐藏右键菜单
+// 隐藏右键菜单并失效所有延迟回调与目标。
 const hideContextMenu = () => {
   contextMenu.visible = false
+  contextMenu.request++
+  contextMenu.scope = null
+  contextMenu.row = null
+  contextMenu.modelId = null
+  contextMenu.field = null
+  contextMenu.positioned = false
+  detachContextMenuEvents()
+}
+const takeContextMenuTarget = () => {
+  const target = contextMenu.scope
+  const current = contextMenu.visible && isContextMenuTargetCurrent(target)
+  hideContextMenu()
+  return current ? target : null
 }
 
 // 处理应用到所有机型
@@ -3663,20 +3725,19 @@ const saveShortcutTargets = async targets => {
   return { result, retryTargets }
 }
 const handleApplyToAllModels = scope => {
-  hideContextMenu()
-  if (applyToAllDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
-  if (!contextMenu.row || !contextMenu.modelId || !contextMenu.field) return
-  if (scope === 'row' && selectedModels.value.length < 2) { ElMessage.warning('整行应用需要至少选择 2 个机型'); return }
-  const { row, modelId, field } = contextMenu
-  const value = row.model_values[modelId]?.[field]
-  const sourceValues = { ...row.model_values[modelId] }
+  const target = takeContextMenuTarget()
+  if (!target || applyToAllDialog.saving) return
+  if (scope === 'row' && target.modelIds.length < 2) { ElMessage.warning('整行应用需要至少选择 2 个机型'); return }
+  const { row, modelId, field, sourceValues } = target
+  const value = sourceValues[field]
   const fields = scope === 'field' ? [field] : ['final_config', 'current_config', 'selection_config', 'rd_status']
-  const modelIds = [...selectedModels.value].filter(id => scope === 'field' || id !== modelId)
+  const modelIds = target.modelIds.filter(id => scope === 'field' || id !== modelId)
   const fieldNames = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态' }
   Object.assign(applyToAllDialog, {
     row, modelId, field, scope, value, modelIds,
     fieldName: scope === 'field' ? fieldNames[field] : `${fieldNames[field]} 等4个字段`,
-    targets: buildShortcutTargets([row], modelIds, fields, (_, __, targetField) => scope === 'field' ? value : sourceValues[targetField]),
+    targets: target.rowTargets.filter(cell => modelIds.includes(cell.modelId) && fields.includes(cell.field))
+      .map(cell => ({ ...cell, newValue: scope === 'field' ? value : sourceValues[cell.field] })),
     retryTargets: null, result: null, request: applyToAllDialog.request + 1, visible: true
   })
 }
@@ -3698,62 +3759,28 @@ const confirmApplyToAll = async () => {
 
 // 当前值应用到该行所有字段（仅当前机型）
 const handleApplyValueToAllFields = async () => {
-  hideContextMenu()
-
-  if (!contextMenu.row || !contextMenu.modelId || !contextMenu.field) return
-
-  const row = contextMenu.row
-  const modelId = contextMenu.modelId
-  const sourceField = contextMenu.field
-  const value = row.model_values[modelId]?.[sourceField]
-
-  if (!value) {
-    ElMessage.warning('当前单元格为空，无法应用')
-    return
-  }
-
-  const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
-  const promises = []
-
-  try {
-    for (const field of fields) {
-      if (field === sourceField) continue // 跳过源字段
-
-      const oldValue = row.model_values[modelId][field]
-      if (isValueChanged(oldValue, value)) {
-        row.model_values[modelId][field] = value
-        promises.push(handleCellChange(row, modelId, field, value, oldValue))
-      }
-    }
-
-    if (promises.length > 0) {
-      const successCount = (await Promise.all(promises)).filter(Boolean).length
-      if (successCount > 0) ElMessage.success(`已将值应用到该机型其他 ${successCount} 个字段`)
-    } else {
-      ElMessage.info('其他字段已经是相同值')
-    }
-  } catch (error) {
-    console.error('应用失败:', error)
-    ElMessage.error('应用失败')
-  }
+  const target = takeContextMenuTarget()
+  if (!target) return
+  const value = target.sourceValues[target.field]
+  if (!value) { ElMessage.warning('当前单元格为空，无法应用'); return }
+  const targets = target.rowTargets.filter(cell => cell.modelId === target.modelId && cell.field !== target.field)
+    .map(cell => ({ ...cell, newValue: value }))
+  const { result } = await saveShortcutTargets(targets)
+  if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+  else if (result.success) ElMessage.success(`已将值应用到该机型其他 ${result.success} 个字段`)
+  else ElMessage.info('其他字段已经是相同值')
 }
 
 // 处理清空单元格
 const handleClearCell = async () => {
-  hideContextMenu()
-
-  if (!contextMenu.row || !contextMenu.modelId || !contextMenu.field) return
-
-  const row = contextMenu.row
-  const modelId = contextMenu.modelId
-  const field = contextMenu.field
+  const target = takeContextMenuTarget()
+  if (!target) return
+  const { row, modelId, field, context } = target
   const oldValue = row.model_values[modelId]?.[field]
-
-  if (!oldValue) return // 已经是空的
-
+  if (!oldValue) return
   try {
     row.model_values[modelId][field] = null
-    if (await handleCellChange(row, modelId, field, null, oldValue)) ElMessage.success('已清空')
+    if (await handleCellChange(row, modelId, field, null, oldValue, context)) ElMessage.success('已清空')
   } catch (error) {
     console.error('清空失败:', error)
     ElMessage.error('清空失败')
@@ -3762,15 +3789,14 @@ const handleClearCell = async () => {
 
 // 处理复制整行配置
 const handleCopyRowConfig = () => {
-  hideContextMenu()
-  if (pasteRowDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
-  if (!contextMenu.row) return
+  const target = takeContextMenuTarget()
+  if (!target || pasteRowDialog.saving) return
 
-  // 复制当前行的所有配置
-  const row = contextMenu.row
+  // 复制菜单打开时确定的机型范围。
+  const row = target.row
   const config = {}
 
-  for (const modelId of selectedModels.value) {
+  for (const modelId of target.modelIds) {
     if (row.model_values[modelId]) {
       config[modelId] = {
         final_config: row.model_values[modelId].final_config,
@@ -3789,18 +3815,16 @@ const handleCopyRowConfig = () => {
 
   // 显示粘贴对话框
   Object.assign(pasteRowDialog, {
-    sourceRow: row, targetRowId: null, modelIds: [...selectedModels.value], clipboard: copiedRowConfig.value,
+    sourceRow: row, targetRowId: null, modelIds: [...target.modelIds], clipboard: copiedRowConfig.value,
     targets: [], retryTargets: null, result: null, request: pasteRowDialog.request + 1, visible: true
   })
 }
 
 // 查看该行差异
 const handleViewRowDiff = () => {
-  hideContextMenu()
-
-  if (!contextMenu.row) return
-
-  rowDiffDialog.row = contextMenu.row
+  const target = takeContextMenuTarget()
+  if (!target) return
+  rowDiffDialog.row = target.row
   rowDiffDialog.visible = true
 }
 
@@ -4566,7 +4590,11 @@ const copyCell = (row, modelId, field) => {
 }
 
 // 粘贴单元格
-const pasteCell = async (targetRow, targetModelId, targetField) => {
+const pasteCell = async (targetRow, targetModelId, targetField, frozenContext = null) => {
+  const context = frozenContext || captureDraftCellContext(targetRow, targetModelId, targetField, `${targetRow.id}_${targetModelId}_${targetField}`)
+  if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+      !paginatedTableData.value.includes(targetRow) || !selectedModels.value.includes(targetModelId) ||
+      !visibleConfigFields.value.includes(targetField) || !isDraftCellContextCurrent(context)) return false
   if (!copiedCell.value) {
     ElMessage.warning('请先复制单元格')
     return
@@ -4590,7 +4618,7 @@ const pasteCell = async (targetRow, targetModelId, targetField) => {
 
   try {
     targetRow.model_values[targetModelId][targetField] = newValue
-    if (await handleCellChange(targetRow, targetModelId, targetField, newValue, oldValue)) ElMessage.success('已粘贴')
+    if (await handleCellChange(targetRow, targetModelId, targetField, newValue, oldValue, context)) ElMessage.success('已粘贴')
   } catch (error) {
     console.error('粘贴失败:', error)
     ElMessage.error('粘贴失败')
@@ -4599,52 +4627,30 @@ const pasteCell = async (targetRow, targetModelId, targetField) => {
 
 // 右键菜单中处理复制
 const handleCopyCell = () => {
-  hideContextMenu()
-  if (contextMenu.row && contextMenu.modelId && contextMenu.field) {
-    copyCell(contextMenu.row, contextMenu.modelId, contextMenu.field)
-  }
+  const target = takeContextMenuTarget()
+  if (target) copyCell(target.row, target.modelId, target.field)
 }
 
 // 右键菜单中处理粘贴
-const handlePasteCell = () => {
-  hideContextMenu()
-  if (contextMenu.row && contextMenu.modelId && contextMenu.field) {
-    pasteCell(contextMenu.row, contextMenu.modelId, contextMenu.field)
-  }
+const handlePasteCell = async () => {
+  const target = takeContextMenuTarget()
+  if (!target || !copiedCell.value) return
+  return await pasteCell(target.row, target.modelId, target.field, target.context)
 }
 
-// 批量粘贴到选中的单元格
+// 批量粘贴到菜单打开时已选择且可见的单元格。
 const pasteToSelectedCells = async () => {
-  if (!copiedCell.value || selectedCells.value.length === 0) return
-
+  const target = takeContextMenuTarget()
+  if (!target || !copiedCell.value || !target.selectedTargets.length) return
   const source = copiedCell.value
-  const promises = []
-
-  try {
-    for (const cell of selectedCells.value) {
-      // 跳过源单元格本身
-      if (cell.rowId === source.row.id && cell.modelId === source.modelId && cell.field === source.field) {
-        continue
-      }
-
-      const targetRow = tableData.value.find(r => r.id === cell.rowId)
-      if (!targetRow || !targetRow.model_values[cell.modelId]) continue
-
-      const oldValue = targetRow.model_values[cell.modelId][cell.field]
-      if (isValueChanged(oldValue, source.value)) {
-        targetRow.model_values[cell.modelId][cell.field] = source.value
-        promises.push(handleCellChange(targetRow, cell.modelId, cell.field, source.value, oldValue))
-      }
-    }
-
-    if (promises.length > 0) {
-      const successCount = (await Promise.all(promises)).filter(Boolean).length
-      if (successCount > 0) ElMessage.success(`已粘贴到 ${successCount} 个单元格`)
-    }
-  } catch (error) {
-    console.error('批量粘贴失败:', error)
-    ElMessage.error('批量粘贴失败')
-  }
+  const targets = target.selectedTargets.filter(cell =>
+    !(cell.row.id === source.row.id && cell.modelId === source.modelId && cell.field === source.field) &&
+    paginatedTableData.value.includes(cell.row) && selectedModels.value.includes(cell.modelId) &&
+    visibleConfigFields.value.includes(cell.field) && isDraftCellContextCurrent(cell.context))
+    .map(cell => ({ ...cell, newValue: source.value }))
+  const { result } = await saveShortcutTargets(targets)
+  if (result.failed || result.stale) ElMessage.warning(`已粘贴 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+  else if (result.success) ElMessage.success(`已粘贴到 ${result.success} 个单元格`)
 }
 
 onMounted(() => {
@@ -4664,6 +4670,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  hideContextMenu()
   cancelEditSession()
   clearTimeout(searchTimer)
   clearTimeout(processTimer)
@@ -4671,6 +4678,15 @@ onUnmounted(() => {
   configResizeObserver?.disconnect()
   // Excel-like keyboard events removed
 })
+
+// 右键菜单范围清理
+watch(() => [currentPage.value, pageSize.value, [...selectedSeries.value], [...selectedModels.value],
+  [...visibleConfigFields.value], tableData.value, paginatedTableData.value, [...draftBatchMap.value],
+  selectedCells.value.map(cell => `${cell.rowId}_${cell.modelId}_${cell.field}`),
+  configReady.value, loading.value, applyingModelGroup.value, reviewInteractionLocked.value], () => {
+  if (contextMenu.visible) hideContextMenu()
+}, { flush: 'sync' })
+// 右键菜单范围清理结束
 
 // 编辑会话范围清理
 watch(() => [editingCell.value, currentPage.value, pageSize.value,
@@ -5123,7 +5139,14 @@ onMounted(() => {
   border-radius: 4px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   z-index: 9999;
-  min-width: 200px;
+  width: max-content;
+  min-width: min(200px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 4px 0;
 }
 
