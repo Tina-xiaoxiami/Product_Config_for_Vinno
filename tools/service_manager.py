@@ -51,7 +51,8 @@ def port_is_free(port: int) -> bool:
     # Check active listeners, not bind availability: closed TCP connections may
     # remain in TIME_WAIT even though the application's server can restart.
     unavailable = {errno.ECONNREFUSED, errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL,
-                   errno.ENETUNREACH, errno.EHOSTUNREACH}
+                   errno.ENETUNREACH, errno.EHOSTUNREACH,
+                   10047, 10049, 10051, 10061, 10065}  # Windows Winsock equivalents.
     for family, host in [(socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')]:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as connection:
@@ -59,7 +60,7 @@ def port_is_free(port: int) -> bool:
                 connection.connect((host, port))
                 return False
         except OSError as exc:
-            if exc.errno not in unavailable:
+            if exc.errno not in unavailable and getattr(exc, 'winerror', None) not in unavailable:
                 return False
     return True
 
