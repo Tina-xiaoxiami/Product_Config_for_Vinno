@@ -216,3 +216,11 @@ async def test_preview_restoring_field_deletion_changes_only_named_cell(db):
     assert impact["changes"][0]["old_value"] is None
     assert impact["changes"][0]["new_value"] == "CURRENT"
     assert await _database_state(db) == before
+
+
+@pytest.mark.asyncio
+async def test_preview_counts_configuration_rows_once_across_multiple_series(db):
+    result = await preview_import(_upload(_workbook([("China", "M1"), ("Overseas", "M2")])), db)
+    assert result["summary"]["total_items"] == 1
+    assert result["summary"]["total_models"] == 2
+    assert [series["item_count"] for series in result["series"]] == [1, 1]
