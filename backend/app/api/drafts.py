@@ -495,9 +495,12 @@ def _select_submission_drafts(all_drafts: list[ConfigDraft], data: DraftSubmitRe
             and (model_ids is None or draft.model_id is None or draft.model_id in model_ids)]
 
 
-def _submission_signature(batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> str:
+async def _submission_signature(db: AsyncSession, batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> str:
     """Detect additions, edits, removals and scope changes after user review."""
+    latest = await _latest_version(db, batch.series_id)
     payload = {
+        "working_snapshot": await build_series_snapshot(db, batch.series_id),
+        "baseline": [latest.id, latest.snapshot_data] if latest else None,
         "batch": [batch.id, batch.series_id, batch.status],
         "items": sorted(set(data.item_ids)) if data.item_ids is not None else None,
         "models": sorted(set(data.model_ids)) if data.model_ids is not None else None,
@@ -527,7 +530,7 @@ async def preview_draft_submission(batch_id: str, data: DraftSubmitRequest, db: 
     return {
         "batch_id": batch.id, "series_id": batch.series_id,
         "series_name": series.name if series else str(batch.series_id),
-        "signature": _submission_signature(batch, all_drafts, data),
+        "signature": await _submission_signature(db, batch, all_drafts, data),
         "total_items": len({draft.item_id for draft in selected}),
         "total_changes": len(selected), "total_models": len(model_ids),
         "fields": [field for field in CONFIG_FIELDS if field in fields],
@@ -567,7 +570,7 @@ async def submit_draft_batch(
         raise HTTPException(status_code=400, detail="没有待提交的草稿")
     validated_items = await _validate_stored_drafts(db, batch, all_drafts)
 
-    if data.expected_signature is not None and data.expected_signature != _submission_signature(batch, all_drafts, data):
+    if data.expected_signature is not None and data.expected_signature != await _submission_signature(db, batch, all_drafts, data):
         raise HTTPException(status_code=409, detail="草稿或提交范围已变化，请重新核对发布预览")
     drafts = _select_submission_drafts(all_drafts, data)
     processed_count = len(drafts)
@@ -678,7 +681,7 @@ async def _process_single_batch_submit(
     all_drafts = drafts_result.scalars().all()
     if not all_drafts:
         return {"success": False, "message": "草稿批次中没有草稿项"}
-    if expected_signature is not None and expected_signature != _submission_signature(batch, all_drafts, DraftSubmitRequest()):
+    if expected_signature is not None and expected_signature != await _submission_signature(db, batch, all_drafts, DraftSubmitRequest()):
         return {"success": False, "message": "草稿已变化，请重新核对发布预览"}
     try:
         await _validate_stored_drafts(db, batch, all_drafts)
