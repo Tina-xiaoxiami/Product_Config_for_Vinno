@@ -48,7 +48,70 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     ...Object.keys(context),
     `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange }`
   )(...Object.values(context))
-  return { finishEdit, removeDraftChange, handleCellChange, messages, row, tableData, draftChanges, originalDataMap: context.originalDataMap }
+  return {
+    finishEdit,
+    removeDraftChange,
+    handleCellChange,
+    messages,
+    row,
+    tableData,
+    draftChanges,
+    originalDataMap: context.originalDataMap,
+    draftBatchMap: context.draftBatchMap
+  }
+}
+
+function draftLoadingController({ getModels, loadData, initDraft }) {
+  const context = {
+    selectedSeries: ref([10]),
+    allModelsMap: ref(new Map()),
+    selectedModels: ref([]),
+    tempSelectedModels: ref([]),
+    tableData: ref([]),
+    originalData: ref([]),
+    seriesList: ref([{ id: 10, name: 'V10' }, { id: 20, name: 'V20' }]),
+    configReady: ref(true),
+    getModels,
+    loadData,
+    initDraft,
+    resolveGroupModels: () => null,
+    applySavedOrder() {},
+    showDiffOnly: ref(false),
+    referenceModel: ref(null),
+    ElMessage: { warning() {}, error() {} },
+    console: { error() {} },
+    loadSeries: async () => {}
+  }
+  const code = source.slice(
+    source.indexOf('let modelLoadRequest ='),
+    source.indexOf('// 加载配置数据')
+  )
+  const loadModels = new Function(
+    ...Object.keys(context),
+    `${code}\nreturn loadModels`
+  )(...Object.values(context))
+  return { loadModels, ...context }
+}
+
+function cellEditor({ ready = true, loading = false, applyingModelGroup = false } = {}) {
+  const context = {
+    configReady: ref(ready),
+    loading: ref(loading),
+    applyingModelGroup: ref(applyingModelGroup),
+    editingCell: ref(null),
+    nextTick: callback => callback(),
+    editSelectRef: ref(null),
+    setTimeout
+  }
+  const code = source.slice(
+    source.indexOf('const startEdit ='),
+    source.indexOf('// 结束编辑单元格')
+  )
+  const startEdit = new Function(
+    ...Object.keys(context),
+    `${code}\nreturn startEdit`
+  )(...Object.values(context))
+  return { startEdit, editingCell: context.editingCell }
 }
 
 function clearCellAction(handleCellChange) {
@@ -299,4 +362,125 @@ test('failed save after refresh and successful undo restores the published basel
   assert.equal(replacement.model_values[2].final_config, 'published')
   assert.equal(replacementOriginal.model_values[2].final_config, 'published')
   assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+})
+
+test('successful save reconciles the replacement row after a same-scope filter refresh', async () => {
+  const saveRequest = deferred()
+  const app = draftEditor({ createDraft: () => saveRequest.promise })
+  const save = app.handleCellChange(app.row, 2, 'final_config', 'attempted', 'published')
+
+  const replacement = { id: 1, model_values: { 2: { final_config: 'published' } } }
+  app.tableData.value = [replacement]
+  saveRequest.resolve({ draft_id: 33 })
+  assert.equal(await save, true)
+
+  assert.equal(replacement.model_values[2].final_config, 'attempted')
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'attempted')
+})
+
+test('successful undo reconciles the replacement row after a same-scope filter refresh', async () => {
+  const deleteRequest = deferred()
+  const app = draftEditor({
+    rowValue: 'working',
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    deleteDraftByKey: () => deleteRequest.promise
+  })
+  const undo = app.removeDraftChange(app.row, 2, 'final_config', '1_2_final_config')
+
+  const replacement = { id: 1, model_values: { 2: { final_config: 'working' } } }
+  app.tableData.value = [replacement]
+  deleteRequest.resolve()
+  assert.equal(await undo, true)
+
+  assert.equal(replacement.model_values[2].final_config, 'published')
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+})
+
+test('same-scope reconciliation does not overwrite a newer queued edit', async () => {
+  const first = deferred()
+  const second = deferred()
+  const requests = [first, second]
+  const app = draftEditor({ createDraft: () => requests.shift().promise })
+  const olderSave = app.handleCellChange(app.row, 2, 'final_config', 'older', 'published')
+  const replacement = { id: 1, model_values: { 2: { final_config: 'newer' } } }
+  app.tableData.value = [replacement]
+  const newerSave = app.handleCellChange(replacement, 2, 'final_config', 'newer', 'published')
+
+  first.resolve({ draft_id: 34 })
+  assert.equal(await olderSave, true)
+  assert.equal(replacement.model_values[2].final_config, 'newer')
+  second.resolve({ draft_id: 35 })
+  assert.equal(await newerSave, true)
+  assert.equal(replacement.model_values[2].final_config, 'newer')
+})
+
+test('successful old-scope save does not modify a replacement row in a new draft batch', async () => {
+  const saveRequest = deferred()
+  const app = draftEditor({ createDraft: () => saveRequest.promise })
+  const save = app.handleCellChange(app.row, 2, 'final_config', 'attempted', 'published')
+  const replacement = { id: 1, model_values: { 2: { final_config: 'new-scope' } } }
+  app.tableData.value = [replacement]
+  app.draftBatchMap.value = new Map([[10, 21]])
+
+  saveRequest.resolve({ draft_id: 36 })
+  assert.equal(await save, true)
+  assert.equal(replacement.model_values[2].final_config, 'new-scope')
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+})
+
+test('model loading keeps editing unready until draft initialization finishes', async () => {
+  const draftRequest = deferred()
+  const app = draftLoadingController({
+    getModels: async () => ({ items: [{ id: 2, name: 'V10' }] }),
+    loadData: async () => true,
+    initDraft: () => draftRequest.promise
+  })
+
+  const load = app.loadModels()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(app.configReady.value, false)
+
+  draftRequest.resolve(true)
+  assert.equal(await load, true)
+  assert.equal(app.configReady.value, true)
+})
+
+test('a stale series load cannot reopen editing while the latest draft initializes', async () => {
+  const firstModels = deferred()
+  const latestDraft = deferred()
+  const app = draftLoadingController({
+    getModels: seriesId => seriesId === 10
+      ? firstModels.promise
+      : Promise.resolve({ items: [{ id: 3, name: 'V20' }] }),
+    loadData: async () => true,
+    initDraft: () => latestDraft.promise
+  })
+
+  const staleLoad = app.loadModels()
+  app.selectedSeries.value = [20]
+  const latestLoad = app.loadModels()
+  await Promise.resolve()
+  await Promise.resolve()
+  firstModels.resolve({ items: [{ id: 2, name: 'V10' }] })
+  assert.equal(await staleLoad, false)
+  assert.equal(app.configReady.value, false)
+
+  latestDraft.resolve(true)
+  assert.equal(await latestLoad, true)
+  assert.equal(app.configReady.value, true)
+})
+
+test('cell editing is gated by aggregate configuration readiness', () => {
+  const unready = cellEditor({ ready: false })
+  unready.startEdit({ id: 1 }, 2, 'final_config')
+  assert.equal(unready.editingCell.value, null)
+
+  const loading = cellEditor({ ready: true, loading: true })
+  loading.startEdit({ id: 1 }, 2, 'final_config')
+  assert.equal(loading.editingCell.value, null)
+
+  const ready = cellEditor()
+  ready.startEdit({ id: 1 }, 2, 'final_config')
+  assert.deepEqual(ready.editingCell.value, { rowId: 1, modelId: 2, field: 'final_config' })
 })
