@@ -81,6 +81,8 @@ function importApp({ files, preview, importExcel, previewRequest = 1, committedP
 function exportApp(visibleRows) {
   let request
   const context = {
+    exporting: ref(false), configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false),
+    draftBatchMap: ref(new Map([[10, 100]])), waitForDraftSaves: async () => {},
     selectedSeries: ref([10]),
     seriesList: ref([{ id: 10, name: 'V10' }]),
     filteredTableData: ref(visibleRows),

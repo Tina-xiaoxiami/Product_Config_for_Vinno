@@ -17,6 +17,7 @@ function deferred() {
 
 function modelLoader(getModels) {
   const context = {
+    modelsLoading: ref(false), modelLoadError: ref(''), invalidateComparison() {},
     modelLoadRequest: 0,
     selectedSeries: ref([1]),
     seriesList: ref([{ id: 1, name: 'One' }, { id: 2, name: 'Two' }]),

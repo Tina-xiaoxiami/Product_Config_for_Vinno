@@ -11,6 +11,7 @@ function exporter(exportExcel = async () => new Uint8Array([1]), waitForDraftSav
     selectedModels: ref([10,20]), allModelsMap: ref(new Map([[10,{seriesId:1,name:'A'}],[20,{seriesId:2,name:'B'}]])),
     selectedCategories: ref(['Probes']), visibleConfigFields: ref(['final_config']),
     filteredTableData: ref([{id:7}]), draftChanges: ref(new Map()), deletedItemModelMap: ref(new Map()), draftDeleteValues: ref(new Map()), newItemModelMap: ref(new Map()),
+    draftBatchMap: ref(new Map([[1,11],[2,22]])),
     configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), exporting: ref(false),
     waitForDraftSaves, exportExcel: async (id, params) => {calls.push({id,params});return exportExcel(id,params)}, mergeModelNames: names => names.join('-'),
     Blob, window: {URL:{createObjectURL:()=> 'blob:test', revokeObjectURL() {}}},

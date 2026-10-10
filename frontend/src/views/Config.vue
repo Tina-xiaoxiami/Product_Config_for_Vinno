@@ -163,7 +163,7 @@
           >
             <el-button type="primary" :icon="Upload" :loading="previewLoading" :disabled="importing">{{ previewLoading ? '正在分析Excel' : '导入Excel' }}</el-button>
           </el-upload>
-          <el-button :icon="Download" @click="handleExport">导出Excel</el-button>
+          <el-button :icon="Download" :loading="exporting" @click="handleExport" :title="selectedSeries.length > 1 ? '多个系列按系列导出到一个 ZIP 文件' : '导出当前筛选视图'">导出Excel</el-button>
 
           <!-- 批量操作 -->
           <el-dropdown v-if="selectedSeries.length > 0" @command="handleBatchOperation">
@@ -1102,6 +1102,7 @@ const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesN
 const tableData = ref([])
 const originalData = ref([])  // 存储原始数据，用于比较变化
 const loading = ref(false)
+const exporting = ref(false)
 const configLoadError = ref('')
 const configRetrying = ref(false)
 const configReady = ref(false)
@@ -3310,14 +3311,24 @@ const confirmImport = async () => {
 
 // 导出Excel - 所见即所得，仅导出当前筛选视图的内容
 const handleExport = async () => {
+  if (exporting.value || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
   if (selectedSeries.value.length === 0) {
     ElMessage.warning('请先选择产品系列')
     return
   }
 
-  // 仅导出第一个选中的系列（当前视图对应的系列）
-  const seriesId = selectedSeries.value[0]
-  const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
+  const visibleFields = [...visibleConfigFields.value]
+  const modelIds = [...selectedModels.value].filter(id => selectedSeries.value.includes(allModelsMap.value.get(id)?.seriesId))
+  if (!modelIds.length || !visibleFields.length) { ElMessage.warning('请先选择机型并显示至少一个配置字段'); return }
+  const seriesIds = [...new Set(selectedSeries.value)].filter(id => modelIds.some(mid => allModelsMap.value.get(mid)?.seriesId === id))
+  const seriesId = seriesIds[0]
+  const seriesNames = seriesIds.map(id => seriesList.value.find(s => s.id === id)?.name || `系列 ${id}`)
+  const seriesName = seriesNames.join('-')
+  const modelNamesList = modelIds.map(id => allModelsMap.value.get(id)?.name).filter(Boolean)
+  const mergedModelNames = mergeModelNames(modelNamesList)
+  const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
+  const batches = new Map(draftBatchMap.value)
+  exporting.value = true
 
   try {
     // 使用 filteredTableData（已应用所有前端筛选：分类、搜索、草稿、差异、空行隐藏）
@@ -3332,23 +3343,22 @@ const handleExport = async () => {
     // 提取筛选后的行 ID
     const visibleItemIds = visibleData.map(r => r.id).filter(id => id != null)
 
-    // 获取该系列当前选中的机型
-    const seriesModelIds = []
-    for (const [mid, m] of allModelsMap.value) {
-      if (m.seriesId === seriesId && selectedModels.value.includes(mid)) {
-        seriesModelIds.push(mid)
-      }
-    }
+    const seriesModelIds = modelIds
 
     // 传入筛选后的行 ID、机型 ID 和可见列，后端按此生成 Excel
     const exportParams = { item_ids: visibleItemIds.join(',') }
+    if (seriesIds.length > 1) exportParams.series_ids = seriesIds
     if (seriesModelIds.length > 0) {
       exportParams.model_ids = seriesModelIds.join(',')
     }
     // 传入当前可见的配置列字段（最终配置/当前配置/选型类别/研发状态）
-    const visibleFields = visibleConfigFields.value
     if (visibleFields.length > 0) {
       exportParams.visible_fields = visibleFields.join(',')
+    }
+    await waitForDraftSaves()
+    if ([...batches].some(([id, batch]) => draftBatchMap.value.get(id) !== batch)) {
+      ElMessage.warning('草稿范围已变化，请重新导出')
+      return
     }
     // 传入草稿变更记录，使导出包含变更前后对比
     const relatedDraftChanges = {}
@@ -3394,14 +3404,6 @@ const handleExport = async () => {
     }
 
     const res = await exportExcel(seriesId, exportParams)
-    const modelNamesList = seriesModelIds.map(id => {
-      const m = allModelsMap.value.get(id)
-      return m ? m.name : ''
-    }).filter(Boolean)
-    const mergedModelNames = mergeModelNames(modelNamesList)
-
-    const categoryNames = selectedCategories.value.map(c => c.replace(/\s+/g, '')).join('-')
-
     let suffix = seriesName
     if (mergedModelNames) {
       suffix += `_${mergedModelNames}`
@@ -3410,7 +3412,7 @@ const handleExport = async () => {
       suffix += `_${categoryNames}`
     }
 
-    const filename = `Export_SpecExcel_${suffix}.xlsx`
+    const filename = `Export_SpecExcel_${suffix}.${seriesIds.length > 1 ? 'zip' : 'xlsx'}`
 
     const url = window.URL.createObjectURL(new Blob([res]))
     const link = document.createElement('a')
@@ -3425,7 +3427,7 @@ const handleExport = async () => {
   } catch (error) {
     console.error('导出失败:', error)
     ElMessage.error('导出失败')
-  }
+  } finally { exporting.value = false }
 }
 
 // 合并型号名称（相同前缀合并，如 VINNO 5, VINNO 3, VINNO 6 -> VINNO 5/3/6）

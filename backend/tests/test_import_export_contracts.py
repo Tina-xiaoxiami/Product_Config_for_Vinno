@@ -1286,11 +1286,14 @@ async def test_multi_series_export_archives_shared_single_series_workbooks(db):
     assert all("/" not in name and "\\" not in name for name in archive.namelist())
     workbooks = [openpyxl.load_workbook(io.BytesIO(archive.read(name))) for name in archive.namelist()]
     assert [workbook.active.cell(1, 6).value for workbook in workbooks] == ["China", "Oversea/Scope"]
-    assert [workbook.active.cell(5, 6).value for workbook in workbooks] == ["FINAL", "OTHER"]
+    assert [workbook.active.cell(6, 6).value for workbook in workbooks] == ["FINAL", "OTHER"]
     for workbook in workbooks:
         assert "__VINNO_CONFIG_META__" in workbook.sheetnames
         assert workbook.active.max_column == 6
         assert "HIDDEN" not in [cell.value for row in workbook.active for cell in row]
+        preview = await preview_import(_upload(workbook, "archived.xlsx"), db)
+        assert preview["summary"]["total_models"] == 1
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
 
 
 @pytest.mark.asyncio

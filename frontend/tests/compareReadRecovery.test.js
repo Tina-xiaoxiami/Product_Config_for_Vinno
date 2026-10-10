@@ -22,7 +22,7 @@ function readController(overrides = {}) {
     compareTableRef: ref(null), nextTick: callback => ticks.push(callback), console:{error(){}},
     ElMessage:Object.fromEntries(['warning','error','success','info'].map(type=>[type,message=>messages.push({type,message})])), ...overrides
   }
-  const start=source.indexOf('// 加载产品系列\nconst loadSeries')
+  const start=source.indexOf('// 加载产品系列')
   const code=source.slice(start,source.indexOf('// 加载枚举值\nconst loadEnumValues',start))
   const lifecycleStart=source.indexOf('// 对比条件生命周期')
   const lifecycle=source.slice(lifecycleStart,source.indexOf('// 对比条件生命周期结束',lifecycleStart))
@@ -53,11 +53,17 @@ test('explicit exists:false skips draft reads and all creation on a read-only pa
 test('draft-list failure does not publish partial series statistics and retries the same scope',async()=>{
   let fail=true;const compared=[]
   const app=readController({
+    selectedSeries:ref([1,2]),
     compareConfigs:async payload=>{compared.push(payload);return{total:1,diff_count:1,items:[]}},
-    getDraftList:async()=>{if(fail)throw Error('offline');return{items:[{id:1,item_id:1,model_id:11,field_name:'final_config',change_type:'update',old_value:'S',new_value:'O'}]}}
+    getCurrentDraftBatch:async id=>({exists:true,batch:{id:`batch-${id}`}}),
+    getDraftList:async id=>{
+      if(id==='batch-2' && fail)throw Error('offline')
+      return {items:id==='batch-1'?[{id:1,item_id:1,model_id:11,field_name:'final_config',change_type:'update',old_value:'S',new_value:'O'}]:[]}
+    }
   })
   assert.equal(await app.autoCompare(),false)
   assert.equal(app.compareResult.value,null);assert.match(app.comparisonError.value,/草稿/)
+  assert.equal(app.draftStats.value.total,0);assert.equal(app.draftChanges.value.size,0)
   fail=false;assert.equal(await app.retryComparison(),true)
   assert.deepEqual(compared[0],compared[1]);assert.equal(app.draftStats.value.total,1)
   assert.equal(app.comparisonError.value,'');assert.equal(app.comparisonRetrying.value,false)

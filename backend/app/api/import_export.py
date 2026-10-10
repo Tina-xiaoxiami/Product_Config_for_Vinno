@@ -9,12 +9,14 @@ from typing import Optional
 from pydantic import BaseModel
 import io
 import json
+import zipfile
 from pathlib import Path
 
 
 class ExportRequest(BaseModel):
     """导出请求参数"""
     series_id: int
+    series_ids: Optional[list[int]] = None
     include_main_unit: bool = False
     item_ids: Optional[str] = None
     categories: Optional[str] = None
@@ -1279,7 +1281,40 @@ async def export_excel(
     body: ExportRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """导出Excel文件（所见即所得——由前端传入已筛选的行ID、机型ID和可见列字段）"""
+    """Export one workbook, or an archive using the same per-series rules."""
+    if body.series_ids is None:
+        return await _export_series_excel(body, db)
+    series_ids = list(dict.fromkeys(body.series_ids))
+    if not series_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个导出系列")
+    if len(series_ids) == 1:
+        return await _export_series_excel(body.model_copy(update={"series_id": series_ids[0]}), db)
+    series = {
+        row.id: row for row in (await db.execute(
+            select(ProductSeries).where(ProductSeries.id.in_(series_ids))
+        )).scalars()
+    }
+    if any(series_id not in series for series_id in series_ids):
+        raise HTTPException(status_code=404, detail="导出范围包含不存在的产品系列")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for series_id in series_ids:
+            response = await _export_series_excel(body.model_copy(update={"series_id": series_id}), db)
+            chunks = [chunk async for chunk in response.body_iterator]
+            name = "".join(
+                "_" if char in '/\\<>:"|?*' or ord(char) < 32 else char
+                for char in series[series_id].name
+            ).strip(" .") or "系列"
+            archive.writestr(f"{series_id}_{name}.xlsx", b"".join(chunks))
+    output.seek(0)
+    return StreamingResponse(
+        output, media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=Export_SpecExcel.zip"},
+    )
+
+
+async def _export_series_excel(body: ExportRequest, db: AsyncSession):
+    """Generate a workbook with the existing row, field and identity rules."""
     series_id = body.series_id
     include_main_unit = body.include_main_unit
     item_ids = body.item_ids

@@ -16,6 +16,7 @@ const versionResult = id => ({ summary: { added: 0, modified: 1, deleted: 0 }, a
 function comparisonController({ compareConfigs = async () => result(1), getDraftList = async () => ({ items: [] }) } = {}) {
   const ticks = [], messages = [], payloads = []
   const context = {
+    seriesLoading: ref(false), modelsLoading: ref(false), seriesLoadError: ref(''), modelLoadError: ref(''), comparisonError: ref(''),
     watch, selectedModels: ref([11, 12]), selectedSeries: ref([1]), compareFields: ref(['final_config']), showOnlyDiff: ref(true),
     allModelsMap: ref(new Map([[11, { seriesId: 1 }], [12, { seriesId: 1 }], [13, { seriesId: 1 }], [14, { seriesId: 1 }]])),
     loading: ref(false), compareResult: ref(null), currentPage: ref(1), referenceModel: ref(11),
