@@ -111,3 +111,24 @@ test('a successful reload restores selected models still present in the current 
   assert.deepEqual(app.selectedModels.value, [11])
   assert.equal(app.referenceModel.value, 11)
 })
+
+test('overlapping Compare reloads retain valid choices when the newer load wins', async () => {
+  const first = deferred()
+  const second = deferred()
+  let calls = 0
+  const app = modelLoader(() => ++calls === 1 ? first.promise : second.promise)
+  app.allModelsMap.value = new Map([[11, { id: 11, name: 'Model One', seriesId: 1, seriesName: 'One' }]])
+  app.selectedModels.value = [11]
+  app.referenceModel.value = 11
+
+  const oldLoad = app.loadModels()
+  const latestLoad = app.loadModels()
+  second.resolve({ items: [{ id: 11, name: 'Model One' }] })
+  await latestLoad
+  first.resolve({ items: [] })
+  await oldLoad
+
+  assert.deepEqual(app.selectedModels.value, [11])
+  assert.equal(app.referenceModel.value, 11)
+  assert.deepEqual([...app.allModelsMap.value.keys()], [11])
+})
