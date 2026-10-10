@@ -308,7 +308,8 @@ def test_recently_closed_listener_does_not_block_restart():
         pytest.fail(f'Closed test listener still looks occupied: {probes=}, {listeners=}')
 
 
-def test_windows_connection_refusal_means_no_active_listener(monkeypatch):
+@pytest.mark.parametrize('winerror_only', [False, True])
+def test_windows_connection_refusal_means_no_active_listener(monkeypatch, winerror_only):
     module = manager()
 
     class RefusedConnection:
@@ -324,9 +325,15 @@ def test_windows_connection_refusal_means_no_active_listener(monkeypatch):
         def settimeout(self, timeout):
             pass
 
+        def setblocking(self, blocking):
+            assert blocking is False
+
         def connect(self, address):
             code = 10061 if self.family == module.socket.AF_INET else 10047
-            raise OSError(code, 'Windows socket unavailable')
+            error = OSError(1 if winerror_only else code, 'Windows socket unavailable')
+            if winerror_only:
+                error.winerror = code
+            raise error
 
     monkeypatch.setattr(module.socket, 'socket', lambda family, kind: RefusedConnection(family))
     assert module.port_is_free(18886) is True

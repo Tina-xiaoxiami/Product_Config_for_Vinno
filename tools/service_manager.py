@@ -8,6 +8,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import select
 import shutil
 import socket
 import subprocess
@@ -53,12 +54,28 @@ def port_is_free(port: int) -> bool:
     unavailable = {errno.ECONNREFUSED, errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL,
                    errno.ENETUNREACH, errno.EHOSTUNREACH,
                    10047, 10049, 10051, 10061, 10065}  # Windows Winsock equivalents.
+    pending = {errno.EINPROGRESS, errno.EALREADY, errno.EWOULDBLOCK,
+               10035, 10036, 10037}  # Winsock nonblocking connect states.
     for family, host in [(socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')]:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as connection:
-                connection.settimeout(1)
-                connection.connect((host, port))
-                return False
+                connection.setblocking(False)
+                try:
+                    connection.connect((host, port))
+                    return False
+                except OSError as exc:
+                    code = getattr(exc, 'winerror', None) or exc.errno
+                    if code in unavailable:
+                        continue
+                    if code not in pending:
+                        return False
+                # A pending connect needs its completed result before deciding.
+                _, writable, exceptional = select.select([], [connection], [connection], 1)
+                if not writable and not exceptional:
+                    return False
+                code = connection.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if code not in unavailable:
+                    return False
         except OSError as exc:
             if exc.errno not in unavailable and getattr(exc, 'winerror', None) not in unavailable:
                 return False
