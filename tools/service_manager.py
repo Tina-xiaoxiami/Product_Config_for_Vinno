@@ -128,11 +128,20 @@ def stop_record(service: Service, record: dict) -> bool:
         descendants = process.children(recursive=True)
         # psutil's Process object guards against PID reuse before terminate/kill.
         for member in reversed(descendants):
-            member.terminate()
-        process.terminate()
+            try:
+                member.terminate()
+            except psutil.NoSuchProcess:
+                continue
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            pass
         _, alive = psutil.wait_procs([*descendants, process], timeout=5)
         for member in alive:
-            member.kill()
+            try:
+                member.kill()
+            except psutil.NoSuchProcess:
+                continue
         return True
     except (psutil.Error, KeyError, TypeError):
         return False
@@ -225,11 +234,21 @@ def main() -> int:
                 print('启动完成： http://127.0.0.1:3006\n服务在后台运行，关闭终端不影响使用。停止服务请运行 stop.command（Windows: stop.bat）。')
             elif arguments.action == 'stop':
                 state = read_state(RUNTIME)
+                remaining = {}
                 for service in reversed(all_services):
                     record = state.get(service.name) or find_owned_listener(service)
                     stopped = bool(record and stop_record(service, record))
-                    print(f'{service.name}: ' + ('已停止' if stopped else '未找到可确认属于本项目的进程'))
-                write_state(RUNTIME, {})
+                    if not stopped:
+                        current = find_owned_listener(service)
+                        if current and current != record:
+                            stopped = stop_record(service, current)
+                        if current and not stopped:
+                            remaining[service.name] = current
+                    message = '已停止' if stopped else ('停止失败，请重试' if service.name in remaining else '未找到可确认属于本项目的进程')
+                    print(f'{service.name}: {message}')
+                write_state(RUNTIME, remaining)
+                if remaining:
+                    return 1
             else:
                 for service in all_services:
                     print(f'{service.name}: ' + ('运行正常' if find_owned_listener(service) and healthy(service) else '未运行或未通过检查'))
