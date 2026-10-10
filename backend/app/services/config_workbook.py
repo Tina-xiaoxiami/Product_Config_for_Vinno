@@ -110,8 +110,12 @@ def read_patch_metadata(workbook) -> dict | None:
             ):
                 raise ValueError
             item_refs = json.loads(values.get("item_refs") or "{}")
+            if not isinstance(item_refs, dict):
+                raise ValueError
             normalized_refs = {}
             for raw_row, raw_ref in item_refs.items():
+                if not isinstance(raw_ref, dict):
+                    raise ValueError
                 row = int(raw_row)
                 item_id = int(raw_ref["id"])
                 fingerprint = str(raw_ref["fingerprint"])
@@ -122,6 +126,8 @@ def read_patch_metadata(workbook) -> dict | None:
                     "fingerprint": fingerprint,
                 }
             raw_excluded_pairs = json.loads(values.get("excluded_pairs") or "[]")
+            if not isinstance(raw_excluded_pairs, list):
+                raise ValueError
             excluded_pairs = set()
             for raw_pair in raw_excluded_pairs:
                 if not isinstance(raw_pair, list) or len(raw_pair) != 2:
@@ -137,7 +143,7 @@ def read_patch_metadata(workbook) -> dict | None:
                 "fields": fields,
                 "excluded_pairs": excluded_pairs,
             }
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, TypeError, ValueError, OverflowError, json.JSONDecodeError) as error:
             raise ValueError("工作簿包含无效的配置项身份元数据，请重新导出后再导入") from error
     raise ValueError("工作簿包含不受支持的导入元数据格式，请重新导出后再导入")
 
