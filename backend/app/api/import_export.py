@@ -84,7 +84,7 @@ async def import_excel(
 
     A-E列固定：研发名称、V代码、IPN号、中文描述、英文描述
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    if not (file.filename or '').casefold().endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="只支持Excel文件(.xlsx, .xls)")
 
     # 读取文件
@@ -1570,7 +1570,7 @@ async def preview_import(
 
     返回解析后的数据摘要，供用户确认后再导入
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    if not (file.filename or '').casefold().endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="只支持Excel文件(.xlsx, .xls)")
 
     # 读取文件
