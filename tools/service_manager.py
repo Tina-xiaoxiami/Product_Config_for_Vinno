@@ -56,6 +56,19 @@ def port_is_free(port: int) -> bool:
                    10047, 10049, 10051, 10061, 10065}  # Windows Winsock equivalents.
     pending = {errno.EINPROGRESS, errno.EALREADY, errno.EWOULDBLOCK,
                10035, 10036, 10037}  # Winsock nonblocking connect states.
+
+    def windows_listener_absent() -> bool:
+        if os.name != 'nt':
+            return False
+        try:
+            # Windows exposes the system TCP listener table without the
+            # incomplete-list caveat that applies to unprivileged Linux scans.
+            return not any(connection.status == psutil.CONN_LISTEN
+                           and connection.laddr and connection.laddr.port == port
+                           for connection in psutil.net_connections(kind='tcp'))
+        except (psutil.Error, OSError):
+            return False
+
     for family, host in [(socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')]:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as connection:
@@ -72,8 +85,10 @@ def port_is_free(port: int) -> bool:
                 # A pending connect needs its completed result before deciding.
                 _, writable, exceptional = select.select([], [connection], [connection], 1)
                 if not writable and not exceptional:
-                    return False
+                    return windows_listener_absent()
                 code = connection.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if code in pending:
+                    return windows_listener_absent()
                 if code not in unavailable:
                     return False
         except OSError as exc:
