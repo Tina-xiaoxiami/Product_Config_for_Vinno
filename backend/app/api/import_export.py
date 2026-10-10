@@ -1663,7 +1663,7 @@ async def _preview_workbook_summary(
         'series': [],
         'summary': {
             'total_models': 0,
-            'total_items': 0,
+            'total_items': len(parsed_rows),
             'categories': []
         }
     }
@@ -1712,7 +1712,6 @@ async def _preview_workbook_summary(
         })
 
         preview_result['summary']['total_models'] += len(models)
-        preview_result['summary']['total_items'] += len(items)
         preview_result['summary']['categories'].extend(list(categories))
 
     preview_result['summary']['categories'] = list(set(preview_result['summary']['categories']))
