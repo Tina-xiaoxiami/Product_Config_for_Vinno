@@ -214,3 +214,13 @@ def test_start_requires_frontend_dependencies(monkeypatch):
     module = manager()
     monkeypatch.setattr(module.shutil, "which", lambda name: None)
     with pytest.raises(module.LaunchError, match="依赖"): module.services(require_dependencies=True)
+
+
+def test_start_reuses_healthy_services_even_without_node(monkeypatch, tmp_path):
+    module = manager()
+    monkeypatch.setattr(module, 'RUNTIME', tmp_path)
+    monkeypatch.setattr(module.sys, 'argv', ['service_manager.py', 'start', '--no-browser'])
+    monkeypatch.setattr(module.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(module, 'check_service', lambda service: {'pid': 123, 'created': 12.0})
+    monkeypatch.setattr(module, 'spawn_service', lambda *args: pytest.fail('healthy services must not spawn'))
+    assert module.main() == 0
