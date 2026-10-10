@@ -225,3 +225,46 @@ def test_start_reuses_healthy_services_even_without_node(monkeypatch, tmp_path):
     monkeypatch.setattr(module, 'check_service', lambda service: {'pid': 123, 'created': 12.0})
     monkeypatch.setattr(module, 'spawn_service', lambda *args: pytest.fail('healthy services must not spawn'))
     assert module.main() == 0
+
+
+def test_stop_continues_when_reload_worker_exits_during_shutdown(monkeypatch, tmp_path):
+    module = manager()
+    calls = []
+    def worker_already_exited():
+        raise module.psutil.NoSuchProcess(456)
+    worker = SimpleNamespace(terminate=worker_already_exited)
+    parent = SimpleNamespace(create_time=lambda: 12.0, cwd=lambda: str(tmp_path), cmdline=lambda: ['python', '-m', 'uvicorn', 'main:app', '--port', '18886'], children=lambda recursive: [worker], terminate=lambda: calls.append('parent'))
+    monkeypatch.setattr(module.psutil, 'Process', lambda pid: parent)
+    monkeypatch.setattr(module.psutil, 'wait_procs', lambda processes, timeout: (processes, []))
+    service = module.Service('backend', tmp_path, [], 18886, '')
+    assert module.stop_record(service, {'pid': 123, 'created': 12.0}) is True
+    assert calls == ['parent']
+
+
+def test_cli_stop_rediscovers_owned_service_after_manual_restart(monkeypatch, tmp_path):
+    module = manager()
+    service = module.Service('backend', tmp_path, [], 18886, '')
+    module.write_state(tmp_path, {'backend': {'pid': 1, 'created': 1.0}})
+    monkeypatch.setattr(module, 'RUNTIME', tmp_path)
+    monkeypatch.setattr(module, 'services', lambda: [service])
+    monkeypatch.setattr(module.sys, 'argv', ['service_manager.py', 'stop'])
+    monkeypatch.setattr(module, 'find_owned_listener', lambda service: {'pid': 2, 'created': 2.0})
+    attempts = []
+    monkeypatch.setattr(module, 'stop_record', lambda service, record: attempts.append(record['pid']) or record['pid'] == 2)
+    assert module.main() == 0
+    assert attempts == [1, 2]
+    assert module.read_state(tmp_path) == {}
+
+
+def test_cli_failed_stop_retains_owned_process_for_retry(monkeypatch, tmp_path):
+    module = manager()
+    service = module.Service('backend', tmp_path, [], 18886, '')
+    record = {'pid': 2, 'created': 2.0}
+    module.write_state(tmp_path, {'backend': record})
+    monkeypatch.setattr(module, 'RUNTIME', tmp_path)
+    monkeypatch.setattr(module, 'services', lambda: [service])
+    monkeypatch.setattr(module.sys, 'argv', ['service_manager.py', 'stop'])
+    monkeypatch.setattr(module, 'find_owned_listener', lambda service: record)
+    monkeypatch.setattr(module, 'stop_record', lambda service, record: False)
+    assert module.main() == 1
+    assert module.read_state(tmp_path) == {'backend': record}
