@@ -610,16 +610,19 @@ const loadSeries = async () => {
 
 // 加载产品型号（从所有选中系列）
 let modelLoadRequest = 0
+let pendingModelSelection = null
 const loadModels = async () => {
   const request = ++modelLoadRequest
   const seriesIds = [...selectedSeries.value]
-  const previousSelectedModels = [...selectedModels.value]
-  const previousReferenceModel = referenceModel.value
+  const previousSelectedModels = pendingModelSelection?.models || [...selectedModels.value]
+  const previousReferenceModel = pendingModelSelection?.reference ?? referenceModel.value
+  pendingModelSelection = { models: previousSelectedModels, reference: previousReferenceModel }
   allModelsMap.value = new Map()
   selectedModels.value = []
   referenceModel.value = null
   modelFilterText.value = ''
   if (seriesIds.length === 0) {
+    pendingModelSelection = null
     return
   }
 
@@ -642,8 +645,10 @@ const loadModels = async () => {
     referenceModel.value = selectedModels.value.includes(previousReferenceModel)
       ? previousReferenceModel
       : selectedModels.value[0] ?? null
+    pendingModelSelection = null
   } catch (error) {
     if (request !== modelLoadRequest) return
+    pendingModelSelection = null
     console.error('加载产品型号失败:', error)
   }
 }

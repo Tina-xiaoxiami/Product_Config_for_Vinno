@@ -28,7 +28,7 @@ function modelLoader(getModels) {
     console: { error() {} }
   }
   const code = source.slice(
-    source.indexOf('const loadModels ='),
+    source.indexOf('let pendingModelSelection ='),
     source.indexOf('// 获取型号名称')
   )
   const loadModels = new Function(
