@@ -53,9 +53,9 @@ def _merged_cells(*ranges: tuple[int, int, int, int]) -> bytes:
     return _record(0x00E5, payload)
 
 
-def _legacy_config_workbook(path: Path) -> Path:
+def _legacy_config_workbook(path: Path, series_label: str = "Legacy Series") -> Path:
     cells = [
-        _label(0, 5, "Legacy Series"),
+        _label(0, 5, series_label),
         _label(1, 5, "Legacy Model"),
         _label(2, 5, "最终配置"),
         _label(2, 6, "当前配置"),
@@ -159,3 +159,15 @@ async def test_malformed_xlsx_returns_clear_bad_request(endpoint, db):
     assert error.value.status_code == 400
     assert "无法读取Excel文件" in error.value.detail
     assert await db.scalar(select(func.count()).select_from(ProductSeries)) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", [preview_import, import_excel])
+async def test_uppercase_filename_fallback_omits_extension(endpoint, db, tmp_path):
+    source = _legacy_config_workbook(tmp_path / "Legacy.XLS", series_label="")
+    if endpoint is preview_import:
+        result = await endpoint(_upload(source), db=db)
+        assert result["series"][0]["name"] == "Legacy"
+    else:
+        await endpoint(_upload(source), series_name=None, db=db)
+        assert await db.scalar(select(ProductSeries.name)) == "Legacy"
