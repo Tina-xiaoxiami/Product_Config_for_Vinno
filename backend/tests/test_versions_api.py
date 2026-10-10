@@ -4,8 +4,9 @@ import json
 import httpx
 import openpyxl
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import versions
@@ -17,6 +18,7 @@ from app.models import (
     ProductModel,
     ProductSeries,
 )
+from app.schemas.version import ConfigVersionCreate
 
 
 async def _versions_harness(tmp_path):
@@ -287,6 +289,212 @@ async def test_create_version_detects_unchanged_item_after_database_id_changes(t
     assert "无任何变化" in response.json()["detail"]
     async with session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "previous_snapshot",
+    [
+        pytest.param(_snapshot(), id="empty-pair-versus-absence"),
+        pytest.param(
+            _snapshot(
+                {
+                    **_item(100, row_index=1, ipn="IPN-EMPTY", rd_name="Feature"),
+                    "values": {
+                        "10": {
+                            "current_config": None,
+                            "final_config": "",
+                            "selection_config": "N/A",
+                            "rd_status": None,
+                        }
+                    },
+                }
+            ),
+            id="equivalent-empty-markers",
+        ),
+    ],
+)
+async def test_create_version_uses_semantic_empty_value_comparison(
+    tmp_path,
+    previous_snapshot,
+):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        item = ConfigItem(
+            id=100,
+            category="Optional",
+            row_index=1,
+            rd_name="Feature",
+            ipn="IPN-EMPTY",
+        )
+        session.add(item)
+        await session.flush()
+        session.add(
+            ConfigValue(
+                item_id=item.id,
+                model_id=10,
+                current_config="",
+                final_config="N/A",
+            )
+        )
+        session.add(
+            ConfigVersion(
+                series_id=1,
+                version_number="1.0.0",
+                snapshot_data=json.dumps(previous_snapshot),
+                row_count=len(previous_snapshot["items"]),
+            )
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/versions",
+            json={"series_id": 1, "version_number": "1.0.1"},
+        )
+
+    assert response.status_code == 400
+    assert "无任何变化" in response.json()["detail"]
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_compare_and_export_prune_semantically_empty_items(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    empty_item_snapshot = _snapshot(
+        {
+            **_item(100, row_index=1, ipn="IPN-EMPTY", rd_name="Feature"),
+            "values": {
+                "10": {
+                    "current_config": "",
+                    "final_config": "N/A",
+                    "selection_config": None,
+                    "rd_status": None,
+                }
+            },
+        }
+    )
+    first_id, second_id = await _seed_versions(
+        session_factory,
+        _snapshot(),
+        empty_item_snapshot,
+    )
+    payload = {"version_id_1": first_id, "version_id_2": second_id}
+
+    async with client:
+        compared = await client.post("/api/versions/compare", json=payload)
+        exported = await client.post("/api/versions/compare/export", json=payload)
+
+    assert compared.status_code == 200, compared.text
+    assert compared.json()["summary"] == {"added": 0, "modified": 0, "deleted": 0}
+    assert exported.status_code == 200, exported.text
+    workbook = openpyxl.load_workbook(io.BytesIO(exported.content))
+    assert all(workbook[sheet].max_row == 1 for sheet in ("新增项", "删除项", "修改项"))
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_version_rejects_duplicate_explicit_number_with_clear_error(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        item = ConfigItem(
+            id=100,
+            category="Optional",
+            row_index=1,
+            rd_name="Feature",
+            ipn="IPN-100",
+        )
+        session.add(item)
+        await session.flush()
+        session.add(ConfigValue(item_id=item.id, model_id=10, current_config="new"))
+        previous = _snapshot(
+            {
+                **_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"),
+                "values": {"10": {"current_config": "old"}},
+            }
+        )
+        session.add(
+            ConfigVersion(
+                series_id=1,
+                version_number="1.0.0",
+                snapshot_data=json.dumps(previous),
+                row_count=1,
+            )
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/versions",
+            json={"series_id": 1, "version_number": "1.0.0"},
+        )
+
+    assert response.status_code == 400
+    assert "版本号已存在" in response.json()["detail"]
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_version_allows_same_explicit_number_in_another_series(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        session.add(
+            ConfigVersion(
+                series_id=2,
+                version_number="release-1",
+                snapshot_data=json.dumps({"models": [], "items": []}),
+                row_count=0,
+            )
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/versions",
+            json={"series_id": 1, "version_number": "release-1"},
+        )
+
+    assert response.status_code == 200, response.text
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_version_rolls_back_unique_constraint_race(tmp_path, monkeypatch):
+    _, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        rollback_called = False
+        original_rollback = session.rollback
+
+        async def fail_commit():
+            raise IntegrityError("INSERT config_versions", {}, Exception("unique"))
+
+        async def tracked_rollback():
+            nonlocal rollback_called
+            rollback_called = True
+            await original_rollback()
+
+        monkeypatch.setattr(session, "commit", fail_commit)
+        monkeypatch.setattr(session, "rollback", tracked_rollback)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await versions.create_version(
+                ConfigVersionCreate(series_id=1, version_number="1.0.0"),
+                session,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "版本号已存在" in exc_info.value.detail
+        assert rollback_called is True
     await engine.dispose()
 
 
