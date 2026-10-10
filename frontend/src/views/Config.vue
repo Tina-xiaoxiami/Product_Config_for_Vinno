@@ -222,7 +222,7 @@
 
     <!-- 草稿状态栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="configLoading || reviewInteractionLocked">
+      <el-card v-if="draftItemSummary.total > 0" class="draft-bar" shadow="never" :inert="configLoading || reviewInteractionLocked || !!configLoadError">
         <div class="draft-info">
           <el-icon><EditPen /></el-icon>
           <span>当前筛选内 <strong>{{ draftItemSummary.total }}</strong> 个配置项有变更：</span>
@@ -350,7 +350,7 @@
       </el-card>
     </transition>
 
-    <div v-if="draftSaveFeedback.pending || draftSaveFeedback.message" class="save-feedback" :inert="reviewInteractionLocked" role="status" aria-live="polite">
+    <div v-if="draftSaveFeedback.pending || draftSaveFeedback.message" class="save-feedback" :inert="reviewInteractionLocked || !!configLoadError" role="status" aria-live="polite">
       <span>{{ draftSaveFeedback.pending ? `正在保存 ${draftSaveFeedback.pending} 处…` : draftSaveFeedback.message }}</span>
       <el-button v-if="draftSaveFeedback.lastCell && !draftSaveFeedback.pending" link type="primary" @click="undoLastCell">撤销该单元格草稿</el-button>
       <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" :title="`${draftSaveFeedback.failedCell.row.rd_name || '配置项 ' + draftSaveFeedback.failedCell.row.id} / ${getModelName(draftSaveFeedback.failedCell.modelId)} / ${fieldLabels[draftSaveFeedback.failedCell.field]}`" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销一处' : '重试保存一处' }}</el-button>
@@ -358,7 +358,7 @@
 
     <!-- 批量操作栏 -->
     <transition name="el-zoom-in-top">
-      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="configLoading || reviewInteractionLocked">
+      <el-card v-if="selectedRows.length > 0" class="batch-bar" shadow="never" :inert="configLoading || reviewInteractionLocked || !!configLoadError">
         <div class="batch-info">
           <span v-if="selectedRows.length > 0">已选择 <strong>{{ selectedRows.length }}</strong> 行</span>
           <span v-if="false">已选择 <strong>{{ selectedCells.length }}</strong> 个单元格</span>
@@ -370,7 +370,10 @@
     </transition>
 
     <!-- 数据表格 -->
-    <el-card class="config-table-card" shadow="never" :inert="reviewInteractionLocked">
+    <el-alert v-if="configLoadError" :title="configLoadError" type="error" show-icon :closable="false" class="config-load-error" role="alert">
+      <el-button :loading="configRetrying" :disabled="loading || applyingModelGroup || reviewInteractionLocked" @click="retryConfiguration">重新加载</el-button>
+    </el-alert>
+    <el-card class="config-table-card" shadow="never" :inert="configLoading || reviewInteractionLocked || !!configLoadError">
       <el-table
         ref="tableRef"
         :data="paginatedTableData"
@@ -1082,6 +1085,8 @@ const allModelsMap = ref(new Map())  // modelId -> { id, name, seriesId, seriesN
 const tableData = ref([])
 const originalData = ref([])  // 存储原始数据，用于比较变化
 const loading = ref(false)
+const configLoadError = ref('')
+const configRetrying = ref(false)
 const configReady = ref(false)
 const selectedRows = ref([])
 
@@ -1416,35 +1421,37 @@ const selectedModels = ref([])
 
 // 配置字段列值筛选（按 `field|modelId` 键控，空数组 = 不过滤当前列的该字段）
 const fieldFilters = reactive({})
+const pendingFieldFilters = reactive({})
 const getFilterKey = (field, modelId) => `${field}|${modelId}`
-
-// 选中机型变化时初始化/清理列筛选状态
-watch(selectedModels, () => {
-  const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
-  const validKeys = new Set()
-  for (const modelId of selectedModels.value) {
-    for (const field of fields) {
-      const key = getFilterKey(field, modelId)
-      validKeys.add(key)
-      if (!(key in fieldFilters)) fieldFilters[key] = []
+const isCurrentFieldFilter = (field, modelId) => selectedModels.value.includes(modelId) && visibleConfigFields.value.includes(field)
+const cleanupFieldFilters = () => {
+  const validKeys = new Set(selectedModels.value.flatMap(modelId => visibleConfigFields.value.map(field => getFilterKey(field, modelId))))
+  let changed = false
+  for (const key of Object.keys(fieldFilters)) {
+    if (!validKeys.has(key)) {
+      if (fieldFilters[key]?.length) changed = true
+      delete fieldFilters[key]
     }
   }
-  for (const key of Object.keys(fieldFilters)) {
-    if (!validKeys.has(key)) delete fieldFilters[key]
-  }
-}, { immediate: true })
-
-// 列筛选暂存状态（弹窗关闭时统一应用到 fieldFilters，避免每次勾选立即刷新）
-const pendingFieldFilters = reactive({})
+  for (const key of Object.keys(pendingFieldFilters)) if (!validKeys.has(key)) delete pendingFieldFilters[key]
+  for (const key of validKeys) if (!(key in fieldFilters)) fieldFilters[key] = []
+  if (changed) currentPage.value = 1
+}
+// 暂存仅属于当前可见列；迟到的关闭回调不能恢复失效列的条件。
 const openFieldFilterPopover = (field, modelId) => {
   const key = getFilterKey(field, modelId)
+  if (!isCurrentFieldFilter(field, modelId)) { delete pendingFieldFilters[key]; return }
   pendingFieldFilters[key] = [...(fieldFilters[key] || [])]
 }
 const applyFieldFilterPopover = (field, modelId) => {
   const key = getFilterKey(field, modelId)
-  if (key in pendingFieldFilters) {
-    fieldFilters[key] = pendingFieldFilters[key]
-    delete pendingFieldFilters[key]
+  if (!isCurrentFieldFilter(field, modelId) || !(key in pendingFieldFilters)) { delete pendingFieldFilters[key]; return }
+  const values = [...new Set(pendingFieldFilters[key] || [])]
+  delete pendingFieldFilters[key]
+  const current = fieldFilters[key] || []
+  if (current.length !== values.length || current.some(value => !values.includes(value))) {
+    fieldFilters[key] = values
+    currentPage.value = 1
   }
 }
 
@@ -1455,7 +1462,7 @@ const applyingModelGroup = ref(false)
 const configLoading = computed(() => (
   loading.value ||
   applyingModelGroup.value ||
-  (selectedSeries.value.length > 0 && !configReady.value)
+  (selectedSeries.value.length > 0 && !configReady.value && !configLoadError.value)
 ))
 try { savedModelGroups.value = loadModelSelectionGroups() } catch (error) { console.error('读取机型分组失败', error); ElMessage.warning('无法读取已保存的机型分组，请检查浏览器存储设置') }
 
@@ -2040,7 +2047,9 @@ const getConfigEmptyState = ({ seriesCount, modelCount, fieldCount, hasFilters }
   if (hasFilters) return { description: '没有符合当前筛选条件的配置，请调整或清除筛选', action: 'filters' }
   return { description: '当前机型没有可显示的配置，请调整机型选择或导入Excel', action: null }
 }
-const configEmptyState = computed(() => getConfigEmptyState({
+const configEmptyState = computed(() => configLoadError.value
+  ? { description: '数据加载失败，请点击上方“重新加载”', action: null }
+  : getConfigEmptyState({
   seriesCount: selectedSeries.value.length, modelCount: selectedModels.value.length,
   fieldCount: visibleConfigFields.value.length, hasFilters: hasActiveFilters.value
 }))
@@ -2053,6 +2062,17 @@ const paginatedTableData = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredTableData.value.slice(start, start + pageSize.value)
 })
+
+const clampConfigPage = (page, total, size) => {
+  const maxPage = Math.max(1, Math.ceil(Math.max(0, Number(total) || 0) / Math.max(1, Number(size) || 1)))
+  return Math.min(maxPage, Math.max(1, Math.floor(Number(page) || 1)))
+}
+// 此处注册时机确保可见字段与分页引用已初始化。
+watch([selectedModels, visibleConfigFields], cleanupFieldFilters, { immediate: true, deep: true, flush: 'sync' })
+watch([() => filteredTableData.value.length, pageSize, currentPage], ([total, size, page]) => {
+  const clamped = clampConfigPage(page, total, size)
+  if (clamped !== page) currentPage.value = clamped
+}, { immediate: true, flush: 'sync' })
 
 // tableData / originalData O(1) 索引
 const tableDataMap = computed(() => new Map(tableData.value.map(r => [r.id, r])))
@@ -2274,9 +2294,16 @@ const getBatchEditOptions = () => {
 }
 
 // 加载产品系列
+let seriesLoadRequest = 0
 const loadSeries = async () => {
+  const request = ++seriesLoadRequest
+  const isCurrent = () => request === seriesLoadRequest
+  modelLoadRequest++
+  configReady.value = false
+  configLoadError.value = ''
   try {
     const res = await getSeriesList()
+    if (!isCurrent()) return false
     seriesList.value = res.items || []
 
     if (seriesList.value.length > 0) {
@@ -2302,10 +2329,6 @@ const loadSeries = async () => {
         selectedSeries.value = []
       }
 
-      // 如果有选中系列，加载型号
-      if (selectedSeries.value.length > 0) {
-        await loadModels()
-      }
     } else {
       selectedSeries.value = []
       allModelsMap.value.clear()
@@ -2313,9 +2336,15 @@ const loadSeries = async () => {
       tempSelectedModels.value = []
       tableData.value = []
     }
+    const selected = selectedSeries.value.length > 0
+    const loaded = await loadModels()
+    return isCurrent() && (!selected || loaded)
   } catch (error) {
+    if (!isCurrent()) return false
+    configLoadError.value = '产品系列加载失败，请检查本地服务后重新加载'
     console.error('加载产品系列失败:', error)
     ElMessage.error('加载产品系列失败')
+    return false
   }
 }
 
@@ -2330,11 +2359,7 @@ const selectAllSeries = () => {
 // 清空系列
 const clearAllSeries = () => {
   selectedSeries.value = []
-  allModelsMap.value.clear()
-  selectedModels.value = []
-  tempSelectedModels.value = []
-  tableData.value = []
-  saveSeriesSelection()
+  handleSeriesSelect([])
 }
 
 // 机型选择即时生效，快捷选择与手动勾选使用相同入口。
@@ -2410,11 +2435,8 @@ const onSeriesDropdownVisibleChange = (visible) => {
 const handleSeriesSelect = (val) => {
   const ids = Array.isArray(val) ? val : [val]
   if (ids.length === 0) {
-    allModelsMap.value.clear()
-    selectedModels.value = []
-    tempSelectedModels.value = []
-    tableData.value = []
     saveSeriesSelection()
+    loadModels()
     return
   }
   currentPage.value = 1
@@ -2429,6 +2451,8 @@ let modelLoadRequest = 0
 const loadModels = async ({ modelGroup } = {}) => {
   const request = ++modelLoadRequest
   const seriesIds = [...selectedSeries.value]
+  const isCurrent = () => request === modelLoadRequest && seriesIds.length === selectedSeries.value.length && seriesIds.every((id, i) => id === selectedSeries.value[i])
+  configLoadError.value = ''
   configReady.value = false
   if (!seriesIds.length) {
     allModelsMap.value.clear()
@@ -2436,12 +2460,13 @@ const loadModels = async ({ modelGroup } = {}) => {
     tempSelectedModels.value = []
     tableData.value = []
     originalData.value = []
+    await loadData()
     configReady.value = true
     return false
   }
   try {
     const results = await Promise.all(seriesIds.map(sid => getModels(sid)))
-    if (request !== modelLoadRequest || seriesIds.length !== selectedSeries.value.length || seriesIds.some((id, i) => id !== selectedSeries.value[i])) return false
+    if (!isCurrent()) return false
     const models = new Map()
     results.forEach((res, idx) => {
       const seriesId = seriesIds[idx]
@@ -2456,20 +2481,29 @@ const loadModels = async ({ modelGroup } = {}) => {
     showDiffOnly.value = false
     referenceModel.value = null
     tempSelectedModels.value = [...selectedModels.value]
-    if (!await loadData()) return false
-    if (request !== modelLoadRequest) return false
+    if (!await loadData()) {
+      if (isCurrent() && !configLoadError.value) configLoadError.value = '配置数据加载失败，请重新加载'
+      return false
+    }
+    if (!isCurrent()) return false
     const draftLoaded = await initDraft()
-    if (request !== modelLoadRequest) return false
+    if (!isCurrent()) return false
     if (!draftLoaded) {
       tableData.value = []
       originalData.value = []
-      ElMessage.error('草稿状态加载失败，请重新选择系列或分组后再编辑')
+      configLoadError.value = '草稿状态加载失败，请重新加载后再编辑'
+      ElMessage.error(configLoadError.value)
       return false
     }
+    configLoadError.value = ''
     configReady.value = true
     if (selection?.missing) ElMessage.warning(`已恢复 ${selection.ids.length} 个机型，${selection.missing} 个机型未找到或名称不唯一`)
     return true
   } catch (error) {
+    if (!isCurrent()) return false
+    configLoadError.value = '机型数据加载失败，请检查本地服务后重新加载'
+    tableData.value = []
+    originalData.value = []
     console.error('加载产品型号失败:', error)
     if (error.response?.status === 404) {
       ElMessage.warning('当前选中的系列已被删除，请重新选择')
@@ -2482,14 +2516,17 @@ const loadModels = async ({ modelGroup } = {}) => {
 // 加载配置数据（从所有选中系列并行加载，按 IPN 合并）
 let dataLoadRequest = 0
 const loadData = async () => {
+  const request = ++dataLoadRequest
+  const seriesIds = [...selectedSeries.value]
+  const isCurrent = () => request === dataLoadRequest && seriesIds.length === selectedSeries.value.length && seriesIds.every((id, i) => id === selectedSeries.value[i])
+  configLoadError.value = ''
   if (selectedSeries.value.length === 0) {
     tableData.value = []
     originalData.value = []
+    loading.value = false
     return true
   }
 
-  const seriesIds = [...selectedSeries.value]
-  const request = ++dataLoadRequest
   loading.value = true
   try {
     // 加载全部数据（limit: 99999），前端分页
@@ -2505,7 +2542,7 @@ const loadData = async () => {
       seriesIds.map(sid => getConfigRows({ ...paramsBase, series_id: sid }))
     )
 
-    if (request !== dataLoadRequest || seriesIds.length !== selectedSeries.value.length || seriesIds.some((id, i) => id !== selectedSeries.value[i])) return false
+    if (!isCurrent()) return false
 
     // 按 IPN 合并 model_values
     const mergedMap = new Map() // ipn -> mergedRow
@@ -2544,9 +2581,10 @@ const loadData = async () => {
     originalData.value = JSON.parse(JSON.stringify(tableData.value))
     return true
   } catch (error) {
-    if (request !== dataLoadRequest) return false
+    if (!isCurrent()) return false
     tableData.value = []
     originalData.value = []
+    configLoadError.value = '配置数据加载失败，请检查本地服务后重新加载'
     console.error('加载配置数据失败:', error)
     if (error.response?.status === 404) {
       ElMessage.warning('当前选中的系列已被删除，请重新选择')
@@ -2682,6 +2720,14 @@ const onFilterChange = async () => {
   if (applyingModelGroup.value) return
   currentPage.value = 1
   await loadData()
+}
+
+const retryConfiguration = async () => {
+  if (configRetrying.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  configRetrying.value = true
+  try {
+    await loadSeries()
+  } finally { configRetrying.value = false }
 }
 
 // 初始化草稿批次（多系列）
@@ -3219,7 +3265,6 @@ const confirmImport = async () => {
   // 重新加载数据（包含表格数据、草稿状态和枚举值）
   currentPage.value = 1  // 重置到第1页
   await loadSeries()
-  await loadModels()
   await loadEnumValues()
 }
 
@@ -4642,6 +4687,8 @@ onMounted(() => {
 .scope-note { color: #606266; font-size: 12px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
 .draft-count-note { font-size: 12px; color: rgba(255, 255, 255, .86); margin-top: 6px; }
 .save-feedback { display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #f0f7ff; color: #355373; font-size: 12px; }
+
+.config-load-error { margin-bottom: 8px; }
 
 .config-page {
   padding: 0;

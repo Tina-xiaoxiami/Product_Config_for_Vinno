@@ -77,6 +77,7 @@ function draftLoadingController({ getModels, loadData, initDraft }) {
     originalData: ref([]),
     seriesList: ref([{ id: 10, name: 'V10' }, { id: 20, name: 'V20' }]),
     configReady: ref(true),
+    configLoadError: ref(''),
     getModels,
     loadData,
     initDraft,

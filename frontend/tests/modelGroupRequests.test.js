@@ -8,7 +8,7 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 function dataLoader(getConfigRows) {
  const context = {
   selectedSeries: ref([1]), selectedCategories: ref([]), searchText: ref(''),
-  tableData: ref([{ id: 99, rd_name: 'old row' }]), originalData: ref([{ id: 99 }]), loading: ref(false),
+  tableData: ref([{ id: 99, rd_name: 'old row' }]), originalData: ref([{ id: 99 }]), loading: ref(false), configLoadError: ref(''),
   getConfigRows, ElMessage: { error() {}, warning() {} }, loadSeries: async () => {}, applyingModelGroup: ref(true)
  }
  const code = source.slice(source.indexOf('let dataLoadRequest ='), source.indexOf('// 检查字段是否被修改'))
@@ -91,7 +91,7 @@ test('stale draft failure cannot clear a newer series table', async () => {
  const context = {
   selectedSeries: ref([1]), seriesList: ref([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]),
   allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]),
-  tableData: ref([]), originalData: ref([]), configReady: ref(true), showDiffOnly: ref(false), referenceModel: ref(null),
+  tableData: ref([]), originalData: ref([]), configReady: ref(true), configLoadError: ref(''), showDiffOnly: ref(false), referenceModel: ref(null),
   getModels: async sid => ({ items: [{ id: sid, name: 'model' }] }),
   resolveGroupModels() {}, applySavedOrder() {},
   loadData: async () => { context.tableData.value = [{ id: context.selectedSeries.value[0] }]; return true },
