@@ -109,3 +109,14 @@ test('reset columns uses the same defaults as first use', () => {
   assert.deepEqual(tempVisibleColumns, defaults.defaultVisibleColumns)
   assert.deepEqual(tempFixedColumns, defaults.defaultFixedColumns)
 })
+
+test('row-wide publish review displays configuration values rather than item name', () => {
+  const match = source.match(/const formatSubmissionValue = [\s\S]*?(?=const captureVisibleSubmissionScope =)/)
+  assert.ok(match, 'publish preview needs a row-wide configuration value renderer')
+  const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态' }
+  const format = new Function('fieldLabels', `${match[0]};return formatSubmissionValue`)(fieldLabels)
+  const create = { field_name: null, new_value: 'S1-8CMV【启用】', old_values: {}, new_values: { final_config: 'X', current_config: '●', selection_config: '标准', rd_status: '已完成' } }
+  assert.equal(format(create, 'new'), '最终配置：X；当前配置：●；选型类别：标准；研发状态：已完成')
+  assert.equal(format(create, 'old'), '最终配置：-；当前配置：-；选型类别：-；研发状态：-')
+  assert.equal(format({ field_name: 'final_config', old_value: '●', new_value: 'X' }, 'new'), 'X')
+})
