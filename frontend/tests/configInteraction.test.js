@@ -120,3 +120,22 @@ test('row-wide publish review displays configuration values rather than item nam
   assert.equal(format(create, 'old'), '最终配置：-；当前配置：-；选型类别：-；研发状态：-')
   assert.equal(format({ field_name: 'final_config', old_value: '●', new_value: 'X' }, 'new'), 'X')
 })
+
+test('large import impact groups every affected model by series without hiding cross-series effects', () => {
+  const match = source.match(/const groupImportImpactModels = [\s\S]*?(?=const impactModelGroups =)/)
+  assert.ok(match, 'affected model preview needs grouped compact scope')
+  const groupModels = new Function(`${match[0]};return groupImportImpactModels`)()
+  const models = Array.from({ length: 101 }, (_, index) => ({ model_id: index + 1, model_name: `机型 ${index + 1}`, series_name: `系列 ${index % 6 + 1}` }))
+  const groups = groupModels(models)
+  assert.equal(groups.length, 6)
+  assert.equal(groups.reduce((count, group) => count + group.models.length, 0), 101)
+  assert.equal(groups.find(group => group.seriesName === '系列 6').models.length, 16)
+  assert.deepEqual(groups.flatMap(group => group.models).map(model => model.model_id).sort((a, b) => a - b), models.map(model => model.model_id))
+  assert.deepEqual(groupModels([]), [])
+})
+
+test('import shared field labels use readable business names', () => {
+  const code = source.match(/const fieldLabels = \{[^\n]+/)[0]
+  const labels = new Function(`${code};return fieldLabels`)()
+  assert.deepEqual(['row_index', 'zh_desc', 'rd_name', 'v_code', 'ipn', 'en_desc', 'category'].map(field => labels[field]), ['排序位置', '中文描述', '研发名称', 'V代码', 'IPN号', '英文描述', '分类'])
+})
