@@ -351,7 +351,7 @@
     <div v-if="draftSaveFeedback.pending || draftSaveFeedback.message" class="save-feedback" :inert="reviewInteractionLocked" role="status" aria-live="polite">
       <span>{{ draftSaveFeedback.pending ? `正在保存 ${draftSaveFeedback.pending} 处…` : draftSaveFeedback.message }}</span>
       <el-button v-if="draftSaveFeedback.lastCell && !draftSaveFeedback.pending" link type="primary" @click="undoLastCell">撤销该单元格草稿</el-button>
-      <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销' : '重试保存' }}</el-button>
+      <el-button v-if="draftSaveFeedback.failedCell && !draftSaveFeedback.pending" link type="primary" :title="`${draftSaveFeedback.failedCell.row.rd_name || '配置项 ' + draftSaveFeedback.failedCell.row.id} / ${getModelName(draftSaveFeedback.failedCell.modelId)} / ${fieldLabels[draftSaveFeedback.failedCell.field]}" @click="retryFailedCell">{{ draftSaveFeedback.failedCell.action === 'undo' ? '重试撤销一处' : '重试保存一处' }}</el-button>
     </div>
 
     <!-- 批量操作栏 -->
@@ -986,8 +986,8 @@
               <el-table-column prop="rd_name" label="配置项" min-width="130" />
               <el-table-column prop="model_name" label="机型" min-width="110" />
               <el-table-column label="字段" width="90"><template #default="{ row }">{{ fieldLabels[row.field_name] || '整项配置' }}</template></el-table-column>
-              <el-table-column prop="old_value" label="原值" width="75" />
-              <el-table-column prop="new_value" label="草稿值" width="75" />
+              <el-table-column label="原值" min-width="170"><template #default="{ row }">{{ formatSubmissionValue(row, 'old') }}</template></el-table-column>
+              <el-table-column label="草稿值" min-width="170"><template #default="{ row }">{{ formatSubmissionValue(row, 'new') }}</template></el-table-column>
             </el-table>
           </el-collapse-item>
         </el-collapse>
@@ -2852,15 +2852,22 @@ const finishEdit = async (row, modelId, field, newValue) => {
   await handleCellChange(row, modelId, field, newValue, oldValue)
 }
 
-const draftSaveFeedback = reactive({ pending: 0, message: '', lastCell: null, failedCell: null })
+const draftSaveFeedback = reactive({ pending: 0, message: '', lastCell: null, failedCell: null, failures: new Map(), successes: new Map(), sequence: 0 })
+const refreshSaveFeedback = context => {
+  const latest = entries => Array.from(entries.values()).sort((left, right) => right.sequence - left.sequence)[0] || null
+  draftSaveFeedback.lastCell = latest(draftSaveFeedback.successes)
+  draftSaveFeedback.failedCell = latest(draftSaveFeedback.failures)
+  draftSaveFeedback.message = draftSaveFeedback.failures.size
+    ? `仍有 ${draftSaveFeedback.failures.size} 处保存或撤销失败，可逐一重试`
+    : context.action === 'undo' ? '已撤销单元格草稿' : '草稿已保存'
+}
 const undoLastCell = async () => {
   const cell = draftSaveFeedback.lastCell
   if (!cell || !isDraftCellScopeCurrent(cell)) { ElMessage.warning('操作范围已变化，请在当前单元格上撤销'); return }
   const row = tableData.value.find(row => row.id === cell.row.id)
   if (!row) { ElMessage.warning('该行不在当前筛选中，请清除筛选后撤销'); return }
   if (await removeDraftChange(row, cell.modelId, cell.field, cell.key)) {
-    draftSaveFeedback.lastCell = null
-    draftSaveFeedback.message = '已撤销单元格修改'
+    refreshSaveFeedback({ action: 'undo' })
   }
 }
 const retryFailedCell = async () => {
@@ -2900,6 +2907,7 @@ const enqueueDraftCellOperation = (context, operation) => {
   }
 
   const generation = ++state.generation
+  context.sequence = ++draftSaveFeedback.sequence
   state.pending++
   draftSaveFeedback.pending++
   const isLatest = () => draftCellOperations.get(context.operationKey) === state && state.generation === generation
@@ -2907,9 +2915,14 @@ const enqueueDraftCellOperation = (context, operation) => {
   state.tail = result.catch(() => undefined)
   return result.then(success => {
     if (isLatest()) {
-      draftSaveFeedback.message = context.action === 'undo' ? (success ? '已撤销单元格草稿' : '撤销失败，已保留原草稿') : (success ? '草稿已保存' : '保存失败，已恢复上次保存的值')
-      draftSaveFeedback.lastCell = success && context.action !== 'undo' ? context : null
-      draftSaveFeedback.failedCell = success ? null : { ...context, attemptedValue: context.attemptedValue }
+      if (success) {
+        draftSaveFeedback.failures.delete(context.operationKey)
+        if (context.action === 'undo') draftSaveFeedback.successes.delete(context.operationKey)
+        else draftSaveFeedback.successes.set(context.operationKey, { ...context })
+      } else {
+        draftSaveFeedback.failures.set(context.operationKey, { ...context })
+      }
+      refreshSaveFeedback(context)
     }
     return success
   }).finally(() => {
@@ -3815,6 +3828,13 @@ const confirmPasteRowConfig = async () => {
 }
 
 const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态', rd_name: '研发名称', v_code: 'V代码', ipn: 'IPN号', zh_desc: '中文描述', en_desc: '英文描述', category: '分类', row_index: '行顺序' }
+const formatSubmissionValue = (draft, side) => {
+  if (draft.field_name) return draft[`${side}_value`] || '-'
+  const values = draft[`${side}_values`]
+  if (!values) return '配置值未提供，请刷新范围'
+  return ['final_config', 'current_config', 'selection_config', 'rd_status']
+    .map(field => `${fieldLabels[field]}：${values[field] || '-'}`).join('；')
+}
 const captureVisibleSubmissionScope = () => ({
   itemIds: new Set(paginatedTableData.value.map(row => row.id)),
   modelIds: new Set(selectedModels.value), fields: new Set(visibleConfigFields.value)
@@ -4145,22 +4165,8 @@ const applyTempColumnsAndClose = () => {
 }
 
 const resetTempColumns = () => {
-  // 重置显示
-  tempVisibleColumns.rd_name = true
-  tempVisibleColumns.v_code = false
-  tempVisibleColumns.ipn = false
-  tempVisibleColumns.zh_desc = false
-  tempVisibleColumns.en_desc = false
-  tempVisibleColumns.final_config = true
-  tempVisibleColumns.current_config = true
-  tempVisibleColumns.selection_config = true
-  tempVisibleColumns.rd_status = true
-  // 重置固定
-  tempFixedColumns.rd_name = true
-  tempFixedColumns.v_code = false
-  tempFixedColumns.ipn = false
-  tempFixedColumns.zh_desc = false
-  tempFixedColumns.en_desc = false
+  Object.assign(tempVisibleColumns, defaultVisibleColumns)
+  Object.assign(tempFixedColumns, defaultFixedColumns)
 }
 
 // 清除所有选择

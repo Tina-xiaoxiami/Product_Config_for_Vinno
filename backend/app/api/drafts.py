@@ -495,11 +495,11 @@ def _select_submission_drafts(all_drafts: list[ConfigDraft], data: DraftSubmitRe
             and (model_ids is None or draft.model_id is None or draft.model_id in model_ids)]
 
 
-async def _submission_signature(db: AsyncSession, batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> str:
+async def _submission_signature(db: AsyncSession, batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest, *, working_snapshot: Optional[dict] = None) -> str:
     """Detect additions, edits, removals and scope changes after user review."""
     latest = await _latest_version(db, batch.series_id)
     payload = {
-        "working_snapshot": await build_series_snapshot(db, batch.series_id),
+        "working_snapshot": working_snapshot if working_snapshot is not None else await build_series_snapshot(db, batch.series_id),
         "baseline": [latest.id, latest.snapshot_data] if latest else None,
         "batch": [batch.id, batch.series_id, batch.status],
         "items": sorted(set(data.item_ids)) if data.item_ids is not None else None,
@@ -509,6 +509,24 @@ async def _submission_signature(db: AsyncSession, batch: DraftBatch, all_drafts:
                    for draft in sorted(all_drafts, key=lambda draft: draft.id)],
     }
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _submission_preview_records(selected, items, model_names, working_snapshot, baseline):
+    records = []
+    for draft in selected:
+        item = items[draft.item_id]
+        record = {"item_id": draft.item_id, "model_id": draft.model_id,
+                  "field_name": draft.field_name, "change_type": draft.change_type,
+                  "rd_name": item.rd_name, "model_name": model_names.get(draft.model_id),
+                  "old_value": draft.old_value, "new_value": draft.new_value}
+        if draft.field_name is None:
+            empty = {field: None for field in CONFIG_FIELDS}
+            current_pair = _snapshot_pair(working_snapshot, item, draft.model_id) or empty
+            baseline_pair = _snapshot_pair(baseline, item, draft.model_id)
+            record["old_values"] = baseline_pair or (current_pair if draft.change_type == "delete" else empty)
+            record["new_values"] = empty if draft.change_type == "delete" else current_pair
+        records.append(record)
+    return records
 
 
 @router.post("/batch/{batch_id}/submit-preview")
@@ -527,20 +545,19 @@ async def preview_draft_submission(batch_id: str, data: DraftSubmitRequest, db: 
     series = await db.get(ProductSeries, batch.series_id)
     fields = {field for draft in selected for field in ((draft.field_name,) if draft.field_name else CONFIG_FIELDS)}
     counts = _draft_counts(selected)
+    working_snapshot = await build_series_snapshot(db, batch.series_id)
+    baseline = await _latest_snapshot(db, batch.series_id) if any(draft.field_name is None for draft in selected) else {"items": []}
     return {
         "batch_id": batch.id, "series_id": batch.series_id,
         "series_name": series.name if series else str(batch.series_id),
-        "signature": await _submission_signature(db, batch, all_drafts, data),
+        "signature": await _submission_signature(db, batch, all_drafts, data, working_snapshot=working_snapshot),
         "total_items": len({draft.item_id for draft in selected}),
         "total_changes": len(selected), "total_models": len(model_ids),
         "fields": [field for field in CONFIG_FIELDS if field in fields],
         "models": [{"id": model.id, "name": model.name} for model in models],
         "change_counts": {kind: counts[kind] for kind in CHANGE_TYPES},
         "remaining_changes": len(all_drafts) - len(selected),
-        "drafts": [{"item_id": draft.item_id, "model_id": draft.model_id,
-                    "field_name": draft.field_name, "change_type": draft.change_type,
-                    "rd_name": items[draft.item_id].rd_name, "model_name": model_names.get(draft.model_id),
-                    "old_value": draft.old_value, "new_value": draft.new_value} for draft in selected],
+        "drafts": _submission_preview_records(selected, items, model_names, working_snapshot, baseline),
     }
 
 
