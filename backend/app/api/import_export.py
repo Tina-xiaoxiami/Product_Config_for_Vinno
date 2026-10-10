@@ -152,7 +152,12 @@ async def _validate_patch_scope_readonly(
             )
     for row in rows:
         ref = refs.get(row["row_idx"])
-        if ref and config_item_fingerprint(row) != ref["fingerprint"]:
+        if ref is None:
+            raise HTTPException(
+                status_code=400,
+                detail="补丁工作簿配置项范围已改变，请重新导出后再导入",
+            )
+        if config_item_fingerprint(row) != ref["fingerprint"]:
             raise HTTPException(
                 status_code=400,
                 detail=f"第 {row['row_idx']} 行配置项身份与导出记录不一致",

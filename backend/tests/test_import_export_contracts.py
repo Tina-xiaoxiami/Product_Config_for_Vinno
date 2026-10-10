@@ -573,6 +573,31 @@ async def test_preview_rejects_invalid_patch_item_id_scope_metadata(db, item_ids
 
 
 @pytest.mark.asyncio
+async def test_header_only_patch_with_empty_item_scope_remains_valid(db):
+    await _seed_config(db, with_snapshot=True)
+    exported = await export_excel(
+        ExportRequest(series_id=1, search="does-not-exist", model_ids="1"),
+        db,
+    )
+    payload = await _response_bytes(exported)
+
+    preview = await preview_import(
+        UploadFile(filename="empty-scope.xlsx", file=io.BytesIO(payload)),
+        db,
+    )
+    result = await import_excel(
+        UploadFile(filename="empty-scope.xlsx", file=io.BytesIO(payload)),
+        series_name=None,
+        db=db,
+    )
+
+    assert preview["summary"]["total_items"] == 0
+    assert result["details"][0]["items"] == 0
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 1
+    assert await db.scalar(select(func.count()).select_from(ConfigValue)) == 1
+
+
+@pytest.mark.asyncio
 async def test_import_maps_recognized_row_three_labels_and_preserves_omitted_fields(db):
     await _seed_config(db, with_snapshot=True)
     workbook = _workbook(

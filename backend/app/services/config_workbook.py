@@ -125,6 +125,11 @@ def read_patch_metadata(workbook) -> dict | None:
         and values.get("mode") == "patch"
     ):
         try:
+            item_ids = [
+                int(value)
+                for value in values.get("item_ids", "").split(",")
+                if value
+            ]
             model_ids = [
                 int(value)
                 for value in values.get("model_ids", "").split(",")
@@ -136,8 +141,11 @@ def read_patch_metadata(workbook) -> dict | None:
                 if value
             ]
             if (
-                not model_ids
+                len(item_ids) != len(set(item_ids))
+                or any(item_id < 1 for item_id in item_ids)
+                or not model_ids
                 or len(model_ids) != len(set(model_ids))
+                or any(model_id < 1 for model_id in model_ids)
                 or not fields
                 or len(fields) != len(set(fields))
                 or any(field not in CONFIG_FIELDS for field in fields)
@@ -159,6 +167,12 @@ def read_patch_metadata(workbook) -> dict | None:
                     "id": item_id,
                     "fingerprint": fingerprint,
                 }
+            referenced_item_ids = {ref["id"] for ref in normalized_refs.values()}
+            if (
+                set(item_ids) != referenced_item_ids
+                or len(item_ids) != len(normalized_refs)
+            ):
+                raise ValueError
             raw_excluded_pairs = json.loads(values.get("excluded_pairs") or "[]")
             if not isinstance(raw_excluded_pairs, list):
                 raise ValueError
@@ -172,6 +186,7 @@ def read_patch_metadata(workbook) -> dict | None:
                 excluded_pairs.add((item_id, model_id))
             return {
                 "series_id": int(values["series_id"]),
+                "item_ids": item_ids,
                 "item_refs": normalized_refs,
                 "model_ids": model_ids,
                 "fields": fields,
