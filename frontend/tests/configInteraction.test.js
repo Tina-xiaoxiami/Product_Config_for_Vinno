@@ -98,3 +98,14 @@ test('batch publication sends only reviewed series and their signatures', async 
   assert.deepEqual(app.requests[0].params.batch_ids, [201])
   assert.deepEqual(app.requests[0].params.expected_signatures, { 201: 'signature-201' })
 })
+
+test('reset columns uses the same defaults as first use', () => {
+  const defaultCode = source.slice(source.indexOf('const defaultVisibleColumns ='), source.indexOf('// 从 localStorage 加载设置'))
+  const defaults = new Function(`${defaultCode};return { defaultVisibleColumns, defaultFixedColumns }`)()
+  const tempVisibleColumns = {}; const tempFixedColumns = {}
+  const resetCode = source.slice(source.indexOf('const resetTempColumns ='), source.indexOf('// 清除所有选择'))
+  const reset = new Function('tempVisibleColumns', 'tempFixedColumns', 'defaultVisibleColumns', 'defaultFixedColumns', `${resetCode};return resetTempColumns`)(tempVisibleColumns, tempFixedColumns, defaults.defaultVisibleColumns, defaults.defaultFixedColumns)
+  reset()
+  assert.deepEqual(tempVisibleColumns, defaults.defaultVisibleColumns)
+  assert.deepEqual(tempFixedColumns, defaults.defaultFixedColumns)
+})

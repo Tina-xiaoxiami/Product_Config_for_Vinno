@@ -502,3 +502,26 @@ test('failed undo exposes an undo retry rather than an unavailable save retry', 
   assert.equal(app.draftSaveFeedback.lastCell, null)
   assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
 })
+
+for (const order of ['failure-first', 'success-first']) {
+  test(`independent cell outcomes preserve failed retry and successful undo (${order})`, async () => {
+    const failing = deferred(); const saving = deferred(); let retried = false
+    const app = draftEditor({ createDraft: payload => payload.item_id === 1
+      ? retried ? Promise.resolve({ draft_id: 41 }) : failing.promise
+      : saving.promise })
+    const secondRow = { id: 2, model_values: { 2: { final_config: 'second' } } }
+    app.tableData.value.push(secondRow)
+    app.originalDataMap.value.set(2, { id: 2, model_values: { 2: { final_config: 'published-second' } } })
+    const first = app.handleCellChange(app.row, 2, 'final_config', 'first', 'published')
+    const second = app.handleCellChange(secondRow, 2, 'final_config', 'second', 'published-second')
+    if (order === 'failure-first') { failing.reject(new Error('offline')); await first; saving.resolve({ draft_id: 40 }); await second }
+    else { saving.resolve({ draft_id: 40 }); await second; failing.reject(new Error('offline')); await first }
+    assert.equal(app.draftSaveFeedback.failedCell?.row.id, 1)
+    assert.equal(app.draftSaveFeedback.lastCell?.row.id, 2)
+    assert.match(app.draftSaveFeedback.message, /失败/)
+    retried = true; await app.retryFailedCell()
+    assert.equal(app.draftSaveFeedback.failedCell, null)
+    assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'first')
+    assert.equal(app.draftChanges.value.get('2_2_final_config').newValue, 'second')
+  })
+}
