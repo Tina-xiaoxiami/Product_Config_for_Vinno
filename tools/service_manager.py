@@ -35,16 +35,16 @@ class Service:
     url: str
 
 
-def services() -> list[Service]:
+def services(*, require_dependencies: bool = False) -> list[Service]:
     python = ROOT / 'backend' / ('.venv/Scripts/python.exe' if os.name == 'nt' else '.venv/bin/python')
     executable = str(python) if python.exists() else sys.executable
     node = shutil.which('node')
     vite = ROOT / 'frontend/node_modules/vite/bin/vite.js'
-    if not node or not vite.is_file():
+    if require_dependencies and (not node or not vite.is_file()):
         raise LaunchError('前端依赖未准备好，请先在 frontend 目录运行 npm ci。')
     return [
         Service('backend', ROOT / 'backend', [executable, '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8086'], 8086, 'http://127.0.0.1:8086/'),
-        Service('frontend', ROOT / 'frontend', [node, str(vite), '--host', '127.0.0.1', '--port', '3006', '--strictPort'], 3006, 'http://127.0.0.1:3006/'),
+        Service('frontend', ROOT / 'frontend', [node or 'node', str(vite), '--host', '127.0.0.1', '--port', '3006', '--strictPort'], 3006, 'http://127.0.0.1:3006/'),
     ]
 
 
@@ -215,7 +215,7 @@ def main() -> int:
     parser.add_argument('--no-browser', action='store_true')
     arguments = parser.parse_args()
     try:
-        all_services = services()
+        all_services = services(require_dependencies=arguments.action == 'start')
         with launcher_lock(RUNTIME):
             if arguments.action == 'start':
                 start(all_services, RUNTIME)

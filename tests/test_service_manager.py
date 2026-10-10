@@ -192,7 +192,7 @@ def test_cli_uses_only_shared_service_state(monkeypatch, tmp_path, action):
     module = manager()
     service = module.Service('backend', tmp_path, [], 0, 'http://127.0.0.1/')
     monkeypatch.setattr(module, 'RUNTIME', tmp_path)
-    monkeypatch.setattr(module, 'services', lambda: [service, service])
+    monkeypatch.setattr(module, 'services', lambda **kwargs: [service, service])
     monkeypatch.setattr(module.sys, 'argv', ['service_manager.py', action, '--no-browser'])
     calls = []
     monkeypatch.setattr(module, 'start', lambda *args: calls.append('start'))
@@ -208,3 +208,9 @@ def test_stop_and_status_can_identify_services_when_node_is_missing(monkeypatch)
     monkeypatch.setattr(module.shutil, 'which', lambda name: None)
     # Missing dependencies should block a new start, never service identification.
     assert [service.name for service in module.services()] == ['backend', 'frontend']
+
+
+def test_start_requires_frontend_dependencies(monkeypatch):
+    module = manager()
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    with pytest.raises(module.LaunchError, match="依赖"): module.services(require_dependencies=True)
