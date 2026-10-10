@@ -1263,3 +1263,54 @@ async def test_patch_rejects_invalid_metadata_container_shapes(db, metadata_key,
         await import_excel(_upload(workbook, 'invalid-metadata.xlsx'), series_name=None, db=db)
     assert exc_info.value.status_code == 400
     assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_series_export_archives_shared_single_series_workbooks(db):
+    import zipfile
+
+    await _seed_config(db)
+    db.add_all([
+        ProductSeries(id=2, name="Oversea/Scope"),
+        ProductModel(id=2, series_id=2, name="Other", sort_order=0),
+    ])
+    await db.flush()
+    db.add(ConfigValue(item_id=1, model_id=2, final_config="OTHER", current_config="HIDDEN"))
+    await db.commit()
+    response = await export_excel(ExportRequest(
+        series_id=1, series_ids=[1, 2], model_ids="1,2", item_ids="1", visible_fields="final_config",
+    ), db)
+    assert response.media_type == "application/zip"
+    archive = zipfile.ZipFile(io.BytesIO(await _response_bytes(response)))
+    assert len(archive.namelist()) == 2
+    assert all("/" not in name and "\\" not in name for name in archive.namelist())
+    workbooks = [openpyxl.load_workbook(io.BytesIO(archive.read(name))) for name in archive.namelist()]
+    assert [workbook.active.cell(1, 6).value for workbook in workbooks] == ["China", "Oversea/Scope"]
+    assert [workbook.active.cell(5, 6).value for workbook in workbooks] == ["FINAL", "OTHER"]
+    for workbook in workbooks:
+        assert "__VINNO_CONFIG_META__" in workbook.sheetnames
+        assert workbook.active.max_column == 6
+        assert "HIDDEN" not in [cell.value for row in workbook.active for cell in row]
+
+
+@pytest.mark.asyncio
+async def test_export_explicit_series_subset_does_not_fall_back_to_legacy_series(db):
+    await _seed_config(db)
+    response = await export_excel(ExportRequest(series_id=999, series_ids=[1, 1], model_ids="1"), db)
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@pytest.mark.asyncio
+async def test_export_empty_explicit_series_scope_is_rejected(db):
+    await _seed_config(db)
+    with pytest.raises(HTTPException) as error:
+        await export_excel(ExportRequest(series_id=1, series_ids=[]), db)
+    assert error.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_multi_series_export_fails_as_a_whole_if_one_series_is_missing(db):
+    await _seed_config(db)
+    with pytest.raises(HTTPException) as error:
+        await export_excel(ExportRequest(series_id=1, series_ids=[1, 999]), db)
+    assert error.value.status_code == 404
