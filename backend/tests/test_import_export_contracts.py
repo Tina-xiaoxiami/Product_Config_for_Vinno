@@ -251,6 +251,89 @@ async def test_preview_of_new_valid_identity_has_no_database_side_effects(db):
 
 
 @pytest.mark.asyncio
+async def test_preview_and_import_reject_duplicate_normalized_ipn_rows_before_writes(db):
+    workbook = _workbook([("China", "M")])
+    worksheet = workbook.active
+    duplicate = ["Second", "V2", " 100 ", "第二", "Second", "F2", "C2", "S2", "R2"]
+    for column, value in enumerate(duplicate, 1):
+        worksheet.cell(6, column, value)
+
+    for operation in (
+        lambda: preview_import(_upload(workbook), db),
+        lambda: import_excel(_upload(workbook), series_name=None, db=db),
+    ):
+        with pytest.raises(HTTPException, match=r"IPN 100.*第 5、6 行") as error:
+            await operation()
+        assert error.value.status_code == 400
+
+    assert await db.scalar(select(func.count()).select_from(ProductSeries)) == 0
+    assert await db.scalar(select(func.count()).select_from(ProductModel)) == 0
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 0
+    assert await db.scalar(select(func.count()).select_from(ConfigValue)) == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_and_import_reject_series_without_model_columns_before_writes(db):
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet["A4"] = "Optional Features"
+    for column, value in enumerate(["Orphan", "V1", "100", "孤儿", "Orphan"], 1):
+        worksheet.cell(5, column, value)
+
+    for operation in (
+        lambda: preview_import(_upload(workbook, "NoModel.xlsx"), db),
+        lambda: import_excel(
+            _upload(workbook, "NoModel.xlsx"),
+            series_name=None,
+            db=db,
+        ),
+    ):
+        with pytest.raises(HTTPException, match="NoModel.*至少一个型号") as error:
+            await operation()
+        assert error.value.status_code == 400
+
+    assert await db.scalar(select(func.count()).select_from(ProductSeries)) == 0
+    assert await db.scalar(select(func.count()).select_from(ProductModel)) == 0
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_and_import_reject_ambiguous_database_ipn_before_writes(db):
+    db.add_all(
+        [
+            ConfigItem(
+                id=1,
+                category="Optional Features",
+                row_index=5,
+                rd_name="First",
+                ipn="100",
+            ),
+            ConfigItem(
+                id=2,
+                category="Optional Features",
+                row_index=6,
+                rd_name="Second",
+                ipn="100",
+            ),
+        ]
+    )
+    await db.commit()
+    workbook = _workbook([("China", "M")])
+
+    for operation in (
+        lambda: preview_import(_upload(workbook), db),
+        lambda: import_excel(_upload(workbook), series_name=None, db=db),
+    ):
+        with pytest.raises(HTTPException, match=r"IPN 100.*数据库中对应 2 条") as error:
+            await operation()
+        assert error.value.status_code == 400
+
+    assert await db.scalar(select(func.count()).select_from(ProductSeries)) == 0
+    assert await db.scalar(select(func.count()).select_from(ProductModel)) == 0
+    assert await db.scalar(select(func.count()).select_from(ConfigItem)) == 2
+
+
+@pytest.mark.asyncio
 async def test_partial_one_column_export_roundtrip_preserves_hidden_fields(db):
     await _seed_config(db, with_snapshot=True)
     exported = await export_excel(
@@ -384,11 +467,53 @@ async def test_unsupported_application_metadata_is_rejected_instead_of_full_sync
     )
     metadata.cell(version_row, 2, "999")
 
-    with pytest.raises(HTTPException, match="元数据") as error:
-        await import_excel(_upload(workbook, "unsupported.xlsx"), series_name=None, db=db)
+    for operation in (
+        lambda: preview_import(_upload(workbook, "unsupported.xlsx"), db),
+        lambda: import_excel(
+            _upload(workbook, "unsupported.xlsx"),
+            series_name=None,
+            db=db,
+        ),
+    ):
+        with pytest.raises(HTTPException, match="元数据") as error:
+            await operation()
+        assert error.value.status_code == 400
+    assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_patch_model_scope_change_like_import(db):
+    await _seed_matrix(db)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    workbook.active["F2"] = "M2"
+
+    with pytest.raises(HTTPException, match="机型范围已改变") as error:
+        await preview_import(_upload(workbook, "changed-model.xlsx"), db)
 
     assert error.value.status_code == 400
     assert await db.scalar(select(func.count()).select_from(ConfigDraft)) == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_patch_row_identity_change_like_import(db):
+    await _seed_config(db, with_snapshot=True)
+    exported = await export_excel(
+        ExportRequest(series_id=1, item_ids="1", model_ids="1"),
+        db,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+    workbook.active["A6"] = "Changed identity"
+
+    with pytest.raises(HTTPException, match="配置项身份与导出记录不一致") as error:
+        await preview_import(_upload(workbook, "changed-identity.xlsx"), db)
+
+    assert error.value.status_code == 400
+    item = await db.get(ConfigItem, 1)
+    assert item.rd_name == "Feature"
 
 
 @pytest.mark.asyncio
