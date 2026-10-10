@@ -68,6 +68,7 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     row,
     tableData,
     draftChanges,
+    draftStats: context.draftStats,
     originalDataMap: context.originalDataMap,
     draftBatchMap: context.draftBatchMap
   }
@@ -610,3 +611,124 @@ test('late old-batch undo completion cannot show an undo result in the new batch
   assert.equal(app.draftSaveFeedback.pending, 0)
   assert.equal(app.draftSaveFeedback.lastCell, null)
 })
+
+
+for (const type of ['create', 'update']) {
+  test(`restoring a ${type} draft removes its local marker and count without an undo ghost`, async () => {
+    const app = draftEditor({
+      change: { oldValue: 'published', newValue: 'working', changeType: type },
+      createDraft: async () => ({ draft_id: null, removed: true, current_value: 'published' })
+    })
+    Object.assign(app.draftStats, { total: 1, create: type === 'create' ? 1 : 0, update: type === 'update' ? 1 : 0, delete: 0 })
+    app.originalDataMap.value.get(1).model_values[2].final_config = 'working'
+    assert.equal(await app.handleCellChange(app.row, 2, 'final_config', 'published', 'working'), true)
+    assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+    assert.deepEqual(app.draftStats, { total: 0, create: 0, update: 0, delete: 0 })
+    assert.equal(app.originalDataMap.value.get(1).model_values[2].final_config, 'published')
+    assert.equal(app.row.model_values[2].final_config, 'published')
+    assert.equal(app.draftSaveFeedback.lastCell, null)
+    assert.equal(app.draftSaveFeedback.successes.size, 0)
+    assert.equal(app.draftSaveFeedback.message, '已撤销单元格草稿')
+  })
+}
+
+test('a first unchanged save keeps the authoritative raw value and no draft or undo entry', async () => {
+  const app = draftEditor({ createDraft: async () => ({ draft_id: null, unchanged: true, current_value: '' }) })
+  assert.equal(await app.handleCellChange(app.row, 2, 'final_config', 'N/A', 'stale-baseline'), true)
+  assert.equal(app.row.model_values[2].final_config, '')
+  assert.equal(app.originalDataMap.value.get(1).model_values[2].final_config, '')
+  assert.equal(app.draftChanges.value.size, 0)
+  assert.deepEqual(app.draftStats, { total: 0, create: 0, update: 0, delete: 0 })
+  assert.equal(app.draftSaveFeedback.lastCell, null)
+  assert.equal(app.draftSaveFeedback.message, '配置未变化，无新增草稿')
+})
+
+test('a queued undo after server removal neither deletes again nor subtracts unrelated drafts', async () => {
+  const restore = deferred(); let deletes = 0
+  const app = draftEditor({
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    createDraft: () => restore.promise, deleteDraftByKey: async () => { deletes++ }
+  })
+  app.draftChanges.value.set('2_2_final_config', { oldValue: 'other', newValue: 'other-change', changeType: 'update' })
+  Object.assign(app.draftStats, { total: 2, create: 0, update: 2, delete: 0 })
+  const restoring = app.handleCellChange(app.row, 2, 'final_config', 'published', 'working')
+  const undo = app.removeDraftChange(app.row, 2, 'final_config', '1_2_final_config')
+  restore.resolve({ draft_id: null, removed: true, current_value: 'published' })
+  await Promise.all([restoring, undo])
+  assert.equal(deletes, 0)
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
+  assert.equal(app.draftChanges.value.has('2_2_final_config'), true)
+  assert.deepEqual(app.draftStats, { total: 1, create: 0, update: 1, delete: 0 })
+})
+
+test('a restore response cannot overwrite a newer queued edit and its successful draft', async () => {
+  const restore = deferred(), save = deferred(); let calls = 0
+  const app = draftEditor({
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    createDraft: () => ++calls === 1 ? restore.promise : save.promise
+  })
+  const older = app.handleCellChange(app.row, 2, 'final_config', 'published', 'working')
+  app.row.model_values[2].final_config = 'newer'
+  const newer = app.handleCellChange(app.row, 2, 'final_config', 'newer', 'working')
+  restore.resolve({ draft_id: null, removed: true, current_value: 'published' })
+  await older
+  assert.equal(app.row.model_values[2].final_config, 'newer')
+  save.resolve({ draft_id: 42 }); await newer
+  assert.equal(app.draftChanges.value.get('1_2_final_config').draftId, 42)
+  assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'newer')
+  assert.deepEqual(app.draftStats, { total: 1, create: 0, update: 1, delete: 0 })
+  assert.equal(app.draftSaveFeedback.lastCell.attemptedValue, 'newer')
+})
+
+test('a failed newer edit restores the authoritative value after a queued removal', async () => {
+  const restore = deferred(); let calls = 0
+  const app = draftEditor({
+    change: { oldValue: '', newValue: 'working', changeType: 'update' },
+    createDraft: async () => { if (++calls === 1) return restore.promise; throw new Error('newer offline') }
+  })
+  app.originalDataMap.value.get(1).model_values[2].final_config = 'working'
+  const older = app.handleCellChange(app.row, 2, 'final_config', 'N/A', 'working')
+  const replacement = { id: 1, model_values: { 2: { final_config: 'newer' } } }
+  app.tableData.value = [replacement]
+  app.originalDataMap.value = new Map([[1, { id: 1, model_values: { 2: { final_config: 'working' } } }]])
+  const newer = app.handleCellChange(replacement, 2, 'final_config', 'newer', 'working')
+  restore.resolve({ draft_id: null, removed: true, current_value: '' })
+  await older; assert.equal(await newer, false)
+  assert.equal(replacement.model_values[2].final_config, '')
+  assert.equal(app.originalDataMap.value.get(1).model_values[2].final_config, '')
+  assert.equal(app.draftChanges.value.size, 0)
+  assert.deepEqual(app.draftStats, { total: 0, create: 0, update: 0, delete: 0 })
+})
+
+test('a late old-batch removal cannot delete a newer batch draft with the same cell key', async () => {
+  const removal = deferred()
+  const app = draftEditor({
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    createDraft: payload => payload.batch_id === 20 ? removal.promise : Promise.resolve({ draft_id: 43 })
+  })
+  const old = app.handleCellChange(app.row, 2, 'final_config', 'published', 'working')
+  await Promise.resolve()
+  app.draftBatchMap.value = new Map([[10, 21]])
+  app.draftChanges.value.clear(); Object.assign(app.draftStats, { total: 0, create: 0, update: 0, delete: 0 })
+  const replacement = { id: 1, model_values: { 2: { final_config: 'new batch' } } }
+  app.tableData.value = [replacement]
+  app.originalDataMap.value = new Map([[1, { id: 1, model_values: { 2: { final_config: 'baseline B' } } }]])
+  await app.handleCellChange(replacement, 2, 'final_config', 'new batch', 'baseline B')
+  removal.resolve({ draft_id: null, removed: true, current_value: 'published' }); await old
+  assert.equal(app.draftChanges.value.get('1_2_final_config').draftId, 43)
+  assert.equal(app.originalDataMap.value.get(1).model_values[2].final_config, 'baseline B')
+  assert.equal(replacement.model_values[2].final_config, 'new batch')
+  assert.deepEqual(app.draftStats, { total: 1, create: 0, update: 1, delete: 0 })
+  assert.equal(app.draftSaveFeedback.lastCell.batchId, 21)
+})
+
+for (const response of [{}, { draft_id: null, unchanged: true }]) {
+  test(`an incomplete save response cannot be accepted as a successful no-op (${JSON.stringify(response)})`, async () => {
+    const app = draftEditor({ createDraft: async () => response })
+    assert.equal(await app.handleCellChange(app.row, 2, 'final_config', 'attempted', 'published'), false)
+    assert.equal(app.draftChanges.value.size, 0)
+    assert.equal(app.draftStats.total, 0)
+    assert.equal(app.draftSaveFeedback.lastCell, null)
+    assert.ok(app.draftSaveFeedback.failedCell)
+  })
+}
