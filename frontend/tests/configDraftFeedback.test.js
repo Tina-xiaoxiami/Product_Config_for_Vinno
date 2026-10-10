@@ -48,7 +48,7 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     ...Object.keys(context),
     `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange }`
   )(...Object.values(context))
-  return { finishEdit, removeDraftChange, handleCellChange, messages, row, tableData, draftChanges }
+  return { finishEdit, removeDraftChange, handleCellChange, messages, row, tableData, draftChanges, originalDataMap: context.originalDataMap }
 }
 
 function clearCellAction(handleCellChange) {
@@ -275,4 +275,28 @@ test('failed replacement-row save restores the last successful same-scope value'
   assert.equal(await newerSave, false)
   assert.equal(replacement.model_values[2].final_config, 'older')
   assert.equal(app.draftChanges.value.get('1_2_final_config').newValue, 'older')
+})
+
+
+test('failed save after refresh and successful undo restores the published baseline', async () => {
+  const deletion = deferred()
+  const app = draftEditor({
+    rowValue: 'working',
+    change: { oldValue: 'published', newValue: 'working', changeType: 'update' },
+    deleteDraftByKey: () => deletion.promise,
+    createDraft: async () => { throw new Error('new save failed') }
+  })
+  const undo = app.removeDraftChange(app.row, 2, 'final_config', '1_2_final_config')
+  await Promise.resolve()
+  const replacement = { id: 1, model_values: { 2: { final_config: 'newer' } } }
+  const replacementOriginal = { id: 1, model_values: { 2: { final_config: 'working' } } }
+  app.tableData.value = [replacement]
+  app.originalDataMap.value = new Map([[1, replacementOriginal]])
+  const save = app.handleCellChange(replacement, 2, 'final_config', 'newer', 'working')
+  deletion.resolve()
+  assert.equal(await undo, true)
+  assert.equal(await save, false)
+  assert.equal(replacement.model_values[2].final_config, 'published')
+  assert.equal(replacementOriginal.model_values[2].final_config, 'published')
+  assert.equal(app.draftChanges.value.has('1_2_final_config'), false)
 })
