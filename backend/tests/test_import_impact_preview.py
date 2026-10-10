@@ -194,3 +194,25 @@ def test_import_impact_detail_cap_keeps_exact_counts_and_declares_truncation():
     assert impact["total_changes"] == 250
     assert len(impact["changes"]) == impact["detail_limit"] == 200
     assert impact["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_preview_restoring_field_deletion_changes_only_named_cell(db):
+    await _seed_config(db, with_snapshot=True)
+    db.add(DraftBatch(id="field-delete", series_id=1, status="draft"))
+    db.add(ConfigDraft(batch_id="field-delete", series_id=1, item_id=1, model_id=1,
+                       change_type="delete", field_name="current_config",
+                       old_value="CURRENT", new_value=None))
+    await db.commit()
+    before = await _database_state(db)
+    working = await import_export._working_import_state(db)
+    assert working["pairs"][(1, 1)]["values"] == {
+        "final_config": "FINAL", "current_config": None,
+        "selection_config": "SELECT", "rd_status": "DONE",
+    }
+    impact = (await preview_import(_upload(_workbook([("China", "M")])), db))["impact"]
+    assert (impact["added"], impact["modified"], impact["changed_cells"]) == (0, 1, 1)
+    assert impact["changes"][0]["field_name"] == "current_config"
+    assert impact["changes"][0]["old_value"] is None
+    assert impact["changes"][0]["new_value"] == "CURRENT"
+    assert await _database_state(db) == before
