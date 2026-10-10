@@ -2084,6 +2084,8 @@ const importProgress = ref({ current: 0, total: 0 })  // 导入进度
 // 多文件上传临时变量
 let pendingFiles = []
 let processTimer = null
+let previewRequest = 0
+let committedPreviewRequest = 0
 
 // 右键菜单状态
 const contextMenu = reactive({
@@ -2956,6 +2958,7 @@ const handleCellChange = (row, modelId, field, newValue, oldValue) => {
 
 // 多文件上传处理（自定义 http-request）
 const handleMultiFileUpload = async (options) => {
+  const request = ++previewRequest
   // Element Plus http-request 模式下，options.file 是包装对象，需要用 .raw 获取原始文件
   const rawFile = options.file.raw || options.file
   pendingFiles.push(rawFile)
@@ -2970,12 +2973,9 @@ const handleMultiFileUpload = async (options) => {
     pendingFiles = []
 
     if (validFiles.length === 0) {
-      ElMessage.warning('请选择 Excel 文件 (.xlsx, .xls)')
+      if (request === previewRequest) ElMessage.warning('请选择 Excel 文件 (.xlsx, .xls)')
       return
     }
-
-    previewFiles.value = validFiles
-    previewData.value = null
 
     // 预览所有文件
     try {
@@ -2986,6 +2986,7 @@ const handleMultiFileUpload = async (options) => {
         formData.append('file', f)
 
         const res = await previewImport(formData)
+        if (request !== previewRequest) return
         allPreviewData.push({
           filename: res.filename,
           series: res.series || [],
@@ -3000,7 +3001,7 @@ const handleMultiFileUpload = async (options) => {
       }
 
       // 合并预览数据
-      previewData.value = {
+      const nextPreviewData = {
         files: allPreviewData,
         totalFiles: allPreviewData.length,
         totalModels: allPreviewData.reduce((sum, d) => sum + d.summary.totalModels, 0),
@@ -3008,8 +3009,13 @@ const handleMultiFileUpload = async (options) => {
         allCategories: [...new Set(allPreviewData.flatMap(d => d.summary.categories))]
       }
 
+      if (request !== previewRequest) return
+      previewFiles.value = [...validFiles]
+      previewData.value = nextPreviewData
+      committedPreviewRequest = request
       previewDialogVisible.value = true
     } catch (error) {
+      if (request !== previewRequest) return
       console.error('预览失败:', error)
       ElMessage.error('文件解析失败: ' + (error.response?.data?.detail || '未知错误'))
     }
@@ -3018,16 +3024,23 @@ const handleMultiFileUpload = async (options) => {
 
 // 确认导入（支持多文件）
 const confirmImport = async () => {
-  if (previewFiles.value.length === 0) return
+  const request = committedPreviewRequest
+  const files = [...previewFiles.value]
+  const preview = previewData.value
+  if (files.length === 0) return
+  if (!preview || request !== previewRequest) {
+    ElMessage.warning('预览已更新，请确认最新文件后再导入')
+    return
+  }
 
   importing.value = true
-  importProgress.value = { current: 0, total: previewFiles.value.length }
+  importProgress.value = { current: 0, total: files.length }
 
   const results = []
   let hasError = false
 
-  for (let i = 0; i < previewFiles.value.length; i++) {
-    const file = previewFiles.value[i]
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
     importProgress.value.current = i + 1
 
     const formData = new FormData()
@@ -3044,7 +3057,9 @@ const confirmImport = async () => {
   }
 
   importing.value = false
-  previewDialogVisible.value = false
+  if (request === previewRequest && committedPreviewRequest === request && previewData.value === preview) {
+    previewDialogVisible.value = false
+  }
 
   // 显示导入结果
   const successCount = results.filter(r => r.success).length
@@ -3095,20 +3110,7 @@ const handleExport = async () => {
     }
 
     // 传入筛选后的行 ID、机型 ID 和可见列，后端按此生成 Excel
-    const exportParams = {}
-    // 有行级筛选（草稿/差异/研发未完成）时传 item_ids 精确保留结果
-    // 无行级筛选时不传 item_ids（避免 URL 超长），改传 categories/search 作为后备
-    const hasRowFilter = draftFilters.value.size > 0 || showDiffOnly.value || showRdIncomplete.value
-    if (hasRowFilter && visibleItemIds.length > 0) {
-      exportParams.item_ids = visibleItemIds.join(',')
-    } else {
-      if (selectedCategories.value.length > 0) {
-        exportParams.categories = selectedCategories.value.join(',')
-      }
-      if (searchText.value) {
-        exportParams.search = searchText.value
-      }
-    }
+    const exportParams = { item_ids: visibleItemIds.join(',') }
     if (seriesModelIds.length > 0) {
       exportParams.model_ids = seriesModelIds.join(',')
     }

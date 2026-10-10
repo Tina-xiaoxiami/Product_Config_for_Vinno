@@ -229,6 +229,7 @@ const activeTab = ref('modified')
 const VERSION_OPTION_PAGE_SIZE = 100
 let versionLoadRequest = 0
 let versionOptionLoadRequest = 0
+let compareRequest = 0
 
 // 编辑版本对话框
 const editDialogVisible = ref(false)
@@ -289,6 +290,9 @@ const loadVersions = async () => {
 }
 
 const handleSeriesChange = () => {
+  compareRequest++
+  compareLoading.value = false
+  compareResult.value = null
   currentPage.value = 1
   versionOptions.value = []
   versionOptionLoadRequest++
@@ -348,7 +352,9 @@ const viewVersion = async (version) => {
 
 // 打开对比对话框
 const openCompareDialog = async (version) => {
+  const request = ++compareRequest
   const seriesId = selectedSeries.value
+  compareLoading.value = false
   compareVersion1.value = version.id
   compareVersion2.value = null
   compareResult.value = null
@@ -359,7 +365,7 @@ const openCompareDialog = async (version) => {
 
   try {
     const options = await loadAllVersionOptions(seriesId)
-    if (selectedSeries.value !== seriesId) return
+    if (request !== compareRequest || selectedSeries.value !== seriesId) return
     const idx = options.findIndex(v => v.id === version.id)
     compareVersion2.value = idx >= 0 && idx < options.length - 1 ? options[idx + 1].id : null
   } catch (error) {
@@ -380,14 +386,30 @@ const executeCompare = async () => {
     return
   }
 
+  const request = ++compareRequest
+  const seriesId = selectedSeries.value
+  const version1 = compareVersion1.value
+  const version2 = compareVersion2.value
+  const modelIds = [...selectedModels.value]
+  const isCurrent = () => (
+    request === compareRequest &&
+    compareDialogVisible.value &&
+    selectedSeries.value === seriesId &&
+    compareVersion1.value === version1 &&
+    compareVersion2.value === version2 &&
+    modelIds.length === selectedModels.value.length &&
+    modelIds.every((id, index) => id === selectedModels.value[index])
+  )
+
   compareLoading.value = true
   try {
     const res = await compareVersions({
-      version_id_1: compareVersion1.value,
-      version_id_2: compareVersion2.value,
-      model_ids: selectedModels.value.length > 0 ? selectedModels.value : undefined
+      version_id_1: version1,
+      version_id_2: version2,
+      model_ids: modelIds.length > 0 ? modelIds : undefined
     })
 
+    if (!isCurrent()) return
     compareResult.value = res
 
     // 自动选择有数据的标签页
@@ -399,10 +421,11 @@ const executeCompare = async () => {
       activeTab.value = 'deleted'
     }
   } catch (error) {
+    if (!isCurrent()) return
     console.error('对比失败:', error)
     ElMessage.error('对比失败')
   } finally {
-    compareLoading.value = false
+    if (request === compareRequest) compareLoading.value = false
   }
 }
 
