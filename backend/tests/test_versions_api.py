@@ -260,6 +260,13 @@ async def test_create_version_detects_unchanged_item_after_database_id_changes(t
                 rd_name="Historical feature name",
             )
         )
+        previous_snapshot["items"][0]["values"]["10"].update(
+            {
+                "final_config": None,
+                "selection_config": None,
+                "rd_status": None,
+            }
+        )
         session.add(
             ConfigVersion(
                 series_id=1,

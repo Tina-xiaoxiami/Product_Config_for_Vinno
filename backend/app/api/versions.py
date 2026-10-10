@@ -293,24 +293,33 @@ async def create_version(
             version_number = "1.0.0"
 
     snapshot = await build_series_snapshot(db, data.series_id)
+    try:
+        current_item_index = build_snapshot_item_comparison_index(snapshot)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前配置快照身份无效：{error}",
+        ) from error
     value_map = {
-        item["id"]: {int(model_id): values for model_id, values in item["values"].items()}
-        for item in snapshot["items"]
+        identity: {
+            int(model_id): values
+            for model_id, values in item["values"].items()
+        }
+        for identity, item in current_item_index.items()
     }
 
     # 如果已有版本，对比数据是否有变化
     if last_version:
         try:
             prev_snapshot = await normalize_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
-            prev_value_map = {}
             prev_item_index = build_snapshot_item_comparison_index(prev_snapshot)
-            for item in prev_item_index.values():
-                iid = item["id"]
-                for mid_str, vals in item.get("values", {}).items():
-                    mid = int(mid_str)
-                    if iid not in prev_value_map:
-                        prev_value_map[iid] = {}
-                    prev_value_map[iid][mid] = vals
+            prev_value_map = {
+                identity: {
+                    int(model_id): values
+                    for model_id, values in item.get("values", {}).items()
+                }
+                for identity, item in prev_item_index.items()
+            }
 
             if prev_value_map == value_map:
                 raise HTTPException(
