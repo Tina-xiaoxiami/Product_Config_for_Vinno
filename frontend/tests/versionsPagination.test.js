@@ -41,6 +41,46 @@ function versionLoader({ getVersions, getModels = async () => ({ items: [] }) })
   return { loadVersions, ...context }
 }
 
+function versionCompareController(compareVersions) {
+  const context = {
+    compareRequest: 0,
+    selectedSeries: ref(10),
+    versions: ref([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]),
+    currentPage: ref(2),
+    versionOptions: ref([]),
+    versionOptionLoadRequest: 0,
+    loadVersions() {},
+    loadAllVersionOptions: async () => [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+    compareDialogVisible: ref(true),
+    compareVersion1: ref(1),
+    compareVersion2: ref(2),
+    compareResult: ref(null),
+    compareLoading: ref(false),
+    selectedModels: ref([]),
+    activeTab: ref('modified'),
+    compareVersions,
+    ElMessage: { warning() {}, error() {} },
+    console: { error() {} }
+  }
+  const seriesCode = source.slice(
+    source.indexOf('const handleSeriesChange ='),
+    source.indexOf('const handlePageSizeChange =')
+  )
+  const openCode = source.slice(
+    source.indexOf('const openCompareDialog ='),
+    source.indexOf('// 执行版本对比')
+  )
+  const compareCode = source.slice(
+    source.indexOf('const executeCompare ='),
+    source.indexOf('// 回滚版本')
+  )
+  const functions = new Function(
+    ...Object.keys(context),
+    `${seriesCode}\n${openCode}\n${compareCode}\nreturn { handleSeriesChange, openCompareDialog, executeCompare }`
+  )(...Object.values(context))
+  return { ...functions, ...context }
+}
+
 test('version history requests the selected server page and renders pagination', () => {
   assert.match(source, /getVersions\(selectedSeries\.value,\s*\{[\s\S]*?skip:\s*\(currentPage\.value - 1\) \* pageSize\.value,[\s\S]*?limit:\s*pageSize\.value/)
   assert.match(source, /total\.value\s*=\s*res\.total\s*\|\|\s*0/)
@@ -88,4 +128,54 @@ test('a stale version response cannot replace the latest series page or total', 
   assert.deepEqual(app.versions.value, [{ id: 2, version_number: 'new' }])
   assert.equal(app.total.value, 1)
   assert.deepEqual(app.modelList.value, [{ id: 2, name: 'model-2' }])
+})
+
+test('latest version comparison wins with its captured series, versions, and model filter', async () => {
+  const slow = deferred()
+  const payloads = []
+  const latestResult = { summary: {}, added: [{ id: 'latest' }], modified: [], deleted: [] }
+  const staleResult = { summary: {}, added: [], modified: [{ id: 'stale' }], deleted: [] }
+  const app = versionCompareController(payload => {
+    payloads.push(payload)
+    return payloads.length === 1 ? slow.promise : Promise.resolve(latestResult)
+  })
+
+  app.selectedModels.value = [7]
+  const oldCompare = app.executeCompare()
+  app.compareVersion1.value = 3
+  app.compareVersion2.value = 4
+  app.selectedModels.value = [8, 9]
+  await app.executeCompare()
+  slow.resolve(staleResult)
+  await oldCompare
+
+  assert.deepEqual(payloads, [
+    { version_id_1: 1, version_id_2: 2, model_ids: [7] },
+    { version_id_1: 3, version_id_2: 4, model_ids: [8, 9] }
+  ])
+  assert.equal(app.compareResult.value, latestResult)
+  assert.equal(app.activeTab.value, 'added')
+  assert.equal(app.compareLoading.value, false)
+})
+
+test('series changes and reopening the dialog invalidate an in-flight version comparison', async () => {
+  const afterSeriesChange = deferred()
+  const seriesApp = versionCompareController(() => afterSeriesChange.promise)
+  const oldSeriesCompare = seriesApp.executeCompare()
+  seriesApp.selectedSeries.value = 20
+  seriesApp.handleSeriesChange()
+  afterSeriesChange.resolve({ summary: {}, added: [], modified: [{ id: 'stale' }], deleted: [] })
+  await oldSeriesCompare
+  assert.equal(seriesApp.compareResult.value, null)
+  assert.equal(seriesApp.compareLoading.value, false)
+
+  const afterReopen = deferred()
+  const dialogApp = versionCompareController(() => afterReopen.promise)
+  const oldDialogCompare = dialogApp.executeCompare()
+  await dialogApp.openCompareDialog({ id: 3 })
+  afterReopen.resolve({ summary: {}, added: [], modified: [{ id: 'stale' }], deleted: [] })
+  await oldDialogCompare
+  assert.equal(dialogApp.compareResult.value, null)
+  assert.equal(dialogApp.compareVersion1.value, 3)
+  assert.equal(dialogApp.compareLoading.value, false)
 })
