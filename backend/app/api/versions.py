@@ -391,8 +391,8 @@ async def compare_versions(
 
     # 构建索引
     try:
-        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids)
-        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids)
+        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids or None)
+        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids or None)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
@@ -606,8 +606,8 @@ async def export_version_compare(
 
     # 构建索引
     try:
-        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids)
-        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids)
+        index1 = build_snapshot_semantic_value_index(snapshot1, data.model_ids or None)
+        index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids or None)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
