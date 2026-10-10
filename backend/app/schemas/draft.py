@@ -40,6 +40,7 @@ class DraftSubmitRequest(BaseModel):
     version_number: Optional[str] = None
     version_name: Optional[str] = None
     description: Optional[str] = None
+    expected_signature: Optional[str] = None
     item_ids: Optional[List[int]] = None  # 部分提交时指定要提交的配置项ID列表，不传则提交全部
     model_ids: Optional[List[int]] = None  # 按机型过滤，仅提交指定机型的变更
 
@@ -98,6 +99,7 @@ class BatchDiscardResponse(BaseModel):
 class BatchSubmitRequest(BaseModel):
     """批量提交请求"""
     batch_ids: List[str]
+    expected_signatures: Optional[dict[str, str]] = None
     version_number: Optional[str] = None
     description: Optional[str] = None
     version_name: Optional[str] = None

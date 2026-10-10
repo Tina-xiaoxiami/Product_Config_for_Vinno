@@ -7,6 +7,7 @@ from sqlalchemy import select
 from typing import Optional
 from copy import deepcopy
 import json
+import hashlib
 import uuid
 
 from app.database import get_db
@@ -483,6 +484,63 @@ async def _resolve_version_number(
     return version_number
 
 
+def _select_submission_drafts(all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> list[ConfigDraft]:
+    """Use the same explicit item/model scope for preview and publication."""
+    item_ids = set(data.item_ids) if data.item_ids is not None else None
+    model_ids = set(data.model_ids) if data.model_ids is not None else None
+    if item_ids == set() or model_ids == set():
+        return []
+    return [draft for draft in all_drafts
+            if (item_ids is None or draft.item_id in item_ids)
+            and (model_ids is None or draft.model_id is None or draft.model_id in model_ids)]
+
+
+def _submission_signature(batch: DraftBatch, all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> str:
+    """Detect additions, edits, removals and scope changes after user review."""
+    payload = {
+        "batch": [batch.id, batch.series_id, batch.status],
+        "items": sorted(set(data.item_ids)) if data.item_ids is not None else None,
+        "models": sorted(set(data.model_ids)) if data.model_ids is not None else None,
+        "drafts": [[draft.id, draft.series_id, draft.item_id, draft.model_id,
+                    draft.change_type, draft.field_name, draft.old_value, draft.new_value]
+                   for draft in sorted(all_drafts, key=lambda draft: draft.id)],
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+@router.post("/batch/{batch_id}/submit-preview")
+async def preview_draft_submission(batch_id: str, data: DraftSubmitRequest, db: AsyncSession = Depends(get_db)):
+    batch = await db.get(DraftBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="草稿批次不存在")
+    if batch.status != "draft":
+        raise HTTPException(status_code=400, detail="草稿已提交或已废弃")
+    all_drafts = await _drafts_for_batch(db, batch_id)
+    items = await _validate_stored_drafts(db, batch, all_drafts)
+    selected = _select_submission_drafts(all_drafts, data)
+    model_ids = {draft.model_id for draft in selected if draft.model_id is not None}
+    models = list((await db.execute(select(ProductModel).where(ProductModel.id.in_(model_ids)))).scalars().all()) if model_ids else []
+    model_names = {model.id: model.name for model in models}
+    series = await db.get(ProductSeries, batch.series_id)
+    fields = {field for draft in selected for field in ((draft.field_name,) if draft.field_name else CONFIG_FIELDS)}
+    counts = _draft_counts(selected)
+    return {
+        "batch_id": batch.id, "series_id": batch.series_id,
+        "series_name": series.name if series else str(batch.series_id),
+        "signature": _submission_signature(batch, all_drafts, data),
+        "total_items": len({draft.item_id for draft in selected}),
+        "total_changes": len(selected), "total_models": len(model_ids),
+        "fields": [field for field in CONFIG_FIELDS if field in fields],
+        "models": [{"id": model.id, "name": model.name} for model in models],
+        "change_counts": {kind: counts[kind] for kind in CHANGE_TYPES},
+        "remaining_changes": len(all_drafts) - len(selected),
+        "drafts": [{"item_id": draft.item_id, "model_id": draft.model_id,
+                    "field_name": draft.field_name, "change_type": draft.change_type,
+                    "rd_name": items[draft.item_id].rd_name, "model_name": model_names.get(draft.model_id),
+                    "old_value": draft.old_value, "new_value": draft.new_value} for draft in selected],
+    }
+
+
 @router.post("/batch/{batch_id}/submit")
 async def submit_draft_batch(
     batch_id: str,
@@ -509,26 +567,9 @@ async def submit_draft_batch(
         raise HTTPException(status_code=400, detail="没有待提交的草稿")
     validated_items = await _validate_stored_drafts(db, batch, all_drafts)
 
-    # 部分提交：根据 item_ids / model_ids 过滤要处理的草稿
-    item_ids_filter = set(data.item_ids) if data.item_ids else None
-    model_ids_filter = set(data.model_ids) if data.model_ids else None
-    if model_ids_filter and not item_ids_filter:
-        # 按机型过滤：model_id=None（旧数据/全局变更）则包含，否则按 model_id 匹配
-        drafts = [
-            d for d in all_drafts
-            if d.model_id is None or d.model_id in model_ids_filter
-        ]
-    elif item_ids_filter and not model_ids_filter:
-        # 按配置项过滤
-        drafts = [d for d in all_drafts if d.item_id in item_ids_filter]
-    elif item_ids_filter and model_ids_filter:
-        # 同时按配置项和机型过滤：model_id=None 也包含
-        drafts = [
-            d for d in all_drafts
-            if d.item_id in item_ids_filter and (d.model_id is None or d.model_id in model_ids_filter)
-        ]
-    else:
-        drafts = all_drafts
+    if data.expected_signature is not None and data.expected_signature != _submission_signature(batch, all_drafts, data):
+        raise HTTPException(status_code=409, detail="草稿或提交范围已变化，请重新核对发布预览")
+    drafts = _select_submission_drafts(all_drafts, data)
     processed_count = len(drafts)
     if not drafts:
         raise HTTPException(status_code=400, detail="筛选条件没有匹配的草稿")
@@ -617,7 +658,8 @@ async def _process_single_batch_submit(
     description: Optional[str] = None,
     version_name: Optional[str] = None,
     version_number: Optional[str] = None,
-    db: AsyncSession = None
+    db: AsyncSession = None,
+    expected_signature: Optional[str] = None
 ) -> dict:
     """处理单个批次提交（提取公共逻辑供批量使用）"""
     result = await db.execute(select(DraftBatch).where(DraftBatch.id == batch_id))
@@ -636,6 +678,8 @@ async def _process_single_batch_submit(
     all_drafts = drafts_result.scalars().all()
     if not all_drafts:
         return {"success": False, "message": "草稿批次中没有草稿项"}
+    if expected_signature is not None and expected_signature != _submission_signature(batch, all_drafts, DraftSubmitRequest()):
+        return {"success": False, "message": "草稿已变化，请重新核对发布预览"}
     try:
         await _validate_stored_drafts(db, batch, all_drafts)
         version_number = await _resolve_version_number(
@@ -789,12 +833,15 @@ async def batch_submit_drafts(
 
     for batch_id in data.batch_ids:
         try:
+            if data.expected_signatures is not None and batch_id not in data.expected_signatures:
+                raise HTTPException(status_code=409, detail="缺少该系列发布预览，请重新核对")
             result = await _process_single_batch_submit(
                 batch_id=batch_id,
                 description=data.description,
                 version_name=data.version_name,
                 version_number=data.version_number,
-                db=db
+                db=db,
+                expected_signature=data.expected_signatures.get(batch_id) if data.expected_signatures is not None else None
             )
             if result["success"]:
                 await db.commit()
