@@ -201,3 +201,10 @@ def test_cli_uses_only_shared_service_state(monkeypatch, tmp_path, action):
     monkeypatch.setattr(module, 'healthy', lambda service: True)
     assert module.main() == 0
     assert calls == (['start'] if action == 'start' else ['stop', 'stop'] if action == 'stop' else [])
+
+
+def test_stop_and_status_can_identify_services_when_node_is_missing(monkeypatch):
+    module = manager()
+    monkeypatch.setattr(module.shutil, 'which', lambda name: None)
+    # Missing dependencies should block a new start, never service identification.
+    assert [service.name for service in module.services()] == ['backend', 'frontend']
