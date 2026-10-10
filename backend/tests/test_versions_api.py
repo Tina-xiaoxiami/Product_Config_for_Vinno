@@ -236,6 +236,54 @@ async def test_create_version_rejects_invalid_previous_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_create_version_detects_unchanged_item_after_database_id_changes(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        current_item = ConfigItem(
+            id=100,
+            category="Optional",
+            row_index=10,
+            rd_name="Current feature name",
+            ipn="IPN-STABLE",
+        )
+        session.add(current_item)
+        await session.flush()
+        session.add(
+            ConfigValue(item_id=current_item.id, model_id=10, current_config="included")
+        )
+        previous_snapshot = _snapshot(
+            _item(
+                999,
+                row_index=1,
+                ipn="IPN-STABLE",
+                rd_name="Historical feature name",
+            )
+        )
+        session.add(
+            ConfigVersion(
+                series_id=1,
+                version_number="1.0.0",
+                snapshot_data=json.dumps(previous_snapshot),
+                row_count=1,
+            )
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/versions",
+            json={"series_id": 1, "version_number": "1.0.1"},
+        )
+
+    assert response.status_code == 400
+    assert "无任何变化" in response.json()["detail"]
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "previous_snapshot_data",
     [
