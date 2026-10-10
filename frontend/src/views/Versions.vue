@@ -262,6 +262,7 @@ const loadVersions = async () => {
   // 切换筛选时先重置数据，避免显示旧数据
   versions.value = []
   modelList.value = []
+  total.value = 0
 
   try {
     const res = await getVersions(selectedSeries.value, {
@@ -279,6 +280,9 @@ const loadVersions = async () => {
     modelList.value = modelRes.items || []
   } catch (error) {
     if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
+    versions.value = []
+    modelList.value = []
+    total.value = 0
     console.error('加载版本列表失败:', error)
     ElMessage.error('加载版本列表失败')
   }

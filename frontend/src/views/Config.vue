@@ -1483,6 +1483,7 @@ const applyModelGroup = async (group) => {
   if (!ids.length) { ElMessage.warning('该分组的产品系列已不存在'); return }
   const previousSeries = [...selectedSeries.value]
   const previousModels = allModelsMap.value
+  const previousReady = configReady.value
   applyingModelGroup.value = true
   modelGroupsPopover.value?.hide()
   selectedSeries.value = ids
@@ -1491,7 +1492,10 @@ const applyModelGroup = async (group) => {
   try {
     const success = await loadModels({ modelGroup: group })
     if (success) { saveSeriesSelection(); saveModelOrder() }
-    else if (allModelsMap.value === previousModels && ids.length === selectedSeries.value.length && ids.every((id, i) => id === selectedSeries.value[i])) selectedSeries.value = previousSeries
+    else if (allModelsMap.value === previousModels && ids.length === selectedSeries.value.length && ids.every((id, i) => id === selectedSeries.value[i])) {
+      selectedSeries.value = previousSeries
+      configReady.value = previousReady
+    }
   } finally { applyingModelGroup.value = false }
 }
 
