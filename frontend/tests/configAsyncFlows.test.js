@@ -210,6 +210,7 @@ test('multiple-file preview requests one sequential batch and uses server final 
   const app = previewApp(async () => previewResponse('unused.xlsx'))
   // Instantiate the same controller with a batch-aware endpoint.
   const context = { ...app, previewImportBatch: async data => { requestCount++; return { files: data.getAll('files').map(file => previewResponse(file.name)), impact: { modified: 1, total_changes: 1 } } } }
+  delete context.handleMultiFileUpload
   const code = source.slice(source.indexOf('const handleMultiFileUpload ='), source.indexOf('// 确认导入'))
   const upload = new Function(...Object.keys(context), `${code};return handleMultiFileUpload`)(...Object.values(context))
   upload({ file: new File(['A'], 'A.xlsx') }); upload({ file: new File(['B'], 'B.xlsx') })
