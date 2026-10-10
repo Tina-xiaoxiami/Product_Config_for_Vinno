@@ -258,3 +258,18 @@ test('superseded preview completion cannot clear the current processing indicato
   assert.equal(app.previewLoading.value, false)
   assert.equal(app.previewFiles.value[0].name, 'B.xlsx')
 })
+
+
+test('import refresh uses the shared series pipeline once and preserves a failed series reload', async () => {
+  let seriesCalls=0,modelCalls=0
+  const app=importApp({files:[new File(['A'],'A.xlsx')],preview:{files:[previewResponse('A.xlsx')]},importExcel:async()=>({message:'ok'})})
+  const error=ref('')
+  const context={...app,loadSeries:async()=>{seriesCalls++;error.value='产品系列加载失败';return false},loadModels:async()=>{modelCalls++;error.value=''}}
+  delete context.confirmImport
+  const code=source.slice(source.indexOf('const confirmImport ='),source.indexOf('// 导出Excel'))
+  const confirm=new Function(...Object.keys(context),`${code};return confirmImport`)(...Object.values(context))
+  await confirm()
+  assert.equal(seriesCalls,1)
+  assert.equal(modelCalls,0)
+  assert.equal(error.value,'产品系列加载失败')
+})

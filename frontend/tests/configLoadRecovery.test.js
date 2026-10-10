@@ -78,9 +78,47 @@ test('the recovery action blocks duplicate clicks and reloads initial series whe
   assert.ok(code,'load failure requires an explicit recovery control')
   const pending=deferred(); let modelCalls=0,seriesCalls=0
   const ctx={configRetrying:ref(false),loading:ref(false),applyingModelGroup:ref(false),reviewInteractionLocked:ref(false),seriesList:ref([{id:1}]),selectedSeries:ref([1]),
-    loadModels:async()=>{modelCalls++;await pending.promise},loadSeries:async()=>{seriesCalls++}}
+    loadModels:async()=>{modelCalls++},loadSeries:async()=>{seriesCalls++;await pending.promise}}
   const retry=new Function(...Object.keys(ctx),`${code[0]};return retryConfiguration`)(...Object.values(ctx))
-  const first=retry(); await retry(); assert.equal(modelCalls,1); assert.equal(ctx.configRetrying.value,true)
+  const first=retry(); await retry(); assert.equal(modelCalls,0); assert.equal(seriesCalls,1); assert.equal(ctx.configRetrying.value,true)
   pending.resolve(); await first; assert.equal(ctx.configRetrying.value,false)
-  ctx.seriesList.value=[]; await retry(); assert.equal(seriesCalls,1)
+  ctx.seriesList.value=[]; await retry(); assert.equal(seriesCalls,2)
+})
+
+function seriesApp(getSeriesList) {
+  let modelCalls=0
+  const ctx={selectedSeries:ref([1]),seriesList:ref([{id:1,name:'cached'}]),allModelsMap:ref(new Map()),selectedModels:ref([]),tempSelectedModels:ref([]),tableData:ref([]),originalData:ref([]),
+    configLoadError:ref(''),configReady:ref(true),configRetrying:ref(false),loading:ref(false),applyingModelGroup:ref(false),reviewInteractionLocked:ref(false),
+    getSeriesList,loadModels:async()=>{modelCalls++;return true},modelLoadRequest:0,SERIES_SELECTION_KEY:'series_selection',
+    ElMessage:{error(){},warning(){}},console:{error(){}},localStorage:{getItem:()=>JSON.stringify({selected_ids:[1]})}}
+  const load=source.slice(source.indexOf('// 加载产品系列'),source.indexOf('// 全选系列'))
+  const methods=new Function(...Object.keys(ctx),`${load};return {loadSeries}`)(...Object.values(ctx))
+  const retryCode=source.match(/const retryConfiguration = [\s\S]*?(?=\/\/ 初始化草稿批次)/)[0]
+  const combined={...ctx,...methods}
+  const retry=new Function(...Object.keys(combined),`${retryCode};return retryConfiguration`)(...Object.values(combined))
+  return {...combined,retry,modelCalls:()=>modelCalls}
+}
+test('recovery retries series retrieval even when the old series list is non-empty',async()=>{
+  let calls=0
+  const app=seriesApp(async()=>{calls++;if(calls===1)throw new Error('offline');return {items:[{id:1,name:'refreshed'}]}})
+  await app.loadSeries();assert.match(app.configLoadError.value,/产品系列/)
+  await app.retry()
+  assert.equal(calls,2)
+  assert.equal(app.seriesList.value[0].name,'refreshed')
+  assert.equal(app.configLoadError.value,'')
+  assert.equal(app.modelCalls(),1)
+})
+test('a superseded series failure cannot hide a successful refreshed list',async()=>{
+  const old=deferred();let calls=0
+  const app=seriesApp(()=>++calls===1?old.promise:Promise.resolve({items:[{id:1,name:'new'}]}))
+  const first=app.loadSeries();await app.loadSeries();old.reject(new Error('old offline'));await first
+  assert.equal(app.configLoadError.value,'')
+  assert.equal(app.seriesList.value[0].name,'new')
+})
+test('a superseded series success cannot replace the newest list or reload its models',async()=>{
+  const old=deferred();let calls=0
+  const app=seriesApp(()=>++calls===1?old.promise:Promise.resolve({items:[{id:1,name:'new'}]}))
+  const first=app.loadSeries();await app.loadSeries();old.resolve({items:[{id:1,name:'old'}]});await first
+  assert.equal(app.seriesList.value[0].name,'new')
+  assert.equal(app.modelCalls(),1)
 })
