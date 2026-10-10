@@ -159,8 +159,9 @@
             :http-request="handleMultiFileUpload"
             accept=".xlsx,.xls"
             multiple
+            :disabled="previewLoading || importing"
           >
-            <el-button type="primary" :icon="Upload">导入Excel</el-button>
+            <el-button type="primary" :icon="Upload" :loading="previewLoading" :disabled="importing">{{ previewLoading ? '正在分析Excel' : '导入Excel' }}</el-button>
           </el-upload>
           <el-button :icon="Download" @click="handleExport">导出Excel</el-button>
 
@@ -187,6 +188,7 @@
             v-if="showRdIncomplete"
             type="danger"
             :icon="DocumentChecked"
+            :loading="rdCompleteSubmitting"
             @click="handleBatchCompleteRdStatus"
           >
             一键完成
@@ -694,7 +696,10 @@
         </template>
 
         <template #empty>
-          <el-empty description="暂无数据，请导入Excel或选择产品系列" />
+          <el-empty :description="configEmptyState.description" :image-size="64">
+            <el-button v-if="configEmptyState.action === 'models'" type="primary" @click="selectAllModels">选择该系列全部机型</el-button>
+            <el-button v-else-if="configEmptyState.action === 'filters'" @click="resetActiveFilters">清除筛选</el-button>
+          </el-empty>
         </template>
       </el-table>
 
@@ -869,44 +874,30 @@
     </div>
 
     <!-- 应用到所有机型确认对话框 -->
-    <el-dialog v-model="applyToAllDialog.visible" title="应用到所有机型" width="450px">
-      <div v-if="applyToAllDialog.scope === 'field'">
-        <p>将 <strong>{{ applyToAllDialog.fieldName }}</strong> 的值</p>
-        <p style="margin: 10px 0; padding: 8px; background: #f5f7fa; border-radius: 4px; font-weight: 500;">
-          "{{ applyToAllDialog.value || '-' }}"
-        </p>
-        <p>应用到该行 <strong>{{ selectedModels.length }}</strong> 个机型的<strong>{{ applyToAllDialog.fieldName }}</strong>字段</p>
-      </div>
-      <div v-else>
-        <p>将当前机型的<strong>全部4个字段</strong>配置</p>
-        <p style="margin: 10px 0; color: #606266; font-size: 13px;">
-          （最终配置、当前配置、选型类别、研发状态）
-        </p>
-        <p>复制到该行其他 <strong>{{ selectedModels.length - 1 }}</strong> 个机型</p>
-      </div>
+    <el-dialog v-model="applyToAllDialog.visible" title="应用到已选机型" width="500px" :close-on-click-modal="!applyToAllDialog.saving" :close-on-press-escape="!applyToAllDialog.saving" :show-close="!applyToAllDialog.saving">
+      <p>将该行来源机型的<strong>{{ applyToAllDialog.fieldName }}</strong>复制到 <strong>{{ applyToAllDialog.modelIds.length }}</strong> 个已选目标机型；最多 {{ applyToAllDialog.targets.length }} 处配置。</p>
+      <p v-if="applyToAllDialog.scope === 'field'">复制值：<strong>{{ applyToAllDialog.value || '-' }}</strong></p>
+      <p v-else>字段：最终配置、当前配置、选型类别、研发状态。</p>
+      <p v-if="applyToAllDialog.result" role="status">保存成功 {{ applyToAllDialog.result.success }} 处；失败 {{ applyToAllDialog.result.failed }} 处；未变化 {{ applyToAllDialog.result.unchanged }} 处；范围已变化 {{ applyToAllDialog.result.stale }} 处。</p>
+      <p v-if="applyToAllDialog.result?.stale" class="scope-note">批次或机型范围已变化，请关闭后重新选择目标。未继续写入过期目标。</p>
       <template #footer>
-        <el-button @click="applyToAllDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="confirmApplyToAll">确认</el-button>
+        <el-button :disabled="applyToAllDialog.saving" @click="applyToAllDialog.visible = false">关闭</el-button>
+        <el-button type="primary" :loading="applyToAllDialog.saving" :disabled="!!applyToAllDialog.result?.stale" @click="confirmApplyToAll">{{ applyToAllDialog.retryTargets?.length ? '仅重试失败项' : '确认应用' }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 粘贴整行配置对话框 -->
-    <el-dialog v-model="pasteRowDialog.visible" title="粘贴整行配置" width="500px">
-      <p>选择要粘贴配置的目标行：</p>
-      <el-select v-model="pasteRowDialog.targetRowId" placeholder="选择目标行" style="width: 100%; margin-top: 10px;">
-        <el-option
-          v-for="row in tableData"
-          :key="row.id"
-          :label="row.rd_name || row.ipn || 'ID:' + row.id"
-          :value="row.id"
-        />
+    <el-dialog v-model="pasteRowDialog.visible" title="粘贴整行配置" width="520px" :close-on-click-modal="!pasteRowDialog.saving" :close-on-press-escape="!pasteRowDialog.saving" :show-close="!pasteRowDialog.saving">
+      <p>来源行：{{ pasteRowDialog.sourceRow?.rd_name || pasteRowDialog.sourceRow?.ipn }}；已复制 {{ pasteRowDialog.modelIds.length }} 个机型的 4 个字段。</p>
+      <p>选择目标行，确认后仅修改该行对应机型配置：</p>
+      <el-select v-model="pasteRowDialog.targetRowId" :disabled="pasteRowDialog.saving || !!pasteRowDialog.retryTargets" placeholder="选择目标行" style="width: 100%; margin-top: 10px;" filterable>
+        <el-option v-for="row in tableData" :key="row.id" :label="row.rd_name || row.ipn || 'ID:' + row.id" :value="row.id" />
       </el-select>
-      <p style="color: #909399; font-size: 12px; margin-top: 10px;">
-        来源行: {{ pasteRowDialog.sourceRow?.rd_name || pasteRowDialog.sourceRow?.ipn }}
-      </p>
+      <p v-if="pasteRowDialog.result" role="status">保存成功 {{ pasteRowDialog.result.success }} 处；失败 {{ pasteRowDialog.result.failed }} 处；未变化 {{ pasteRowDialog.result.unchanged }} 处；范围已变化 {{ pasteRowDialog.result.stale }} 处。</p>
+      <p v-if="pasteRowDialog.result?.stale" class="scope-note">批次或机型范围已变化，请关闭后重新选择目标。未继续写入过期目标。</p>
       <template #footer>
-        <el-button @click="pasteRowDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="confirmPasteRowConfig">确认粘贴</el-button>
+        <el-button :disabled="pasteRowDialog.saving" @click="pasteRowDialog.visible = false">关闭</el-button>
+        <el-button type="primary" :loading="pasteRowDialog.saving" :disabled="!pasteRowDialog.targetRowId || !!pasteRowDialog.result?.stale" @click="confirmPasteRowConfig">{{ pasteRowDialog.retryTargets?.length ? '仅重试失败项' : '确认粘贴' }}</el-button>
       </template>
     </el-dialog>
 
@@ -2042,6 +2033,18 @@ const filteredTableData = computed(() => {
   return _computeFilteredData(false)
 })
 
+const getConfigEmptyState = ({ seriesCount, modelCount, fieldCount, hasFilters }) => {
+  if (!seriesCount) return { description: '请选择产品系列，查看机型配置', action: null }
+  if (!modelCount) return { description: '请选择要查看的机型', action: 'models' }
+  if (!fieldCount) return { description: '请通过“列筛选”至少显示一项机型配置字段', action: null }
+  if (hasFilters) return { description: '没有符合当前筛选条件的配置，请调整或清除筛选', action: 'filters' }
+  return { description: '当前机型没有可显示的配置，请调整机型选择或导入Excel', action: null }
+}
+const configEmptyState = computed(() => getConfigEmptyState({
+  seriesCount: selectedSeries.value.length, modelCount: selectedModels.value.length,
+  fieldCount: visibleConfigFields.value.length, hasFilters: hasActiveFilters.value
+}))
+
 // 不含草稿筛选的基础可见数据（用于统计，不随草稿标签变化）
 const baseFilteredData = computed(() => _computeFilteredData(true))
 
@@ -2131,6 +2134,7 @@ const groupImportImpactModels = models => {
 }
 const impactModelGroups = computed(() => groupImportImpactModels(previewData.value?.impact?.models || []))
 const previewFiles = ref([])  // 支持多文件
+const previewLoading = ref(false)
 const importing = ref(false)
 const importProgress = ref({ current: 0, total: 0 })  // 导入进度
 
@@ -2152,20 +2156,18 @@ const contextMenu = reactive({
 
 // 应用到所有机型对话框
 const applyToAllDialog = reactive({
-  visible: false,
-  row: null,
-  modelId: null,
-  field: null,
-  fieldName: '',
-  value: null
+  visible: false, saving: false, request: 0,
+  row: null, modelId: null, field: null, fieldName: '', value: null,
+  scope: 'field', modelIds: [], targets: [], retryTargets: null, result: null
 })
 
 // 粘贴整行配置对话框
 const pasteRowDialog = reactive({
-  visible: false,
-  sourceRow: null,
-  targetRowId: null
+  visible: false, saving: false, request: 0,
+  sourceRow: null, targetRowId: null,
+  modelIds: [], clipboard: null, targets: [], retryTargets: null, result: null
 })
+const rdCompleteSubmitting = ref(false)
 
 // 行差异查看对话框
 const rowDiffDialog = reactive({
@@ -2235,7 +2237,7 @@ const batchSubmitDialog = reactive({
 })
 const batchSubmitSubmitting = ref(false)
 let batchSubmitPreviewRequest = 0
-const reviewInteractionLocked = computed(() => submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value)
+const reviewInteractionLocked = computed(() => submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value || rdCompleteSubmitting.value || applyToAllDialog.saving || pasteRowDialog.saving)
 const batchSubmitResultDialog = reactive({
   visible: false,
   results: []  // { seriesName, versionNumber, changes, success, message }
@@ -3105,6 +3107,7 @@ const handleCellChange = (row, modelId, field, newValue, oldValue, frozenContext
 // 多文件上传处理（自定义 http-request）
 const handleMultiFileUpload = async (options) => {
   const request = ++previewRequest
+  previewLoading.value = true
   // Element Plus http-request 模式下，options.file 是包装对象，需要用 .raw 获取原始文件
   const rawFile = options.file.raw || options.file
   pendingFiles.push(rawFile)
@@ -3114,12 +3117,15 @@ const handleMultiFileUpload = async (options) => {
   processTimer = setTimeout(async () => {
     if (pendingFiles.length === 0) return
 
-    const validFiles = pendingFiles.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))
+    const validFiles = pendingFiles.filter(f => /\.xlsx?$/i.test(f.name))
 
     pendingFiles = []
 
     if (validFiles.length === 0) {
-      if (request === previewRequest) ElMessage.warning('请选择 Excel 文件 (.xlsx, .xls)')
+      if (request === previewRequest) {
+        previewLoading.value = false
+        ElMessage.warning('请选择 Excel 文件 (.xlsx, .xls)')
+      }
       return
     }
 
@@ -3155,6 +3161,8 @@ const handleMultiFileUpload = async (options) => {
       if (request !== previewRequest) return
       console.error('预览失败:', error)
       ElMessage.error('文件解析失败: ' + (error.response?.data?.detail || '未知错误'))
+    } finally {
+      if (request === previewRequest) previewLoading.value = false
     }
   }, 100)
 }
@@ -3472,49 +3480,25 @@ const onDiffFilterChange = () => {
 
 // 批量完成研发状态 - 将所有未完成的研发状态设为"已完成"
 const handleBatchCompleteRdStatus = async () => {
-  if (draftBatchMap.value.size === 0) {
-    ElMessage.warning('请先创建草稿批次')
-    return
-  }
-
+  if (rdCompleteSubmitting.value || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (draftBatchMap.value.size === 0) { ElMessage.warning('请先创建草稿批次'); return }
+  const targets = buildShortcutTargets([...filteredTableData.value], [...selectedModels.value], ['rd_status'], () => '已完成')
+    .filter(target => target.oldValue && !['已完成', 'N/A', '-'].includes(target.oldValue))
+  if (!targets.length) { ElMessage.info('当前筛选结果没有未完成的研发状态'); return }
+  const rowCount = new Set(targets.map(target => target.row.id)).size
+  const modelCount = new Set(targets.map(target => target.modelId)).size
+  rdCompleteSubmitting.value = true
   try {
     await ElMessageBox.confirm(
-      '确定将所有未完成的研发状态设为"已完成"？此操作将创建草稿变更。',
-      '批量完成研发状态',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
+      `将当前筛选结果（包含其他页）的 ${rowCount} 行 × ${modelCount} 个机型中 ${targets.length} 处研发状态设为“已完成”。不包含筛选外行，此操作仅创建草稿变更。`,
+      '确认一键完成范围', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
     )
-  } catch {
-    return
-  }
-
-  let count = 0
-  const promises = []
-
-  for (const row of tableData.value) {
-    for (const modelId of selectedModels.value) {
-      const currentValue = row.model_values[modelId]?.rd_status
-      const isIncomplete = currentValue && currentValue !== '已完成' && currentValue !== 'N/A' && currentValue !== '-'
-      if (isIncomplete) {
-        const oldValue = currentValue
-        row.model_values[modelId].rd_status = '已完成'
-        promises.push(handleCellChange(row, modelId, 'rd_status', '已完成', oldValue))
-        count++
-      }
-    }
-  }
-
-  if (count === 0) {
-    ElMessage.info('没有未完成的研发状态')
-    return
-  }
-
-  try {
-    const successCount = (await Promise.all(promises)).filter(Boolean).length
-    if (successCount > 0) ElMessage.success(`已完成 ${successCount} 项研发状态设置为"已完成"`)
+    const { result } = await saveShortcutTargets(targets)
+    if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。请核对当前范围后重试。`)
+    else ElMessage.success(`已完成 ${result.success} 处研发状态，跳过值未变化 ${result.unchanged} 处`)
   } catch (error) {
-    console.error('批量完成研发状态失败:', error)
-    ElMessage.error('部分操作失败，请刷新后重试')
-  }
+    if (error !== 'cancel' && error !== 'close') { console.error('批量完成研发状态失败:', error); ElMessage.error('操作未完成，请重试') }
+  } finally { rdCompleteSubmitting.value = false }
 }
 
 // 显示右键菜单
@@ -3551,105 +3535,62 @@ const hideContextMenu = () => {
 }
 
 // 处理应用到所有机型
-const handleApplyToAllModels = (scope) => {
-  hideContextMenu()
-
-  if (!contextMenu.row || !contextMenu.modelId || !contextMenu.field) return
-
-  // 检查是否至少选择了2个机型（整行模式需要）
-  if (scope === 'row' && selectedModels.value.length < 2) {
-    ElMessage.warning('整行应用需要至少选择 2 个机型，请先在顶部选择多个型号')
-    return
+const buildShortcutTargets = (rows, modelIds, fields, getNewValue) => rows.flatMap(row => modelIds.flatMap(modelId => {
+  if (!row.model_values[modelId]) return []
+  return fields.map(field => ({
+    row, modelId, field, oldValue: row.model_values[modelId][field],
+    newValue: getNewValue(row, modelId, field),
+    context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
+  }))
+}))
+const saveShortcutTargets = async targets => {
+  const result = { success: 0, failed: 0, unchanged: 0, stale: 0 }
+  const retryTargets = []
+  for (const target of targets) {
+    const { row, modelId, field, newValue, context } = target
+    if (!isDraftCellScopeCurrent(context)) { result.stale++; continue }
+    const oldValue = row.model_values[modelId][field]
+    if (!isValueChanged(oldValue, newValue)) { result.unchanged++; continue }
+    row.model_values[modelId][field] = newValue
+    try {
+      if (await handleCellChange(row, modelId, field, newValue, oldValue, context)) result.success++
+      else { result.failed++; retryTargets.push(target) }
+    } catch (error) { result.failed++; retryTargets.push(target); console.error('保存快捷操作失败:', error) }
   }
-
-  const row = contextMenu.row
-  const modelId = contextMenu.modelId
-  const field = contextMenu.field
-
-  // 获取当前值
-  const value = row.model_values[modelId]?.[field]
-
-  // 设置对话框数据
-  applyToAllDialog.row = row
-  applyToAllDialog.modelId = modelId
-  applyToAllDialog.field = field
-  applyToAllDialog.scope = scope
-  applyToAllDialog.value = value
-
-  // 设置字段显示名
-  const fieldNames = {
-    final_config: '最终配置',
-    current_config: '当前配置',
-    selection_config: '选型类别',
-    rd_status: '研发状态'
-  }
-  applyToAllDialog.fieldName = scope === 'field'
-    ? fieldNames[field]
-    : `${fieldNames[field]} 等4个字段`
-
-  applyToAllDialog.visible = true
+  return { result, retryTargets }
 }
-
-// 确认应用到所有机型
+const handleApplyToAllModels = scope => {
+  hideContextMenu()
+  if (applyToAllDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (!contextMenu.row || !contextMenu.modelId || !contextMenu.field) return
+  if (scope === 'row' && selectedModels.value.length < 2) { ElMessage.warning('整行应用需要至少选择 2 个机型'); return }
+  const { row, modelId, field } = contextMenu
+  const value = row.model_values[modelId]?.[field]
+  const sourceValues = { ...row.model_values[modelId] }
+  const fields = scope === 'field' ? [field] : ['final_config', 'current_config', 'selection_config', 'rd_status']
+  const modelIds = [...selectedModels.value].filter(id => scope === 'field' || id !== modelId)
+  const fieldNames = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态' }
+  Object.assign(applyToAllDialog, {
+    row, modelId, field, scope, value, modelIds,
+    fieldName: scope === 'field' ? fieldNames[field] : `${fieldNames[field]} 等4个字段`,
+    targets: buildShortcutTargets([row], modelIds, fields, (_, __, targetField) => scope === 'field' ? value : sourceValues[targetField]),
+    retryTargets: null, result: null, request: applyToAllDialog.request + 1, visible: true
+  })
+}
 const confirmApplyToAll = async () => {
-  if (!applyToAllDialog.row || !applyToAllDialog.field) {
-    applyToAllDialog.visible = false
-    return
-  }
-
-  const row = applyToAllDialog.row
-  const field = applyToAllDialog.field
-  const value = applyToAllDialog.value
-  const scope = applyToAllDialog.scope
-
+  if (applyToAllDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  const request = applyToAllDialog.request
+  const targets = [...(applyToAllDialog.retryTargets || applyToAllDialog.targets)]
+  if (!targets.length) { ElMessage.info('没有可应用的目标配置'); return }
+  applyToAllDialog.saving = true
   try {
-    const promises = []
-
-    if (scope === 'field') {
-      // 仅应用到当前字段
-      for (const modelId of selectedModels.value) {
-        if (row.model_values[modelId]) {
-          const oldValue = row.model_values[modelId][field]
-          if (isValueChanged(oldValue, value)) {
-            row.model_values[modelId][field] = value
-            // 并行发送请求，不等待
-            promises.push(handleCellChange(row, modelId, field, value, oldValue))
-          }
-        }
-      }
-    } else if (scope === 'row') {
-      // 应用到整行（所有4个字段）
-      const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
-      const sourceModelId = applyToAllDialog.modelId
-
-      for (const modelId of selectedModels.value) {
-        if (row.model_values[modelId] && modelId !== sourceModelId) {
-          for (const f of fields) {
-            const sourceValue = row.model_values[sourceModelId]?.[f]
-            const oldValue = row.model_values[modelId][f]
-            if (isValueChanged(oldValue, sourceValue)) {
-              row.model_values[modelId][f] = sourceValue
-              // 并行发送请求，不等待
-              promises.push(handleCellChange(row, modelId, f, sourceValue, oldValue))
-            }
-          }
-        }
-      }
-    }
-
-    // 并行执行所有请求
-    if (promises.length > 0) {
-      const successCount = (await Promise.all(promises)).filter(Boolean).length
-      if (successCount > 0) ElMessage.success(`已应用到 ${successCount} 处`)
-    } else {
-      ElMessage.info('没有需要更新的内容')
-    }
-
-    applyToAllDialog.visible = false
-  } catch (error) {
-    console.error('应用失败:', error)
-    ElMessage.error('应用失败')
-  }
+    const { result, retryTargets } = await saveShortcutTargets(targets)
+    if (request !== applyToAllDialog.request) return
+    applyToAllDialog.result = result
+    applyToAllDialog.retryTargets = retryTargets
+    if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+    else { ElMessage.success(`已应用 ${result.success} 处，跳过值未变化 ${result.unchanged} 处`); applyToAllDialog.visible = false }
+  } finally { if (request === applyToAllDialog.request) applyToAllDialog.saving = false }
 }
 
 // 当前值应用到该行所有字段（仅当前机型）
@@ -3719,7 +3660,7 @@ const handleClearCell = async () => {
 // 处理复制整行配置
 const handleCopyRowConfig = () => {
   hideContextMenu()
-
+  if (pasteRowDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
   if (!contextMenu.row) return
 
   // 复制当前行的所有配置
@@ -3744,9 +3685,10 @@ const handleCopyRowConfig = () => {
   }
 
   // 显示粘贴对话框
-  pasteRowDialog.sourceRow = row
-  pasteRowDialog.targetRowId = null
-  pasteRowDialog.visible = true
+  Object.assign(pasteRowDialog, {
+    sourceRow: row, targetRowId: null, modelIds: [...selectedModels.value], clipboard: copiedRowConfig.value,
+    targets: [], retryTargets: null, result: null, request: pasteRowDialog.request + 1, visible: true
+  })
 }
 
 // 查看该行差异
@@ -3816,46 +3758,32 @@ const getRowDiffData = (row) => {
 
 // 确认粘贴整行配置
 const confirmPasteRowConfig = async () => {
-  if (!pasteRowDialog.targetRowId || !copiedRowConfig.value) {
-    pasteRowDialog.visible = false
-    return
+  if (pasteRowDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  const request = pasteRowDialog.request
+  const clipboard = pasteRowDialog.clipboard
+  if (!pasteRowDialog.targetRowId || !clipboard) { ElMessage.warning('请选择目标行'); return }
+  if (!pasteRowDialog.retryTargets) {
+    const targetRow = tableData.value.find(row => row.id === pasteRowDialog.targetRowId)
+    if (!targetRow) { ElMessage.error('目标行不在当前范围，请重新选择'); return }
+    const modelIds = [...pasteRowDialog.modelIds].filter(id => clipboard.config[id])
+    const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
+    pasteRowDialog.targets = buildShortcutTargets([targetRow], modelIds, fields, (_, modelId, field) => clipboard.config[modelId][field])
   }
-
-  const targetRow = tableData.value.find(r => r.id === pasteRowDialog.targetRowId)
-  if (!targetRow) {
-    ElMessage.error('目标行不存在')
-    return
-  }
-
-  const sourceConfig = copiedRowConfig.value.config
-  const promises = []
-
+  const targets = [...(pasteRowDialog.retryTargets || pasteRowDialog.targets)]
+  if (!targets.length) { ElMessage.info('目标行没有对应的机型配置'); return }
+  pasteRowDialog.saving = true
   try {
-    for (const modelId of selectedModels.value) {
-      if (sourceConfig[modelId] && targetRow.model_values[modelId]) {
-        const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
-        for (const field of fields) {
-          const newValue = sourceConfig[modelId][field]
-          const oldValue = targetRow.model_values[modelId][field]
-
-          if (isValueChanged(oldValue, newValue)) {
-            targetRow.model_values[modelId][field] = newValue
-            promises.push(handleCellChange(targetRow, modelId, field, newValue, oldValue))
-          }
-        }
-      }
+    const { result, retryTargets } = await saveShortcutTargets(targets)
+    if (request !== pasteRowDialog.request || clipboard !== pasteRowDialog.clipboard) return
+    pasteRowDialog.result = result
+    pasteRowDialog.retryTargets = retryTargets
+    if (result.failed || result.stale) ElMessage.warning(`已粘贴 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+    else {
+      ElMessage.success(`已粘贴 ${result.success} 处，跳过值未变化 ${result.unchanged} 处`)
+      pasteRowDialog.visible = false
+      if (copiedRowConfig.value === clipboard) copiedRowConfig.value = null
     }
-
-    if (promises.length > 0) {
-      const successCount = (await Promise.all(promises)).filter(Boolean).length
-      if (successCount > 0) ElMessage.success(`已粘贴到目标行，共修改 ${successCount} 处`)
-    }
-    pasteRowDialog.visible = false
-    copiedRowConfig.value = null
-  } catch (error) {
-    console.error('粘贴失败:', error)
-    ElMessage.error('粘贴失败')
-  }
+  } finally { if (request === pasteRowDialog.request) pasteRowDialog.saving = false }
 }
 
 const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态', rd_name: '研发名称', v_code: 'V代码', ipn: 'IPN号', zh_desc: '中文描述', en_desc: '英文描述', category: '分类', row_index: '排序位置' }
@@ -4211,6 +4139,12 @@ const clearSelection = () => {
 
 // 拖拽填充开始
 const handleDragStart = (e, row, modelId, field) => {
+  if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+      !paginatedTableData.value.some(item => item.id === row.id) || !selectedModels.value.includes(modelId) ||
+      !visibleConfigFields.value.includes(field)) {
+    e.preventDefault()
+    return
+  }
   const value = row.model_values[modelId]?.[field]
   dragSource.value = {
     rowId: row.id,
@@ -4240,37 +4174,18 @@ const handleDragOver = (e, row, modelId, field) => {
 
 // 高亮拖拽目标区域
 const highlightDragTarget = (targetRowId, targetModelId, targetField) => {
-  if (!dragSource.value) return
+  dragTargetCells.value = []
+  if (!dragSource.value || dragSource.value.field !== targetField ||
+      !selectedModels.value.includes(targetModelId) || !visibleConfigFields.value.includes(targetField)) return
 
-  const { rowId: sourceRowId, modelId: sourceModelId, field: sourceField } = dragSource.value
-
-  // 只支持同字段拖拽填充
-  if (sourceField !== targetField) return
-
-  // 获取范围
-  const rowIds = tableData.value.map(r => r.id)
-  const sourceIndex = rowIds.indexOf(sourceRowId)
-  const targetIndex = rowIds.indexOf(targetRowId)
-
+  const rows = paginatedTableData.value
+  const sourceIndex = rows.findIndex(row => row.id === dragSource.value.rowId)
+  const targetIndex = rows.findIndex(row => row.id === targetRowId)
   if (sourceIndex < 0 || targetIndex < 0) return
 
-  const startIndex = Math.min(sourceIndex, targetIndex)
-  const endIndex = Math.max(sourceIndex, targetIndex)
-
-  // 生成目标单元格列表
-  const cells = []
-  for (let i = startIndex; i <= endIndex; i++) {
-    const row = tableData.value[i]
-    if (row && row.model_values[targetModelId]) {
-      cells.push({
-        rowId: row.id,
-        modelId: targetModelId,
-        field: targetField
-      })
-    }
-  }
-
-  dragTargetCells.value = cells
+  dragTargetCells.value = rows.slice(Math.min(sourceIndex, targetIndex), Math.max(sourceIndex, targetIndex) + 1)
+    .filter(row => row.model_values?.[targetModelId])
+    .map(row => ({ rowId: row.id, modelId: targetModelId, field: targetField }))
 }
 
 // 判断是否正在拖拽的目标
@@ -4284,42 +4199,48 @@ const isDragTarget = (rowId, modelId, field) => {
 const handleDrop = async (e, row, modelId, field) => {
   e.preventDefault()
   if (!isDragging.value || !dragSource.value) return
-
-  // 执行拖拽填充
-  await performDragFill()
-
-  // 重置拖拽状态
-  isDragging.value = false
-  dragSource.value = null
-  dragTargetCells.value = []
+  try {
+    if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value || field !== dragSource.value.field) return
+    highlightDragTarget(row.id, modelId, field)
+    await performDragFill()
+  } finally {
+    handleDragEnd()
+  }
 }
 
 // 执行拖拽填充
 const performDragFill = async () => {
-  if (!dragSource.value || dragTargetCells.value.length === 0) return
+  if (!dragSource.value || !dragTargetCells.value.length || !configReady.value || loading.value ||
+      applyingModelGroup.value || reviewInteractionLocked.value) return
 
   const source = dragSource.value
   const value = source.value
-  const promises = []
+  const rows = new Map(paginatedTableData.value.map(row => [row.id, row]))
+  const targets = dragTargetCells.value.flatMap(cell => {
+    if ((cell.rowId === source.rowId && cell.modelId === source.modelId) ||
+        cell.field !== source.field || !selectedModels.value.includes(cell.modelId) ||
+        !visibleConfigFields.value.includes(cell.field)) return []
+    const row = rows.get(cell.rowId)
+    if (!row?.model_values?.[cell.modelId]) return []
+    return [{ ...cell, row, context: captureDraftCellContext(row, cell.modelId, cell.field, `${row.id}_${cell.modelId}_${cell.field}`) }]
+  })
 
   try {
-    for (const cell of dragTargetCells.value) {
-      // 跳过源单元格
-      if (cell.rowId === source.rowId && cell.modelId === source.modelId) continue
-
-      const targetRow = tableData.value.find(r => r.id === cell.rowId)
-      if (!targetRow || !targetRow.model_values[cell.modelId]) continue
-
-      const oldValue = targetRow.model_values[cell.modelId][cell.field]
+    const promises = []
+    for (const target of targets) {
+      const { row, modelId, field, context } = target
+      const oldValue = row.model_values[modelId][field]
       if (isValueChanged(oldValue, value)) {
-        targetRow.model_values[cell.modelId][cell.field] = value
-        promises.push(handleCellChange(targetRow, cell.modelId, cell.field, value, oldValue))
+        row.model_values[modelId][field] = value
+        promises.push(handleCellChange(row, modelId, field, value, oldValue, context))
       }
     }
-
-    if (promises.length > 0) {
-      const successCount = (await Promise.all(promises)).filter(Boolean).length
-      if (successCount > 0) ElMessage.success(`已填充 ${successCount} 个单元格`)
+    if (promises.length) {
+      const results = await Promise.all(promises)
+      const success = results.filter(Boolean).length
+      const failed = results.length - success
+      if (failed) ElMessage.error(`填充完成：成功 ${success} 个，失败 ${failed} 个，请重试失败的单元格`)
+      else ElMessage.success(`已填充 ${success} 个单元格`)
     }
   } catch (error) {
     console.error('拖拽填充失败:', error)

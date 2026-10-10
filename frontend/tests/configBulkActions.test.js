@@ -68,7 +68,25 @@ test('paste completion preserves a newer clipboard and dialog', async () => {
   assert.equal(app.copiedRowConfig.value,newer); assert.equal(app.pasteRowDialog.visible,true)
 })
 test('failed paste retains its target and copied configuration for retry', async () => {
-  const app=bulkApp({handleCellChange:async()=>false}); app.handleCopyRowConfig(); app.pasteRowDialog.targetRowId=2; const copied=app.copiedRowConfig.value
+  const app=bulkApp({handleCellChange:async()=>false}); app.rows[1].model_values[10].final_config='different'; app.handleCopyRowConfig(); app.pasteRowDialog.targetRowId=2; const copied=app.copiedRowConfig.value
   await app.confirmPasteRowConfig()
   assert.equal(app.pasteRowDialog.visible,true); assert.equal(app.copiedRowConfig.value,copied); assert.ok(app.pasteRowDialog.result.failed>0)
+})
+
+
+test('row apply uses the four reviewed source values, not later source edits', async () => {
+  const app=bulkApp(); app.rows[0].model_values[10].current_config='source-current'
+  app.handleApplyToAllModels('row'); app.rows[0].model_values[10].current_config='later-current'; await app.confirmApplyToAll()
+  assert.equal(app.rows[0].model_values[20].current_config,'source-current')
+})
+
+test('paste retry sends only failed fields with the frozen source values', async () => {
+  const calls=[]; let retry=false
+  const app=bulkApp({handleCellChange:async(row,model,field,value,oldValue)=>{calls.push({model,field,value}); if(!retry && field==='final_config'){row.model_values[model][field]=oldValue;return false} return true}})
+  app.rows[0].model_values[10].current_config='COPY'; app.rows[1].model_values[10].final_config='old'
+  app.handleCopyRowConfig(); app.pasteRowDialog.targetRowId=2; await app.confirmPasteRowConfig()
+  assert.equal(app.pasteRowDialog.result.success,1); assert.equal(app.pasteRowDialog.result.failed,1)
+  app.rows[0].model_values[10].final_config='later source'; retry=true; await app.confirmPasteRowConfig()
+  assert.deepEqual(calls.map(call=>[call.field,call.value]),[['final_config','X'],['current_config','COPY'],['final_config','X']])
+  assert.equal(app.pasteRowDialog.visible,false)
 })

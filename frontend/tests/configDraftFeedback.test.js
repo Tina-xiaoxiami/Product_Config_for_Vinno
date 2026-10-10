@@ -154,6 +154,10 @@ function dragFillAction(handleCellChange) {
     dragSource: ref({ rowId: 9, modelId: 9, field: 'final_config', value: 'new' }),
     dragTargetCells: ref([{ rowId: 1, modelId: 2, field: 'final_config' }]),
     tableData: ref([{ id: 1, model_values: { 2: { final_config: 'old' } } }]),
+    paginatedTableData: ref([{ id: 1, model_values: { 2: { final_config: 'old' } } }]),
+    selectedModels: ref([2]), visibleConfigFields: ref(['final_config']),
+    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false),
+    captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
     isValueChanged: (oldValue, newValue) => oldValue !== newValue,
     handleCellChange,
     ElMessage: {
