@@ -112,6 +112,42 @@ def _has_reliable_no_ipn_identity(item_info: dict) -> bool:
     )
 
 
+def snapshot_item_comparison_identity(item_info: dict) -> tuple:
+    """Return a stable, collision-checkable identity for snapshot comparison."""
+    ipn = str(item_info.get("ipn") or "").strip()
+    if ipn:
+        return ("ipn", ipn)
+
+    snapshot_id = item_info.get("id")
+    try:
+        snapshot_id = int(snapshot_id) if snapshot_id is not None else None
+    except (TypeError, ValueError):
+        raise ValueError(f"快照配置项编号 {snapshot_id} 无效") from None
+    if snapshot_id is not None:
+        return ("snapshot", snapshot_id)
+
+    if _has_reliable_no_ipn_identity(item_info):
+        return ("metadata", _no_ipn_identity(item_info))
+    raise ValueError("无 IPN 配置项缺少可用于版本比较的稳定身份")
+
+
+def build_snapshot_item_comparison_index(snapshot: dict) -> dict[tuple, dict]:
+    """Index snapshot items without silently overwriting identity collisions."""
+    items = snapshot.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("快照配置项列表格式无效")
+
+    index = {}
+    for item_info in items:
+        if not isinstance(item_info, dict):
+            raise ValueError("快照配置项格式无效")
+        identity = snapshot_item_comparison_identity(item_info)
+        if identity in index:
+            raise ValueError(f"快照中多个配置项指向同一身份 {identity[1]}")
+        index[identity] = item_info
+    return index
+
+
 def _resolve_existing_item(item_info: dict, items: Iterable[ConfigItem]) -> ConfigItem | None:
     existing_items = list(items)
     snapshot_id = item_info.get("id")

@@ -1,7 +1,7 @@
 """
 版本管理 API
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional
@@ -24,7 +24,11 @@ from app.schemas.version import (
 )
 from app.utils import generate_next_version
 
-from app.services.config_history import build_series_snapshot, restore_series_snapshot
+from app.services.config_history import (
+    build_series_snapshot,
+    build_snapshot_item_comparison_index,
+    restore_series_snapshot,
+)
 from app.services.model_identity import normalize_snapshot
 
 router = APIRouter()
@@ -49,22 +53,25 @@ async def _ensure_no_pending_drafts(db: AsyncSession, series_id: int) -> None:
 
 @router.get("", response_model=ConfigVersionListResponse)
 async def get_versions(
-    series_id: int = None,
-    skip: int = 0,
-    limit: int = 20,
+    series_id: Optional[int] = Query(None, ge=1),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db)
 ):
     """获取版本列表"""
     query = select(ConfigVersion)
+    count_query = select(func.count()).select_from(ConfigVersion)
 
-    if series_id:
+    if series_id is not None:
         query = query.where(ConfigVersion.series_id == series_id)
+        count_query = count_query.where(ConfigVersion.series_id == series_id)
 
     query = query.order_by(ConfigVersion.id.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
     items = result.scalars().all()
+    total = await db.scalar(count_query)
 
-    return ConfigVersionListResponse(items=items, total=len(items))
+    return ConfigVersionListResponse(items=items, total=total or 0)
 
 
 # ==================== 变更日志 API ====================
@@ -311,8 +318,11 @@ async def create_version(
                 )
         except HTTPException:
             raise
-        except Exception:
-            pass  # 快照解析失败则跳过对比
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError, AttributeError) as error:
+            raise HTTPException(
+                status_code=400,
+                detail="上次版本快照无效，无法安全创建新版本",
+            ) from error
 
     # 创建版本
     version = ConfigVersion(
@@ -352,15 +362,11 @@ async def compare_versions(
     snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
 
     # 构建索引
-    def build_index(snapshot):
-        index = {}
-        for item in snapshot.get("items", []):
-            key = (item.get("row_index"), item.get("ipn"))
-            index[key] = item
-        return index
-
-    index1 = build_index(snapshot1)
-    index2 = build_index(snapshot2)
+    try:
+        index1 = build_snapshot_item_comparison_index(snapshot1)
+        index2 = build_snapshot_item_comparison_index(snapshot2)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
     # 计算差异
     added = []
@@ -575,15 +581,11 @@ async def export_version_compare(
     snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
 
     # 构建索引
-    def build_index(snapshot):
-        index = {}
-        for item in snapshot.get("items", []):
-            key = (item.get("row_index"), item.get("ipn"))
-            index[key] = item
-        return index
-
-    index1 = build_index(snapshot1)
-    index2 = build_index(snapshot2)
+    try:
+        index1 = build_snapshot_item_comparison_index(snapshot1)
+        index2 = build_snapshot_item_comparison_index(snapshot2)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
     # 计算差异
     added = []
