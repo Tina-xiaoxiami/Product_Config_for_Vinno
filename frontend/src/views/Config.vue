@@ -958,8 +958,10 @@
     </el-dialog>
 
     <!-- 创建版本对话框 -->
-    <el-dialog v-model="versionDialogVisible" title="创建版本" width="500px">
-      <el-form :model="versionForm" label-width="100px">
+    <el-dialog v-model="versionDialogVisible" title="创建版本" width="560px" :close-on-click-modal="!versionSubmitting" :close-on-press-escape="!versionSubmitting" :show-close="!versionSubmitting">
+      <p>创建范围：{{ versionCreateScope?.targets.map(target => target.seriesName).join('、') }}</p>
+      <p class="scope-note">有未发布草稿的系列需要先提交发布，才能创建版本。</p>
+      <el-form :model="versionForm" label-width="100px" :disabled="versionSubmitting || versionHasSuccess">
         <el-form-item label="版本号">
           <el-input v-model="versionForm.version_number" placeholder="留空则自动生成" />
         </el-form-item>
@@ -970,9 +972,16 @@
           <el-input v-model="versionForm.description" type="textarea" :rows="3" placeholder="可选" />
         </el-form-item>
       </el-form>
+      <div v-if="versionResults.length" role="status">
+        <p v-for="result in versionResults" :key="result.seriesId">
+          <el-tag :type="result.success ? 'success' : 'danger'" size="small">{{ result.success ? '成功' : '失败' }}</el-tag>
+          {{ result.seriesName }}：{{ result.message }}
+        </p>
+        <p v-if="versionHasSuccess" class="scope-note">再次确认仅重试失败的系列，已成功的系列不会重复创建。</p>
+      </div>
       <template #footer>
-        <el-button @click="versionDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmCreateVersion">确定</el-button>
+        <el-button :disabled="versionSubmitting" @click="versionDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="versionSubmitting" @click="confirmCreateVersion">{{ versionHasSuccess ? '仅重试失败系列' : '确定' }}</el-button>
       </template>
     </el-dialog>
 
@@ -2232,6 +2241,10 @@ const batchEditForm = reactive({
 
 // 对话框
 const versionDialogVisible = ref(false)
+const versionSubmitting = ref(false)
+const versionCreateScope = ref(null)
+const versionResults = ref([])
+const versionHasSuccess = computed(() => versionResults.value.some(result => result.success))
 const submitDialogVisible = ref(false)
 const submitPreviewLoading = ref(false)
 const submitSubmitting = ref(false)
@@ -2265,7 +2278,7 @@ const batchSubmitDialog = reactive({
 })
 const batchSubmitSubmitting = ref(false)
 let batchSubmitPreviewRequest = 0
-const reviewInteractionLocked = computed(() => submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value || rdCompleteSubmitting.value || applyToAllDialog.saving || pasteRowDialog.saving)
+const reviewInteractionLocked = computed(() => versionSubmitting.value || submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value || rdCompleteSubmitting.value || applyToAllDialog.saving || pasteRowDialog.saving)
 const batchSubmitResultDialog = reactive({
   visible: false,
   results: []  // { seriesName, versionNumber, changes, success, message }
@@ -3495,6 +3508,14 @@ const confirmBatchEdit = async () => {
 
 // 创建版本
 const handleCreateVersion = () => {
+  if (versionSubmitting.value || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (!selectedSeries.value.length) { ElMessage.warning('请先选择产品系列'); return }
+  versionCreateScope.value = {
+    targets: [...new Set(selectedSeries.value)].map(seriesId => ({
+      seriesId, seriesName: seriesList.value.find(series => series.id === seriesId)?.name || `系列 ${seriesId}`
+    })), form: null
+  }
+  versionResults.value = []
   versionForm.version_number = ''
   versionForm.version_name = ''
   versionForm.description = ''
@@ -3502,32 +3523,40 @@ const handleCreateVersion = () => {
 }
 
 const confirmCreateVersion = async () => {
-  if (selectedSeries.value.length === 0) {
-    ElMessage.warning('请先选择产品系列')
-    return
+  if (versionSubmitting.value || !versionCreateScope.value) return
+  const scope = versionCreateScope.value
+  const successfulIds = new Set(versionResults.value.filter(result => result.success).map(result => result.seriesId))
+  const targets = scope.targets.filter(target => !successfulIds.has(target.seriesId))
+  if (!targets.length) return
+  scope.form ||= {
+    version_number: versionForm.version_number || undefined,
+    version_name: versionForm.version_name || undefined,
+    description: versionForm.description || undefined
   }
-
+  versionSubmitting.value = true
   try {
-    await Promise.all(selectedSeries.value.map(seriesId =>
-      createVersion({
-        series_id: seriesId,
-        version_number: versionForm.version_number || undefined,
-        version_name: versionForm.version_name || undefined,
-        description: versionForm.description || undefined
-      })
-    ))
-
-    ElMessage.success(`${selectedSeries.value.length} 个系列版本创建成功，请前往"版本历史"页面查看`)
-    versionDialogVisible.value = false
-
-    // 清空表单
-    versionForm.version_number = ''
-    versionForm.version_name = ''
-    versionForm.description = ''
-  } catch (error) {
-    console.error('创建版本失败:', error)
-    ElMessage.error('创建版本失败: ' + (error.response?.data?.detail || '未知错误'))
-  }
+    await waitForDraftSaves()
+    const outcomes = await Promise.all(targets.map(async target => {
+      try {
+        const version = await createVersion({ series_id: target.seriesId, ...scope.form })
+        return { ...target, success: true, message: `已创建版本${version.version_number ? ' ' + version.version_number : ''}` }
+      } catch (error) {
+        return { ...target, success: false, message: error.response?.data?.detail || '连接失败，请重试' }
+      }
+    }))
+    if (versionCreateScope.value !== scope) return
+    const results = new Map(versionResults.value.map(result => [result.seriesId, result]))
+    outcomes.forEach(result => results.set(result.seriesId, result))
+    versionResults.value = scope.targets.map(target => results.get(target.seriesId))
+    const successCount = versionResults.value.filter(result => result.success).length
+    if (successCount === scope.targets.length) {
+      ElMessage.success(`${successCount} 个系列版本创建成功，请前往“版本历史”页面查看`)
+      versionDialogVisible.value = false
+    } else {
+      ElMessage.warning(`已创建 ${successCount} 个系列，${scope.targets.length - successCount} 个失败，请查看结果后重试`)
+      if (!successCount) scope.form = null
+    }
+  } finally { versionSubmitting.value = false }
 }
 
 // 提交草稿

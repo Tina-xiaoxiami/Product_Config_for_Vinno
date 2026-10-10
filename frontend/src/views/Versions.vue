@@ -193,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, compareVersions, rollbackVersion, updateVersion, getModels } from '../api/data'
@@ -352,7 +352,6 @@ const viewVersion = async (version) => {
 
 // 打开对比对话框
 const openCompareDialog = async (version) => {
-  const request = ++compareRequest
   const seriesId = selectedSeries.value
   compareLoading.value = false
   compareVersion1.value = version.id
@@ -362,6 +361,7 @@ const openCompareDialog = async (version) => {
   selectedModels.value = []  // 重置机型选择
   versionOptions.value = [...versions.value]
   compareDialogVisible.value = true
+  const request = ++compareRequest
 
   try {
     const options = await loadAllVersionOptions(seriesId)
@@ -377,6 +377,7 @@ const openCompareDialog = async (version) => {
 
 // 执行版本对比
 const executeCompare = async () => {
+  compareResult.value = null
   if (!compareVersion1.value || !compareVersion2.value) {
     ElMessage.warning('请选择两个版本进行对比')
     return
@@ -493,6 +494,14 @@ const saveVersionEdit = async () => {
     ElMessage.error(error.response?.data?.detail || '保存失败')
   }
 }
+
+// 版本对比条件生命周期
+watch([compareVersion1, compareVersion2, selectedModels, compareDialogVisible], () => {
+  compareRequest++
+  compareLoading.value = false
+  compareResult.value = null
+}, { deep: true, flush: 'sync' })
+// 版本对比条件生命周期结束
 
 onMounted(() => {
   loadSeries()
