@@ -2,8 +2,15 @@
 
 from dataclasses import dataclass
 import hashlib
+import io
 import json
 from collections.abc import Mapping
+from pathlib import Path
+import tempfile
+
+from openpyxl import load_workbook
+
+from app.services.overseas_registration_preview import _resolve_parseable_workbook
 
 
 CONFIG_FIELDS = ("final_config", "current_config", "selection_config", "rd_status")
@@ -17,6 +24,25 @@ FIELD_BY_LABEL = {
 METADATA_SHEET = "__VINNO_CONFIG_META__"
 METADATA_MARKER = "vinno-config-export"
 METADATA_VERSION = "1"
+
+
+def load_config_workbook(content: bytes, filename: str):
+    """Load an OOXML or legacy BIFF configuration workbook from an upload."""
+
+    try:
+        if Path(filename).suffix.casefold() != ".xls":
+            return load_workbook(io.BytesIO(content))
+
+        with tempfile.TemporaryDirectory(prefix="config-workbook-") as temp:
+            directory = Path(temp)
+            source = directory / "source.xls"
+            source.write_bytes(content)
+            parse_path = _resolve_parseable_workbook(source, directory)
+            return load_workbook(parse_path)
+    except Exception as error:
+        raise ValueError(
+            "无法读取Excel文件，请确认文件未损坏且格式正确"
+        ) from error
 
 
 @dataclass(frozen=True)

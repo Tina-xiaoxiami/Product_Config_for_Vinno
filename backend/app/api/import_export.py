@@ -40,6 +40,7 @@ from openpyxl.comments import Comment
 from app.services.config_workbook import (
     CONFIG_FIELDS,
     config_item_fingerprint,
+    load_config_workbook,
     merged_cell_starts,
     parse_model_columns,
     parse_series_columns,
@@ -88,7 +89,10 @@ async def import_excel(
 
     # 读取文件
     content = await file.read()
-    wb = openpyxl.load_workbook(io.BytesIO(content))
+    try:
+        wb = load_config_workbook(content, file.filename)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     ws = wb.active
     try:
         import_mode = workbook_import_mode(wb)
@@ -1571,7 +1575,10 @@ async def preview_import(
 
     # 读取文件
     content = await file.read()
-    wb = openpyxl.load_workbook(io.BytesIO(content))
+    try:
+        wb = load_config_workbook(content, file.filename)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     ws = wb.active
 
     # 解析合并单元格
