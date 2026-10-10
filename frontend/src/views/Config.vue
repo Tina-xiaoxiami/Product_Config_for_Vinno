@@ -722,11 +722,11 @@
         />
 
         <el-table :data="previewData.files" border stripe size="small" style="margin-bottom: 16px">
-          <el-table-column prop="filename" label="文件名" width="200" />
+          <el-table-column prop="filename" label="文件名" width="200" show-overflow-tooltip />
           <el-table-column prop="summary.totalModels" label="型号数" width="80" />
           <el-table-column prop="summary.totalItems" label="配置项数" width="100" />
           <el-table-column label="本文件影响（项×机型）" min-width="180"><template #default="{ row }">新增 {{ row.impact?.added || 0 }} / 修改 {{ row.impact?.modified || 0 }} / 删除 {{ row.impact?.deleted || 0 }}</template></el-table-column>
-          <el-table-column label="系列">
+          <el-table-column label="系列" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">
               <el-tag v-for="s in row.series" :key="s.name" size="small" style="margin: 2px">{{ s.name }}</el-tag>
             </template>
@@ -737,8 +737,18 @@
           <el-alert type="warning" :closable="false" title="以下为相对当前工作配置的实际影响；文件按列表顺序导入，后面的文件可能覆盖前面的值。" />
           <p>配置项 × 机型：新增 <strong>{{ previewData.impact.added }}</strong>，修改 <strong>{{ previewData.impact.modified }}</strong>，删除 <strong>{{ previewData.impact.deleted }}</strong>，未变化 {{ previewData.impact.unchanged }}；共 {{ previewData.impact.changed_cells }} 处配置字段变更。</p>
           <p>共享基础信息：新增 {{ previewData.impact.item_counts?.added || 0 }} 项，修改 {{ previewData.impact.item_counts?.modified || 0 }} 项，删除 {{ previewData.impact.item_counts?.deleted || 0 }} 项；会影响这些配置项的相关机型。</p>
-          <p class="scope-note">涉及机型：{{ previewData.impact.models.map(model => `${model.series_name} / ${model.model_name}`).join('、') || '无机型配置变更' }}<br>涉及字段：{{ previewData.impact.fields.map(field => fieldLabels[field] || field).join('、') || '无' }}</p>
+          <p class="scope-note"><strong>涉及 {{ impactModelGroups.length }} 个系列 / {{ previewData.impact.models.length }} 个机型</strong><span v-if="previewData.impact.changed_item_fields > 0">（含共享基础信息关联机型）</span>；涉及字段：{{ previewData.impact.fields.map(field => fieldLabels[field] || field).join('、') || '无' }}</p>
           <el-collapse>
+            <el-collapse-item :title="`查看涉及机型（${previewData.impact.models.length} 个）`" name="models">
+              <div class="impact-model-list" role="region" aria-label="按系列查看涉及机型">
+                <div v-for="group in impactModelGroups" :key="group.seriesName" class="impact-model-group">
+                  <strong>{{ group.seriesName }}（{{ group.models.length }} 个）</strong>
+                  <div>
+                    <el-tag v-for="model in group.models" :key="model.model_id || model.model_name" :title="model.model_name" size="small">{{ model.model_name }}</el-tag>
+                  </div>
+                </div>
+              </div>
+            </el-collapse-item>
             <el-collapse-item :title="`查看变更明细（${previewData.impact.total_changes} 条）`" name="impact">
               <el-alert v-if="previewData.impact.truncated" type="info" :closable="false" :title="`明细仅展示前 ${previewData.impact.detail_limit} 条，以上数量包含全部变更。`" />
               <el-table :data="previewData.impact.changes" max-height="300" size="small">
@@ -749,7 +759,7 @@
                 <el-table-column label="字段" min-width="100"><template #default="{ row }">{{ fieldLabels[row.field_name] || row.field_name }}</template></el-table-column>
                 <el-table-column prop="old_value" label="当前工作值" min-width="100" />
                 <el-table-column prop="new_value" label="导入值" min-width="100" />
-                <el-table-column label="类型" width="75"><template #default="{ row }">{{ { create: '新增', update: '修改', delete: '删除' }[row.change_type] || row.change_type }}</template></el-table-column>
+                <el-table-column label="类型" width="75"><template #default="{ row }">{{ { create: '新增', added: '新增', update: '修改', modified: '修改', delete: '删除', deleted: '删除' }[row.change_type] || row.change_type }}</template></el-table-column>
               </el-table>
             </el-collapse-item>
           </el-collapse>
@@ -2110,6 +2120,16 @@ const getCellState = (rowId, modelId, field) => {
 const previewDialogVisible = ref(false)
 
 const previewData = ref(null)
+const groupImportImpactModels = models => {
+  const groups = new Map()
+  for (const model of models) {
+    const seriesName = model.series_name || '未分类系列'
+    if (!groups.has(seriesName)) groups.set(seriesName, { seriesName, models: [] })
+    groups.get(seriesName).models.push(model)
+  }
+  return Array.from(groups.values())
+}
+const impactModelGroups = computed(() => groupImportImpactModels(previewData.value?.impact?.models || []))
 const previewFiles = ref([])  // 支持多文件
 const importing = ref(false)
 const importProgress = ref({ current: 0, total: 0 })  // 导入进度
@@ -3838,7 +3858,7 @@ const confirmPasteRowConfig = async () => {
   }
 }
 
-const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态', rd_name: '研发名称', v_code: 'V代码', ipn: 'IPN号', zh_desc: '中文描述', en_desc: '英文描述', category: '分类', row_index: '行顺序' }
+const fieldLabels = { final_config: '最终配置', current_config: '当前配置', selection_config: '选型类别', rd_status: '研发状态', rd_name: '研发名称', v_code: 'V代码', ipn: 'IPN号', zh_desc: '中文描述', en_desc: '英文描述', category: '分类', row_index: '排序位置' }
 const formatSubmissionValue = (draft, side) => {
   if (draft.field_name) return draft[`${side}_value`] || '-'
   const values = draft[`${side}_values`]
@@ -4694,6 +4714,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.impact-model-list { max-height: 180px; overflow-y: auto; padding: 4px 8px; }
+.impact-model-group { margin-bottom: 10px; }
+.impact-model-group :deep(.el-tag) { margin: 4px 4px 0 0; max-width: 100%; }
+.impact-model-group :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; }
 .scope-note { color: #606266; font-size: 12px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
 .draft-count-note { font-size: 12px; color: rgba(255, 255, 255, .86); margin-top: 6px; }
 .save-feedback { display: flex; gap: 16px; align-items: center; padding: 6px 12px; background: #f0f7ff; color: #355373; font-size: 12px; }
