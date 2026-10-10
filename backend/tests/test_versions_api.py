@@ -75,6 +75,7 @@ async def _seed_catalog(session_factory):
                 ProductSeries(id=1, name="V Series"),
                 ProductSeries(id=2, name="Other Series"),
                 ProductModel(id=10, series_id=1, name="V10"),
+                ProductModel(id=11, series_id=1, name="V11"),
             ]
         )
         await session.commit()
@@ -148,6 +149,55 @@ async def test_compare_rejects_duplicate_stable_item_identity(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compare_export_honors_requested_model_filter(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    before = {
+        "models": [{"id": 10, "name": "V10"}, {"id": 11, "name": "V11"}],
+        "items": [
+            {
+                **_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"),
+                "values": {
+                    "10": {"current_config": "old V10"},
+                    "11": {"current_config": "old V11"},
+                },
+            }
+        ],
+    }
+    after = {
+        "models": [{"id": 10, "name": "V10"}, {"id": 11, "name": "V11"}],
+        "items": [
+            {
+                **_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"),
+                "values": {
+                    "10": {"current_config": "new V10"},
+                    "11": {"current_config": "new V11"},
+                },
+            }
+        ],
+    }
+    first_id, second_id = await _seed_versions(session_factory, before, after)
+    payload = {
+        "version_id_1": first_id,
+        "version_id_2": second_id,
+        "model_ids": [10],
+    }
+
+    async with client:
+        compared = await client.post("/api/versions/compare", json=payload)
+        exported = await client.post("/api/versions/compare/export", json=payload)
+
+    assert compared.status_code == 200, compared.text
+    assert compared.json()["summary"]["modified"] == 1
+    assert exported.status_code == 200, exported.text
+    workbook = openpyxl.load_workbook(io.BytesIO(exported.content))
+    modified_sheet = workbook["修改项"]
+    assert modified_sheet.max_row == 2
+    assert modified_sheet.cell(row=2, column=3).value == "V10"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_create_version_rejects_invalid_previous_snapshot(tmp_path):
     client, session_factory, engine = await _versions_harness(tmp_path)
     await _seed_catalog(session_factory)
@@ -167,6 +217,71 @@ async def test_create_version_rejects_invalid_previous_snapshot(tmp_path):
                 series_id=1,
                 version_number="1.0.0",
                 snapshot_data="{invalid-json",
+                row_count=1,
+            )
+        )
+        await session.commit()
+
+    async with client:
+        response = await client.post(
+            "/api/versions",
+            json={"series_id": 1, "version_number": "1.0.1"},
+        )
+
+    assert response.status_code == 400
+    assert "快照" in response.json()["detail"]
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "previous_snapshot_data",
+    [
+        pytest.param("", id="empty-string"),
+        pytest.param(
+            json.dumps(
+                _snapshot(
+                    _item(100, row_index=1, ipn="IPN-DUP", rd_name="First"),
+                    _item(101, row_index=2, ipn="IPN-DUP", rd_name="Second"),
+                )
+            ),
+            id="duplicate-ipn",
+        ),
+        pytest.param(
+            json.dumps(
+                _snapshot(
+                    _item(100, row_index=1, ipn=None, rd_name="First", v_code="FIRST"),
+                    _item(100, row_index=2, ipn=None, rd_name="Second", v_code="SECOND"),
+                )
+            ),
+            id="duplicate-no-ipn-snapshot-id",
+        ),
+    ],
+)
+async def test_create_version_rejects_unusable_previous_identity_snapshot(
+    tmp_path,
+    previous_snapshot_data,
+):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    async with session_factory() as session:
+        item = ConfigItem(
+            id=100,
+            category="Optional",
+            row_index=1,
+            rd_name="Feature",
+            ipn="IPN-100",
+        )
+        session.add(item)
+        await session.flush()
+        session.add(ConfigValue(item_id=item.id, model_id=10, current_config="included"))
+        session.add(
+            ConfigVersion(
+                series_id=1,
+                version_number="1.0.0",
+                snapshot_data=previous_snapshot_data,
                 row_count=1,
             )
         )
