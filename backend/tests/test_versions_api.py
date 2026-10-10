@@ -200,6 +200,45 @@ async def test_compare_export_honors_requested_model_filter(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compare_empty_model_filter_keeps_compare_all_behavior(tmp_path):
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(session_factory)
+    before = _snapshot(
+        _item(
+            100,
+            row_index=1,
+            ipn="IPN-100",
+            rd_name="Feature",
+            current_config="old",
+        )
+    )
+    after = _snapshot(
+        _item(
+            100,
+            row_index=1,
+            ipn="IPN-100",
+            rd_name="Feature",
+            current_config="new",
+        )
+    )
+    first_id, second_id = await _seed_versions(session_factory, before, after)
+
+    async with client:
+        response = await client.post(
+            "/api/versions/compare",
+            json={
+                "version_id_1": first_id,
+                "version_id_2": second_id,
+                "model_ids": [],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["modified"] == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_create_version_rejects_invalid_previous_snapshot(tmp_path):
     client, session_factory, engine = await _versions_harness(tmp_path)
     await _seed_catalog(session_factory)
