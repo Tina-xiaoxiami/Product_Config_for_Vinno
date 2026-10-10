@@ -24,6 +24,7 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
   const tableData = ref([row])
   const context = {
     reactive: value => value,
+    selectedSeries: ref([10]),
     editingCell: ref(null),
     originalData: ref([originalRow]),
     originalDataMap: ref(new Map([[1, originalRow]])),
@@ -45,14 +46,15 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
     source.indexOf('const finishEdit ='),
     source.indexOf('// 多文件上传处理')
   )
-  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell } = new Function(
+  const { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback } = new Function(
     ...Object.keys(context),
-    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell }`
+    `${code}\nreturn { finishEdit, removeDraftChange, handleCellChange, draftSaveFeedback, retryFailedCell, refreshSaveFeedback }`
   )(...Object.values(context))
   return {
     finishEdit,
     draftSaveFeedback,
     retryFailedCell,
+    refreshSaveFeedback,
     removeDraftChange,
     handleCellChange,
     messages,
@@ -525,3 +527,47 @@ for (const order of ['failure-first', 'success-first']) {
     assert.equal(app.draftChanges.value.get('2_2_final_config').newValue, 'second')
   })
 }
+
+
+test('switching draft batches prunes unavailable retry and undo feedback before another save', async () => {
+  let requestCount = 0
+  const app = draftEditor({ createDraft: async () => { if (++requestCount === 1) throw new Error('offline'); return { draft_id: 40 } } })
+  await app.handleCellChange(app.row, 2, 'final_config', 'failed-A')
+  assert.equal(app.draftSaveFeedback.failedCell.row.id, 1)
+  app.draftBatchMap.value = new Map([[10, 21]])
+  app.refreshSaveFeedback()
+  assert.equal(app.draftSaveFeedback.failedCell, null)
+  assert.equal(app.draftSaveFeedback.message, '')
+  await app.handleCellChange(app.row, 2, 'final_config', 'saved-B')
+  assert.equal(app.draftSaveFeedback.failedCell, null)
+  assert.equal(app.draftSaveFeedback.lastCell.batchId, 21)
+  assert.equal(app.draftSaveFeedback.message, '草稿已保存')
+})
+
+for (const success of [true, false]) {
+  test(`late old-batch outcome cannot reintroduce saving feedback (${success ? 'success' : 'failure'})`, async () => {
+    const request = deferred()
+    const app = draftEditor({ createDraft: () => request.promise })
+    const saving = app.handleCellChange(app.row, 2, 'final_config', 'old-batch')
+    await Promise.resolve()
+    assert.equal(app.draftSaveFeedback.pending, 1)
+    app.draftBatchMap.value = new Map([[10, 21]])
+    app.refreshSaveFeedback()
+    assert.equal(app.draftSaveFeedback.pending, 0)
+    if (success) request.resolve({ draft_id: 40 }); else request.reject(new Error('offline'))
+    await saving
+    assert.equal(app.draftSaveFeedback.failedCell, null)
+    assert.equal(app.draftSaveFeedback.lastCell, null)
+    assert.equal(app.draftSaveFeedback.message, '')
+    assert.equal(app.draftSaveFeedback.pending, 0)
+  })
+}
+
+test('same-batch row filtering preserves actionable failed-cell feedback', async () => {
+  const app = draftEditor({ createDraft: async () => { throw new Error('offline') } })
+  await app.handleCellChange(app.row, 2, 'final_config', 'failed')
+  app.tableData.value = []
+  app.refreshSaveFeedback()
+  assert.equal(app.draftSaveFeedback.failedCell.row.id, 1)
+  assert.match(app.draftSaveFeedback.message, /失败/)
+})
