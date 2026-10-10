@@ -290,7 +290,22 @@ def test_recently_closed_listener_does_not_block_restart():
             pass
     worker.join(timeout=2)
     assert not worker.is_alive()
-    assert module.port_is_free(port) is True
+    if not module.port_is_free(port):
+        probes = []
+        for family, host in ((socket.AF_INET, '127.0.0.1'), (socket.AF_INET6, '::1')):
+            try:
+                with socket.socket(family, socket.SOCK_STREAM) as connection:
+                    connection.settimeout(1)
+                    probes.append((host, connection.connect_ex((host, port))))
+            except OSError as error:
+                probes.append((host, type(error).__name__, error.errno,
+                               getattr(error, 'winerror', None)))
+        try:
+            listeners = [(conn.laddr, conn.pid) for conn in module.psutil.net_connections(kind='tcp')
+                         if conn.status == module.psutil.CONN_LISTEN and conn.laddr.port == port]
+        except module.psutil.Error as error:
+            listeners = [type(error).__name__]
+        pytest.fail(f'Closed test listener still looks occupied: {probes=}, {listeners=}')
 
 
 def test_windows_connection_refusal_means_no_active_listener(monkeypatch):
