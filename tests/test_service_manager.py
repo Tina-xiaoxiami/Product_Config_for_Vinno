@@ -367,3 +367,30 @@ def test_pending_windows_connect_checks_completed_socket_result(monkeypatch):
     monkeypatch.setattr(module, 'select', SimpleNamespace(select=lambda *args: ([], args[1], [])), raising=False)
     assert module.port_is_free(18886) is True
     assert len(checked) == 2
+
+
+@pytest.mark.parametrize('listening', [False, True])
+def test_windows_pending_probe_timeout_checks_actual_listeners(monkeypatch, listening):
+    module = manager()
+
+    class PendingConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def setblocking(self, blocking):
+            assert blocking is False
+
+        def connect(self, address):
+            raise OSError(10035, 'operation would block')
+
+    monkeypatch.setattr(module, 'os', SimpleNamespace(name='nt'))
+    monkeypatch.setattr(module.socket, 'socket', lambda family, kind: PendingConnection())
+    monkeypatch.setattr(module.select, 'select', lambda *args: ([], [], []))
+    listener = SimpleNamespace(status=module.psutil.CONN_LISTEN,
+                               laddr=SimpleNamespace(port=18886))
+    monkeypatch.setattr(module.psutil, 'net_connections',
+                        lambda kind: [listener] if listening else [])
+    assert module.port_is_free(18886) is not listening
