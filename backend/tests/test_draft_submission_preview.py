@@ -135,3 +135,41 @@ async def test_batch_submit_rejects_changed_review_signature(tmp_path):
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 0
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['pair_value', 'shared_description'])
+@pytest.mark.parametrize('submit_mode', ['single', 'batch'])
+async def test_unchanged_draft_records_cannot_hide_changed_publication_values(tmp_path, change, submit_mode):
+    from app.models import ConfigItem
+    client, sessions, engine = await _draft_harness(tmp_path)
+    await seed_submission(sessions)
+    async with sessions() as session:
+        draft = await session.scalar(select(ConfigDraft).where(ConfigDraft.item_id == 100, ConfigDraft.model_id == 11))
+        draft.field_name = None
+        draft.old_value = None
+        draft.new_value = 'CPU'
+        await session.commit()
+    async with client:
+        preview = await client.post('/api/drafts/batch/review-batch/submit-preview', json={})
+        assert preview.status_code == 200, preview.text
+        async with sessions() as session:
+            if change == 'pair_value':
+                value = await session.scalar(select(ConfigValue).where(ConfigValue.item_id == 100, ConfigValue.model_id == 11))
+                value.final_config = 'changed-after-preview'
+            else:
+                item = await session.get(ConfigItem, 100)
+                item.zh_desc = 'changed-after-preview'
+            await session.commit()
+        if submit_mode == 'single':
+            submitted = await client.post('/api/drafts/batch/review-batch/submit', json={'expected_signature': preview.json()['signature']})
+            assert submitted.status_code == 409, submitted.text
+        else:
+            submitted = await client.post('/api/drafts/batch/submit', json={'batch_ids': ['review-batch'], 'expected_signatures': {'review-batch': preview.json()['signature']}})
+            assert submitted.status_code == 200, submitted.text
+            assert submitted.json()['submitted_count'] == 0
+            assert not submitted.json()['results'][0]['success']
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 0
+        assert await session.scalar(select(func.count()).select_from(ConfigDraft)) == 4
+    await engine.dispose()
