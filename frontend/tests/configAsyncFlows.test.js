@@ -25,6 +25,7 @@ function previewApp(previewImport) {
     previewFiles: ref([]),
     previewData: ref(null),
     previewDialogVisible: ref(false),
+    previewLoading: ref(false),
     previewImport,
     previewImportBatch: async data => ({ files: await Promise.all(data.getAll('files').map(file => { const form = new FormData(); form.append('file', file); return previewImport(form) })) }),
     ElMessage: { warning() {}, error() {} },
@@ -218,4 +219,42 @@ test('multiple-file preview requests one sequential batch and uses server final 
   assert.equal(requestCount, 1)
   assert.equal(app.previewData.value.impact.modified, 1)
   assert.deepEqual(app.previewData.value.files.map(file => file.filename), ['A.xlsx', 'B.xlsx'])
+})
+
+
+test('upload accepts uppercase Excel extensions without silently losing files', async () => {
+  const app = previewApp(async form => previewResponse(form.get('file').name))
+  app.handleMultiFileUpload({ file: new File(['A'], 'A.XLSX') })
+  app.handleMultiFileUpload({ file: new File(['B'], 'B.XLS') })
+  await delay(120)
+  assert.deepEqual(app.previewFiles.value.map(file => file.name), ['A.XLSX', 'B.XLS'])
+})
+
+test('upload shows processing until the current preview succeeds or fails', async () => {
+  const pending = deferred()
+  const app = previewApp(() => pending.promise)
+  app.handleMultiFileUpload({ file: new File(['A'], 'A.xlsx') })
+  await delay(120)
+  assert.equal(app.previewLoading.value, true)
+  pending.reject(new Error('offline'))
+  await delay(0)
+  assert.equal(app.previewLoading.value, false)
+  assert.equal(app.previewDialogVisible.value, false)
+})
+
+test('superseded preview completion cannot clear the current processing indicator', async () => {
+  const first = deferred(), second = deferred()
+  let calls = 0
+  const app = previewApp(() => ++calls === 1 ? first.promise : second.promise)
+  app.handleMultiFileUpload({ file: new File(['A'], 'A.xlsx') })
+  await delay(120)
+  app.handleMultiFileUpload({ file: new File(['B'], 'B.xlsx') })
+  await delay(120)
+  first.resolve(previewResponse('A.xlsx'))
+  await delay(0)
+  assert.equal(app.previewLoading.value, true)
+  second.resolve(previewResponse('B.xlsx'))
+  await delay(0)
+  assert.equal(app.previewLoading.value, false)
+  assert.equal(app.previewFiles.value[0].name, 'B.xlsx')
 })
