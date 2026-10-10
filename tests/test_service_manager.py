@@ -268,3 +268,26 @@ def test_cli_failed_stop_retains_owned_process_for_retry(monkeypatch, tmp_path):
     monkeypatch.setattr(module, 'stop_record', lambda service, record: False)
     assert module.main() == 1
     assert module.read_state(tmp_path) == {'backend': record}
+
+
+def test_recently_closed_listener_does_not_block_restart():
+    import socket
+    import threading
+    module = manager()
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    def respond_and_close():
+        connection, _ = listener.accept()
+        with connection:
+            connection.sendall(b'done')
+        listener.close()
+    worker = threading.Thread(target=respond_and_close, daemon=True)
+    worker.start()
+    with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
+        while client.recv(16):
+            pass
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert module.port_is_free(port) is True
