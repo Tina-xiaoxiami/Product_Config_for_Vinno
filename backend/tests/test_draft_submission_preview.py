@@ -173,3 +173,29 @@ async def test_unchanged_draft_records_cannot_hide_changed_publication_values(tm
         assert await session.scalar(select(func.count()).select_from(ConfigVersion)) == 0
         assert await session.scalar(select(func.count()).select_from(ConfigDraft)) == 4
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change_type', ['create', 'delete'])
+async def test_pair_preview_displays_actual_field_values_not_item_name(tmp_path, change_type):
+    client, sessions, engine = await _draft_harness(tmp_path)
+    await seed_submission(sessions)
+    async with sessions() as session:
+        draft = await session.scalar(select(ConfigDraft).where(ConfigDraft.item_id == 100, ConfigDraft.model_id == 11))
+        draft.field_name = None
+        draft.change_type = change_type
+        draft.old_value = None
+        draft.new_value = 'CPU'
+        await session.commit()
+    async with client:
+        response = await client.post('/api/drafts/batch/review-batch/submit-preview', json={'item_ids': [100], 'model_ids': [11]})
+    assert response.status_code == 200, response.text
+    draft = response.json()['drafts'][0]
+    if change_type == 'create':
+        assert draft['new_values']['final_config'] == 'working'
+        assert draft['new_values']['current_config'] == 'working'
+        assert all(value is None for value in draft['old_values'].values())
+    else:
+        assert draft['old_values']['final_config'] == 'working'
+        assert all(value is None for value in draft['new_values'].values())
+    await engine.dispose()
