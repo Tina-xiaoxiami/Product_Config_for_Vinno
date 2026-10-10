@@ -43,8 +43,9 @@ from app.services.config_workbook import (
     config_item_fingerprint,
     load_config_workbook,
     merged_cell_starts,
-    parse_model_columns,
-    parse_series_columns,
+    parse_config_categories,
+    parse_config_rows,
+    parse_workbook_structure,
     read_patch_metadata,
     workbook_import_mode,
     write_patch_metadata,
@@ -65,6 +66,97 @@ router = APIRouter()
 def parse_merged_cells(ws):
     """解析合并单元格信息，返回每个合并区域的起始单元格值"""
     return merged_cell_starts(ws)
+
+
+async def _load_unique_existing_items(db: AsyncSession, rows: list[dict]) -> dict[str, ConfigItem]:
+    """Load IPN identities without silently choosing between duplicate database rows."""
+    ipns = {row["ipn"] for row in rows if row["ipn"]}
+    if not ipns:
+        return {}
+    result = await db.execute(select(ConfigItem).where(func.trim(ConfigItem.ipn).in_(ipns)))
+    items_by_ipn: dict[str, list[ConfigItem]] = {}
+    for item in result.scalars().all():
+        normalized_ipn = str(item.ipn).strip()
+        items_by_ipn.setdefault(normalized_ipn, []).append(item)
+    ambiguous = next(
+        ((ipn, items) for ipn, items in items_by_ipn.items() if len(items) > 1),
+        None,
+    )
+    if ambiguous:
+        ipn, items = ambiguous
+        raise HTTPException(
+            status_code=400,
+            detail=f"IPN {ipn} 在数据库中对应 {len(items)} 条配置项，无法安全导入",
+        )
+    return {ipn: items[0] for ipn, items in items_by_ipn.items()}
+
+
+async def _validate_patch_scope_readonly(
+    db: AsyncSession,
+    structure,
+    rows: list[dict],
+    patch_metadata: dict | None,
+) -> None:
+    """Apply patch series, model, field, and item identity checks without writes."""
+    if patch_metadata is None:
+        return
+
+    resolved_model_ids = []
+    for series_info, parsed_models in structure:
+        series = await db.scalar(
+            select(ProductSeries).where(ProductSeries.name == series_info.name)
+        )
+        if series is None or patch_metadata["series_id"] != series.id:
+            raise HTTPException(status_code=400, detail="补丁工作簿与目标产品系列不一致")
+        for index, model_columns in enumerate(parsed_models):
+            try:
+                model = await resolve_import_model_readonly(
+                    db,
+                    series.id,
+                    model_columns.raw_header,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            expected_ids = patch_metadata["model_ids"]
+            expected_id = expected_ids[index] if index < len(expected_ids) else None
+            if model is None or model.id != expected_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="补丁工作簿机型范围已改变，请重新导出后再导入",
+                )
+            if set(model_columns.field_columns) != set(patch_metadata["fields"]):
+                raise HTTPException(
+                    status_code=400,
+                    detail="补丁工作簿字段范围已改变，请重新导出后再导入",
+                )
+            resolved_model_ids.append(model.id)
+
+    if resolved_model_ids != patch_metadata["model_ids"]:
+        raise HTTPException(
+            status_code=400,
+            detail="补丁工作簿机型范围已改变，请重新导出后再导入",
+        )
+
+    refs = patch_metadata["item_refs"]
+    ref_ids = {ref["id"] for ref in refs.values()}
+    referenced_items = {}
+    if ref_ids:
+        result = await db.execute(select(ConfigItem).where(ConfigItem.id.in_(ref_ids)))
+        referenced_items = {item.id: item for item in result.scalars().all()}
+    for row_idx, ref in refs.items():
+        item = referenced_items.get(ref["id"])
+        if item is None or config_item_fingerprint(item) != ref["fingerprint"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"第 {row_idx} 行配置项身份已失效，请重新导出后再导入",
+            )
+    for row in rows:
+        ref = refs.get(row["row_idx"])
+        if ref and config_item_fingerprint(row) != ref["fingerprint"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"第 {row['row_idx']} 行配置项身份与导出记录不一致",
+            )
 
 
 @router.post("/import")
@@ -98,24 +190,23 @@ async def import_excel(
     try:
         import_mode = workbook_import_mode(wb)
         patch_metadata = read_patch_metadata(wb)
+        merged_info = parse_merged_cells(ws)
+        structure = parse_workbook_structure(
+            ws,
+            fallback_name=series_name or Path(file.filename).stem,
+            merged_info=merged_info,
+        )
+        parsed_rows = parse_config_rows(ws)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-
-    # 解析合并单元格
-    merged_info = parse_merged_cells(ws)
-
-    fallback_name = series_name or Path(file.filename).stem
-    series_list = parse_series_columns(
-        ws,
-        fallback_name=fallback_name,
-        merged_info=merged_info,
-    )
+    validated_existing_items = await _load_unique_existing_items(db, parsed_rows)
+    await _validate_patch_scope_readonly(db, structure, parsed_rows, patch_metadata)
 
     results = []
     change_log = []  # 变更记录
 
     try:
-        for series_info in series_list:
+        for series_info, parsed_models in structure:
             current_series_name = series_info.name
 
             # 创建或获取产品系列
@@ -135,7 +226,7 @@ async def import_excel(
             models = []
             model_fields = {}
             model_allows_pair_delete = {}
-            for model_columns in parse_model_columns(ws, series_info.ranges, merged_info=merged_info):
+            for model_columns in parsed_models:
                 try:
                     model = None
                     if import_mode == "patch":
@@ -301,71 +392,14 @@ async def import_excel(
                             snapshot_no_ipn_all_na_pairs.add(pair)
 
             # 解析配置数据（从第5行开始）
-            current_category = None
             items_created = 0
             values_created = 0
 
             # 批量收集待创建的配置项和配置值
-            items_to_create = []
-            all_ipns = set()
+            items_to_create = parsed_rows
 
-            for row_idx in range(4, ws.max_row + 1):
-                first_col = ws.cell(row=row_idx, column=1).value
-
-                # 检查是否是分类标题行
-                if first_col and isinstance(first_col, str):
-                    stripped = first_col.strip()
-                    # 识别分类标题（6种分类）
-                    valid_categories = [
-                        "Main Unit",
-                        "Optional Features",
-                        "Optional peripherals",
-                        "*Optional peripherals(Preassemble in Factory)",
-                        "Probes",
-                        "Biopsy guide"
-                    ]
-                    if stripped in valid_categories or stripped.startswith("Optional"):
-                        current_category = stripped
-                        continue
-
-                # 跳过Main Unit分类的数据
-                if current_category == "Main Unit":
-                    continue
-
-                # 解析固定列（A-E列）
-                rd_name = ws.cell(row=row_idx, column=1).value
-                v_code = ws.cell(row=row_idx, column=2).value
-                ipn = ws.cell(row=row_idx, column=3).value
-                zh_desc = ws.cell(row=row_idx, column=4).value
-                en_desc = ws.cell(row=row_idx, column=5).value
-
-                # 跳过空行
-                if not rd_name and not ipn:
-                    continue
-
-                ipn_str = str(ipn).strip() if ipn else None
-                if ipn_str:
-                    all_ipns.add(ipn_str)
-
-                # 收集配置项数据（待批量创建）
-                items_to_create.append({
-                    'row_idx': row_idx,
-                    'category': current_category or "Optional Features",
-                    'rd_name': str(rd_name).strip() if rd_name else None,
-                    'v_code': str(v_code).strip() if v_code else None,
-                    'ipn': ipn_str,
-                    'zh_desc': str(zh_desc).strip() if zh_desc else None,
-                    'en_desc': str(en_desc).strip() if en_desc else None,
-                })
-
-            # 批量查询已存在的 ConfigItem（按 IPN）
-            existing_items_map = {}
-            if all_ipns:
-                existing_items_result = await db.execute(
-                    select(ConfigItem).where(ConfigItem.ipn.in_(all_ipns))
-                )
-                for item in existing_items_result.scalars().all():
-                    existing_items_map[item.ipn] = item
+            # 已在任何写入前验证 IPN 在数据库中只对应一个配置项。
+            existing_items_map = dict(validated_existing_items)
             patch_items_by_row = {}
             if patch_metadata:
                 refs = patch_metadata["item_refs"]
@@ -1581,15 +1615,20 @@ async def preview_import(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     ws = wb.active
-
-    # 解析合并单元格
-    merged_info = parse_merged_cells(ws)
-
-    series_list = parse_series_columns(
-        ws,
-        fallback_name=Path(file.filename).stem,
-        merged_info=merged_info,
-    )
+    try:
+        workbook_import_mode(wb)
+        patch_metadata = read_patch_metadata(wb)
+        merged_info = parse_merged_cells(ws)
+        structure = parse_workbook_structure(
+            ws,
+            fallback_name=Path(file.filename).stem,
+            merged_info=merged_info,
+        )
+        parsed_rows = parse_config_rows(ws)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    await _load_unique_existing_items(db, parsed_rows)
+    await _validate_patch_scope_readonly(db, structure, parsed_rows, patch_metadata)
 
     # 解析结果
     preview_result = {
@@ -1605,16 +1644,7 @@ async def preview_import(
     }
 
     # 解析型号和数据
-    for series_info in series_list:
-        try:
-            parsed_models = parse_model_columns(
-                ws,
-                series_info.ranges,
-                merged_info=merged_info,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-
+    for series_info, parsed_models in structure:
         series = await db.scalar(
             select(ProductSeries).where(ProductSeries.name == series_info.name)
         )
@@ -1647,43 +1677,8 @@ async def preview_import(
             seen_identity_keys.add(identity_key)
             models.append(model_name)
 
-        # 解析配置项
-        items = []
-        categories = set()
-        current_category = None
-
-        for row_idx in range(4, ws.max_row + 1):
-            first_col = ws.cell(row=row_idx, column=1).value
-
-            if first_col and isinstance(first_col, str):
-                stripped = first_col.strip()
-                valid_categories = [
-                    "Main Unit",
-                    "Optional Features",
-                    "Optional peripherals",
-                    "*Optional peripherals(Preassemble in Factory)",
-                    "Probes",
-                    "Biopsy guide"
-                ]
-                if stripped in valid_categories or stripped.startswith("Optional"):
-                    current_category = stripped
-                    categories.add(stripped)
-                    continue
-
-            if current_category == "Main Unit":
-                continue
-
-            rd_name = ws.cell(row=row_idx, column=1).value
-            ipn = ws.cell(row=row_idx, column=3).value
-
-            if not rd_name and not ipn:
-                continue
-
-            items.append({
-                'rd_name': str(rd_name).strip() if rd_name else None,
-                'ipn': str(ipn).strip() if ipn else None,
-                'category': current_category or 'Optional Features'
-            })
+        items = parsed_rows
+        categories = parse_config_categories(ws)
 
         preview_result['series'].append({
             'name': series_info.name,

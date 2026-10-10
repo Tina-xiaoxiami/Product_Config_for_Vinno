@@ -288,7 +288,7 @@ async def test_preview_and_import_reject_series_without_model_columns_before_wri
             db=db,
         ),
     ):
-        with pytest.raises(HTTPException, match="NoModel.*至少一个型号") as error:
+        with pytest.raises(HTTPException, match="NoModel.*至少.*一个型号") as error:
             await operation()
         assert error.value.status_code == 400
 
@@ -306,7 +306,7 @@ async def test_preview_and_import_reject_ambiguous_database_ipn_before_writes(db
                 category="Optional Features",
                 row_index=5,
                 rd_name="First",
-                ipn="100",
+                ipn=" 100 ",
             ),
             ConfigItem(
                 id=2,

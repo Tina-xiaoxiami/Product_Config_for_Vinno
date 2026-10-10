@@ -14,6 +14,14 @@ from app.services.overseas_registration_preview import _resolve_parseable_workbo
 
 
 CONFIG_FIELDS = ("final_config", "current_config", "selection_config", "rd_status")
+CONFIG_CATEGORIES = (
+    "Main Unit",
+    "Optional Features",
+    "Optional peripherals",
+    "*Optional peripherals(Preassemble in Factory)",
+    "Probes",
+    "Biopsy guide",
+)
 FIELD_BY_LABEL = {
     "最终配置": "final_config",
     "当前配置": "current_config",
@@ -303,3 +311,91 @@ def parse_model_columns(
             )
             column = end + 1
     return result
+
+
+def parse_workbook_structure(
+    worksheet,
+    *,
+    fallback_name: str,
+    merged_info: dict[tuple[int, int], dict] | None = None,
+) -> list[tuple[SeriesColumns, list[ModelColumns]]]:
+    """Parse every series and require each one to contain a real model header."""
+    merged_info = merged_info or merged_cell_starts(worksheet)
+    structure = []
+    for series in parse_series_columns(
+        worksheet,
+        fallback_name=fallback_name,
+        merged_info=merged_info,
+    ):
+        models = parse_model_columns(
+            worksheet,
+            series.ranges,
+            merged_info=merged_info,
+        )
+        if not models:
+            raise ValueError(f"产品系列 {series.name} 至少需要一个型号")
+        structure.append((series, models))
+    return structure
+
+
+def parse_config_categories(worksheet) -> set[str]:
+    """Return category headings exactly as preview historically reported them."""
+    categories = set()
+    for row_idx in range(4, worksheet.max_row + 1):
+        value = worksheet.cell(row=row_idx, column=1).value
+        if value and isinstance(value, str):
+            stripped = value.strip()
+            if stripped in CONFIG_CATEGORIES or stripped.startswith("Optional"):
+                categories.add(stripped)
+    return categories
+
+
+def parse_config_rows(worksheet) -> list[dict]:
+    """Parse shared item identity columns and reject duplicate normalized IPNs."""
+    rows = []
+    ipn_rows: dict[str, list[int]] = {}
+    current_category = None
+
+    for row_idx in range(4, worksheet.max_row + 1):
+        first_col = worksheet.cell(row=row_idx, column=1).value
+        if first_col and isinstance(first_col, str):
+            stripped = first_col.strip()
+            if stripped in CONFIG_CATEGORIES or stripped.startswith("Optional"):
+                current_category = stripped
+                continue
+
+        if current_category == "Main Unit":
+            continue
+
+        rd_name = worksheet.cell(row=row_idx, column=1).value
+        v_code = worksheet.cell(row=row_idx, column=2).value
+        ipn = worksheet.cell(row=row_idx, column=3).value
+        zh_desc = worksheet.cell(row=row_idx, column=4).value
+        en_desc = worksheet.cell(row=row_idx, column=5).value
+        if not rd_name and not ipn:
+            continue
+
+        ipn_str = str(ipn).strip() if ipn else None
+        if ipn_str:
+            ipn_rows.setdefault(ipn_str, []).append(row_idx)
+        rows.append(
+            {
+                "row_idx": row_idx,
+                "category": current_category or "Optional Features",
+                "rd_name": str(rd_name).strip() if rd_name else None,
+                "v_code": str(v_code).strip() if v_code else None,
+                "ipn": ipn_str,
+                "zh_desc": str(zh_desc).strip() if zh_desc else None,
+                "en_desc": str(en_desc).strip() if en_desc else None,
+            }
+        )
+
+    duplicate = next(
+        ((ipn, row_numbers) for ipn, row_numbers in ipn_rows.items() if len(row_numbers) > 1),
+        None,
+    )
+    if duplicate:
+        ipn, row_numbers = duplicate
+        rows_text = "、".join(str(row_number) for row_number in row_numbers)
+        raise ValueError(f"IPN {ipn} 在第 {rows_text} 行重复，请只保留一行")
+    return rows
