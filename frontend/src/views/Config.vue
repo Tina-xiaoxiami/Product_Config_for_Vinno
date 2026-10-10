@@ -2761,12 +2761,10 @@ const finishEdit = async (row, modelId, field, newValue) => {
 
 // 同一单元格的保存和撤销必须按用户操作顺序到达后端。
 const draftCellOperations = new Map()
-const draftRowOperationIds = new WeakMap()
-let nextDraftRowOperationId = 1
-
 const getDraftCellOperationKey = (row, modelId, field) => {
-  if (!draftRowOperationIds.has(row)) draftRowOperationIds.set(row, nextDraftRowOperationId++)
-  return `${draftRowOperationIds.get(row)}_${modelId}_${field}`
+  const seriesId = findSeriesIdByModelId(modelId)
+  const batchId = seriesId ? draftBatchMap.value.get(seriesId) : undefined
+  return `${seriesId}_${batchId}_${row.id}_${modelId}_${field}`
 }
 
 const hasPendingDraftCellOperation = (row, modelId, field) => {
@@ -2813,11 +2811,14 @@ const captureDraftCellContext = (row, modelId, field, key) => {
   }
 }
 
-const isDraftCellContextCurrent = (context) => {
-  if (!tableData.value.includes(context.row)) return false
+const isDraftCellScopeCurrent = (context) => {
   if (context.seriesId && findSeriesIdByModelId(context.modelId) !== context.seriesId) return false
   if (context.batchId !== undefined && draftBatchMap.value.get(context.seriesId) !== context.batchId) return false
   return true
+}
+
+const isDraftCellContextCurrent = (context) => {
+  return tableData.value.includes(context.row) && isDraftCellScopeCurrent(context)
 }
 
 const restoreWorkingCell = (context, isLatest = () => true) => {
@@ -2848,14 +2849,18 @@ const removeDraftChange = (row, modelId, field, key) => {
     try {
       await deleteDraftByKey(context.batchId, row.id, modelId, field)
       state.serverHasDraft = false
-      if (isDraftCellContextCurrent(context)) {
+      if (isDraftCellScopeCurrent(context)) {
         const baselineValue = draftBaseline(change, context.originalRow?.model_values?.[modelId]?.[field])
         if (context.originalRow?.model_values?.[modelId]) {
           context.originalRow.model_values[modelId][field] = baselineValue
         }
+        const currentOriginalRow = originalDataMap.value.get(row.id)
+        if (currentOriginalRow?.model_values?.[modelId]) {
+          currentOriginalRow.model_values[modelId][field] = baselineValue
+        }
         draftChanges.value.delete(key)
         Object.assign(draftStats, updateDraftStats(draftStats, change?.changeType, null))
-        if (isLatest() && row.model_values?.[modelId]) row.model_values[modelId][field] = baselineValue
+        if (isLatest() && isDraftCellContextCurrent(context) && row.model_values?.[modelId]) row.model_values[modelId][field] = baselineValue
       }
       return true
     } catch (error) {
@@ -2897,7 +2902,7 @@ const handleCellChange = (row, modelId, field, newValue, oldValue) => {
       })
 
       state.serverHasDraft = true
-      if (isDraftCellContextCurrent(context)) {
+      if (isDraftCellScopeCurrent(context)) {
         // 记录变更用于UI高亮
         const previousType = draftChanges.value.get(key)?.changeType
         draftChanges.value.set(key, {
