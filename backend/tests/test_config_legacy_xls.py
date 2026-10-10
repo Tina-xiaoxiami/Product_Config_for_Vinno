@@ -110,8 +110,9 @@ async def db(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_preview_reads_legacy_xls_with_merged_model_columns(db, tmp_path):
-    source = _legacy_config_workbook(tmp_path / "legacy-config.xls")
+@pytest.mark.parametrize("filename", ["legacy-config.xls", "legacy-config.XLS"])
+async def test_preview_reads_legacy_xls_with_merged_model_columns(db, tmp_path, filename):
+    source = _legacy_config_workbook(tmp_path / filename)
 
     result = await preview_import(_upload(source), db)
 
@@ -123,8 +124,9 @@ async def test_preview_reads_legacy_xls_with_merged_model_columns(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_import_reads_legacy_xls_and_persists_configuration(db, tmp_path):
-    source = _legacy_config_workbook(tmp_path / "legacy-config.xls")
+@pytest.mark.parametrize("filename", ["legacy-config.xls", "legacy-config.XLS"])
+async def test_import_reads_legacy_xls_and_persists_configuration(db, tmp_path, filename):
+    source = _legacy_config_workbook(tmp_path / filename)
 
     await import_excel(_upload(source), series_name=None, db=db)
 
