@@ -3506,6 +3506,7 @@ const handleBatchEdit = () => {
 
 const confirmBatchEdit = async () => {
   if (batchEditSubmitting.value || !configReady.value || loading.value || configLoadError.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  const isBatchEditScopeCurrent = context => configReady.value && !loading.value && !configLoadError.value && !applyingModelGroup.value && isDraftCellContextCurrent(context)
   if (!batchEditTargets.value) {
     const { field, value, scope } = batchEditForm
     if (!field || !value) { ElMessage.warning('请选择修改字段和值'); return }
@@ -3528,7 +3529,7 @@ const confirmBatchEdit = async () => {
   let scopeChanged = false
   try {
     for (let index = 0; index < targets.length; index++) {
-      if (!isDraftCellContextCurrent(targets[index].context)) {
+      if (!isBatchEditScopeCurrent(targets[index].context)) {
         result.failed += targets.length - index
         scopeChanged = true
         break
@@ -3542,6 +3543,11 @@ const confirmBatchEdit = async () => {
         if (await handleCellChange(row, modelId, field, newValue, oldValue, context)) result.success++
         else result.failed++
       } catch (error) { result.failed++; console.error('批量修改单元格失败:', error) }
+      if (!isBatchEditScopeCurrent(context)) {
+        result.failed += targets.length - index - 1
+        scopeChanged = true
+        break
+      }
     }
     batchEditResult.value = result
     if (scopeChanged) ElMessage.warning('批量修改范围已变化，已停止写入旧范围；请关闭弹窗并重新选择行后再试')
