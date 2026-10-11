@@ -3528,7 +3528,7 @@ const confirmBatchEdit = async () => {
   let scopeChanged = false
   try {
     for (let index = 0; index < targets.length; index++) {
-      if (targets.some(target => !isDraftCellContextCurrent(target.context))) {
+      if (!isDraftCellContextCurrent(targets[index].context)) {
         result.failed += targets.length - index
         scopeChanged = true
         break
