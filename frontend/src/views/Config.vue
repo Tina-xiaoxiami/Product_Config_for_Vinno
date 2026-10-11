@@ -4149,6 +4149,7 @@ const runDraftDiscard = async (retryScope = null) => {
     if (!targets.length) {
       setResults(reviews)
       ElMessage.info('所选系列无可撤销草稿')
+      if (retryScope) await refreshDiscardData()
       return
     }
     await ElMessageBox.confirm(
