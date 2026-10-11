@@ -10,9 +10,13 @@ function batchApp(save) {
   const context = {
     batchEditForm: { scope: 'filtered', field: 'final_config', value: 'new' }, selectedRows: ref([rows[0]]), filteredTableData: ref(rows.slice(0, 2)), tableData: ref(rows), selectedModels: ref([10]),
     batchEditSubmitting: ref(false), batchEditDialogVisible: ref(true), batchEditResult: ref(null), batchEditTargets: ref(null),
-    handleCellChange: save, captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }), isValueChanged: (a, b) => a !== b,
+    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), configLoadError: ref(''),
+    handleCellChange: save, captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
+    isDraftCellContextCurrent: context => context.tableData?.includes(context.row) ?? true,
+    isValueChanged: (a, b) => a !== b,
     ElMessage: { warning: m => messages.push(m), success: m => messages.push(m), error: m => messages.push(m) }, console,
   }
+  context.captureDraftCellContext = (row, modelId, field) => ({ row, modelId, field, tableData: context.tableData.value })
   const code = source.slice(source.indexOf('const confirmBatchEdit ='), source.indexOf('// 创建版本', source.indexOf('const confirmBatchEdit =')))
   return { ...new Function(...Object.keys(context), `${code};return { confirmBatchEdit }`)(...Object.values(context)), ...context, rows, messages }
 }
@@ -31,6 +35,41 @@ test('batch freezes models and field while saving and refuses a second click', a
   const second = app.confirmBatchEdit(); pending.resolve(); await Promise.all([first, second])
   assert.deepEqual(saved, [[1, 10, 'final_config', 'new'], [3, 10, 'final_config', 'new']])
   assert.equal(app.batchEditResult.value.failed, 2)
+})
+test('batch edit refuses to write while configuration data is loading or unavailable', async () => {
+  const saved = []; const app = batchApp(async (...args) => { saved.push(args); return true })
+  app.loading.value = true
+  await app.confirmBatchEdit()
+  app.loading.value = false; app.configLoadError.value = '加载失败'
+  await app.confirmBatchEdit()
+  assert.deepEqual(saved, [])
+  assert.equal(app.rows[0].model_values[10].final_config, 'old')
+})
+test('batch edit rejects every target before writing when an old row object was replaced with the same id', async () => {
+  const saved = []; const app = batchApp(async (...args) => { saved.push(args); return true })
+  app.batchEditForm.scope = 'selected'
+  app.selectedRows.value = [app.rows[0], app.rows[2]]
+  const replacement = { id: app.rows[2].id, model_values: app.rows[2].model_values }
+  app.tableData.value = [app.rows[0], replacement]
+  await app.confirmBatchEdit()
+  assert.deepEqual(saved, [])
+  assert.equal(app.rows[0].model_values[10].final_config, 'old')
+  assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
+})
+test('batch retry stays within the first confirmed rows, models, field and value', async () => {
+  const saved = []; let retry = false
+  const app = batchApp(async (row, modelId, field, value) => { saved.push([row.id, modelId, field, value]); return retry })
+  app.batchEditForm.scope = 'selected'; app.selectedRows.value = [app.rows[0]]
+  await app.confirmBatchEdit()
+  app.selectedRows.value = [app.rows[2]]; app.selectedModels.value = [20]
+  app.batchEditForm.field = 'rd_status'; app.batchEditForm.value = 'other'; retry = true
+  await app.confirmBatchEdit()
+  assert.deepEqual(saved, [[1, 10, 'final_config', 'new'], [1, 10, 'final_config', 'new']])
+  assert.equal(app.rows[2].model_values[20].final_config, 'old')
+})
+test('batch edit confirm button is disabled while its source data is unavailable', () => {
+  const dialog = source.slice(source.indexOf('<el-dialog v-model="batchEditDialogVisible"'), source.indexOf('<!-- 右键菜单 -->'))
+  assert.match(dialog, /:disabled="[^"]*configReady[^"]*loading[^"]*configLoadError/)
 })
 test('publish review is backed by server preview and expected signatures for both paths', () => {
   const single = source.slice(source.indexOf('const handleSubmitDraft ='), source.indexOf('// 提交选中机型'))
