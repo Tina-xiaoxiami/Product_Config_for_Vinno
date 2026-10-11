@@ -27,7 +27,7 @@ function menuApp({width=1280,height=577,menuWidth=220,menuHeight=397}={}) {
     tableData:ref(rows),paginatedTableData:ref(rows.slice(0,2)),draftBatchMap:ref(new Map([[5,'A']])),
     selectedCells:ref([]),copiedCell:ref(null),copiedRowConfig:ref(null),cancelEditSession(){},
     applyToAllDialog:reactive({visible:false,saving:false,request:0,targets:[],modelIds:[]}),pasteRowDialog:reactive({visible:false,saving:false,request:0}),rowDiffDialog:reactive({visible:false,row:null}),
-    isValueChanged:(a,b)=>a!==b,
+    isValueChanged:(a,b)=>a!==b,hasPendingDraftCellOperation:()=>false,
     captureDraftCellContext:(row,modelId,field,key)=>({row,modelId,field,key,seriesId:5,batchId:ctx.draftBatchMap.value.get(5)}),
     isDraftCellScopeCurrent:context=>ctx.draftBatchMap.value.get(5)===context.batchId,
     isDraftCellContextCurrent:context=>ctx.tableData.value.includes(context.row)&&ctx.draftBatchMap.value.get(5)===context.batchId,

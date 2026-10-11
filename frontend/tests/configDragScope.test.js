@@ -8,11 +8,12 @@ function app() {
   const saved = []
   const ctx = {
     tableData: ref(rows), paginatedTableData: ref([rows[0], rows[2]]), selectedModels: ref([10]), visibleConfigFields: ref(['final_config']),
-    dragSource: ref({ rowId: 1, modelId: 10, field: 'final_config', value: 'X', row: rows[0] }), dragTargetCells: ref([]), isDragging: ref(true),
+    dragSource: ref({ rowId: 1, modelId: 10, field: 'final_config', value: 'X', row: rows[0], context: { row: rows[0], modelId: 10, field: 'final_config' } }), dragTargetCells: ref([]), isDragging: ref(true),
     configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false),
     isValueChanged: (a, b) => a !== b, handleCellChange: async (row, modelId, field, value) => { saved.push([row.id, modelId, field, value]); return true },
     captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
-    ElMessage: { success() {}, error() {} }, console,
+    isDraftCellContextCurrent: context => ctx.tableData.value.includes(context.row), hasPendingDraftCellOperation: () => false,
+    ElMessage: { success() {}, error() {}, info() {} }, console,
   }
   const code = source.slice(source.indexOf('const handleDragStart ='), source.indexOf('const navigateToCell =', source.indexOf('const handleDragStart =')))
   return { ...ctx, ...new Function(...Object.keys(ctx), `${code};return { highlightDragTarget, performDragFill, handleDrop, handleDragStart }`)(...Object.values(ctx)), saved, rows }

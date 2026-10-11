@@ -162,14 +162,16 @@ function clearCellAction(handleCellChange) {
 
 function dragFillAction(handleCellChange) {
   const messages = []
+  const sourceRow = { id: 9, model_values: { 9: { final_config: 'new' } } }
   const context = {
-    dragSource: ref({ rowId: 9, modelId: 9, field: 'final_config', value: 'new' }),
+    dragSource: ref({ rowId: 9, modelId: 9, field: 'final_config', value: 'new', row: sourceRow, context: { row: sourceRow, modelId: 9, field: 'final_config' } }),
     dragTargetCells: ref([{ rowId: 1, modelId: 2, field: 'final_config' }]),
     tableData: ref([{ id: 1, model_values: { 2: { final_config: 'old' } } }]),
-    paginatedTableData: ref([{ id: 1, model_values: { 2: { final_config: 'old' } } }]),
-    selectedModels: ref([2]), visibleConfigFields: ref(['final_config']),
+    paginatedTableData: ref([sourceRow, { id: 1, model_values: { 2: { final_config: 'old' } } }]),
+    selectedModels: ref([2, 9]), visibleConfigFields: ref(['final_config']),
     configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false),
     captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
+    isDraftCellContextCurrent: () => true, hasPendingDraftCellOperation: () => false,
     isValueChanged: (oldValue, newValue) => oldValue !== newValue,
     handleCellChange,
     ElMessage: {
@@ -177,7 +179,8 @@ function dragFillAction(handleCellChange) {
       error() {}
     }
   }
-  const code = source.slice(
+  const helper = source.slice(source.indexOf('const isDragSourceCurrent ='), source.indexOf('// 拖拽经过单元格', source.indexOf('const isDragSourceCurrent =')))
+  const code = helper + source.slice(
     source.indexOf('const performDragFill = async'),
     source.indexOf('// 拖拽结束')
   )

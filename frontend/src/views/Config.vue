@@ -3671,7 +3671,7 @@ const isContextMenuTargetCurrent = target => Boolean(target) && configReady.valu
   visibleConfigFields.value.length === target.visibleFields.length && target.visibleFields.every((field, index) => field === visibleConfigFields.value[index]) &&
   selectedModels.value.includes(target.modelId) && visibleConfigFields.value.includes(target.field) &&
   paginatedTableData.value.includes(target.row) && isDraftCellContextCurrent(target.context) &&
-  target.rowTargets.every(cell => isDraftCellScopeCurrent(cell.context))
+  target.rowTargets.every(cell => isDraftCellScopeCurrent(cell.context) && !hasPendingDraftCellOperation(cell.row, cell.modelId, cell.field))
 const handleContextMenuOutside = event => {
   if (!contextMenuRef.value?.contains(event.target)) hideContextMenu()
 }
@@ -3699,6 +3699,10 @@ const showContextMenu = (event, row, modelId, field) => {
   const modelIds = [...selectedModels.value]
   const visibleRows = new Map(paginatedTableData.value.map(item => [item.id, item]))
   const fields = ['final_config', 'current_config', 'selection_config', 'rd_status']
+  if (modelIds.some(id => fields.some(name => hasPendingDraftCellOperation(row, id, name)))) {
+    ElMessage.info('该行配置正在保存，请完成后重试')
+    return false
+  }
   const target = {
     row, modelId, field, modelIds, seriesIds: [...selectedSeries.value], visibleFields: [...visibleConfigFields.value],
     page: currentPage.value, pageSize: pageSize.value,
@@ -4318,19 +4322,20 @@ const clearSelection = () => {
 // 拖拽填充开始
 const handleDragStart = (e, row, modelId, field) => {
   if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
-      !paginatedTableData.value.some(item => item.id === row.id) || !selectedModels.value.includes(modelId) ||
+      !paginatedTableData.value.includes(row) || !selectedModels.value.includes(modelId) ||
       !visibleConfigFields.value.includes(field)) {
     e.preventDefault()
     return
   }
-  const value = row.model_values[modelId]?.[field]
-  dragSource.value = {
-    rowId: row.id,
-    modelId,
-    field,
-    value,
-    row
+  if (hasPendingDraftCellOperation(row, modelId, field)) {
+    e.preventDefault()
+    ElMessage.info('该单元格正在保存，请完成后重试')
+    return
   }
+  const context = captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
+  if (!isDraftCellContextCurrent(context)) { e.preventDefault(); return }
+  const value = row.model_values[modelId]?.[field]
+  dragSource.value = { rowId: row.id, modelId, field, value, row, context }
   isDragging.value = true
   e.dataTransfer.effectAllowed = 'copy'
   // 设置拖拽时的视觉效果
@@ -4338,6 +4343,10 @@ const handleDragStart = (e, row, modelId, field) => {
     e.target.style.cursor = 'copy'
   }
 }
+const isDragSourceCurrent = source => Boolean(source?.context) &&
+  paginatedTableData.value.includes(source.row) && selectedModels.value.includes(source.modelId) &&
+  visibleConfigFields.value.includes(source.field) && isDraftCellContextCurrent(source.context) &&
+  !hasPendingDraftCellOperation(source.row, source.modelId, source.field)
 
 // 拖拽经过单元格
 const handleDragOver = (e, row, modelId, field) => {
@@ -4378,7 +4387,8 @@ const handleDrop = async (e, row, modelId, field) => {
   e.preventDefault()
   if (!isDragging.value || !dragSource.value) return
   try {
-    if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value || field !== dragSource.value.field) return
+    if (!configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+        field !== dragSource.value.field || !isDragSourceCurrent(dragSource.value)) return
     highlightDragTarget(row.id, modelId, field)
     await performDragFill()
   } finally {
@@ -4388,7 +4398,7 @@ const handleDrop = async (e, row, modelId, field) => {
 
 // 执行拖拽填充
 const performDragFill = async () => {
-  if (!dragSource.value || !dragTargetCells.value.length || !configReady.value || loading.value ||
+  if (!isDragSourceCurrent(dragSource.value) || !dragTargetCells.value.length || !configReady.value || loading.value ||
       applyingModelGroup.value || reviewInteractionLocked.value) return
 
   const source = dragSource.value
