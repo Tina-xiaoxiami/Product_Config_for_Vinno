@@ -805,7 +805,7 @@
     <!-- 导入变更详情对话框 -->
     <!-- 批量修改对话框 -->
     <el-dialog v-model="batchEditDialogVisible" title="批量修改" width="540px" :close-on-click-modal="!batchEditSubmitting" :close-on-press-escape="!batchEditSubmitting" :show-close="!batchEditSubmitting">
-      <el-form :model="batchEditForm" label-width="100px" :disabled="batchEditSubmitting">
+      <el-form :model="batchEditForm" label-width="100px" :disabled="batchEditSubmitting || !!batchEditTargets">
         <el-form-item label="修改字段">
           <el-select v-model="batchEditForm.field" placeholder="选择要修改的字段">
             <el-option label="最终配置" value="final_config" />
@@ -826,11 +826,11 @@
           </el-radio-group>
         </el-form-item>
       </el-form>
-      <el-alert :closable="false" type="info" :title="`${batchEditRowCount} 行 × ${selectedModels.length} 个已选机型 × 1 个字段；仅修改这些目标，不包含筛选外行。`" />
+      <el-alert :closable="false" type="info" :title="`${batchEditRowCount} 行 × ${batchEditModelCount} 个已选机型 × 1 个字段；仅修改这些目标，不包含筛选外行。`" />
       <p v-if="batchEditResult" role="status">保存成功 {{ batchEditResult.success }} 处，失败 {{ batchEditResult.failed }} 处，值未变 {{ batchEditResult.unchanged }} 处，无该机型配置 {{ batchEditResult.missing }} 处。</p>
       <template #footer>
         <el-button :disabled="batchEditSubmitting" @click="batchEditDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="batchEditSubmitting" :disabled="!batchEditRowCount || !selectedModels.length" @click="confirmBatchEdit">确认修改</el-button>
+        <el-button type="primary" :loading="batchEditSubmitting" :disabled="batchEditSubmitting || !configReady || loading || !!configLoadError || applyingModelGroup || reviewInteractionLocked || !batchEditRowCount || !batchEditModelCount" @click="confirmBatchEdit">确认修改</el-button>
       </template>
     </el-dialog>
 
@@ -2239,7 +2239,13 @@ const dragTargetCells = ref([]) // { rowId, modelId, field }[]
 const batchEditDialogVisible = ref(false)
 const batchEditSubmitting = ref(false)
 const batchEditResult = ref(null)
-const batchEditRowCount = computed(() => batchEditForm.scope === 'selected' ? selectedRows.value.length : filteredTableData.value.length)
+const batchEditTargets = ref(null)
+const batchEditRowCount = computed(() => batchEditTargets.value
+  ? new Set(batchEditTargets.value.map(target => target.row.id)).size
+  : (batchEditForm.scope === 'selected' ? selectedRows.value.length : filteredTableData.value.length))
+const batchEditModelCount = computed(() => batchEditTargets.value
+  ? new Set(batchEditTargets.value.map(target => target.modelId)).size
+  : selectedModels.value.length)
 const batchEditForm = reactive({
   field: '',
   value: '',
@@ -3489,39 +3495,57 @@ const mergeModelNames = (modelNames) => {
 
 // 批量修改
 const handleBatchEdit = () => {
+  if (batchEditSubmitting.value || !configReady.value || loading.value || configLoadError.value || applyingModelGroup.value || reviewInteractionLocked.value) return
   batchEditForm.field = ''
   batchEditForm.value = ''
   batchEditForm.scope = 'selected'
   batchEditResult.value = null
+  batchEditTargets.value = null
   batchEditDialogVisible.value = true
 }
 
 const confirmBatchEdit = async () => {
-  if (batchEditSubmitting.value) return
-  const { field, value, scope } = batchEditForm
-  if (!field || !value) { ElMessage.warning('请选择修改字段和值'); return }
-  const rows = [...(scope === 'selected' ? selectedRows.value : filteredTableData.value)]
-  const models = [...selectedModels.value]
-  if (!rows.length || !models.length) { ElMessage.warning('没有要修改的数据或机型'); return }
-  const targets = rows.flatMap(row => models.map(modelId => ({
-    row, modelId, oldValue: row.model_values[modelId]?.[field],
-    context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
-  })))
+  if (batchEditSubmitting.value || !configReady.value || loading.value || configLoadError.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (!batchEditTargets.value) {
+    const { field, value, scope } = batchEditForm
+    if (!field || !value) { ElMessage.warning('请选择修改字段和值'); return }
+    const rows = [...(scope === 'selected' ? selectedRows.value : filteredTableData.value)]
+    const models = [...selectedModels.value]
+    if (!rows.length || !models.length) { ElMessage.warning('没有要修改的数据或机型'); return }
+    batchEditTargets.value = rows.flatMap(row => models.map(modelId => ({
+      row, modelId, field, newValue: value,
+      context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
+    })))
+  }
+  const targets = batchEditTargets.value
+  if (targets.some(target => !isDraftCellContextCurrent(target.context))) {
+    ElMessage.warning('批量修改范围已变化，请关闭弹窗并重新选择行后再试')
+    return
+  }
   batchEditSubmitting.value = true
   batchEditResult.value = null
   const result = { success: 0, failed: 0, unchanged: 0, missing: 0 }
+  let scopeChanged = false
   try {
-    for (const { row, modelId, oldValue, context } of targets) {
+    for (let index = 0; index < targets.length; index++) {
+      if (targets.some(target => !isDraftCellContextCurrent(target.context))) {
+        result.failed += targets.length - index
+        scopeChanged = true
+        break
+      }
+      const { row, modelId, field, newValue, context } = targets[index]
       if (!row.model_values[modelId]) { result.missing++; continue }
-      if (!isValueChanged(oldValue, value)) { result.unchanged++; continue }
-      row.model_values[modelId][field] = value
+      const oldValue = row.model_values[modelId][field]
+      if (!isValueChanged(oldValue, newValue)) { result.unchanged++; continue }
+      row.model_values[modelId][field] = newValue
       try {
-        if (await handleCellChange(row, modelId, field, value, oldValue, context)) result.success++
+        if (await handleCellChange(row, modelId, field, newValue, oldValue, context)) result.success++
         else result.failed++
       } catch (error) { result.failed++; console.error('批量修改单元格失败:', error) }
     }
     batchEditResult.value = result
-    if (result.failed) ElMessage.warning(`已保存 ${result.success} 处，${result.failed} 处失败；可重新确认修改以重试`)
+    if (scopeChanged) ElMessage.warning('批量修改范围已变化，已停止写入旧范围；请关闭弹窗并重新选择行后再试')
+    else if (result.failed) ElMessage.warning(`已保存 ${result.success} 处，${result.failed} 处失败；可重新确认修改以重试`)
     else ElMessage.success(`已保存 ${result.success} 处，跳过 ${result.unchanged + result.missing} 处`)
   } finally { batchEditSubmitting.value = false }
 }
