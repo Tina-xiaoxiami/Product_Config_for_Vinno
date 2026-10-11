@@ -10,13 +10,13 @@ function batchApp(save) {
   const context = {
     batchEditForm: { scope: 'filtered', field: 'final_config', value: 'new' }, selectedRows: ref([rows[0]]), filteredTableData: ref(rows.slice(0, 2)), tableData: ref(rows), selectedModels: ref([10]),
     batchEditSubmitting: ref(false), batchEditDialogVisible: ref(true), batchEditResult: ref(null), batchEditTargets: ref(null),
-    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), configLoadError: ref(''),
+    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), configLoadError: ref(''), draftScopeToken: ref(1),
     handleCellChange: save, captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
-    isDraftCellContextCurrent: context => context.tableDataRef?.value.includes(context.row) ?? true,
+    isDraftCellContextCurrent: captured => (captured.tableDataRef?.value.includes(captured.row) ?? true) && captured.scopeToken === context.draftScopeToken.value,
     isValueChanged: (a, b) => a !== b,
     ElMessage: { warning: m => messages.push(m), success: m => messages.push(m), error: m => messages.push(m) }, console,
   }
-  context.captureDraftCellContext = (row, modelId, field) => ({ row, modelId, field, tableDataRef: context.tableData })
+  context.captureDraftCellContext = (row, modelId, field) => ({ row, modelId, field, tableDataRef: context.tableData, scopeToken: context.draftScopeToken.value })
   const code = source.slice(source.indexOf('const confirmBatchEdit ='), source.indexOf('// 创建版本', source.indexOf('const confirmBatchEdit =')))
   return { ...new Function(...Object.keys(context), `${code};return { confirmBatchEdit }`)(...Object.values(context)), ...context, rows, messages }
 }
@@ -76,6 +76,42 @@ test('batch edit stops before the next target when its frozen scope changes duri
   assert.deepEqual(saved, [[1, 10, 'final_config', 'new']])
   assert.equal(app.rows[2].model_values[10].final_config, 'old')
   assert.equal(app.batchEditResult.value.failed, 1)
+  assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
+})
+test('batch edit stops when configuration becomes unready during the first save', async () => {
+  const pending = deferred(); const saved = []
+  const app = batchApp(async (row, modelId, field, value) => {
+    saved.push([row.id, modelId, field, value])
+    await pending.promise
+    return true
+  })
+  app.batchEditForm.scope = 'selected'
+  app.selectedRows.value = [app.rows[0], app.rows[2]]
+  const confirmation = app.confirmBatchEdit()
+  await Promise.resolve()
+  app.configReady.value = false
+  pending.resolve()
+  await confirmation
+  assert.deepEqual(saved, [[1, 10, 'final_config', 'new']])
+  assert.equal(app.rows[2].model_values[10].final_config, 'old')
+  assert.equal(app.batchEditResult.value.failed, 1)
+  assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
+})
+test('batch edit reports a scope change when its last save returns after the draft batch changes', async () => {
+  const pending = deferred(); const saved = []
+  const app = batchApp(async (row, modelId, field, value) => {
+    saved.push([row.id, modelId, field, value])
+    await pending.promise
+    return true
+  })
+  app.batchEditForm.scope = 'selected'
+  const confirmation = app.confirmBatchEdit()
+  await Promise.resolve()
+  app.draftScopeToken.value++
+  pending.resolve()
+  await confirmation
+  assert.deepEqual(saved, [[1, 10, 'final_config', 'new']])
+  assert.equal(app.batchEditResult.value.success, 1)
   assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
 })
 test('batch retry stays within the first confirmed rows, models, field and value', async () => {
