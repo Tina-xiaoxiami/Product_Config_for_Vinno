@@ -130,3 +130,23 @@ test('result dialog reuses series result table with distinct discard labels and 
   const lock=source.slice(source.indexOf('const reviewInteractionLocked ='),source.indexOf('const batchSubmitResultDialog ='))
   assert.match(lock,/discardSubmitting\.value/)
 })
+for(const absent of [true,false]) {
+  for(const refreshSucceeds of [true,false]) {
+    test(`retry of already resolved ${absent?'absent':'zero-change'} failure refreshes data (${refreshSucceeds?'success':'failure'})`,async()=>{
+      let attempt=0,retry=false
+      const app=discardApp({
+        getCurrentDraftBatch:async id=>{app.reads.push(id);return retry&&id===2?(absent?{exists:false}:{exists:true,batch:{id:'b2',series_id:2,status:'draft',total_count:0}}):{exists:true,batch:{id:`b${id}`,series_id:id,status:'draft',total_count:2}}},
+        batchDiscardDrafts:async params=>{app.posts.push(params);return{discarded_count:1,results:[{batch_id:'b1',series_id:1,success:true,message:'已撤销'},{batch_id:'b2',series_id:2,success:false,message:'结果未确认'}]}},
+        loadData:async()=>{app.reloads.push('data');attempt++;return attempt===1?false:refreshSucceeds}
+      })
+      await app.handleDiscardDraft();assert.match(app.batchSubmitResultDialog.error,/刷新/)
+      retry=true;await app.retryDiscardDrafts()
+      assert.equal(app.posts.length,1);assert.deepEqual(app.reads,[1,2,2])
+      assert.ok(app.batchSubmitResultDialog.results.every(row=>row.success))
+      assert.deepEqual(app.reloads,refreshSucceeds?['data','data','draft']:['data','data'])
+      if(refreshSucceeds)assert.equal(app.batchSubmitResultDialog.error,'')
+      else assert.match(app.batchSubmitResultDialog.error,/刷新/)
+      assert.equal(app.discardSubmitting.value,false)
+    })
+  }
+}
