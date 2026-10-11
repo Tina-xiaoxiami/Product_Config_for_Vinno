@@ -81,7 +81,7 @@ for(const transition of ['pending','row','model','field','batch']) {
   test(`drag execution rejects a source changed by ${transition}`,async()=>{
     const a=app();a.drag();a.highlightDragTarget(2,20,'final_config');let saving
     if(transition==='pending'){saving=a.save();await Promise.resolve()}
-    if(transition==='row'){const replacement={...a.rows[0],model_values:structuredClone(a.rows[0].model_values)};a.tableData.value=[replacement,a.rows[1]];a.paginatedTableData.value=a.tableData.value}
+    if(transition==='row'){const replacement={...a.rows[0],model_values:JSON.parse(JSON.stringify(a.rows[0].model_values))};a.tableData.value=[replacement,a.rows[1]];a.paginatedTableData.value=a.tableData.value}
     if(transition==='model')a.selectedModels.value=[20]
     if(transition==='field')a.visibleConfigFields.value=['current_config']
     if(transition==='batch')a.draftBatchMap.value.set(5,'B')
