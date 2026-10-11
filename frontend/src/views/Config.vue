@@ -167,7 +167,7 @@
 
           <!-- 批量操作 -->
           <el-dropdown v-if="selectedSeries.length > 0" @command="handleBatchOperation">
-            <el-button type="warning">
+            <el-button type="warning" :loading="discardSubmitting">
               批量操作 ({{ selectedSeries.length }})<el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
             <template #dropdown>
@@ -273,7 +273,7 @@
           </el-button>
           <div class="draft-actions">
             <el-button type="primary" size="small" @click="handleSubmitDraft()">提交发布</el-button>
-            <el-button size="small" @click="handleDiscardDraft">废弃全部</el-button>
+            <el-button size="small" :loading="discardSubmitting" @click="handleDiscardDraft">废弃全部</el-button>
             <el-button v-if="draftModels.length > 0" size="small" type="info" plain @click="showModelBar = !showModelBar">
               按机型提交
             </el-button>
@@ -1055,22 +1055,28 @@
     </el-dialog>
 
     <!-- 批量提交结果 -->
-    <el-dialog v-model="batchSubmitResultDialog.visible" title="批量提交结果" width="550px">
+    <el-dialog v-model="batchSubmitResultDialog.visible" :title="batchSubmitResultDialog.action === 'discard' ? '撤销草稿结果' : '批量提交结果'" width="650px"
+      :close-on-click-modal="!discardSubmitting" :close-on-press-escape="!discardSubmitting" :show-close="!discardSubmitting">
+      <el-alert v-if="batchSubmitResultDialog.error" :title="batchSubmitResultDialog.error" type="error" :closable="false" show-icon style="margin-bottom: 12px" />
       <el-table :data="batchSubmitResultDialog.results" max-height="400">
         <el-table-column prop="seriesName" label="系列" width="150" />
-        <el-table-column prop="versionNumber" label="版本号" width="120" />
-        <el-table-column prop="changes" label="变更数" width="80" />
-        <el-table-column prop="success" label="状态" width="80">
+        <el-table-column v-if="batchSubmitResultDialog.action !== 'discard'" prop="versionNumber" label="版本号" width="120" />
+        <el-table-column :label="batchSubmitResultDialog.action === 'discard' ? '核验草稿数' : '变更数'" width="100">
+          <template #default="{ row }">{{ row.changes ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="success" label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.success ? 'success' : 'danger'" size="small">
-              {{ row.success ? '成功' : '失败' }}
+            <el-tag :type="row.skipped ? 'info' : row.success ? 'success' : 'danger'" size="small">
+              {{ row.skipped ? '跳过' : row.success ? '成功' : '失败' }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="message" label="说明" />
       </el-table>
       <template #footer>
-        <el-button type="primary" @click="batchSubmitResultDialog.visible = false">关闭</el-button>
+        <el-button v-if="batchSubmitResultDialog.action === 'discard' && batchSubmitResultDialog.scope && (batchSubmitResultDialog.error || batchSubmitResultDialog.results.some(row => !row.success))"
+          :loading="discardSubmitting" @click="retryDiscardDrafts">重新核验并重试</el-button>
+        <el-button type="primary" :disabled="discardSubmitting" @click="batchSubmitResultDialog.visible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1088,7 +1094,7 @@ import { buildModelSelectionGroup, resolveGroupSeries, resolveGroupModels, loadM
 import {
   getSeriesList, getModels, getConfigRows,
   getCurrentDraftBatch, createDraftBatch, createDraft,
-  submitDraftBatch, discardDraftBatch, deleteDraftByKey,
+  submitDraftBatch, deleteDraftByKey,
   importExcel, exportExcel, createVersion,
   getEnumValues, previewImportBatch, previewDraftSubmission,
   batchDiscardDrafts, batchSubmitDrafts
@@ -2290,10 +2296,14 @@ const batchSubmitDialog = reactive({
   description: ''
 })
 const batchSubmitSubmitting = ref(false)
+const discardSubmitting = ref(false)
 let batchSubmitPreviewRequest = 0
-const reviewInteractionLocked = computed(() => versionSubmitting.value || submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value || rdCompleteSubmitting.value || applyToAllDialog.saving || pasteRowDialog.saving)
+const reviewInteractionLocked = computed(() => discardSubmitting.value || versionSubmitting.value || submitDialogVisible.value || batchSubmitDialog.visible || batchEditSubmitting.value || rdCompleteSubmitting.value || applyToAllDialog.saving || pasteRowDialog.saving)
 const batchSubmitResultDialog = reactive({
   visible: false,
+  action: 'submit',
+  scope: null,
+  error: '',
   results: []  // { seriesName, versionNumber, changes, success, message }
 })
 
@@ -3977,7 +3987,7 @@ const waitForDraftSaves = async () => {
   await Promise.all(Array.from(draftCellOperations.values(), state => state.tail))
 }
 const handleSubmitDraft = async (itemIds = null, modelIds = null) => {
-  if (submitSubmitting.value || submitPreviewLoading.value || batchSubmitDialog.visible) return
+  if (discardSubmitting.value || submitSubmitting.value || submitPreviewLoading.value || batchSubmitDialog.visible) return
   submitForm.version_number = ''; submitForm.description = ''
   submitForm.item_ids = itemIds == null ? null : new Set(itemIds)
   submitForm.model_ids = modelIds == null ? null : new Set(modelIds)
@@ -4075,42 +4085,111 @@ const toggleDraftModel = (modelId) => {
   selectedDraftModelIds.value = newSet
 }
 
-// 废弃草稿（废弃所有系列批次）
-const handleDiscardDraft = async () => {
-  const entries = Array.from(draftBatchMap.value.entries())
-  if (entries.length === 0) return
-
-  try {
-    await ElMessageBox.confirm('确认废弃所有草稿？此操作不可恢复。', '确认', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-
-    await Promise.all(entries.map(([seriesId, batchId]) => discardDraftBatch(batchId)))
-    ElMessage.success('已废弃')
-
-    draftStats.total = 0
-    draftStats.create = 0
-    draftStats.update = 0
-    draftStats.delete = 0
-    draftChanges.value.clear()  // 清空变更记录
-    draftFilterMode.value = false; draftFilters.value = new Set()  // 清空筛选
-    draftExpanded.value = false
-    selectedDraftItemIds.value = new Set()
-    selectedDraftModelIds.value = new Set()
-    draftItemInfo.value = new Map()
-    draftBatchMap.value.clear()
-
-    await loadData()  // 重新加载数据
-    await initDraft()
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error('废弃失败:', error)
-      ElMessage.error('废弃失败')
+// 废弃草稿（核验所选系列的全部草稿，与页面筛选无关）
+const runDraftDiscard = async (retryScope = null) => {
+  if (discardSubmitting.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value ||
+      (!retryScope && !configReady.value)) return
+  const scope = retryScope || {
+    targets: [...new Set(selectedSeries.value)].map(seriesId => ({
+      seriesId, seriesName: seriesList.value.find(series => series.id === seriesId)?.name || `系列 ${seriesId}`
+    })),
+    batchIds: new Map()
+  }
+  if (!scope.targets.length) { ElMessage.info('请先选择系列'); return }
+  const previous = retryScope ? [...batchSubmitResultDialog.results] : []
+  discardSubmitting.value = true
+  batchSubmitResultDialog.action = 'discard'
+  batchSubmitResultDialog.scope = scope
+  batchSubmitResultDialog.error = ''
+  if (!retryScope) batchSubmitResultDialog.results = []
+  const retained = new Map(previous.filter(result => result.success).map(result => [result.seriesId, result]))
+  const setResults = rows => {
+    const bySeries = new Map([...retained, ...rows.map(row => [row.seriesId, row])])
+    batchSubmitResultDialog.results = scope.targets.flatMap(target => bySeries.has(target.seriesId) ? [bySeries.get(target.seriesId)] : [])
+    batchSubmitResultDialog.visible = true
+  }
+  const refreshDiscardData = async () => {
+    try {
+      if (await loadData() === false) throw new Error('配置加载失败')
+      if (await initDraft() === false) throw new Error('草稿加载失败')
+      batchSubmitResultDialog.error = ''
+    } catch (error) {
+      batchSubmitResultDialog.error = '撤销结果已保留，但配置刷新失败，请重试刷新。'
+      ElMessage.error(batchSubmitResultDialog.error)
     }
   }
+  try {
+    await waitForDraftSaves()
+    const remaining = scope.targets.filter(target => !retained.has(target.seriesId))
+    if (!remaining.length) { await refreshDiscardData(); return }
+    const reviews = await Promise.all(remaining.map(async target => {
+      try {
+        const response = await getCurrentDraftBatch(target.seriesId)
+        if (response?.exists === false) return { ...target, success: true, skipped: true, changes: 0, message: '无草稿' }
+        const batch = response?.batch
+        if (response?.exists !== true || typeof batch?.id !== 'string' || !batch.id ||
+            batch.series_id !== target.seriesId || batch.status !== 'draft' ||
+            !Number.isFinite(batch.total_count) || batch.total_count < 0) throw new Error('草稿批次信息不完整')
+        if (batch.total_count === 0) return { ...target, success: true, skipped: true, changes: 0, message: '无变更' }
+        const previousBatchId = scope.batchIds.get(target.seriesId)
+        if (previousBatchId && previousBatchId !== batch.id) throw new Error('草稿批次已变化，请关闭结果后重新核验')
+        scope.batchIds.set(target.seriesId, batch.id)
+        return { ...target, batchId: batch.id, changes: batch.total_count, success: false, ready: true, message: '已核验，尚未撤销' }
+      } catch (error) {
+        return { ...target, success: false, message: '核验失败：' + (error.response?.data?.detail || error.message || '无法连接服务器，请重试') }
+      }
+    }))
+    if (reviews.some(review => !review.success && !review.ready)) {
+      batchSubmitResultDialog.error = '无法核验完整撤销范围，本次未撤销任何草稿，请重试核验。'
+      setResults(reviews.map(review => review.ready ? { ...review, message: '未执行：其他系列核验失败' } : review))
+      ElMessage.error(batchSubmitResultDialog.error)
+      return
+    }
+    const targets = reviews.filter(review => review.ready)
+    if (!targets.length) {
+      setResults(reviews)
+      ElMessage.info('所选系列无可撤销草稿')
+      return
+    }
+    await ElMessageBox.confirm(
+      `确认撤销以下系列的全部草稿？包含筛选之外的行、其他页、未选机型和隐藏字段，数据将回滚到最近一次提交版本。\n${targets.map(target => `${target.seriesName}（${target.changes}条变更记录）`).join('、')}`,
+      '撤销草稿', { confirmButtonText: '确认撤销', cancelButtonText: '取消', type: 'warning' }
+    )
+    let results
+    try {
+      const response = await batchDiscardDrafts({ batch_ids: targets.map(target => target.batchId) })
+      const entries = Array.isArray(response?.results) ? response.results : []
+      results = reviews.map(review => {
+        if (!review.ready) return review
+        const matches = entries.filter(entry => entry.batch_id === review.batchId)
+        const result = matches.length === 1 ? matches[0] : null
+        const success = result?.success === true && result.series_id === review.seriesId
+        return { ...review, success, ready: false,
+          message: result?.success === true && !success ? '撤销结果未确认：系列信息不匹配，请重新核验'
+            : result ? (result.message || (success ? '已撤销' : '撤销结果未确认，请重新核验')) : '服务器未返回该系列结果，请重新核验' }
+      })
+    } catch (error) {
+      results = reviews.map(review => review.ready ? { ...review, ready: false, success: false,
+        message: '撤销结果未确认，请重新核验：' + (error.response?.data?.detail || error.message || '连接失败') } : review)
+    }
+    setResults(results)
+    const successCount = results.filter(result => result.success && !result.skipped).length
+    const failedCount = results.filter(result => !result.success).length
+    if (failedCount) ElMessage.warning(`撤销完成：成功 ${successCount} 个系列，失败 ${failedCount} 个系列，请核对结果后重试`)
+    else ElMessage.success(`已撤销 ${successCount} 个系列的草稿`)
+    await refreshDiscardData()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      batchSubmitResultDialog.error = '撤销草稿失败，请重新核验后重试。'
+      setResults(previous)
+      ElMessage.error(batchSubmitResultDialog.error)
+    }
+  } finally {
+    discardSubmitting.value = false
+  }
 }
+const handleDiscardDraft = () => runDraftDiscard()
+const retryDiscardDrafts = () => runDraftDiscard(batchSubmitResultDialog.scope)
 
 // 批量操作处理入口
 const handleBatchOperation = async (command) => {
@@ -4121,75 +4200,12 @@ const handleBatchOperation = async (command) => {
   }
 }
 
-// 批量撤销
-const handleBatchDiscardDrafts = async () => {
-  // 收集选中的系列及其草稿信息
-  const batchInfo = []
-  for (const seriesId of selectedSeries.value) {
-    try {
-      const res = await getCurrentDraftBatch(seriesId)
-      if (res.exists && res.batch.total_count > 0) {
-        const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || `系列 ${seriesId}`
-        batchInfo.push({
-          seriesId,
-          seriesName,
-          batchId: res.batch.id,
-          changeCount: res.batch.total_count || 0
-        })
-      }
-    } catch (e) {
-      // 跳过没有草稿的系列
-    }
-  }
-
-  if (batchInfo.length === 0) {
-    ElMessage.info('没有可撤销的草稿')
-    return
-  }
-
-  const summaryParts = batchInfo.map(b => `${b.seriesName}(${b.changeCount}项变更)`)
-  try {
-    await ElMessageBox.confirm(
-      `确认撤销以下系列的草稿？数据将回滚到最近一次提交版本。\n${summaryParts.join('、')}`,
-      '批量撤销草稿',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
-    )
-
-    const batchIds = batchInfo.map(b => b.batchId)
-    const res = await batchDiscardDrafts({ batch_ids: batchIds })
-
-    const successCount = res.discarded_count || 0
-    if (successCount > 0) {
-      ElMessage.success(`成功撤销 ${successCount} 个系列的草稿`)
-    } else {
-      ElMessage.warning('没有成功撤销的草稿')
-    }
-
-    // 刷新当前数据
-    draftStats.total = 0
-    draftStats.create = 0
-    draftStats.update = 0
-    draftStats.delete = 0
-    draftChanges.value.clear()
-    draftFilterMode.value = false; draftFilters.value = new Set()
-    draftExpanded.value = false
-    selectedDraftItemIds.value = new Set()
-    selectedDraftModelIds.value = new Set()
-    draftItemInfo.value = new Map()
-
-    await loadData()
-    await initDraft()
-  } catch (error) {
-    if (error !== 'cancel') {
-      console.error('批量撤销失败:', error)
-      ElMessage.error('批量撤销失败')
-    }
-  }
-}
+// 批量撤销复用同一范围核验与结果处理
+const handleBatchDiscardDrafts = () => runDraftDiscard()
 
 // 打开批量提交对话框
 const handleOpenBatchSubmit = async () => {
-  if (batchSubmitSubmitting.value || batchSubmitDialog.loading || submitDialogVisible.value) return
+  if (discardSubmitting.value || batchSubmitSubmitting.value || batchSubmitDialog.loading || submitDialogVisible.value) return
   batchSubmitDialog.scope = { seriesIds: [...selectedSeries.value], visible: captureVisibleSubmissionScope() }
   batchSubmitDialog.versionNumber = ''; batchSubmitDialog.description = ''
   batchSubmitDialog.visible = true
@@ -4239,6 +4255,7 @@ const confirmBatchSubmit = async () => {
       seriesName: reviews.find(review => review.batch_id === result.batch_id)?.series_name || `系列 ${result.series_id}`,
       versionNumber: result.version_number || '-', changes: result.changes || 0, success: result.success, message: result.message
     }))
+    batchSubmitResultDialog.action = 'submit'; batchSubmitResultDialog.scope = null; batchSubmitResultDialog.error = ''
     batchSubmitDialog.visible = false; batchSubmitResultDialog.visible = true
     if (res.submitted_count) ElMessage.success(`成功提交 ${res.submitted_count} 个系列`)
     await loadData(); await initDraft()

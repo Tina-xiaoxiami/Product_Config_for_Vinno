@@ -148,7 +148,7 @@ function publishApp(overrides = {}) {
   const review = id => ({ batch_id: id, series_name: `系列 ${id}`, total_items: 2, total_changes: 3, total_models: 1, signature: `signature-${id}`, remaining_changes: 1,
     models: [{ id: 10, name: '机型' }], fields: ['final_config'], drafts: [{ item_id: 1, model_id: 10, field_name: 'final_config' }, { item_id: 2, model_id: 10, field_name: 'final_config' }, { item_id: 1, model_id: 20, field_name: 'final_config' }] })
   const context = {
-    submitSubmitting: ref(false), submitPreviewLoading: ref(false), submitPreviewError: ref(''), submitPreviews: ref([]), submitResults: ref([]), submitDialogVisible: ref(false), submitScope: ref(null), submitPreviewRequest: 0,
+    discardSubmitting: ref(false), submitSubmitting: ref(false), submitPreviewLoading: ref(false), submitPreviewError: ref(''), submitPreviews: ref([]), submitResults: ref([]), submitDialogVisible: ref(false), submitScope: ref(null), submitPreviewRequest: 0,
     submitForm: { version_number: '', description: '', item_ids: null, model_ids: null },
     batchSubmitDialog: { visible: false, loading: false, error: '', selectedBatchIds: [], availableBatches: [], scope: null }, batchSubmitSubmitting: ref(false), batchSubmitPreviewRequest: 0, batchSubmitResultDialog: { visible: false, results: [] },
     draftBatchMap: ref(new Map([[100, 200], [101, 201]])), selectedSeries: ref([100, 101]), paginatedTableData: ref([{ id: 1 }]), selectedModels: ref([10]), visibleConfigFields: ref(['final_config']), draftCellOperations: new Map(),
