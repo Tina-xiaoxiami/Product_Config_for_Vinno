@@ -12,11 +12,11 @@ function batchApp(save) {
     batchEditSubmitting: ref(false), batchEditDialogVisible: ref(true), batchEditResult: ref(null), batchEditTargets: ref(null),
     configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), configLoadError: ref(''),
     handleCellChange: save, captureDraftCellContext: (row, modelId, field) => ({ row, modelId, field }),
-    isDraftCellContextCurrent: context => context.tableData?.includes(context.row) ?? true,
+    isDraftCellContextCurrent: context => context.tableDataRef?.value.includes(context.row) ?? true,
     isValueChanged: (a, b) => a !== b,
     ElMessage: { warning: m => messages.push(m), success: m => messages.push(m), error: m => messages.push(m) }, console,
   }
-  context.captureDraftCellContext = (row, modelId, field) => ({ row, modelId, field, tableData: context.tableData.value })
+  context.captureDraftCellContext = (row, modelId, field) => ({ row, modelId, field, tableDataRef: context.tableData })
   const code = source.slice(source.indexOf('const confirmBatchEdit ='), source.indexOf('// 创建版本', source.indexOf('const confirmBatchEdit =')))
   return { ...new Function(...Object.keys(context), `${code};return { confirmBatchEdit }`)(...Object.values(context)), ...context, rows, messages }
 }
@@ -56,9 +56,35 @@ test('batch edit rejects every target before writing when an old row object was 
   assert.equal(app.rows[0].model_values[10].final_config, 'old')
   assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
 })
+test('batch edit stops before the next target when its frozen scope changes during a save', async () => {
+  const pending = deferred(); const saved = []
+  const app = batchApp(async (row, modelId, field, value) => {
+    saved.push([row.id, modelId, field, value])
+    await pending.promise
+    return true
+  })
+  app.batchEditForm.scope = 'selected'
+  app.selectedRows.value = [app.rows[0], app.rows[2]]
+  const confirmation = app.confirmBatchEdit()
+  await Promise.resolve()
+  app.tableData.value = [
+    { id: app.rows[0].id, model_values: app.rows[0].model_values },
+    { id: app.rows[2].id, model_values: app.rows[2].model_values },
+  ]
+  pending.resolve()
+  await confirmation
+  assert.deepEqual(saved, [[1, 10, 'final_config', 'new']])
+  assert.equal(app.rows[2].model_values[10].final_config, 'old')
+  assert.equal(app.batchEditResult.value.failed, 1)
+  assert.match(app.messages.at(-1), /范围已变化.*重新选择/)
+})
 test('batch retry stays within the first confirmed rows, models, field and value', async () => {
   const saved = []; let retry = false
-  const app = batchApp(async (row, modelId, field, value) => { saved.push([row.id, modelId, field, value]); return retry })
+  const app = batchApp(async (row, modelId, field, value, oldValue) => {
+    saved.push([row.id, modelId, field, value])
+    if (!retry) row.model_values[modelId][field] = oldValue
+    return retry
+  })
   app.batchEditForm.scope = 'selected'; app.selectedRows.value = [app.rows[0]]
   await app.confirmBatchEdit()
   app.selectedRows.value = [app.rows[2]]; app.selectedModels.value = [20]
