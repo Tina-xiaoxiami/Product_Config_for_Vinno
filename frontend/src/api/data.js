@@ -45,6 +45,7 @@ export const createDraftBatch = (seriesId, filename) => api.post('/drafts/batch'
 export const getDraftStats = (batchId) => api.get(`/drafts/batch/${batchId}/stats`)
 export const getDraftList = (batchId) => api.get(`/drafts/batch/${batchId}/drafts`)
 export const createDraft = (data) => api.post('/drafts/draft', data)
+export const previewDraftSubmission = (batchId, data) => api.post(`/drafts/batch/${batchId}/submit-preview`, data)
 export const submitDraftBatch = (batchId, data) => api.post(`/drafts/batch/${batchId}/submit`, data)
 export const discardDraftBatch = (batchId) => api.delete(`/drafts/batch/${batchId}`)
 export const deleteDraft = (draftId) => api.delete(`/drafts/draft/${draftId}`)
@@ -57,6 +58,7 @@ export const batchSubmitDrafts = (data) => api.post('/drafts/batch/submit', data
 // 不设置 Content-Type，让 axios 自动处理（包含 boundary）
 export const importExcel = (formData, params) => api.post('/import-export/import', formData, { params })
 export const previewImport = (formData) => api.post('/import-export/preview', formData)
+export const previewImportBatch = (formData) => api.post('/import-export/preview-batch', formData)
 export const exportExcel = (seriesId, params) => api.post('/import-export/export', {
   series_id: seriesId,
   ...params

@@ -1,7 +1,7 @@
 """
 草稿模型
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, func
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -60,3 +60,13 @@ class ConfigDraft(Base):
     series = relationship("ProductSeries", back_populates="config_drafts")
     batch = relationship("DraftBatch", back_populates="drafts")
     model = relationship("ProductModel", back_populates="config_drafts")
+
+
+DRAFT_BUSINESS_KEY_INDEX = Index(
+    "uq_config_draft_business_key",
+    ConfigDraft.batch_id,
+    ConfigDraft.item_id,
+    ConfigDraft.model_id,
+    func.coalesce(ConfigDraft.field_name, ""),
+    unique=True,
+)
