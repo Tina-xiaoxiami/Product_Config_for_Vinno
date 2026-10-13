@@ -148,6 +148,23 @@ async def _seed_config(db, *, with_snapshot: bool = False):
     return model, item
 
 
+async def _seed_structural_draft(db, change_type: str, *, with_snapshot: bool):
+    await _seed_config(db, with_snapshot=with_snapshot)
+    batch = DraftBatch(id="structural-reimport", series_id=1, status="draft")
+    db.add(batch)
+    db.add(
+        ConfigDraft(
+            series_id=1,
+            batch_id=batch.id,
+            change_type=change_type,
+            item_id=1,
+            model_id=1,
+            field_name=None,
+        )
+    )
+    await db.commit()
+
+
 async def _seed_matrix(db):
     series = ProductSeries(id=1, name="China")
     models = [
@@ -1034,6 +1051,52 @@ async def test_reimport_converts_delete_back_to_update_without_stale_draft(db):
         (draft.change_type, draft.field_name, draft.old_value, draft.new_value)
         for draft in drafts
     ] == [("update", "final_config", "FINAL", "REVISED")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["preview", "import"])
+@pytest.mark.parametrize(
+    ("existing_type", "desired_type", "with_snapshot", "values"),
+    [
+        ("delete", "create", False, ["FINAL", "CURRENT", "SELECT", "DONE"]),
+        ("create", "delete", True, ["-", "-", "-", "-"]),
+    ],
+)
+async def test_structural_reimport_replaces_opposite_draft_without_unique_conflict(
+    db,
+    operation,
+    existing_type,
+    desired_type,
+    with_snapshot,
+    values,
+):
+    await _seed_structural_draft(
+        db,
+        existing_type,
+        with_snapshot=with_snapshot,
+    )
+    workbook = _workbook(
+        [("China", f"M//{SOURCE_UUID}")],
+        labels=list(CONFIG_FIELDS),
+        values=values,
+    )
+
+    if operation == "preview":
+        await preview_import(_upload(workbook, "structural-preview.xlsx"), db)
+        expected_type = existing_type
+    else:
+        await import_excel(
+            _upload(workbook, "structural-import.xlsx"),
+            series_name=None,
+            db=db,
+        )
+        expected_type = desired_type
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    assert [
+        (draft.change_type, draft.item_id, draft.model_id, draft.field_name)
+        for draft in drafts
+    ] == [(expected_type, 1, 1, None)]
 
 
 @pytest.mark.asyncio
