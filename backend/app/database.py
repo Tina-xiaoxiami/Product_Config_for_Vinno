@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.schema import CreateIndex
 
 # 数据库路径（锚定到 backend/ 目录，避免依赖启动时的工作目录）
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -41,10 +42,8 @@ async def init_db():
             await conn.run_sync(Base.metadata.create_all)
             from app.models.draft import DRAFT_BUSINESS_KEY_INDEX
 
-            await conn.run_sync(
-                lambda connection: DRAFT_BUSINESS_KEY_INDEX.create(
-                    connection, checkfirst=True
-                )
+            await conn.execute(
+                CreateIndex(DRAFT_BUSINESS_KEY_INDEX, if_not_exists=True)
             )
     except IntegrityError as error:
         raise RuntimeError(
