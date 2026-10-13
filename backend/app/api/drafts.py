@@ -4,6 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from copy import deepcopy
 import json
@@ -28,6 +29,12 @@ from app.services.config_history import (
     restore_series_snapshot,
 )
 from app.services.model_identity import MERGED_STATUS, normalize_snapshot
+from app.services.draft_integrity import (
+    DraftIntegrityError,
+    consolidate_identical_drafts,
+    drafts_for_business_key,
+    ensure_no_duplicate_draft_keys,
+)
 
 router = APIRouter()
 
@@ -153,6 +160,10 @@ async def _validate_target(
 async def _validate_stored_drafts(
     db: AsyncSession, batch: DraftBatch, drafts: list[ConfigDraft]
 ) -> dict[int, ConfigItem]:
+    try:
+        ensure_no_duplicate_draft_keys(drafts)
+    except DraftIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     items = {}
     for draft in drafts:
         if draft.change_type not in CHANGE_TYPES:
@@ -166,6 +177,17 @@ async def _validate_stored_drafts(
         )
         items[item.id] = item
     return items
+
+
+async def _commit_draft_edit(db: AsyncSession) -> None:
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="同一配置位置已被并发更新，请刷新草稿后重试",
+        ) from error
 
 
 @router.get("/batch/current/{series_id}")
@@ -372,14 +394,18 @@ async def create_draft(
     if data.change_type == "update" and data.field_name is None:
         raise HTTPException(status_code=400, detail="更新草稿必须指定配置字段")
 
-    existing = await db.scalar(
-        select(ConfigDraft).where(
-            ConfigDraft.batch_id == data.batch_id,
-            ConfigDraft.item_id == data.item_id,
-            ConfigDraft.model_id == data.model_id,
-            ConfigDraft.field_name == data.field_name
-        )
+    existing_drafts = await drafts_for_business_key(
+        db,
+        batch_id=data.batch_id,
+        item_id=data.item_id,
+        model_id=data.model_id,
+        field_name=data.field_name,
     )
+    try:
+        existing_drafts = await consolidate_identical_drafts(db, existing_drafts)
+    except DraftIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    existing = existing_drafts[0] if existing_drafts else None
     if existing:
         if data.field_name is not None and (
             normalize_config_comparison_value(data.new_value)
@@ -391,7 +417,7 @@ async def create_draft(
             )
             await db.delete(existing)
             await _refresh_batch_counts(db, batch)
-            await db.commit()
+            await _commit_draft_edit(db)
             return {
                 "message": "已恢复原值，草稿已移除", "draft_id": None,
                 "removed": True, "current_value": original_value,
@@ -401,7 +427,7 @@ async def create_draft(
         existing.change_type = data.change_type
         await _sync_config_value(db, data)
         await _refresh_batch_counts(db, batch)
-        await db.commit()
+        await _commit_draft_edit(db)
         return {"message": "草稿已更新", "draft_id": existing.id}
 
     old_value = None
@@ -425,7 +451,7 @@ async def create_draft(
                     db, data.model_copy(update={"new_value": old_value})
                 )
             await _refresh_batch_counts(db, batch)
-            await db.commit()
+            await _commit_draft_edit(db)
             return {
                 "message": "配置未变化", "draft_id": None,
                 "unchanged": True, "current_value": old_value,
@@ -443,7 +469,7 @@ async def create_draft(
     db.add(draft)
     await _sync_config_value(db, data)
     await _refresh_batch_counts(db, batch)
-    await db.commit()
+    await _commit_draft_edit(db)
     await db.refresh(draft)
     return {"message": "草稿已保存", "draft_id": draft.id}
 
@@ -730,10 +756,10 @@ async def _process_single_batch_submit(
     all_drafts = drafts_result.scalars().all()
     if not all_drafts:
         return {"success": False, "message": "草稿批次中没有草稿项"}
-    if expected_signature is not None and expected_signature != await _submission_signature(db, batch, all_drafts, DraftSubmitRequest()):
-        return {"success": False, "message": "草稿已变化，请重新核对发布预览"}
     try:
         await _validate_stored_drafts(db, batch, all_drafts)
+        if expected_signature is not None and expected_signature != await _submission_signature(db, batch, all_drafts, DraftSubmitRequest()):
+            return {"success": False, "message": "草稿已变化，请重新核对发布预览"}
         version_number = await _resolve_version_number(
             db, batch.series_id, version_number
         )
@@ -978,8 +1004,17 @@ async def discard_draft_batch(
         raise HTTPException(status_code=500, detail=f"废弃失败: {str(e)}")
 
 
-async def _restore_then_delete_draft(db: AsyncSession, draft: ConfigDraft) -> None:
-    """撤销单条草稿对 working ConfigValue 的同步改动。"""
+async def _restore_then_delete_drafts(
+    db: AsyncSession, drafts: list[ConfigDraft]
+) -> None:
+    """撤销一个业务键的草稿，完全重复只恢复一次，冲突则拒绝。"""
+    try:
+        drafts = await consolidate_identical_drafts(db, drafts)
+    except DraftIntegrityError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not drafts:
+        return
+    draft = drafts[0]
     batch = await db.get(DraftBatch, draft.batch_id)
     if not batch or batch.status != "draft":
         raise HTTPException(status_code=400, detail="草稿批次不是待编辑状态")
@@ -1029,18 +1064,17 @@ async def delete_draft_by_key(
     """根据条件删除草稿并恢复 working value。"""
     if field_name not in CONFIG_FIELDS:
         raise HTTPException(status_code=422, detail="配置字段无效")
-    draft = await db.scalar(
-        select(ConfigDraft).where(
-            ConfigDraft.batch_id == batch_id,
-            ConfigDraft.item_id == item_id,
-            ConfigDraft.model_id == model_id,
-            ConfigDraft.field_name == field_name
-        )
+    drafts = await drafts_for_business_key(
+        db,
+        batch_id=batch_id,
+        item_id=item_id,
+        model_id=model_id,
+        field_name=field_name,
     )
-    if not draft:
+    if not drafts:
         return {"message": "草稿不存在", "deleted": False}
-    await _restore_then_delete_draft(db, draft)
-    await db.commit()
+    await _restore_then_delete_drafts(db, drafts)
+    await _commit_draft_edit(db)
     return {"message": "删除成功", "deleted": True}
 
 
@@ -1054,9 +1088,16 @@ async def delete_draft(
     draft = result.scalar_one_or_none()
 
     if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+        return {"message": "草稿不存在", "deleted": False}
 
-    await _restore_then_delete_draft(db, draft)
-    await db.commit()
+    drafts = await drafts_for_business_key(
+        db,
+        batch_id=draft.batch_id,
+        item_id=draft.item_id,
+        model_id=draft.model_id,
+        field_name=draft.field_name,
+    )
+    await _restore_then_delete_drafts(db, drafts)
+    await _commit_draft_edit(db)
 
-    return {"message": "删除成功"}
+    return {"message": "删除成功", "deleted": True}

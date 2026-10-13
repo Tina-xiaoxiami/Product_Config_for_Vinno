@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from pydantic import BaseModel
 import io
@@ -61,6 +62,10 @@ from app.services.model_identity import (
     resolve_import_model_readonly,
 )
 from app.services.config_history import resolve_snapshot_item
+from app.services.draft_integrity import (
+    DraftIntegrityError,
+    consolidate_identical_drafts,
+)
 
 router = APIRouter()
 
@@ -863,7 +868,13 @@ async def _execute_import(
                     old_drafts = await db.execute(
                         select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
                     )
-                    for d in old_drafts.scalars().all():
+                    try:
+                        coordinated_drafts = await consolidate_identical_drafts(
+                            db, list(old_drafts.scalars().all())
+                        )
+                    except DraftIntegrityError as error:
+                        raise HTTPException(status_code=409, detail=str(error)) from error
+                    for d in coordinated_drafts:
                         existing_drafts_by_key[
                             (d.change_type, d.item_id, d.model_id, d.field_name)
                         ] = d
@@ -1203,6 +1214,13 @@ async def _execute_import(
         if commit:
             await db.rollback()
         raise
+    except IntegrityError as error:
+        if commit:
+            await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="草稿在导入期间被并发更新，请重新预览后再导入",
+        ) from error
     except Exception as e:
         # 预览的外层 savepoint 负责回滚，不能回滚调用者事务。
         if commit:

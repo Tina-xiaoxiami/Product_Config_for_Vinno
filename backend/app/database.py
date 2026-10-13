@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 # 数据库路径（锚定到 backend/ 目录，避免依赖启动时的工作目录）
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -35,5 +36,19 @@ async def get_db():
 
 async def init_db():
     """初始化数据库表"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            from app.models.draft import DRAFT_BUSINESS_KEY_INDEX
+
+            await conn.run_sync(
+                lambda connection: DRAFT_BUSINESS_KEY_INDEX.create(
+                    connection, checkfirst=True
+                )
+            )
+    except IntegrityError as error:
+        raise RuntimeError(
+            "config_drafts 存在重复业务键，已拒绝启动。请先备份数据库并运行 "
+            "scripts/migrate_draft_integrity.py --database <明确数据库路径> 检查；"
+            "确认仅有完全相同重复后再加 --apply。"
+        ) from error
