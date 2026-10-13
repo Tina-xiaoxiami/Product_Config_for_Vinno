@@ -165,6 +165,49 @@ async def _seed_structural_draft(db, change_type: str, *, with_snapshot: bool):
     await db.commit()
 
 
+async def _field_draft_patch(db, change_type: str):
+    await _seed_config(db, with_snapshot=True)
+    value = await db.scalar(
+        select(ConfigValue).where(
+            ConfigValue.item_id == 1,
+            ConfigValue.model_id == 1,
+        )
+    )
+    value.current_config = "X"
+    batch = DraftBatch(
+        id="field-reimport",
+        series_id=1,
+        status="draft",
+        total_count=1,
+        create_count=1 if change_type == "create" else 0,
+        delete_count=1 if change_type == "delete" else 0,
+    )
+    db.add(batch)
+    db.add(
+        ConfigDraft(
+            series_id=1,
+            batch_id=batch.id,
+            change_type=change_type,
+            item_id=1,
+            model_id=1,
+            field_name="current_config",
+            old_value="CURRENT",
+            new_value="X",
+        )
+    )
+    await db.commit()
+    exported = await export_excel(
+        ExportRequest(
+            series_id=1,
+            item_ids="1",
+            model_ids="1",
+            visible_fields="current_config",
+        ),
+        db,
+    )
+    return openpyxl.load_workbook(io.BytesIO(await _response_bytes(exported)))
+
+
 async def _seed_matrix(db):
     series = ProductSeries(id=1, name="China")
     models = [
@@ -1097,6 +1140,52 @@ async def test_structural_reimport_replaces_opposite_draft_without_unique_confli
         (draft.change_type, draft.item_id, draft.model_id, draft.field_name)
         for draft in drafts
     ] == [(expected_type, 1, 1, None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["preview", "import"])
+@pytest.mark.parametrize("existing_type", ["create", "delete"])
+@pytest.mark.parametrize("imported_value", ["Y", "CURRENT"])
+async def test_field_reimport_uses_business_key_and_preserves_baseline(
+    db,
+    operation,
+    existing_type,
+    imported_value,
+):
+    workbook = await _field_draft_patch(db, existing_type)
+    workbook.active["F6"] = imported_value
+
+    if operation == "preview":
+        await preview_import(_upload(workbook, "field-preview.xlsx"), db)
+    else:
+        await import_excel(
+            _upload(workbook, "field-import.xlsx"),
+            series_name=None,
+            db=db,
+        )
+
+    drafts = (await db.execute(select(ConfigDraft))).scalars().all()
+    value = await db.scalar(
+        select(ConfigValue).where(
+            ConfigValue.item_id == 1,
+            ConfigValue.model_id == 1,
+        )
+    )
+    if operation == "preview":
+        assert [
+            (draft.change_type, draft.old_value, draft.new_value)
+            for draft in drafts
+        ] == [(existing_type, "CURRENT", "X")]
+        assert value.current_config == "X"
+    elif imported_value == "CURRENT":
+        assert drafts == []
+        assert value.current_config == "CURRENT"
+    else:
+        assert [
+            (draft.change_type, draft.old_value, draft.new_value)
+            for draft in drafts
+        ] == [("update", "CURRENT", "Y")]
+        assert value.current_config == "Y"
 
 
 @pytest.mark.asyncio
