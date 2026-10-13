@@ -65,6 +65,8 @@ from app.services.config_history import resolve_snapshot_item
 from app.services.draft_integrity import (
     DraftIntegrityError,
     consolidate_identical_drafts,
+    draft_business_key,
+    make_draft_business_key,
 )
 
 router = APIRouter()
@@ -863,7 +865,7 @@ async def _execute_import(
                         draft_batch.delete_count = 0
 
                 # 非新增批次：保留旧草稿，导入产生的新变更去重后追加
-                existing_drafts_by_key = {}  # (change_type, item_id, model_id, field_name) -> draft
+                existing_drafts_by_key = {}
                 if not batch_is_new:
                     old_drafts = await db.execute(
                         select(ConfigDraft).where(ConfigDraft.batch_id == draft_batch.id)
@@ -875,9 +877,7 @@ async def _execute_import(
                     except DraftIntegrityError as error:
                         raise HTTPException(status_code=409, detail=str(error)) from error
                     for d in coordinated_drafts:
-                        existing_drafts_by_key[
-                            (d.change_type, d.item_id, d.model_id, d.field_name)
-                        ] = d
+                        existing_drafts_by_key[draft_business_key(d)] = d
 
                 # === 先筛选draft_changes：将"Excel全N/A但快照有有效值"的配对转为删除 ===
                 # 必须在创建DB草稿之前完成，避免update草稿和delete草稿同时存在
@@ -930,7 +930,12 @@ async def _execute_import(
                 # 以本次工作簿触及的字段/配对为边界，对现有草稿做替换式协调。
                 # 未触及字段继续保留；同一字段最初的 old_value 始终保留。
                 desired_updates = {
-                    ("update", entry["item_id"], entry["model_id"], entry["field_name"]): entry
+                    make_draft_business_key(
+                        draft_batch.id,
+                        entry["item_id"],
+                        entry["model_id"],
+                        entry["field_name"],
+                    ): entry
                     for entry in draft_changes
                 }
                 models_by_name = {m.name: m for m in models}
@@ -964,10 +969,10 @@ async def _execute_import(
 
                 removed_existing_draft = False
                 for key, existing_draft in list(existing_drafts_by_key.items()):
-                    change_type, item_id, model_id, field_name = key
+                    _, item_id, model_id, field_name = key
                     pair_id = (item_id, model_id)
                     should_remove = False
-                    if change_type == "update":
+                    if field_name is not None:
                         should_remove = (
                             pair_id in desired_pair_types
                             or (
@@ -979,7 +984,10 @@ async def _execute_import(
                         pair_id in touched_pair_ids
                         and pair_id in authoritative_pair_ids
                     ):
-                        should_remove = desired_pair_types.get(pair_id) != change_type
+                        should_remove = (
+                            desired_pair_types.get(pair_id)
+                            != existing_draft.change_type
+                        )
                     if should_remove:
                         await db.delete(existing_draft)
                         existing_drafts_by_key.pop(key)
@@ -993,9 +1001,15 @@ async def _execute_import(
 
                 # === 创建或更新字段草稿（已排除应转为新增/删除的配对） ===
                 for entry in draft_changes:
-                    draft_key = ("update", entry["item_id"], entry["model_id"], entry["field_name"])
+                    draft_key = make_draft_business_key(
+                        draft_batch.id,
+                        entry["item_id"],
+                        entry["model_id"],
+                        entry["field_name"],
+                    )
                     existing_draft = existing_drafts_by_key.get(draft_key)
                     if existing_draft is not None:
+                        existing_draft.change_type = entry["change_type"]
                         existing_draft.new_value = entry["new_value"]
                     else:
                         draft = ConfigDraft(
@@ -1012,7 +1026,12 @@ async def _execute_import(
 
                 # 为"全部Excel值为N/A"的配对创建删除草稿
                 for (del_item_id, del_model_id) in update_to_delete:
-                    draft_key = ("delete", del_item_id, del_model_id, None)
+                    draft_key = make_draft_business_key(
+                        draft_batch.id,
+                        del_item_id,
+                        del_model_id,
+                        None,
+                    )
                     if draft_key in existing_drafts_by_key:
                         continue
                     delete_draft = ConfigDraft(
@@ -1038,7 +1057,12 @@ async def _execute_import(
                     pair_model = models_by_name.get(pair_model_name)
                     if not pair_model or not pair_model.id:
                         continue
-                    draft_key = ("create", pair_item.id, pair_model.id, None)
+                    draft_key = make_draft_business_key(
+                        draft_batch.id,
+                        pair_item.id,
+                        pair_model.id,
+                        None,
+                    )
                     if draft_key in existing_drafts_by_key:
                         continue  # 已有相同新增草稿，跳过
                     create_draft = ConfigDraft(
@@ -1058,7 +1082,12 @@ async def _execute_import(
                     pair_model = models_by_name.get(pair_model_name)
                     if not pair_item or not pair_model:
                         continue
-                    draft_key = ("create", pair_item.id, pair_model.id, None)
+                    draft_key = make_draft_business_key(
+                        draft_batch.id,
+                        pair_item.id,
+                        pair_model.id,
+                        None,
+                    )
                     if draft_key in existing_drafts_by_key:
                         continue
                     db.add(
@@ -1156,7 +1185,12 @@ async def _execute_import(
                                 del_ipns.discard(del_ipn)
                             continue
 
-                        delete_key = ("delete", del_item.id, del_model.id, None)
+                        delete_key = make_draft_business_key(
+                            draft_batch.id,
+                            del_item.id,
+                            del_model.id,
+                            None,
+                        )
                         if delete_key in existing_drafts_by_key:
                             continue
 
@@ -1177,7 +1211,12 @@ async def _execute_import(
                     del_model = models_by_name.get(del_model_name)
                     if not del_item or not del_model:
                         continue
-                    delete_key = ("delete", del_item.id, del_model.id, None)
+                    delete_key = make_draft_business_key(
+                        draft_batch.id,
+                        del_item.id,
+                        del_model.id,
+                        None,
+                    )
                     if delete_key in existing_drafts_by_key:
                         continue
                     db.add(

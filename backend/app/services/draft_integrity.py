@@ -44,8 +44,22 @@ class DraftIntegrityReport:
     batch_count_changes: dict[str, dict[str, dict[str, int]]]
 
 
+def make_draft_business_key(
+    batch_id: str,
+    item_id: int | None,
+    model_id: int | None,
+    field_name: str | None,
+) -> tuple[str, int | None, int | None, str | None]:
+    return (batch_id, item_id, model_id, field_name)
+
+
 def draft_business_key(draft) -> tuple[str, int | None, int | None, str | None]:
-    return (draft.batch_id, draft.item_id, draft.model_id, draft.field_name)
+    return make_draft_business_key(
+        draft.batch_id,
+        draft.item_id,
+        draft.model_id,
+        draft.field_name,
+    )
 
 
 def _draft_meaning(draft) -> tuple[int, str, str | None, str | None]:
