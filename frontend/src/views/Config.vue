@@ -891,11 +891,11 @@
       <p>将该行来源机型的<strong>{{ applyToAllDialog.fieldName }}</strong>复制到 <strong>{{ applyToAllDialog.modelIds.length }}</strong> 个已选目标机型；最多 {{ applyToAllDialog.targets.length }} 处配置。</p>
       <p v-if="applyToAllDialog.scope === 'field'">复制值：<strong>{{ applyToAllDialog.value || '-' }}</strong></p>
       <p v-else>字段：最终配置、当前配置、选型类别、研发状态。</p>
-      <p v-if="applyToAllDialog.result" role="status">保存成功 {{ applyToAllDialog.result.success }} 处；失败 {{ applyToAllDialog.result.failed }} 处；未变化 {{ applyToAllDialog.result.unchanged }} 处；范围已变化 {{ applyToAllDialog.result.stale }} 处。</p>
-      <p v-if="applyToAllDialog.result?.stale" class="scope-note">批次或机型范围已变化，请关闭后重新选择目标。未继续写入过期目标。</p>
+      <p v-if="applyToAllDialog.result" role="status">保存成功 {{ applyToAllDialog.result.success }} 处；失败 {{ applyToAllDialog.result.failed }} 处；未变化 {{ applyToAllDialog.result.unchanged }} 处。</p>
+      <p v-if="applyToAllDialog.result?.stale" class="scope-note">配置加载状态或操作范围已变化，请重新加载并核对已保存结果，再选择目标。</p>
       <template #footer>
         <el-button :disabled="applyToAllDialog.saving" @click="applyToAllDialog.visible = false">关闭</el-button>
-        <el-button type="primary" :loading="applyToAllDialog.saving" :disabled="!!applyToAllDialog.result?.stale" @click="confirmApplyToAll">{{ applyToAllDialog.retryTargets?.length ? '仅重试失败项' : '确认应用' }}</el-button>
+        <el-button type="primary" :loading="applyToAllDialog.saving" :disabled="applyToAllDialog.saving || !configReady || loading || !!configLoadError || applyingModelGroup || !!applyToAllDialog.result?.stale" @click="confirmApplyToAll">{{ applyToAllDialog.retryTargets?.length ? '仅重试失败项' : '确认应用' }}</el-button>
       </template>
     </el-dialog>
 
@@ -906,11 +906,11 @@
       <el-select v-model="pasteRowDialog.targetRowId" :disabled="pasteRowDialog.saving || !!pasteRowDialog.retryTargets" placeholder="选择目标行" style="width: 100%; margin-top: 10px;" filterable>
         <el-option v-for="row in tableData" :key="row.id" :label="row.rd_name || row.ipn || 'ID:' + row.id" :value="row.id" />
       </el-select>
-      <p v-if="pasteRowDialog.result" role="status">保存成功 {{ pasteRowDialog.result.success }} 处；失败 {{ pasteRowDialog.result.failed }} 处；未变化 {{ pasteRowDialog.result.unchanged }} 处；范围已变化 {{ pasteRowDialog.result.stale }} 处。</p>
-      <p v-if="pasteRowDialog.result?.stale" class="scope-note">批次或机型范围已变化，请关闭后重新选择目标。未继续写入过期目标。</p>
+      <p v-if="pasteRowDialog.result" role="status">保存成功 {{ pasteRowDialog.result.success }} 处；失败 {{ pasteRowDialog.result.failed }} 处；未变化 {{ pasteRowDialog.result.unchanged }} 处。</p>
+      <p v-if="pasteRowDialog.result?.stale" class="scope-note">配置加载状态或操作范围已变化，请重新加载并核对已保存结果，再选择目标。</p>
       <template #footer>
         <el-button :disabled="pasteRowDialog.saving" @click="pasteRowDialog.visible = false">关闭</el-button>
-        <el-button type="primary" :loading="pasteRowDialog.saving" :disabled="!pasteRowDialog.targetRowId || !!pasteRowDialog.result?.stale" @click="confirmPasteRowConfig">{{ pasteRowDialog.retryTargets?.length ? '仅重试失败项' : '确认粘贴' }}</el-button>
+        <el-button type="primary" :loading="pasteRowDialog.saving" :disabled="pasteRowDialog.saving || !configReady || loading || !!configLoadError || applyingModelGroup || !pasteRowDialog.targetRowId || !!pasteRowDialog.result?.stale" @click="confirmPasteRowConfig">{{ pasteRowDialog.retryTargets?.length ? '仅重试失败项' : '确认粘贴' }}</el-button>
       </template>
     </el-dialog>
 
@@ -3655,7 +3655,7 @@ const handleBatchCompleteRdStatus = async () => {
       '确认一键完成范围', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
     )
     const { result } = await saveShortcutTargets(targets)
-    if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。请核对当前范围后重试。`)
+    if (result.failed || result.stale) ElMessage.warning(formatShortcutSaveWarning(result))
     else ElMessage.success(`已完成 ${result.success} 处研发状态，跳过值未变化 ${result.unchanged} 处`)
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') { console.error('批量完成研发状态失败:', error); ElMessage.error('操作未完成，请重试') }
@@ -3764,12 +3764,20 @@ const buildShortcutTargets = (rows, modelIds, fields, getNewValue) => rows.flatM
     context: captureDraftCellContext(row, modelId, field, `${row.id}_${modelId}_${field}`)
   }))
 }))
+const isShortcutSaveScopeCurrent = context => configReady.value && !loading.value &&
+  !configLoadError.value && !applyingModelGroup.value && isDraftCellScopeCurrent(context)
+const formatShortcutSaveWarning = (result, successLabel = '已保存') => {
+  const counts = `${successLabel} ${result.success} 处；失败 ${result.failed} 处。`
+  return result.stale
+    ? `${counts} 配置加载状态或操作范围已变化，请重新加载并核对已保存结果，再选择目标。`
+    : counts
+}
 const saveShortcutTargets = async targets => {
   const result = { success: 0, failed: 0, unchanged: 0, stale: 0 }
   const retryTargets = []
   for (const target of targets) {
     const { row, modelId, field, newValue, context } = target
-    if (!isDraftCellScopeCurrent(context)) { result.stale++; continue }
+    if (!isShortcutSaveScopeCurrent(context)) { result.stale++; break }
     const oldValue = row.model_values[modelId][field]
     if (!isValueChanged(oldValue, newValue)) { result.unchanged++; continue }
     row.model_values[modelId][field] = newValue
@@ -3777,6 +3785,7 @@ const saveShortcutTargets = async targets => {
       if (await handleCellChange(row, modelId, field, newValue, oldValue, context)) result.success++
       else { result.failed++; retryTargets.push(target) }
     } catch (error) { result.failed++; retryTargets.push(target); console.error('保存快捷操作失败:', error) }
+    if (!isShortcutSaveScopeCurrent(context)) { result.stale++; break }
   }
   return { result, retryTargets }
 }
@@ -3798,7 +3807,7 @@ const handleApplyToAllModels = scope => {
   })
 }
 const confirmApplyToAll = async () => {
-  if (applyToAllDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (applyToAllDialog.saving || !configReady.value || loading.value || configLoadError.value || applyingModelGroup.value || reviewInteractionLocked.value) return
   const request = applyToAllDialog.request
   const targets = [...(applyToAllDialog.retryTargets || applyToAllDialog.targets)]
   if (!targets.length) { ElMessage.info('没有可应用的目标配置'); return }
@@ -3808,7 +3817,7 @@ const confirmApplyToAll = async () => {
     if (request !== applyToAllDialog.request) return
     applyToAllDialog.result = result
     applyToAllDialog.retryTargets = retryTargets
-    if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+    if (result.failed || result.stale) ElMessage.warning(formatShortcutSaveWarning(result))
     else { ElMessage.success(`已应用 ${result.success} 处，跳过值未变化 ${result.unchanged} 处`); applyToAllDialog.visible = false }
   } finally { if (request === applyToAllDialog.request) applyToAllDialog.saving = false }
 }
@@ -3822,7 +3831,7 @@ const handleApplyValueToAllFields = async () => {
   const targets = target.rowTargets.filter(cell => cell.modelId === target.modelId && cell.field !== target.field)
     .map(cell => ({ ...cell, newValue: value }))
   const { result } = await saveShortcutTargets(targets)
-  if (result.failed || result.stale) ElMessage.warning(`已保存 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+  if (result.failed || result.stale) ElMessage.warning(formatShortcutSaveWarning(result))
   else if (result.success) ElMessage.success(`已将值应用到该机型其他 ${result.success} 个字段`)
   else ElMessage.info('其他字段已经是相同值')
 }
@@ -3941,7 +3950,7 @@ const getRowDiffData = (row) => {
 
 // 确认粘贴整行配置
 const confirmPasteRowConfig = async () => {
-  if (pasteRowDialog.saving || !configReady.value || loading.value || applyingModelGroup.value || reviewInteractionLocked.value) return
+  if (pasteRowDialog.saving || !configReady.value || loading.value || configLoadError.value || applyingModelGroup.value || reviewInteractionLocked.value) return
   const request = pasteRowDialog.request
   const clipboard = pasteRowDialog.clipboard
   if (!pasteRowDialog.targetRowId || !clipboard) { ElMessage.warning('请选择目标行'); return }
@@ -3960,7 +3969,7 @@ const confirmPasteRowConfig = async () => {
     if (request !== pasteRowDialog.request || clipboard !== pasteRowDialog.clipboard) return
     pasteRowDialog.result = result
     pasteRowDialog.retryTargets = retryTargets
-    if (result.failed || result.stale) ElMessage.warning(`已粘贴 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+    if (result.failed || result.stale) ElMessage.warning(formatShortcutSaveWarning(result, '已粘贴'))
     else {
       ElMessage.success(`已粘贴 ${result.success} 处，跳过值未变化 ${result.unchanged} 处`)
       pasteRowDialog.visible = false
@@ -4719,7 +4728,7 @@ const pasteToSelectedCells = async () => {
     visibleConfigFields.value.includes(cell.field) && isDraftCellContextCurrent(cell.context))
     .map(cell => ({ ...cell, newValue: source.value }))
   const { result } = await saveShortcutTargets(targets)
-  if (result.failed || result.stale) ElMessage.warning(`已粘贴 ${result.success} 处；失败 ${result.failed} 处，范围已变化 ${result.stale} 处。`)
+  if (result.failed || result.stale) ElMessage.warning(formatShortcutSaveWarning(result, '已粘贴'))
   else if (result.success) ElMessage.success(`已粘贴到 ${result.success} 个单元格`)
 }
 

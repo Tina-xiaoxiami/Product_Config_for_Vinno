@@ -116,6 +116,8 @@ test('shortcut dialogs disable confirmation while configuration is not ready, lo
   const pasteDialog=source.slice(source.indexOf('<!-- 粘贴整行配置对话框 -->'),source.indexOf('<!-- 行差异查看对话框 -->'))
   assert.match(applyDialog,/:disabled="[^"]*!configReady[^"]*loading[^"]*configLoadError/)
   assert.match(pasteDialog,/:disabled="[^"]*!configReady[^"]*loading[^"]*configLoadError/)
+  assert.match(applyDialog,/配置加载状态或操作范围已变化，请重新加载并核对已保存结果，再选择目标/)
+  assert.match(pasteDialog,/配置加载状态或操作范围已变化，请重新加载并核对已保存结果，再选择目标/)
 })
 
 test('shortcut saving stops before the next target when configuration starts loading', async () => {
@@ -127,6 +129,8 @@ test('shortcut saving stops before the next target when configuration starts loa
   assert.deepEqual(app.applyToAllDialog.result,{success:1,failed:0,unchanged:0,stale:1})
   assert.equal(app.applyToAllDialog.visible,true)
   assert.equal(app.messages.at(-1).type,'warning')
+  assert.match(app.messages.at(-1).message,/配置加载状态或操作范围已变化/)
+  assert.doesNotMatch(app.messages.at(-1).message,/范围已变化 1 处/)
 })
 
 test('a load failure during the final save is reported as stale without losing the successful save count', async () => {

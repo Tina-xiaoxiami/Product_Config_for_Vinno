@@ -22,7 +22,7 @@ function menuApp({width=1280,height=577,menuWidth=220,menuHeight=397}={}) {
   const menuElement={getBoundingClientRect:()=>{measurements++;return{width:menuWidth,height:menuHeight}},contains:target=>target===menuElement||target===inside}
   const ctx={
     window,document,watch,contextMenu:reactive({visible:false,x:0,y:0,row:null,modelId:null,field:null,scope:null,request:0,positioned:false}),contextMenuRef:ref(menuElement),
-    configReady:ref(true),loading:ref(false),applyingModelGroup:ref(false),reviewInteractionLocked:ref(false),
+    configReady:ref(true),loading:ref(false),configLoadError:ref(''),applyingModelGroup:ref(false),reviewInteractionLocked:ref(false),
     currentPage:ref(1),pageSize:ref(100),selectedModels:ref([10,20]),visibleConfigFields:ref(['final_config','current_config','selection_config','rd_status']),selectedSeries:ref([5]),
     tableData:ref(rows),paginatedTableData:ref(rows.slice(0,2)),draftBatchMap:ref(new Map([[5,'A']])),
     selectedCells:ref([]),copiedCell:ref(null),copiedRowConfig:ref(null),cancelEditSession(){},
