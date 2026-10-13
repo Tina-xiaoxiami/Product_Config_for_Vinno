@@ -962,6 +962,7 @@ async def _execute_import(
                     if model_name in models_by_name
                 })
 
+                removed_existing_draft = False
                 for key, existing_draft in list(existing_drafts_by_key.items()):
                     change_type, item_id, model_id, field_name = key
                     pair_id = (item_id, model_id)
@@ -982,6 +983,13 @@ async def _execute_import(
                     if should_remove:
                         await db.delete(existing_draft)
                         existing_drafts_by_key.pop(key)
+                        removed_existing_draft = True
+
+                # SQLite may issue an INSERT before a pending DELETE during the
+                # final flush. Persist removals first so an opposite structural
+                # draft can safely reuse the same unique business key.
+                if removed_existing_draft:
+                    await db.flush()
 
                 # === 创建或更新字段草稿（已排除应转为新增/删除的配对） ===
                 for entry in draft_changes:
