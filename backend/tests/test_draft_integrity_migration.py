@@ -63,6 +63,25 @@ def _rows(path):
         connection.close()
 
 
+def _add_invalid_drafts(path):
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        """
+        INSERT INTO config_drafts
+            (id, series_id, batch_id, change_type, item_id, model_id,
+             field_name, old_value, new_value)
+        VALUES (?, 1, 'batch-1', 'update', ?, ?, ?, 'old', 'new')
+        """,
+        [
+            (4, None, 10, "selection_config"),
+            (5, 102, None, "selection_config"),
+            (6, 103, 10, ""),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+
 def test_migration_is_dry_run_by_default_and_reports_exact_repair(tmp_path):
     database = tmp_path / "legacy.db"
     _legacy_database(database)
@@ -108,6 +127,42 @@ def test_apply_rejects_conflicts_and_rolls_back_all_changes(tmp_path):
 
     drafts, batch, indexes = _rows(database)
     assert [row[0] for row in drafts] == [1, 2, 3]
+    assert batch == (3, 0, 3, 0)
+    assert all(row[1] != "uq_config_draft_business_key" for row in indexes)
+
+
+def test_dry_run_reports_invalid_draft_identities_without_writes(tmp_path):
+    database = tmp_path / "legacy.db"
+    _legacy_database(database)
+    _add_invalid_drafts(database)
+
+    report = migrate_sqlite_draft_integrity(database)
+
+    drafts, batch, indexes = _rows(database)
+    assert report.invalid_draft_ids == (4, 5, 6)
+    assert report.invalid_reasons == {
+        4: ("item_id 为 NULL",),
+        5: ("model_id 为 NULL",),
+        6: ("field_name 为空字符串",),
+    }
+    assert [row[0] for row in drafts] == [1, 2, 3, 4, 5, 6]
+    assert batch == (3, 0, 3, 0)
+    assert all(row[1] != "uq_config_draft_business_key" for row in indexes)
+
+
+def test_apply_rejects_invalid_identities_before_exact_duplicate_repair(tmp_path):
+    database = tmp_path / "legacy.db"
+    _legacy_database(database)
+    _add_invalid_drafts(database)
+
+    with pytest.raises(
+        DraftIntegrityError,
+        match=r"无效草稿身份.*4.*item_id.*5.*model_id.*6.*field_name",
+    ):
+        migrate_sqlite_draft_integrity(database, apply=True)
+
+    drafts, batch, indexes = _rows(database)
+    assert [row[0] for row in drafts] == [1, 2, 3, 4, 5, 6]
     assert batch == (3, 0, 3, 0)
     assert all(row[1] != "uq_config_draft_business_key" for row in indexes)
 

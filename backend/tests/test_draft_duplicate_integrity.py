@@ -1,14 +1,52 @@
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.models import ConfigDraft, ConfigValue, ConfigVersion, DraftBatch
+from app.services.draft_integrity import (
+    DraftIntegrityError,
+    consolidate_identical_drafts,
+)
 from test_draft_safety import _draft_harness, _draft_payload, _seed_catalog
 
 
 UNIQUE_INDEX = "uq_config_draft_business_key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"item_id": None, "model_id": 10, "field_name": "selection_config"},
+        {"item_id": 100, "model_id": None, "field_name": "selection_config"},
+        {"item_id": 100, "model_id": 10, "field_name": ""},
+    ],
+)
+async def test_consolidation_rejects_invalid_duplicate_identities_without_deleting(
+    identity,
+):
+    drafts = [
+        SimpleNamespace(
+            id=draft_id,
+            series_id=1,
+            batch_id="batch-1",
+            change_type="update",
+            old_value="old",
+            new_value="new",
+            **identity,
+        )
+        for draft_id in (1, 2)
+    ]
+    db = AsyncMock()
+
+    with pytest.raises(DraftIntegrityError, match="无效草稿身份"):
+        await consolidate_identical_drafts(db, drafts)
+
+    db.delete.assert_not_awaited()
 
 
 async def _allow_legacy_duplicates(session_factory):
