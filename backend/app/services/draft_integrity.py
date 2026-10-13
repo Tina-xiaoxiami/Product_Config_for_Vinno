@@ -38,6 +38,8 @@ class DraftIntegrityReport:
     applied: bool
     exact_groups: tuple[DraftDuplicateGroup, ...]
     conflict_groups: tuple[DraftDuplicateGroup, ...]
+    invalid_draft_ids: tuple[int, ...]
+    invalid_reasons: dict[int, tuple[str, ...]]
     deleted_ids: tuple[int, ...]
     batch_count_changes: dict[str, dict[str, dict[str, int]]]
 
@@ -48,6 +50,36 @@ def draft_business_key(draft) -> tuple[str, int | None, int | None, str | None]:
 
 def _draft_meaning(draft) -> tuple[int, str, str | None, str | None]:
     return (draft.series_id, draft.change_type, draft.old_value, draft.new_value)
+
+
+def invalid_draft_identity_reasons(draft) -> tuple[str, ...]:
+    reasons = []
+    if draft.item_id is None:
+        reasons.append("item_id 为 NULL")
+    if draft.model_id is None:
+        reasons.append("model_id 为 NULL")
+    if draft.field_name == "":
+        reasons.append("field_name 为空字符串")
+    return tuple(reasons)
+
+
+def find_invalid_draft_identities(drafts: Iterable) -> dict[int, tuple[str, ...]]:
+    invalid = {}
+    for draft in drafts:
+        reasons = invalid_draft_identity_reasons(draft)
+        if reasons:
+            invalid[draft.id] = reasons
+    return invalid
+
+
+def ensure_valid_draft_identities(drafts: Iterable) -> None:
+    invalid = find_invalid_draft_identities(drafts)
+    if invalid:
+        details = "; ".join(
+            f"id={draft_id}: {', '.join(reasons)}"
+            for draft_id, reasons in invalid.items()
+        )
+        raise DraftIntegrityError(f"存在无效草稿身份，不能自动合并：{details}")
 
 
 def group_drafts_by_business_key(drafts: Iterable) -> dict[tuple, list]:
@@ -95,6 +127,7 @@ def ensure_no_duplicate_draft_keys(drafts: Iterable) -> None:
 
 
 def ensure_identical_draft_group(drafts: Sequence) -> None:
+    ensure_valid_draft_identities(drafts)
     if len(drafts) < 2:
         return
     group = _duplicate_group(draft_business_key(drafts[0]), drafts)
@@ -131,6 +164,7 @@ async def consolidate_identical_drafts(
 ) -> list[ConfigDraft]:
     """Collapse exact duplicates only after every duplicate group is proven safe."""
 
+    ensure_valid_draft_identities(drafts)
     groups = group_drafts_by_business_key(drafts)
     duplicate_groups = [group for group in groups.values() if len(group) > 1]
     for group in duplicate_groups:
@@ -146,7 +180,7 @@ async def consolidate_identical_drafts(
     return [draft for draft in drafts if draft.id not in redundant_ids]
 
 
-def _sqlite_duplicate_groups(connection: sqlite3.Connection) -> tuple[DraftDuplicateGroup, ...]:
+def _sqlite_drafts(connection: sqlite3.Connection) -> list[SimpleNamespace]:
     rows = connection.execute(
         """
         SELECT id, series_id, batch_id, change_type, item_id, model_id,
@@ -155,9 +189,7 @@ def _sqlite_duplicate_groups(connection: sqlite3.Connection) -> tuple[DraftDupli
         ORDER BY id
         """
     ).fetchall()
-    return find_duplicate_draft_groups(
-        SimpleNamespace(**dict(row)) for row in rows
-    )
+    return [SimpleNamespace(**dict(row)) for row in rows]
 
 
 def _counts(connection: sqlite3.Connection, batch_id: str) -> dict[str, int]:
@@ -191,9 +223,20 @@ def migrate_sqlite_draft_integrity(
     connection.row_factory = sqlite3.Row
     try:
         connection.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
-        groups = _sqlite_duplicate_groups(connection)
+        drafts = _sqlite_drafts(connection)
+        groups = find_duplicate_draft_groups(drafts)
         exact = tuple(group for group in groups if not group.conflict)
         conflicts = tuple(group for group in groups if group.conflict)
+        invalid_reasons = find_invalid_draft_identities(drafts)
+        invalid_ids = tuple(invalid_reasons)
+        if apply and invalid_reasons:
+            details = "; ".join(
+                f"id={draft_id}: {', '.join(reasons)}"
+                for draft_id, reasons in invalid_reasons.items()
+            )
+            raise DraftIntegrityError(
+                f"存在无效草稿身份，未执行任何修复：{details}"
+            )
         if apply and conflicts:
             details = "; ".join(_group_label(group) for group in conflicts)
             raise DraftIntegrityError(f"草稿重复记录存在冲突，未执行任何修复：{details}")
@@ -245,6 +288,8 @@ def migrate_sqlite_draft_integrity(
             applied=apply,
             exact_groups=exact,
             conflict_groups=conflicts,
+            invalid_draft_ids=invalid_ids,
+            invalid_reasons=invalid_reasons,
             deleted_ids=deleted_ids,
             batch_count_changes=count_changes,
         )
