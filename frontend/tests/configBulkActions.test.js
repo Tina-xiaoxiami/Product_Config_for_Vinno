@@ -8,7 +8,7 @@ function bulkApp(overrides = {}) {
   const rows = [1, 2].map(id => ({ id, rd_name: `行${id}`, model_values: { 10: { final_config: 'X', current_config: '', selection_config: '', rd_status: '未完成' }, 20: { final_config: '●', current_config: '', selection_config: '', rd_status: '未完成' } } }))
   const calls = []; const confirmations = []; const messages = []
   const context = {
-    configReady: ref(true), loading: ref(false), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), rdCompleteSubmitting: ref(false),
+    configReady: ref(true), loading: ref(false), configLoadError: ref(''), applyingModelGroup: ref(false), reviewInteractionLocked: ref(false), rdCompleteSubmitting: ref(false),
     draftBatchMap: ref(new Map([[5, 'A']])), selectedModels: ref([10,20]), tableData: ref(rows), filteredTableData: ref([rows[0]]),
     applyToAllDialog: { visible:false, saving:false, row:null, request:0, targets:[], retryTargets:null, modelIds:[], result:null },
     pasteRowDialog: { visible:false, saving:false, targetRowId:null, request:0, targets:[], retryTargets:null, result:null, modelIds:[] },
@@ -101,4 +101,58 @@ test('paste retry sends only failed fields with the frozen source values', async
   app.rows[0].model_values[10].final_config='later source'; retry=true; await app.confirmPasteRowConfig()
   assert.deepEqual(calls.map(call=>[call.field,call.value]),[['final_config','X'],['current_config','COPY'],['final_config','X']])
   assert.equal(app.pasteRowDialog.visible,false)
+})
+
+test('apply and paste retry do not write while configuration loading has failed', async () => {
+  const apply=bulkApp(); apply.handleApplyToAllModels('field'); apply.configLoadError.value='配置数据加载失败'; await apply.confirmApplyToAll()
+  assert.equal(apply.calls.length,0); assert.equal(apply.applyToAllDialog.visible,true); assert.equal(apply.applyToAllDialog.result,null)
+
+  const paste=bulkApp(); paste.handleCopyRowConfig(); paste.pasteRowDialog.targetRowId=2; paste.configLoadError.value='配置数据加载失败'; await paste.confirmPasteRowConfig()
+  assert.equal(paste.calls.length,0); assert.equal(paste.pasteRowDialog.visible,true); assert.equal(paste.pasteRowDialog.result,null)
+})
+
+test('shortcut dialogs disable confirmation while configuration is not ready, loading, or failed', () => {
+  const applyDialog=source.slice(source.indexOf('<!-- 应用到所有机型确认对话框 -->'),source.indexOf('<!-- 粘贴整行配置对话框 -->'))
+  const pasteDialog=source.slice(source.indexOf('<!-- 粘贴整行配置对话框 -->'),source.indexOf('<!-- 行差异查看对话框 -->'))
+  assert.match(applyDialog,/:disabled="[^"]*!configReady[^"]*loading[^"]*configLoadError/)
+  assert.match(pasteDialog,/:disabled="[^"]*!configReady[^"]*loading[^"]*configLoadError/)
+})
+
+test('shortcut saving stops before the next target when configuration starts loading', async () => {
+  let app; const fields=[]
+  app=bulkApp({handleCellChange:async(_row,_model,field)=>{fields.push(field);if(fields.length===1)app.loading.value=true;return true}})
+  Object.assign(app.rows[0].model_values[10],{current_config:'COPY',selection_config:'Optional',rd_status:'已完成'})
+  app.handleApplyToAllModels('row'); await app.confirmApplyToAll()
+  assert.deepEqual(fields,['final_config'])
+  assert.deepEqual(app.applyToAllDialog.result,{success:1,failed:0,unchanged:0,stale:1})
+  assert.equal(app.applyToAllDialog.visible,true)
+  assert.equal(app.messages.at(-1).type,'warning')
+})
+
+test('a load failure during the final save is reported as stale without losing the successful save count', async () => {
+  const save=deferred(); const app=bulkApp({handleCellChange:()=>save.promise})
+  app.handleApplyToAllModels('field'); const pending=app.confirmApplyToAll(); await Promise.resolve()
+  app.configLoadError.value='配置数据加载失败'; save.resolve(true); await pending
+  assert.deepEqual(app.applyToAllDialog.result,{success:1,failed:0,unchanged:1,stale:1})
+  assert.equal(app.applyToAllDialog.visible,true)
+  assert.equal(app.messages.at(-1).type,'warning')
+})
+
+test('a batch change during the final save is reported as stale without losing the successful save count', async () => {
+  const save=deferred(); const app=bulkApp({handleCellChange:()=>save.promise})
+  app.handleApplyToAllModels('field'); const pending=app.confirmApplyToAll(); await Promise.resolve()
+  app.draftBatchMap.value=new Map([[5,'B']]); save.resolve(true); await pending
+  assert.deepEqual(app.applyToAllDialog.result,{success:1,failed:0,unchanged:1,stale:1})
+  assert.equal(app.applyToAllDialog.visible,true)
+  assert.equal(app.messages.at(-1).type,'warning')
+})
+
+test('a successful reload may hide frozen targets without invalidating their save scope', async () => {
+  let app; const fields=[]
+  app=bulkApp({handleCellChange:async(_row,_model,field)=>{fields.push(field);if(fields.length===1)app.tableData.value=[app.rows[1]];return true}})
+  Object.assign(app.rows[0].model_values[10],{current_config:'COPY',selection_config:'Optional',rd_status:'已完成'})
+  app.handleApplyToAllModels('row'); await app.confirmApplyToAll()
+  assert.deepEqual(fields,['final_config','current_config','selection_config','rd_status'])
+  assert.deepEqual(app.applyToAllDialog.result,{success:4,failed:0,unchanged:0,stale:0})
+  assert.equal(app.applyToAllDialog.visible,false)
 })
