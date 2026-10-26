@@ -20,3 +20,13 @@ test('combination application reuses model-group identity selection and rejects 
  assert.throws(()=>buildSubseriesCombinationSelection({name:'组合',model_ids:[1],missing_models:['URM：旧机型']},catalog),/未匹配|无法匹配/)
  assert.throws(()=>buildSubseriesCombinationSelection({name:'组合',model_ids:[3],missing_models:[]},catalog),/不存在|变化/)
 })
+
+import { resolveGroupModels } from '../src/utils/modelSelectionGroups.js'
+test('fresh combinations preserve exact IDs and reject any changed member as a whole',()=>{
+ const catalog=[{id:1,name:'M',series_id:1,series:'China'},{id:2,name:'M',series_id:1,series:'China'},{id:3,name:'N',series_id:1,series:'China'}]
+ const combination=buildSubseriesCombinationSelection({name:'组合',model_ids:[1,2,3],missing_models:[]},catalog)
+ const models=new Map(catalog.map(m=>[m.id,{...m,seriesName:m.series}]))
+ assert.deepEqual(resolveGroupModels(combination,models),{ids:[1,2,3],missing:0})
+ models.delete(1)
+ assert.deepEqual(resolveGroupModels(combination,models),{ids:[],missing:1})
+})
