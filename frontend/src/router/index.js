@@ -90,8 +90,8 @@ const routes = [
       ,
       {
         path: 'release',
-        name: 'FeatureRelease',
-        component: () => import('../views/FeatureRelease.vue'),
+        name: 'ReleaseWorkspace',
+        component: () => import('../views/ReleaseWorkspace.vue'),
         meta: { title: '功能发布' }
       }
     ]

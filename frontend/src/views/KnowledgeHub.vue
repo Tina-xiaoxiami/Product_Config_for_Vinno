@@ -9,6 +9,8 @@
           <router-link to="/feature-manage">功能管理</router-link>
           <span>·</span>
           <router-link to="/registration-manage">注册管理</router-link>
+          <span>·</span>
+          <router-link to="/release?tab=search">搜索发布资料</router-link>
         </p>
       </div>
       <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">

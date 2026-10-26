@@ -5,6 +5,8 @@ import test from 'node:test'
 import {
   isWorkbenchNavigationMessage,
   normalizeReleaseTab,
+  releaseWorkbenchHealthUrl,
+  releaseWorkbenchStandaloneUrl,
   releaseWorkbenchUrl
 } from '../src/utils/releaseWorkspace.js'
 
@@ -21,6 +23,8 @@ test('release workbench views use a same-origin embedded URL', () => {
   assert.equal(releaseWorkbenchUrl('search'), '/release-workbench/?embedded=1#search')
   assert.equal(releaseWorkbenchUrl('review'), '/release-workbench/?embedded=1#review')
   assert.equal(releaseWorkbenchUrl('feature-versions'), '')
+  assert.equal(releaseWorkbenchStandaloneUrl('review'), '/release-workbench/#review')
+  assert.equal(releaseWorkbenchHealthUrl(), '/release-workbench/api/v1/health')
 })
 
 test('workbench navigation messages accept only known views from this origin', () => {
@@ -44,6 +48,8 @@ test('release route opens the unified workspace while retaining the native recor
   assert.match(workspace, /label="发布对比"\s+name="compare"/)
   assert.match(workspace, /label="功能版本管理"\s+name="feature-versions"/)
   assert.match(workspace, /<FeatureRelease\s+\/>/)
+  assert.match(workspace, /<h2>功能发布<\/h2>/)
+  assert.doesNotMatch(workspace, /同源工作台/)
 })
 
 test('embedded workbench keeps visited views alive and offers explicit recovery', () => {
