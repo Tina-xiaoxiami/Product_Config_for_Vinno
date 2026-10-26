@@ -51,12 +51,21 @@ body.workbench-embedded #search-toggle { display: none; }
 body.workbench-embedded .view[data-page="search"] > .section-heading { display: none; }
 body.workbench-embedded .view { padding-top: 0; }
 body.workbench-embedded .view.active { animation: none; }
-body.workbench-embedded .unified-search-form { display: grid; gap: 12px; padding: 0 0 16px; margin: 0; border: 0; border-bottom: 1px solid #ebeef5; border-radius: 0; box-shadow: none; background: #fff; }
+body.workbench-embedded .unified-search-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 0 0 16px; margin: 0; border: 0; border-bottom: 1px solid #ebeef5; border-radius: 0; box-shadow: none; background: #fff; }
 body.workbench-embedded .search-primary-row { display: flex; align-items: stretch; gap: 10px; }
 body.workbench-embedded .unified-search-query { flex: 1; min-width: 0; padding: 0 12px; background: #fff; border: 1px solid #dcdfe6; border-radius: 5px; }
-body.workbench-embedded .unified-search-query:focus-within { border-color: #409eff; box-shadow: 0 0 0 2px #ecf5ff; }
+body.workbench-embedded .unified-search-query:focus-within { border-color: #409eff; box-shadow: none; }
 body.workbench-embedded .unified-search-query > span { color: #909399; font-size: 19px; }
 body.workbench-embedded .unified-search-query input { height: 40px; padding: 0; font-size: 14px; color: #303133; }
+/* The containing label owns the focus ring, including Safari's inner search field. */
+body.workbench-embedded .unified-search-query input:focus,
+body.workbench-embedded .unified-search-query input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
 body.workbench-embedded .search-primary-row > .primary-button { min-width: 88px; font-size: 14px; }
 body.workbench-embedded input::placeholder { color: #a8abb2; }
 body.workbench-embedded .search-task-shortcuts { display: flex; align-items: center; gap: 0; width: fit-content; max-width: 100%; padding: 3px; border-radius: 5px; background: #f5f7fa; }
@@ -71,7 +80,7 @@ body.workbench-embedded .unified-search-controls .search-version-selection input
 body.workbench-embedded .unified-search-controls .checkbox-filter { min-height: 32px; color: #606266; }
 body.workbench-embedded input[type="checkbox"] { accent-color: #409eff; }
 body.workbench-embedded #search-version-help { display: none; }
-body.workbench-embedded .search-disclosures { display: grid; grid-template-columns: repeat(3, max-content) 1fr; align-items: start; gap: 8px 16px; }
+body.workbench-embedded .search-disclosures { min-width: 0; display: grid; grid-template-columns: repeat(3, max-content) minmax(0, 1fr); align-items: start; gap: 8px 16px; }
 body.workbench-embedded .search-disclosures > details { display: block; min-width: 0; }
 body.workbench-embedded .search-disclosures > details > summary { padding: 3px 0; color: #606266; font-size: 12px; cursor: pointer; }
 body.workbench-embedded .search-disclosures > details > summary:hover { color: #409eff; }
@@ -116,7 +125,7 @@ body.workbench-embedded .pill { border-radius: 3px; }
   body.workbench-embedded .unified-search-controls > label:not(.checkbox-filter) { width: 100%; }
   body.workbench-embedded .unified-search-controls :is(select, input:not([type="checkbox"])) { width: auto; flex: 1; min-width: 0; }
   body.workbench-embedded .unified-search-controls .search-version-selection input { width: auto; }
-  body.workbench-embedded .search-disclosures { grid-template-columns: repeat(3, max-content); gap: 8px 14px; }
+  body.workbench-embedded .search-disclosures { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; }
   body.workbench-embedded .search-disclosures > .search-tools:not([open]) { justify-self: start; }
   body.workbench-embedded .search-save-row { width: 100%; }
   body.workbench-embedded #saved-search-name { flex: 1; width: auto; }
@@ -129,3 +138,23 @@ body.workbench-embedded .search-coverage > summary { color: #606266; font-weight
 body.workbench-embedded .search-coverage[open] { padding: 10px 12px; border: 1px solid #e4e7ed; border-radius: 4px; background: #fafcff; }
 body.workbench-embedded .search-comparison-tray { padding: 8px 12px; margin: 10px 0; background: #ecf5ff; border-color: #b3d8ff; border-radius: 4px; font-size: 12px; }
 body.workbench-embedded .search-comparison-tray:not(:has([data-search-compare-remove])) { display: none; }
+
+/* Compact version choices without a nested fieldset border or repeated project title. */
+body.workbench-embedded #search-version-picker[open] { display: block; padding: 8px 10px; background: #fafbfc; border-color: #ebeef5; }
+body.workbench-embedded #search-version-picker[open] > summary { margin: 0 0 6px; padding: 0; }
+body.workbench-embedded #search-version-options {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+body.workbench-embedded #search-version-options .search-source-filters { min-width: 0; min-inline-size: 0; flex-wrap: wrap; margin: 0; padding: 0; border: 0; background: transparent; gap: 6px; }
+body.workbench-embedded #search-version-options legend { padding: 0; margin-bottom: 4px; }
+body.workbench-embedded #search-version-options .search-source-filters:only-of-type > legend { display: none; }
+body.workbench-embedded #search-version-options .search-source-filters label { gap: 5px; padding: 3px 7px; border: 1px solid #e4e7ed; border-radius: 3px; background: #fff; font-size: 12px; }
+body.workbench-embedded #search-version-options .search-source-filters label:has(input:checked) { color: #337ecc; border-color: #b3d8ff; background: #ecf5ff; }
+body.workbench-embedded #search-version-options input { margin: 0; }
+body.workbench-embedded #search-version-options .strategy-note { margin: 0; font-size: 12px; color: #909399; }
