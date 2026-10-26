@@ -71,6 +71,43 @@ def test_static_client_routes_api_preview_and_download_through_mount_prefix(tmp_
         close_release_workbench(workbench)
 
 
+def test_prefixed_search_opens_the_matching_release_snapshot(tmp_path: Path) -> None:
+    client, workbench = _client(tmp_path)
+    database = workbench.extensions["tracker_database"]
+    release_id = database.upsert_release("1.51.80")
+    database.stage_release_pair(
+        release_id,
+        [
+            {
+                "path": "/readonly/release-note.docx",
+                "language": "cn",
+                "sha256": "snapshot",
+                "content": "前言\n新增后台转换\n仍可继续操作",
+            }
+        ],
+        [],
+        [],
+    )
+    try:
+        result = client.get(
+            "/release-workbench/api/v1/workbench/search",
+            params={"q": "后台转换", "sources": "release"},
+        )
+        assert result.status_code == 200
+        hit = result.json()["data"]["results"][0]
+
+        preview = client.get(
+            f"/release-workbench/api/v1/workbench/search-index/sources/{hit['preview_id']}/preview",
+            params={"locator": hit["locator"]},
+        )
+
+        assert preview.status_code == 200
+        assert "后台转换" in preview.json()["data"]["chunks"][0]["text"]
+        assert "/readonly" not in str(preview.json())
+    finally:
+        close_release_workbench(workbench)
+
+
 def test_integrated_mode_allows_release_review_but_blocks_duplicate_business_writes(
     tmp_path: Path,
 ) -> None:
@@ -116,6 +153,9 @@ def test_embedded_mode_exposes_only_integrated_views_and_parent_navigation(tmp_p
         app_source = client.get("/release-workbench/static/app.js").text
         assert "release-workbench:navigate" in app_source
         assert "window.parent.postMessage" in app_source
+        assert "release-workspace:activate" in app_source
+        assert "event.source !== window.parent" in app_source
+        assert "state.activeView !== view" in app_source
     finally:
         close_release_workbench(workbench)
 
