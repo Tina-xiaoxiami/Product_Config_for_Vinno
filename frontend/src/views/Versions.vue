@@ -4,10 +4,10 @@
       <template #header>
         <div class="card-header">
           <span>版本历史</span>
-          <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="handleSeriesChange" style="width: 200px">
-            <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
-          </el-select>
         </div>
+        <el-tabs v-model="selectedSeries" class="series-tabs" aria-label="产品系列" @tab-change="handleSeriesChange">
+          <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
+        </el-tabs>
       </template>
 
       <el-timeline v-if="versions.length > 0">
@@ -98,7 +98,10 @@
 
     <!-- 版本对比对话框 -->
     <el-dialog v-model="compareDialogVisible" title="版本对比" width="90%" top="5vh">
-      <VersionComparison v-if="compareDialogVisible"
+      <el-tabs v-model="selectedSeries" class="series-tabs compare-series-tabs" aria-label="对比产品系列" @tab-change="handleCompareSeriesChange">
+        <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
+      </el-tabs>
+      <VersionComparison v-if="compareDialogVisible" :key="selectedSeries"
         v-model:version1="compareVersion1" v-model:version2="compareVersion2"
         :versions="versionOptions" :options-loading="versionOptionsLoading" :result="compareResult" :loading="compareLoading"
         @compare="executeCompare" />
@@ -230,7 +233,27 @@ const handleSeriesChange = () => {
   currentPage.value = 1
   versionOptions.value = []
   versionOptionLoadRequest++
-  loadVersions()
+  return loadVersions()
+}
+
+const handleCompareSeriesChange = async () => {
+  compareVersion1.value = null
+  compareVersion2.value = null
+  selectedModels.value = []
+  const loadingHistory = handleSeriesChange()
+  const request = compareRequest
+  const seriesId = selectedSeries.value
+  const isCurrent = () => request === compareRequest && selectedSeries.value === seriesId && compareDialogVisible.value
+  try {
+    await loadingHistory
+    if (!isCurrent()) return
+    const options = await loadAllVersionOptions(seriesId)
+    if (!isCurrent()) return
+    compareVersion1.value = options[0]?.id ?? null
+    compareVersion2.value = options[1]?.id ?? null
+  } catch (error) {
+    if (isCurrent()) ElMessage.error('加载该系列的版本失败，请重新切换系列重试')
+  }
 }
 
 const handlePageSizeChange = () => {
@@ -446,6 +469,10 @@ onMounted(() => {
 .versions-page {
   padding: 0;
 }
+
+.series-tabs { min-width: 0; margin-top: 10px; }
+.series-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.series-tabs :deep(.el-tabs__content) { display: none; }
 
 .card-header {
   display: flex;
