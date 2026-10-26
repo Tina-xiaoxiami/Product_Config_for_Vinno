@@ -52,16 +52,23 @@ test('release route opens the unified workspace while retaining the native recor
   assert.doesNotMatch(workspace, /同源工作台/)
 })
 
-test('embedded workbench keeps visited views alive and offers explicit recovery', () => {
+test('embedded workbench keeps one persistent frame while outer tabs activate child views', () => {
   const workspace = read('../src/views/ReleaseWorkspace.vue')
 
-  assert.match(workspace, /v-for="tab in mountedWorkbenchTabs"/)
-  assert.match(workspace, /v-show="activeTab === tab"/)
+  assert.equal((workspace.match(/<iframe\b/g) || []).length, 1)
+  assert.doesNotMatch(workspace, /v-for="tab in mountedWorkbenchTabs"/)
+  assert.match(workspace, /ref="workbenchFrame"/)
+  assert.match(workspace, /:src="workbenchFrameUrl"/)
+  assert.match(workspace, /if \(!workbenchFrameUrl\.value\) workbenchFrameUrl\.value = releaseWorkbenchUrl\(tab\)/)
+  assert.match(workspace, /type: 'release-workspace:activate'/)
+  assert.match(workspace, /workbenchFrame\.value\?\.contentWindow\?\.postMessage/)
+  assert.doesNotMatch(workspace, /:src="releaseWorkbenchUrl\(tab\)"/)
   assert.match(workspace, /data-testid="release-workbench-retry"/)
   assert.match(workspace, /data-testid="release-workbench-standalone"/)
   assert.match(workspace, /checkWorkbenchAvailability/)
   assert.match(workspace, /window\.addEventListener\('message'/)
   assert.match(workspace, /router\.replace/)
+  assert.doesNotMatch(workspace, /同进程/)
 })
 
 test('knowledge hub links to release source search and dev server proxies the mounted module', () => {
