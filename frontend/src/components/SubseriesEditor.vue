@@ -1,6 +1,6 @@
 <template>
-  <el-button :disabled="disabled" @click="open">编辑子系列</el-button>
-  <el-dialog v-model="visible" title="编辑共用子系列" width="min(760px, calc(100vw - 32px))" :before-close="requestClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
+  <el-button :disabled="disabled" @click="open">{{ buttonLabel }}</el-button>
+  <el-dialog v-model="visible" title="管理子系列与组合" width="min(760px, calc(100vw - 32px))" :before-close="requestClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
     <el-alert type="info" :closable="false" title="配置库包含全部机型，白皮书使用其中已有文档的机型。此处保存的子系列由两个系统共用。" />
     <el-alert v-if="error" type="error" :closable="false" :title="error" style="margin-top: 10px" />
     <div v-loading="loading" style="min-height: 90px; max-height: 55vh; overflow-y: auto; padding: 4px">
@@ -49,7 +49,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSubseries, saveSubseries } from '../api/data'
 import { cloneSubseriesGroups, cloneSubseriesCombinations, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../utils/subseriesEditor'
 
-defineProps({ disabled: Boolean })
+defineProps({ disabled: Boolean, buttonLabel: { type: String, default: '编辑子系列' } })
 const emit = defineEmits(['saved'])
 const visible = ref(false), loading = ref(false), saving = ref(false), loaded = ref(false)
 const combinations = ref([])

@@ -5,17 +5,31 @@
         <div class="card-header">
           <span>产品型号管理</span>
           <div class="header-actions">
-            <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="loadData" style="width: 200px">
+            <el-select v-model="selectedSeries" :disabled="reordering" placeholder="选择产品系列" @change="changeSeries" style="width: 200px">
               <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
+            <SubseriesEditor ref="subseriesEditorRef" button-label="管理子系列与组合" @saved="loadData" />
             <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="!selectedSeries">新增型号</el-button>
           </div>
         </div>
       </template>
 
-      <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id">
+      <div class="group-help">在此统一维护子系列与组合，配置管理和白皮书引用同一份分组关系。</div>
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false"><el-button link @click="loadData">重新加载</el-button></el-alert>
+      <div class="model-workspace">
+        <aside class="group-navigation" aria-label="型号分组">
+          <el-tree :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
+            <template #default="{ data }"><span class="group-node"><span>{{ data.label }}</span><small>{{ data.ids.length }}</small></span></template>
+          </el-tree>
+        </aside>
+        <section class="model-results">
+          <div class="model-toolbar"><span>{{ currentGroup?.label || '全部型号' }} · {{ total }} 个型号</span><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /></div>
+      <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="型号名称" min-width="200" />
+        <el-table-column prop="name" label="型号名称" min-width="200" fixed="left" show-overflow-tooltip />
+        <el-table-column label="所属子系列" min-width="180">
+          <template #default="{ row }"><div class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><span v-if="!row.sub_series?.length" class="unmapped-registration">未分组</span></div></template>
+        </el-table-column>
         <el-table-column label="对应注册证" min-width="280">
           <template #default="{ row }">
             <div v-if="row.registration_packages?.length" class="registration-mappings">
@@ -44,10 +58,10 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column label="操作" width="210" fixed="right" class-name="model-actions">
           <template #default="{ row }">
-            <el-button size="small" @click="moveRow(row, -1)" :disabled="tableData.indexOf(row) === 0" :icon="ArrowUp" />
-            <el-button size="small" @click="moveRow(row, 1)" :disabled="tableData.indexOf(row) === tableData.length - 1" :icon="ArrowDown" />
+            <el-button size="small" @click="moveRow(row, -1)" :disabled="!canReorder || catalog.findIndex(item => item.id === row.id) === 0" aria-label="上移型号" :icon="ArrowUp" />
+            <el-button size="small" @click="moveRow(row, 1)" :disabled="!canReorder || catalog.findIndex(item => item.id === row.id) === catalog.length - 1" aria-label="下移型号" :icon="ArrowDown" />
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -61,9 +75,10 @@
           :total="total"
           :page-sizes="[10, 20, 50, 100]"
           layout="total, sizes, prev, pager, next"
-          @size-change="loadData"
-          @current-change="loadData"
+          @size-change="currentPage = 1"
         />
+      </div>
+        </section>
       </div>
     </el-card>
 
@@ -96,30 +111,69 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
-import { getSeriesList, getModels, createModel, updateModel, deleteModel } from '../api/data'
+import { getSeriesList, getModels, getSubseries, createModel, updateModel, deleteModel } from '../api/data'
+import { useRoute, useRouter } from 'vue-router'
+import SubseriesEditor from '../components/SubseriesEditor.vue'
+import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog, createGroupEditorRequest } from '../utils/modelManagementGroups'
 import { formatTime } from '../utils/modelHelpers'
 
 const seriesList = ref([])
 const selectedSeries = ref(null)
-const tableData = ref([])
+const catalog = ref([])
+const sharedGroups = ref({})
+const selectedGroup = ref('all')
+const search = ref('')
+const loadError = ref('')
+const groupNodes = computed(() => buildManagementGroups(catalog.value, sharedGroups.value))
+const currentGroup = computed(() => groupNodes.value.flatMap(node => [node, ...(node.children || [])]).find(node => node.key === selectedGroup.value))
+const filteredModels = computed(() => {
+  const ids = new Set(currentGroup.value?.ids || [])
+  const query = search.value.trim().toLocaleLowerCase()
+  return catalog.value.filter(model => ids.has(String(model.id)) && (!query || [model.name, model.description, ...(model.sub_series || [])].some(value => String(value || '').toLocaleLowerCase().includes(query))))
+})
+const tableData = computed(() => filteredModels.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
+const reordering = ref(false)
+const canReorder = computed(() => selectedGroup.value === 'all' && !search.value.trim() && !loading.value && !reordering.value && !loadError.value)
+const subseriesEditorRef = ref(null)
+const route = useRoute(), router = useRouter()
+let pageActive = true
+const editorRequest = createGroupEditorRequest({
+  isRequested: () => route.query.editSubseries === '1',
+  isActive: () => pageActive && route.path === '/models',
+  consume: () => {
+    const query = { ...route.query }; delete query.editSubseries
+    return router.replace({ path: route.path, query })
+  },
+  nextTick,
+  open: () => subseriesEditorRef.value?.open()
+})
+const openRequestedEditor = () => editorRequest.run()
+watch(() => route.query.editSubseries, openRequestedEditor)
+watch([search, selectedGroup], () => { currentPage.value = 1 })
+const selectGroup = node => { selectedGroup.value = node.key }
+const changeSeries = () => { selectedGroup.value = 'all'; currentPage.value = 1; loadData() }
 const loading = ref(false)
-const total = ref(0)
+const total = computed(() => filteredModels.value.length)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const tableRef = ref(null)
 
 // 排序移动
 const moveRow = async (row, direction) => {
-  const idx = tableData.value.findIndex(m => m.id === row.id)
-  const newIdx = idx + direction
-  if (newIdx < 0 || newIdx >= tableData.value.length) return
-  const moved = tableData.value.splice(idx, 1)[0]
-  tableData.value.splice(newIdx, 0, moved)
-  const updates = tableData.value.map((m, i) => ({ id: m.id, sort_order: i }))
-  await Promise.all(updates.map(u => updateModel(u.id, { sort_order: u.sort_order })))
+  if (!canReorder.value) return
+  const ordered = [...catalog.value]
+  const idx = ordered.findIndex(m => m.id === row.id), next = idx + direction
+  if (next < 0 || next >= ordered.length) return
+  ;[ordered[idx], ordered[next]] = [ordered[next], ordered[idx]]
+  reordering.value = true
+  try {
+    // Use the complete series order; never renumber only a filtered page.
+    for (const [index, model] of ordered.entries()) if (model.sort_order !== index) await updateModel(model.id, { sort_order: index })
+  } catch { ElMessage.error('排序保存失败，已重新加载实际顺序') }
+  finally { reordering.value = false; await loadData() }
 }
 
 const dialogVisible = ref(false)
@@ -145,23 +199,24 @@ const loadSeries = async () => {
   }
 }
 
+let loadRequest = 0
 const loadData = async () => {
   if (!selectedSeries.value) return
-
-  loading.value = true
+  const request = ++loadRequest, seriesId = selectedSeries.value
+  const isCurrent = () => request === loadRequest && seriesId === selectedSeries.value
+  loading.value = true; loadError.value = ''; catalog.value = []; sharedGroups.value = {}
   try {
-    const res = await getModels(selectedSeries.value, {
-      skip: (currentPage.value - 1) * pageSize.value,
-      limit: pageSize.value
-    })
-    tableData.value = res.items || []
-    total.value = res.total || 0
+    const [models, groups] = await Promise.all([
+      loadCompleteModelCatalog(params => getModels(seriesId, params), isCurrent), getSubseries()
+    ])
+    if (!isCurrent() || !models) return
+    sharedGroups.value = groups
+    catalog.value = [...applySharedMemberships(new Map(models.map(model => [model.id, model])), groups.groups).values()]
+    if (!currentGroup.value) selectedGroup.value = 'all'
+    currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil(total.value / pageSize.value)))
   } catch (error) {
-    console.error('加载失败:', error)
-    ElMessage.error('加载失败')
-  } finally {
-    loading.value = false
-  }
+    if (isCurrent()) loadError.value = error.response?.data?.detail || error.message || '加载失败，请重试'
+  } finally { if (isCurrent()) loading.value = false }
 }
 
 const getStatusType = (status) => {
@@ -250,12 +305,23 @@ const handleDelete = async (row) => {
   }
 }
 
-onMounted(() => {
-  loadSeries()
-})
+let initialized = false
+onMounted(async () => { await loadSeries(); initialized = true; openRequestedEditor() })
+onActivated(() => { pageActive = true; if (initialized) { loadData(); openRequestedEditor() } })
+onDeactivated(() => { pageActive = false; editorRequest.invalidate(); ++loadRequest; loading.value = false })
 </script>
 
 <style scoped>
+.model-workspace { display: flex; gap: 16px; min-width: 0; }
+.group-navigation { width: 240px; flex-shrink: 0; max-height: 640px; overflow: auto; border-right: 1px solid #ebeef5; padding-right: 10px; }
+.group-node { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; }
+.group-node span { white-space: normal; overflow-wrap: anywhere; }
+.group-node small { color: #909399; margin-left: auto; padding-right: 6px; }
+.group-navigation :deep(.el-tree-node__content) { height: auto; min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
+.model-results { min-width: 0; flex: 1; }
+.model-toolbar { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; align-items: center; font-size: 13px; }
+.group-help { font-size: 12px; color: #909399; margin-bottom: 12px; }
+@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: auto; max-height: 220px; border-right: 0; border-bottom: 1px solid #ebeef5; } .header-actions { flex-wrap: wrap; } }
 .models-page {
   padding: 0;
 }
@@ -271,6 +337,8 @@ onMounted(() => {
   gap: 12px;
 }
 
+.model-results :deep(.model-actions .cell) { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; }
+.model-results :deep(.model-actions .el-button + .el-button) { margin-left: 0; }
 .registration-mappings { display: flex; flex-wrap: wrap; gap: 6px; }
 .unmapped-registration { color: #94a3b8; font-size: 12px; }
 
