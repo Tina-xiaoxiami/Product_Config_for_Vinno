@@ -68,7 +68,8 @@
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
           </div>
 
-          <SubseriesEditor :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @saved="loadModels" />
+          <SubseriesEditor ref="subseriesEditorRef" :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @saved="loadModels" />
+          <SubseriesCombinations :selection-key="JSON.stringify([selectedSeries, selectedModels])" :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @apply="applyModelGroup" @edit="subseriesEditorRef?.open()" />
           <el-popover ref="modelGroupsPopover" placement="bottom-start" :width="420" trigger="click">
             <template #reference><el-button :loading="applyingModelGroup">机型分组</el-button></template>
             <div class="model-groups-panel">
@@ -1090,6 +1091,7 @@
 
 <script setup>
 import SubseriesEditor from '../components/SubseriesEditor.vue'
+import SubseriesCombinations from '../components/SubseriesCombinations.vue'
 import { draftBaseline, draftWorkingValue, updateDraftStats } from '../utils/configDraftHelpers'
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -1106,6 +1108,7 @@ import {
   batchDiscardDrafts, batchSubmitDrafts
 } from '../api/data'
 
+const subseriesEditorRef = ref(null)
 const tableRef = ref(null)
 const configPageRef = ref(null)
 let configResizeObserver

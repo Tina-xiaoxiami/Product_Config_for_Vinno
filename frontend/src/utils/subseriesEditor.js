@@ -30,7 +30,40 @@ export const subseriesGroupOptions = (group, catalog) => {
   }
   return options
 }
-export const subseriesPayload = (revision, groups) => ({
-  revision, groups: groups.map(group => ({ name: group.name.trim(), series: group.series || '', models: [...new Set(group.models)] }))
-})
-export const subseriesSnapshot = groups => JSON.stringify(subseriesPayload('', groups).groups)
+export const cloneSubseriesCombinations = (combinations, groups) => combinations.map(combination => ({
+  name: combination.name,
+  groupKeys: combination.sub_series.map(name => {
+    const group = groups.find(group => group.name === name)
+    if (!group) throw new Error(`组合引用的子系列不存在：${name}`)
+    return group.editorKey
+  })
+}))
+export const subseriesPayload = (revision, groups, combinations) => {
+  const payload = {
+    revision, groups: groups.map(group => ({ name: group.name.trim(), series: group.series || '', models: [...new Set(group.models)] }))
+  }
+  if (combinations !== undefined) payload.combinations = combinations.map(combination => ({
+    name: combination.name.trim(),
+    sub_series: [...new Set(combination.groupKeys)].map(key => {
+      const group = groups.find(group => group.editorKey === key)
+      if (!group) throw new Error('组合引用的子系列已删除，请先调整组合')
+      return group.name.trim()
+    })
+  }))
+  return payload
+}
+export const subseriesSnapshot = (groups, combinations) => {
+  const payload = subseriesPayload('', groups, combinations)
+  return JSON.stringify(combinations === undefined ? payload.groups : payload)
+}
+export const buildSubseriesCombinationSelection = (combination, catalog) => {
+  if (combination.missing_models?.length) throw new Error('组合中有未匹配机型，请先在编辑子系列中核对：' + combination.missing_models.join('、'))
+  const modelsById = new Map(catalog.map(model => [model.id, model]))
+  const models = [...new Set(combination.model_ids)].map(id => {
+    const model = modelsById.get(id)
+    if (!model || !model.series) throw new Error('组合机型不存在或所属系列已变化，请重新加载')
+    return { id: model.id, name: model.name, seriesId: model.series_id, seriesName: model.series }
+  })
+  if (!models.length) throw new Error('组合中没有可用机型，请先调整子系列')
+  return { name: combination.name, models, exactModelIds: models.map(model => model.id) }
+}

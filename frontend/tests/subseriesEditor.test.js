@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cloneSubseriesGroups, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../src/utils/subseriesEditor.js'
+import { cloneSubseriesGroups, cloneSubseriesCombinations, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../src/utils/subseriesEditor.js'
 
 test('editing preserves existing short names and unmatched members without mutating source',()=>{
  const raw=[{name:'URM',series:'Tulip-China',models:['9E科研版（URM）','旧机型'],options:[{id:40,value:'9E科研版（URM）',label:'ULTIMUS 9E科研版(URM)',series:'Tulip-China'}]}]
@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 const component=readFileSync(new URL('../src/components/SubseriesEditor.vue',import.meta.url),'utf8')
 function editor(overrides={}) {
  const ref=value=>({value}),computed=fn=>({get value(){return fn()}}),messages=[],events=[]
- const ctx={ref,computed,cloneSubseriesGroups,subseriesGroupOptions,subseriesPayload,subseriesSnapshot,
+ const ctx={ref,computed,defineExpose(){},cloneSubseriesGroups,cloneSubseriesCombinations,subseriesGroupOptions,subseriesPayload,subseriesSnapshot,
   getSubseries:async()=>({revision:'r1',groups:[{name:'原组',series:'China',models:['M']}],catalog:[],series:[]}),
   saveSubseries:async()=>{throw {response:{data:{detail:'其他系统已修改，请重新加载'}}}},
   ElMessage:{success:m=>messages.push(m),warning:m=>messages.push(m)},ElMessageBox:{confirm:async()=>{}},emit:e=>events.push(e),...overrides}

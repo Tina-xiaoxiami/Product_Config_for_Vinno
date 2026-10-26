@@ -13,16 +13,28 @@
             <el-option v-for="series in seriesList" :key="series.id" :label="series.name" :value="series.name" />
             <el-option v-if="group.series && !seriesList.some(series => series.name === group.series)" :label="group.series + '（系列已不存在）'" :value="group.series" />
           </el-select>
-          <el-button type="danger" text :disabled="saving" :aria-label="'删除子系列 ' + (group.name || index + 1)" @click="groups.splice(index, 1)">删除</el-button>
+          <el-button type="danger" text :disabled="saving" :aria-label="'删除子系列 ' + (group.name || index + 1)" @click="removeGroup(group)">删除</el-button>
         </div>
         <el-select v-model="group.models" class="subseries-members" multiple filterable :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个子系列成员机型'" placeholder="从配置库选择成员机型，可搜索" style="width:100%">
           <el-option v-for="option in subseriesGroupOptions(group, catalog)" :key="option.value" :label="option.label" :value="option.value" />
         </el-select>
         <div class="subseries-note">{{ group.models.length }} 个成员 · 更换所属系列会保留原选择，请移除不属于新系列的机型后保存。</div>
       </section>
+      <h4 style="margin:16px 0 4px">子系列组合</h4>
+      <p class="subseries-note">组合引用子系列，成员调整后自动更新；重叠机型会自动去重。</p>
+      <section v-for="(combination, index) in combinations" :key="combination.editorKey" class="subseries-card">
+        <div class="subseries-heading">
+          <el-input v-model="combination.name" :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个组合名称'" placeholder="例如：科研机型组合" maxlength="200" />
+          <el-button text type="danger" :disabled="saving" :aria-label="'删除组合 ' + (combination.name || index + 1)" @click="combinations.splice(index, 1)">删除组合</el-button>
+        </div>
+        <el-select v-model="combination.groupKeys" class="subseries-members" multiple filterable :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个组合包含的子系列'" placeholder="选择一个或多个子系列" style="width:100%">
+          <el-option v-for="group in groups" :key="group.editorKey" :value="group.editorKey" :label="(group.name || '未命名子系列') + '（' + (group.series || '不限系列') + '）'" />
+        </el-select>
+      </section>
     </div>
     <el-button :disabled="saving || loading || !loaded" @click="add">新增子系列</el-button>
-    <span class="subseries-note" style="margin-left: 10px">共 {{ groups.length }} 个子系列，修改后点击保存</span>
+    <el-button :disabled="saving || loading || !loaded || !groups.length" @click="addCombination">新增组合</el-button>
+    <span class="subseries-note" style="margin-left: 10px">{{ groups.length }} 个子系列 · {{ combinations.length }} 个组合，修改后点击保存</span>
     <template #footer>
       <el-button :disabled="saving" @click="requestClose()">关闭</el-button>
       <el-button v-if="error" :disabled="saving || loading" @click="reload">重新加载</el-button>
@@ -35,20 +47,22 @@
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSubseries, saveSubseries } from '../api/data'
-import { cloneSubseriesGroups, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../utils/subseriesEditor'
+import { cloneSubseriesGroups, cloneSubseriesCombinations, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../utils/subseriesEditor'
 
 defineProps({ disabled: Boolean })
 const emit = defineEmits(['saved'])
 const visible = ref(false), loading = ref(false), saving = ref(false), loaded = ref(false)
-const groups = ref([]), catalog = ref([]), seriesList = ref([]), revision = ref(''), baseline = ref('[]'), error = ref('')
+const combinations = ref([])
+const groups = ref([]), catalog = ref([]), seriesList = ref([]), revision = ref(''), baseline = ref(subseriesSnapshot([], [])), error = ref('')
 let request = 0, nextKey = 0
-const dirty = computed(() => subseriesSnapshot(groups.value) !== baseline.value)
+const dirty = computed(() => subseriesSnapshot(groups.value, combinations.value) !== baseline.value)
 const install = data => {
   groups.value = cloneSubseriesGroups(data.groups).map(group => ({ ...group, editorKey: ++nextKey }))
+  combinations.value = cloneSubseriesCombinations(data.combinations || [], groups.value).map(combination => ({ ...combination, editorKey: ++nextKey }))
   catalog.value = data.catalog
   seriesList.value = data.series
   revision.value = data.revision
-  baseline.value = subseriesSnapshot(groups.value)
+  baseline.value = subseriesSnapshot(groups.value, combinations.value)
   loaded.value = true
 }
 const load = async () => {
@@ -69,8 +83,16 @@ const reload = async () => {
   }
   await load()
 }
-const open = () => { visible.value = true; groups.value = []; baseline.value = '[]'; load() }
+const open = () => { visible.value = true; groups.value = []; combinations.value = []; baseline.value = subseriesSnapshot([], []); load() }
 const add = () => groups.value.push({ name: '', series: '', models: [], options: [], editorKey: ++nextKey })
+const addCombination = () => combinations.value.push({ name: '', groupKeys: [], editorKey: ++nextKey })
+const removeGroup = group => {
+  if (combinations.value.some(combination => combination.groupKeys.includes(group.editorKey))) {
+    ElMessage.warning('该子系列正在被组合使用，请先从组合中移除后再删除'); return
+  }
+  groups.value = groups.value.filter(item => item.editorKey !== group.editorKey)
+}
+defineExpose({ open })
 const requestClose = async done => {
   if (saving.value) return
   if (dirty.value) {
@@ -88,9 +110,15 @@ const save = async () => {
   if (new Set(groups.value.map(group => group.name.trim())).size !== groups.value.length) {
     ElMessage.warning('子系列名称不能重复'); return
   }
+  if (combinations.value.some(combination => !combination.name.trim() || !combination.groupKeys.length)) {
+    ElMessage.warning('请填写组合名称，并至少选择一个子系列'); return
+  }
+  if (new Set(combinations.value.map(combination => combination.name.trim())).size !== combinations.value.length) {
+    ElMessage.warning('组合名称不能重复'); return
+  }
   saving.value = true; error.value = ''
   try {
-    install(await saveSubseries(subseriesPayload(revision.value, groups.value)))
+    install(await saveSubseries(subseriesPayload(revision.value, groups.value, combinations.value)))
     ElMessage.success('子系列已保存，白皮书与配置管理共用此关系')
     emit('saved')
   } catch (cause) {
