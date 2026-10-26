@@ -276,3 +276,6 @@ export const openKnowledgeDocumentLocally = (id, mode = 'open') =>
 export const openRegistrationArtifactLocally = (versionId, artifactType, mode = 'open') =>
   api.post(`/registrations/package-versions/${versionId}/artifacts/${artifactType}/open-locally`, { mode })
 export const archiveKnowledgeDocument = (id) => api.post(`/knowledge/documents/${id}/archive`)
+
+export const getSubseries = () => api.get('/models/subseries')
+export const saveSubseries = data => api.put('/models/subseries', data)

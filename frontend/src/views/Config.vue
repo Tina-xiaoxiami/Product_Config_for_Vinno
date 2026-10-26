@@ -68,6 +68,7 @@
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
           </div>
 
+          <SubseriesEditor :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @saved="loadModels" />
           <el-popover ref="modelGroupsPopover" placement="bottom-start" :width="420" trigger="click">
             <template #reference><el-button :loading="applyingModelGroup">机型分组</el-button></template>
             <div class="model-groups-panel">
@@ -1088,6 +1089,7 @@
 </template>
 
 <script setup>
+import SubseriesEditor from '../components/SubseriesEditor.vue'
 import { draftBaseline, draftWorkingValue, updateDraftStats } from '../utils/configDraftHelpers'
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
