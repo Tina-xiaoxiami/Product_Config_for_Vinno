@@ -279,3 +279,10 @@ export const archiveKnowledgeDocument = (id) => api.post(`/knowledge/documents/$
 
 export const getSubseries = () => api.get('/models/subseries')
 export const saveSubseries = data => api.put('/models/subseries', data)
+
+export const checkSubmissionVersion = ({ seriesIds, versionNumber }) => {
+  const params = new URLSearchParams()
+  seriesIds.forEach(id => params.append('series_ids', id))
+  params.set('version_number', versionNumber || '')
+  return api.get('/drafts/version-check', { params })
+}

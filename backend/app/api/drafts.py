@@ -1,7 +1,7 @@
 """
 草稿管理 API
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -540,6 +540,29 @@ async def _resolve_version_number(
             detail=f"版本号 {version_number} 在该系列中已存在",
         )
     return version_number
+
+
+@router.get("/version-check")
+async def check_submission_version(
+    series_ids: list[int] = Query(..., min_length=1, max_length=100),
+    version_number: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only preflight using the same resolver as publication."""
+    results = []
+    for series_id in dict.fromkeys(series_ids):
+        series = await db.get(ProductSeries, series_id)
+        if series is None:
+            raise HTTPException(status_code=404, detail="产品系列不存在，请刷新提交范围")
+        try:
+            resolved = await _resolve_version_number(db, series_id, version_number)
+        except HTTPException as error:
+            if error.status_code != 400:
+                raise
+            results.append({"series_id": series_id, "valid": False, "message": f"{series.name}：{error.detail}"})
+        else:
+            results.append({"series_id": series_id, "valid": True, "version_number": resolved})
+    return {"results": results}
 
 
 def _select_submission_drafts(all_drafts: list[ConfigDraft], data: DraftSubmitRequest) -> list[ConfigDraft]:
