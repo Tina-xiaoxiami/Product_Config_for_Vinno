@@ -14,7 +14,7 @@ const computed=fn=>({get value(){return fn()}})
 function app(){
  const selected=ref([99]); const ctx={ref,computed,buildModelSelectionTree,filterModelSelectionTree,primaryModelOccurrences, modelGroups:ref([{seriesId:6,seriesName:'Tulip-China',models:[{id:40,name:'科研URM',sub_series:['URM']},{id:42,name:'旗舰',sub_series:['非URM']},{id:43,name:'9L',sub_series:[]}]}]),modelFilterText:ref(''),tempSelectedModels:selected,applyingModelGroup:ref(false),reviewInteractionLocked:ref(false),applyModelSelection(){}}
  const start=source.indexOf('const modelSubseriesProblems =');const end=source.indexOf('// 根据 modelId',start)
- return {...ctx,...new Function(...Object.keys(ctx),source.slice(start,end)+';return {modelSelectionGroups,filteredModelGroups,modelSubseriesCombinations,modelSelectionTree,filteredModelTree,primaryModelGroups,selectSubseriesModels,isModelGroupExpanded,toggleModelGroup,expandModelGroupsForKeyboard,toggleTreeModel}')(...Object.values(ctx))}
+ return {...ctx,...new Function(...Object.keys(ctx),source.slice(start,end)+';return {modelTreeSelectionIds,modelTreeSelectionLabel,modelSelectionGroups,filteredModelGroups,modelSubseriesCombinations,modelSelectionTree,filteredModelTree,primaryModelGroups,selectSubseriesModels,isModelGroupExpanded,toggleModelGroup,expandModelGroupsForKeyboard,toggleTreeModel}')(...Object.values(ctx))}
 }
 test('subseries selectors retain other models, search group labels and preserve previous selections',()=>{
  const a=app();assert.deepEqual(a.modelSelectionGroups.value.map(g=>g.models.map(m=>m.id)),[[40],[42],[43]])
@@ -111,4 +111,28 @@ test('combinations start expanded while subseries and standalone unclassified mo
  a.modelSubseriesCombinations.value=[]
  assert.equal(a.modelSelectionTree.value[0].groups.some(group=>group.searchOnly),false)
  assert.match(source,/v-show="!group.searchOnly \|\| isModelGroupExpanded\(group\)"/)
+})
+
+
+test('selecting a combination merges all members once and reports full or partial selection across search', () => {
+ const a=app()
+ a.modelSubseriesCombinations.value=[{name:'全部',sub_series:['URM','非URM']}]
+ const section=a.modelSelectionTree.value[0]
+ assert.equal(a.modelTreeSelectionLabel(section),'')
+ a.selectSubseriesModels(section.groups[0])
+ assert.equal(a.modelTreeSelectionLabel(section),'已选 1/2')
+ assert.equal(a.modelTreeSelectionLabel(section.groups[0]),'✓ 已全选')
+ a.modelFilterText.value='科研'
+ const filtered=a.filteredModelTree.value[0]
+ assert.deepEqual(a.modelTreeSelectionIds(filtered),[40,42])
+ a.selectSubseriesModels(filtered)
+ assert.deepEqual(a.tempSelectedModels.value,[99,40,42])
+ assert.equal(a.modelTreeSelectionLabel(filtered),'✓ 已全选')
+ a.selectSubseriesModels(filtered)
+ assert.deepEqual(a.tempSelectedModels.value,[99,40,42])
+ a.toggleTreeModel(40)
+ assert.equal(a.modelTreeSelectionLabel(filtered),'已选 1/2')
+ a.reviewInteractionLocked.value=true
+ a.selectSubseriesModels(filtered)
+ assert.deepEqual(a.tempSelectedModels.value,[99,42])
 })

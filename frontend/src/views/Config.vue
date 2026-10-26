@@ -51,11 +51,15 @@
               </div>
             </template>
             <div v-for="section in filteredModelTree" :key="section.key" class="model-tree-section">
-              <button v-if="section.combination" type="button" class="model-tree-heading model-tree-combination"
+              <div v-if="section.combination" class="model-tree-group-heading">
+              <button type="button" class="model-tree-heading model-tree-combination"
                 :aria-expanded="isModelGroupExpanded(section)" :aria-disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" @click.stop="toggleModelGroup(section)">
                 <span aria-hidden="true">{{ isModelGroupExpanded(section) ? '▾' : '▸' }}</span>
                 <span>{{ section.label }}</span><small>组合 · {{ section.subseriesCount }} 个子系列</small>
               </button>
+                <span v-if="modelTreeSelectionLabel(section)" class="model-tree-selection">{{ modelTreeSelectionLabel(section) }}</span>
+                <el-button link type="primary" :aria-label="'选中组合 ' + section.label" title="选中当前所属系列范围内此组合的全部机型（不受搜索影响）" :disabled="applyingModelGroup || reviewInteractionLocked" @click.stop="selectSubseriesModels(section)">选中</el-button>
+              </div>
               <div v-show="!section.combination || isModelGroupExpanded(section)" :class="{ 'model-tree-children': section.combination }">
                 <div v-for="group in section.groups" :key="group.key" v-show="!group.searchOnly || isModelGroupExpanded(group)">
                   <div class="model-tree-group-heading">
@@ -63,7 +67,8 @@
                       <span aria-hidden="true">{{ isModelGroupExpanded(group) ? '▾' : '▸' }}</span>
                       <span>{{ group.label }}</span><small>{{ group.models.length }}</small>
                     </button>
-                    <el-button v-if="group.subseries" link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中</el-button>
+                    <span v-if="modelTreeSelectionLabel(group)" class="model-tree-selection">{{ modelTreeSelectionLabel(group) }}</span>
+                    <el-button v-if="group.subseries" link type="primary" :aria-label="'选中子系列 ' + group.label" title="选中当前所属系列范围内此子系列的全部机型（不受搜索影响）" :disabled="applyingModelGroup || reviewInteractionLocked" @click.stop="selectSubseriesModels(group)">选中</el-button>
                   </div>
                   <div v-show="isModelGroupExpanded(group)" class="subseries-model-options">
                     <template v-for="m in group.models" :key="m.id">
@@ -1186,9 +1191,23 @@ const expandModelGroupsForKeyboard = event => {
     expandedModelGroupKeys.value = new Set(modelSelectionTree.value.flatMap(section => [section.key, ...section.groups.map(group => group.key)]))
   }
 }
+// Resolve the full visible-series scope, not just search matches.
+const modelTreeSelectionIds = node => {
+  const full = node.combination
+    ? modelSelectionTree.value.find(section => section.key === node.key)
+    : modelSelectionTree.value.flatMap(section => section.groups).find(group => group.key === node.key)
+  const models = full?.combination ? full.groups.flatMap(group => group.models) : (full || node).models || []
+  return [...new Set(models.map(model => model.id))]
+}
+const modelTreeSelectionLabel = node => {
+  const ids = modelTreeSelectionIds(node)
+  const selected = new Set(tempSelectedModels.value)
+  const count = ids.filter(id => selected.has(id)).length
+  return !count ? '' : count === ids.length ? '✓ 已全选' : `已选 ${count}/${ids.length}`
+}
 const selectSubseriesModels = group => {
   if (applyingModelGroup.value || reviewInteractionLocked.value) return
-  tempSelectedModels.value = [...new Set([...tempSelectedModels.value, ...group.models.map(model => model.id)])]
+  tempSelectedModels.value = [...new Set([...tempSelectedModels.value, ...modelTreeSelectionIds(group)])]
   applyModelSelection()
 }
 
@@ -4908,7 +4927,8 @@ onMounted(() => {
 .model-tree-heading span:nth-child(2) { overflow-wrap:anywhere; }
 .model-tree-heading small { flex-shrink:0; color:var(--el-text-color-secondary); font-weight:normal; }
 .model-tree-heading:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
-.model-tree-combination { width:100%; font-weight:600; padding:7px 12px; }
+.model-tree-combination { flex:1; font-weight:600; padding:7px 0; }
+.model-tree-selection { flex-shrink:0; font-size:11px; color:var(--el-color-primary); }
 .model-tree-group-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 12px; }
 .model-tree-group-heading .el-button { flex-shrink:0; }
 .model-tree-children { margin-left:12px; border-left:1px solid var(--el-border-color-lighter); }
