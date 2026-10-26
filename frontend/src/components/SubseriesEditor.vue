@@ -15,7 +15,7 @@
           </el-select>
           <el-button type="danger" text :disabled="saving" :aria-label="'删除子系列 ' + (group.name || index + 1)" @click="groups.splice(index, 1)">删除</el-button>
         </div>
-        <el-select v-model="group.models" multiple filterable collapse-tags collapse-tags-tooltip :max-collapse-tags="3" :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个子系列成员机型'" placeholder="从配置库选择成员机型，可搜索" style="width:100%">
+        <el-select v-model="group.models" class="subseries-members" multiple filterable :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个子系列成员机型'" placeholder="从配置库选择成员机型，可搜索" style="width:100%">
           <el-option v-for="option in subseriesGroupOptions(group, catalog)" :key="option.value" :label="option.label" :value="option.value" />
         </el-select>
         <div class="subseries-note">{{ group.models.length }} 个成员 · 更换所属系列会保留原选择，请移除不属于新系列的机型后保存。</div>
@@ -104,5 +104,7 @@ const save = async () => {
 .subseries-heading { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .subseries-heading .el-input { flex: 1; min-width: 100px; }
 .subseries-heading .el-select { width: 230px; }
+.subseries-members :deep(.el-tag) { height: auto; min-height: 20px; }
+.subseries-members :deep(.el-select__tags-text) { white-space: normal; overflow-wrap: anywhere; }
 .subseries-note { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 6px; }
 </style>
