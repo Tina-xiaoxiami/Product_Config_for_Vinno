@@ -470,6 +470,7 @@ onMounted(() => {
 .series-tabs { min-width: 0; margin-top: 10px; }
 .series-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
 .series-tabs :deep(.el-tabs__content) { display: none; }
+.compare-series-tabs { margin-bottom: 16px; }
 
 .card-header {
   display: flex;
