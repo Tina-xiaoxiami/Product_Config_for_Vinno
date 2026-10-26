@@ -52,7 +52,7 @@
         <div class="topbar-actions">
           <div class="project-context-actions" id="project-context-actions">
             <select id="project-switcher" aria-label="切换当前项目"></select>
-            <button type="button" id="manage-projects" class="ghost-button compact-button">管理项目</button>
+            <button type="button" id="manage-projects" class="ghost-button compact-button">{% if integrated_mode %}目录与扫描{% else %}管理项目{% endif %}</button>
           </div>
           <button type="button" id="search-toggle" class="ghost-button compact-button" aria-controls="release-search-form">全局搜索</button>
           <button id="refresh-button" class="ghost-button compact-button">刷新</button>
@@ -356,7 +356,7 @@
       </section>
 
       <section class="view" data-page="review">
-        <div class="section-heading compact"><div><p class="page-note">先处理风险项与缺语言的记录；确认后进入功能库与版本中心。</p></div><button class="primary-button" id="scan-notes">重新智能整理</button></div>
+        <div class="section-heading compact"><div><p class="page-note">先处理风险项与缺语言的记录；{% if integrated_mode %}确认后进入发布版本记录，正式功能身份在基础数据管理中维护。{% else %}确认后进入功能库与版本中心。{% endif %}</p></div><button class="primary-button" id="scan-notes">{% if integrated_mode %}扫描并同步文件{% else %}重新智能整理{% endif %}</button></div>
         <div class="candidate-version-navigation" role="group" aria-label="待审核版本切换">
           <button type="button" class="release-step-button" data-candidate-version-step="-1" aria-label="切换到前一版本" title="前一版本">‹</button>
           <div id="candidate-version-tabs" class="release-version-tabs" role="tablist" aria-label="待审核版本号"></div>
@@ -372,7 +372,7 @@
         <div id="candidate-version-page" role="tabpanel"><div id="candidate-list" class="candidate-list"></div></div>
         <details class="review-guidance">
           <summary>审核规则说明</summary>
-          <div><p>按版本从旧到新连续处理；确认后进入功能库与版本中心。</p><p><b>扫描 → 提取 → 审核 → 发布</b>：仅读取版本号目录中无后缀最终版，保留 Word 原文证据，批准后进入功能库和版本中心。</p><p>Bug 直接进入版本中心；图像优化、Bug 和配置变更不写入功能终极描述；URM 文件夹当前排除。</p></div>
+          <div>{% if integrated_mode %}<p>按版本从旧到新连续处理；确认后进入发布版本记录，正式功能身份在基础数据管理中维护。</p><p><b>扫描 → 提取 → 审核 → 发布</b>：仅读取版本号目录中无后缀最终版，保留 Word 原文证据，批准后进入发布版本记录。</p>{% else %}<p>按版本从旧到新连续处理；确认后进入功能库与版本中心。</p><p><b>扫描 → 提取 → 审核 → 发布</b>：仅读取版本号目录中无后缀最终版，保留 Word 原文证据，批准后进入功能库和版本中心。</p>{% endif %}<p>Bug 直接进入版本中心；图像优化、Bug 和配置变更不写入功能终极描述；URM 文件夹当前排除。</p></div>
         </details>
         <div id="review-issue-list" class="review-issue-list"></div>
         <details class="rejected-panel"><summary>已拒绝记录（<span id="rejected-count">0</span>）</summary><div id="rejected-candidate-list" class="candidate-list"></div></details>
