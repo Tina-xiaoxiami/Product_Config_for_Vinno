@@ -13,6 +13,12 @@ export function versionCellChanged(row, modelId, field) {
   return (row.old_values?.[modelId]?.[field] ?? null) !== (row.new_values?.[modelId]?.[field] ?? null)
 }
 
+export function versionCellTransition(row, modelId, field) {
+  const before = row.old_values?.[modelId]?.[field] ?? '-'
+  const after = row.new_values?.[modelId]?.[field] ?? '-'
+  return versionCellChanged(row, modelId, field) ? `${before} → ${after}` : String(after)
+}
+
 export function versionRowChanged(row, modelIds, fields) {
   return modelIds.some(id => fields.some(field => versionCellChanged(row, id, field)))
 }

@@ -26,7 +26,7 @@
             <el-option v-for="model in filteredModels" :key="model.id" :label="model.name" :value="model.id" />
           </el-select>
         </div>
-        <el-button :type="onlyDiff ? 'primary' : 'default'" :icon="Filter" size="small" @click="onlyDiff = !onlyDiff">仅差异项</el-button>
+        <el-button :type="onlyDiff ? 'primary' : 'default'" :icon="Filter" size="small" @click="onlyDiff = !onlyDiff">仅更新项</el-button>
         <el-button type="primary" :loading="loading" :disabled="!canCompare" @click="compareNow">对比</el-button>
       </div>
       <div class="select-row">
@@ -41,7 +41,7 @@
     <div v-loading="loading" class="comparison-body">
       <template v-if="result">
         <div class="result-header">
-          <span>总配置项 <strong>{{ scopedRows.length }}</strong> · 差异项 <strong class="diff-count">{{ diffCount }}</strong> · 当前显示 {{ visibleRows.length }} 项</span>
+          <span>总配置项 <strong>{{ scopedRows.length }}</strong> · 更新项 <strong class="diff-count">{{ diffCount }}</strong> · 当前显示 {{ visibleRows.length }} 项</span>
           <div class="result-actions">
             <el-button size="small" @click="resetWidths">恢复列宽</el-button>
             <el-button :icon="Download" :loading="exporting" :disabled="loading || !visibleRows.length || !modelIds.length" @click="exportResult">导出结果</el-button>
@@ -51,17 +51,15 @@
           <el-table :data="pageRows" row-key="key" size="small" border stripe :max-height="tableHeight" style="width:100%" @header-dragend="resizeColumn">
             <el-table-column v-for="column in visibleNameColumns" :key="column.key" :prop="column.key" :label="column.label" :width="widths[column.key] || column.width" :column-key="column.key" fixed show-overflow-tooltip />
             <el-table-column v-for="model in visibleModels" :key="model.id" :label="model.name" align="center">
-              <el-table-column v-for="side in sides" :key="side.key" :label="side.label" align="center">
                 <el-table-column v-for="field in visibleFields" :key="field.key" :label="field.label" :width="widths[field.key] || 100" :column-key="field.key" show-overflow-tooltip>
-                  <template #default="{ row }"><span :class="{ 'diff-value': versionCellChanged(row, model.id, field.key) }">{{ row[side.key]?.[model.id]?.[field.key] ?? '-' }}</span></template>
+                  <template #default="{ row }"><span :class="{ 'diff-value': versionCellChanged(row, model.id, field.key) }">{{ versionCellTransition(row, model.id, field.key) }}</span></template>
                 </el-table-column>
-              </el-table-column>
             </el-table-column>
-            <template #empty>{{ !modelIds.length ? '请选择要对比的机型' : onlyDiff ? '所选字段没有差异，可关闭“仅差异项”查看全部' : '当前机型没有配置项' }}</template>
+            <template #empty>{{ !modelIds.length ? '请选择要对比的机型' : onlyDiff ? '所选字段没有差异，可关闭“仅更新项”查看全部' : '当前机型没有配置项' }}</template>
           </el-table>
         </div>
         <el-pagination v-if="visibleRows.length" v-model:current-page="currentPage" v-model:page-size="pageSize" :page-sizes="[20, 30, 50, 100]" :total="visibleRows.length" layout="total, sizes, prev, pager, next" small class="matrix-pagination" />
-        <p class="comparison-note">以原版本为基准，差异值高亮；表头拖动可调整列宽。历史快照仅供查看。</p>
+        <p class="comparison-note">原版本 {{ result.version_1.version_number }} → 对比版本 {{ result.version_2.version_number }}：未更新显示单值，更新显示“原值 → 新值”；“-”表示无配置。</p>
       </template>
       <el-empty v-else-if="!loading" description="请选择两个不同版本进行对比" :image-size="60" />
     </div>
@@ -73,7 +71,7 @@ import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Filter, Download } from '@element-plus/icons-vue'
 import { exportVersionCompare } from '../api/data'
-import { VERSION_COMPARE_FIELDS, VERSION_NAME_COLUMNS, versionCellChanged, versionRowChanged, scopeVersionRows, filterVersionRows, versionExportPayload, reconcileVersionModelSelection } from '../utils/versionComparison'
+import { VERSION_COMPARE_FIELDS, VERSION_NAME_COLUMNS, versionCellChanged, versionCellTransition, versionRowChanged, scopeVersionRows, filterVersionRows, versionExportPayload, reconcileVersionModelSelection } from '../utils/versionComparison'
 
 const props = defineProps({ versions: { type: Array, default: () => [] }, version1: Number, version2: Number, result: Object, loading: Boolean, optionsLoading: Boolean })
 const emit = defineEmits(['update:version1', 'update:version2', 'compare'])
@@ -95,10 +93,6 @@ const diffCount = computed(() => scopedRows.value.filter(row => versionRowChange
 const visibleRows = computed(() => filterVersionRows(rows.value, modelIds.value, fields.value, onlyDiff.value))
 const pageRows = computed(() => visibleRows.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
 watch([visibleRows, pageSize], () => { currentPage.value = 1 })
-const sides = computed(() => [
-  { key: 'old_values', label: `原版本 ${props.result?.version_1?.version_number || ''}` },
-  { key: 'new_values', label: `对比版本 ${props.result?.version_2?.version_number || ''}` }
-])
 let compareTimer, alive = true, loadedPair = '', loadedModelIds = []
 const compareNow = () => { clearTimeout(compareTimer); if (canCompare.value) emit('compare') }
 watch(() => [props.version1, props.version2, props.optionsLoading], () => {

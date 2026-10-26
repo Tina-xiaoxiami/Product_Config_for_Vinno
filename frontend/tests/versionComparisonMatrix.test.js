@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { VERSION_COMPARE_FIELDS, versionCellChanged, versionRowChanged, scopeVersionRows, filterVersionRows, versionExportPayload, reconcileVersionModelSelection } from '../src/utils/versionComparison.js'
+import { VERSION_COMPARE_FIELDS, versionCellChanged, versionCellTransition, versionRowChanged, scopeVersionRows, filterVersionRows, versionExportPayload, reconcileVersionModelSelection } from '../src/utils/versionComparison.js'
 
 const rows = [
   { key: 'unchanged', old_values: { 1: { final_config: 'S' } }, new_values: { 1: { final_config: 'S' } } },
@@ -50,4 +50,17 @@ test('refreshing the same version pair preserves subsets and explicit clear whil
   assert.deepEqual(reconcileVersionModelSelection([1, 2], [1, 2], [1, 2, 3], true), [1, 2, 3])
   assert.deepEqual(reconcileVersionModelSelection([2], [1, 2], [1, 3], true), [])
   assert.deepEqual(reconcileVersionModelSelection([2], [1, 2], [1, 3], false), [1, 3])
+})
+
+
+test('version fields use one value when unchanged and directional transitions when updated', () => {
+  assert.equal(versionCellTransition(rows[0], 1, 'final_config'), 'S')
+  assert.equal(versionCellTransition(rows[1], 1, 'final_config'), 'S → O')
+  assert.equal(versionCellTransition(rows[2], 1, 'current_config'), 'X → -')
+  assert.equal(versionCellTransition(rows[3], 2, 'final_config'), '- → S')
+  assert.equal(versionCellTransition(rows[0], 1, 'rd_status'), '-')
+  assert.equal(versionCellTransition({old_values:{1:{final_config:0}},new_values:{1:{final_config:0}}},1,'final_config'),'0')
+  const source = readFileSync(new URL('../src/components/VersionComparison.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /v-for="side in sides"/)
+  assert.match(source, /仅更新项/)
 })

@@ -726,10 +726,10 @@ async def test_matrix_export_matches_selected_fields_names_and_difference_scope(
     sheet = openpyxl.load_workbook(io.BytesIO(response.content)).active
     assert sheet.title == "版本对比"
     assert sheet.max_row == 3
-    assert [sheet.cell(1, i).value for i in range(1, 5)] == ["中文描述", "IPN号", "V10 / 1.0.1", "V10 / 1.0.2"]
-    assert [sheet.cell(3, i).value for i in range(1, 5)] == ["=literal text", "IPN-101", "-", "X"]
+    assert [sheet.cell(1, i).value for i in range(1, 4)] == ["中文描述", "IPN号", "V10 / 1.0.1 → 1.0.2"]
+    assert [sheet.cell(3, i).value for i in range(1, 4)] == ["=literal text", "IPN-101", "- → X"]
     assert sheet.cell(3, 1).data_type == "s"
-    assert sheet.cell(3, 4).fill.fgColor.rgb == "00FFF2CC"
+    assert sheet.cell(3, 3).fill.fgColor.rgb == "00FFF2CC"
     assert sheet.freeze_panes == "C3"
     assert openpyxl.load_workbook(io.BytesIO(full.content)).active.max_row == 6
     await engine.dispose()
@@ -757,7 +757,8 @@ async def test_matrix_uses_normalized_identity_but_preserves_historical_model_na
     assert result["matrix_rows"][0]["old_values"]["10"]["final_config"] == "X"
     assert result["matrix_rows"][0]["new_values"]["10"]["final_config"] == "O"
     sheet = openpyxl.load_workbook(io.BytesIO(exported.content)).active
-    assert sheet.cell(1, 2).value == "Historical new name / 1.0.1"
+    assert sheet.cell(1, 2).value == "Historical new name / 1.0.1 → 1.0.2"
+    assert sheet.cell(3, 2).value == "X → O"
     async with factory() as db:
         persisted = await db.get(ConfigVersion, first)
         assert json.loads(persisted.snapshot_data) == before
@@ -781,8 +782,10 @@ async def test_matrix_export_unicode_filename_and_formula_like_model_header(tmp_
     assert "filename=version_compare.xlsx" in response.headers["content-disposition"]
     assert "%E6%AD%A3%E5%BC%8F%E7%89%88" in response.headers["content-disposition"]
     sheet = openpyxl.load_workbook(io.BytesIO(response.content)).active
-    assert sheet.cell(1, 2).value == "=Literal model / 1.51.90-正式版"
+    assert sheet.cell(1, 2).value == "=Literal model / 1.51.90-正式版 → 1.0.2"
     assert sheet.cell(1, 2).data_type == "s"
+    assert sheet.cell(3, 2).value == "X"
+    assert sheet.max_column == 2
     await engine.dispose()
 
 
@@ -808,5 +811,5 @@ async def test_matrix_export_model_scope_preserves_full_matrix_metadata_when_ite
     assert scoped.json()["matrix_models"] == [{"id": 10, "name": "V10"}]
     assert scoped.json()["summary"]["deleted"] == 1  # Legacy differences retain prior semantics.
     sheet = openpyxl.load_workbook(io.BytesIO(exported.content)).active
-    assert [sheet.cell(3, i).value for i in range(1, 5)] == ["New name", "New description", "X", "-"]
+    assert [sheet.cell(3, i).value for i in range(1, 4)] == ["New name", "New description", "X → -"]
     await engine.dispose()

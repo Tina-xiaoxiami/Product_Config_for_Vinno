@@ -65,7 +65,7 @@ def matrix_cell_differs(row, model_id, field):
 
 
 def export_comparison_matrix(rows, models, version_numbers, fields, names, only_diff):
-    """Export the exact requested field/name scope, with parallel version columns."""
+    """Export the exact requested field/name scope, with compact before-to-after values."""
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -80,16 +80,15 @@ def export_comparison_matrix(rows, models, version_numbers, fields, names, only_
     value_columns = []
     column = len(names) + 1
     for model in models:
-        for side, version in zip(("old_values", "new_values"), version_numbers):
-            header = sheet.cell(1, column, f"{model['name']} / {version}")
-            header.data_type = "s"
-            if len(fields) > 1:
-                sheet.merge_cells(start_row=1, end_row=1, start_column=column, end_column=column + len(fields) - 1)
-            for field in fields:
-                sheet.cell(2, column, FIELD_LABELS[field])
-                sheet.column_dimensions[get_column_letter(column)].width = 16
-                value_columns.append((column, model["id"], side, field))
-                column += 1
+        header = sheet.cell(1, column, f"{model['name']} / {version_numbers[0]} → {version_numbers[1]}")
+        header.data_type = "s"
+        if len(fields) > 1:
+            sheet.merge_cells(start_row=1, end_row=1, start_column=column, end_column=column + len(fields) - 1)
+        for field in fields:
+            sheet.cell(2, column, FIELD_LABELS[field])
+            sheet.column_dimensions[get_column_letter(column)].width = 20
+            value_columns.append((column, model["id"], field))
+            column += 1
     changed_fill = PatternFill(fill_type="solid", fgColor="FFF2CC")
     for row in rows:
         if only_diff and not any(matrix_cell_differs(row, model["id"], field) for model in models for field in fields):
@@ -99,9 +98,13 @@ def export_comparison_matrix(rows, models, version_numbers, fields, names, only_
             cell = sheet.cell(row_number, column, row.get(name))
             if isinstance(cell.value, str):
                 cell.data_type = "s"
-        for column, model_id, side, field in value_columns:
-            value = row[side].get(str(model_id), {}).get(field)
-            cell = sheet.cell(row_number, column, value if value is not None else "-")
+        for column, model_id, field in value_columns:
+            before = row["old_values"].get(str(model_id), {}).get(field)
+            after = row["new_values"].get(str(model_id), {}).get(field)
+            before = before if before is not None else "-"
+            after = after if after is not None else "-"
+            value = f"{before} → {after}" if matrix_cell_differs(row, model_id, field) else after
+            cell = sheet.cell(row_number, column, value)
             if isinstance(cell.value, str):
                 cell.data_type = "s"
             if matrix_cell_differs(row, model_id, field):
