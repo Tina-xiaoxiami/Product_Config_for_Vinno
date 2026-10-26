@@ -85,3 +85,26 @@ def test_snapshot_import_preserves_legacy_relative_path_meaning(tmp_path: Path) 
     ]
     assert snapshot["source_roots"] == [str((source_root / "sources/history").resolve())]
     assert "product_config_database" not in snapshot
+
+
+def test_config_import_cli_refuses_overwrite_and_preserves_source(tmp_path, monkeypatch):
+    import pytest
+    from scripts.import_release_workbench_config import main
+
+    source = tmp_path / 'legacy'
+    (source / 'config').mkdir(parents=True)
+    original = '{"database": "data/existing.db", "source_roots": []}'
+    (source / 'config/local.json').write_text(original)
+    output = tmp_path / 'integrated/local.json'
+    monkeypatch.setattr('sys.argv', ['import-config', str(source), '--output', str(output)])
+    assert main() == 0
+    first = output.read_text()
+    assert json.loads(first)['database'] == str(source / 'data/existing.db')
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert output.read_text() == first
+    assert (source / 'config/local.json').read_text() == original
+    monkeypatch.setattr('sys.argv', ['import-config', str(source), '--output', str(output), '--force'])
+    assert main() == 0
+    assert output.read_text() == first
