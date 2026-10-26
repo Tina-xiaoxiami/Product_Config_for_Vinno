@@ -34,6 +34,12 @@ const routes = [
         meta: { title: '配置对比' }
       },
       {
+        path: 'version-compare',
+        name: 'VersionCompare',
+        component: () => import('../views/VersionCompare.vue'),
+        meta: { title: '版本对比' }
+      },
+      {
         path: 'versions',
         name: 'Versions',
         component: () => import('../views/Versions.vue'),

@@ -63,6 +63,9 @@
             <el-menu-item index="/compare">
               <span>配置对比</span>
             </el-menu-item>
+            <el-menu-item index="/version-compare">
+              <span>版本对比</span>
+            </el-menu-item>
             <el-menu-item index="/versions">
               <span>版本历史</span>
             </el-menu-item>
