@@ -7,7 +7,19 @@ export const subseriesGroupOptions = (group, catalog) => {
     id: model.id, value: originalById.get(model.id)?.value || model.name,
     label: model.name, series: model.series
   }))
-  const options = [...new Map(candidates.map(option => [option.value, option])).values()]
+  const byValue = new Map()
+  for (const option of candidates) {
+    const existing = byValue.get(option.value)
+    if (existing) {
+      if (option.series && !existing.seriesNames.includes(option.series)) existing.seriesNames.push(option.series)
+    } else {
+      byValue.set(option.value, { ...option, seriesNames: option.series ? [option.series] : [] })
+    }
+  }
+  const options = [...byValue.values()].map(option => ({
+    ...option,
+    label: !group.series && option.seriesNames.length ? `${option.label}（${option.seriesNames.join('、')}）` : option.label
+  }))
   const values = new Set(options.map(option => option.value))
   for (const value of group.models) {
     if (!values.has(value)) {
