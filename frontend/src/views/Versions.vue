@@ -1,6 +1,6 @@
 <template>
   <div class="versions-page">
-    <el-card shadow="never">
+    <el-card shadow="never" class="history-card">
       <template #header>
         <div class="card-header">
           <span>版本历史</span>
@@ -14,15 +14,15 @@
         <el-timeline-item
           v-for="version in versions"
           :key="version.id"
-          :timestamp="formatTime(version.published_at)"
-          placement="top"
+          hide-timestamp
           type="primary"
         >
           <el-card shadow="hover" class="version-card">
             <div class="version-header">
               <div class="version-info">
-                <el-tag type="primary" size="large">{{ version.version_number }}</el-tag>
+                <el-tag type="primary" size="small">{{ version.version_number }}</el-tag>
                 <span v-if="version.version_name" class="version-name">{{ version.version_name }}</span>
+                <span class="version-time">{{ formatTime(version.published_at) }}</span>
                 <span class="version-stats">共 {{ version.row_count }} 项配置</span>
               </div>
               <div class="version-actions">
@@ -35,9 +35,6 @@
 
             <p v-if="version.description" class="version-desc">{{ version.description }}</p>
 
-            <div class="version-footer">
-              <span class="publisher">发布人：{{ version.published_by || '系统' }}</span>
-            </div>
           </el-card>
         </el-timeline-item>
       </el-timeline>
@@ -480,59 +477,55 @@ onMounted(() => {
   align-items: center;
 }
 
-.version-card {
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.version-card:hover {
-  transform: translateX(5px);
-}
+.history-card > :deep(.el-card__header) { padding: 12px 16px 8px; }
+.history-card > :deep(.el-card__body) { padding: 14px 16px; }
+.history-card :deep(.el-timeline) { padding-left: 8px; }
+.history-card :deep(.el-timeline-item) { padding-bottom: 12px; }
+.history-card :deep(.el-timeline-item__wrapper) { padding-left: 22px; top: -3px; }
+.version-card :deep(.el-card__body) { padding: 10px 12px; }
 
 .version-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 8px 16px;
+  flex-wrap: wrap;
 }
 
 .version-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .version-name {
-  font-size: 16px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
   font-weight: 500;
 }
 
-.version-stats {
+.version-time, .version-stats {
   color: #909399;
   font-size: 13px;
 }
 
 .version-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
+.version-actions .el-button + .el-button { margin-left: 0; }
 
 .version-desc {
   color: #606266;
-  margin: 12px 0;
-  padding-left: 12px;
+  margin: 6px 0 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-left: 8px;
   border-left: 3px solid #409EFF;
-}
-
-.version-footer {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #EBEEF5;
-}
-
-.publisher {
-  color: #909399;
-  font-size: 13px;
 }
 
 .pagination-wrapper {
