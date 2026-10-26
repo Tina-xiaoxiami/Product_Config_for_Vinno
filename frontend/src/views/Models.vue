@@ -1,6 +1,6 @@
 <template>
   <div class="models-page">
-    <el-card shadow="never">
+    <el-card shadow="never" class="models-card">
       <template #header>
         <div class="card-header">
           <span>产品型号管理</span>
@@ -14,16 +14,22 @@
         </div>
       </template>
 
-      <div class="group-help">在此统一维护子系列与组合，配置管理和白皮书引用同一份分组关系。</div>
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false"><el-button link @click="loadData">重新加载</el-button></el-alert>
       <div class="model-workspace">
         <aside class="group-navigation" aria-label="型号分组">
-          <el-tree :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
-            <template #default="{ data }"><span class="group-node"><span>{{ data.label }}</span><small>{{ data.ids.length }}</small></span></template>
+          <div class="group-navigation-header"><span>型号分组</span><el-tooltip content="在此统一维护分组，配置管理和白皮书共用"><el-icon class="group-info" tabindex="0" aria-label="分组说明"><InfoFilled /></el-icon></el-tooltip></div>
+          <el-tree :indent="14" :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
+            <template #default="{ data }">
+              <span class="group-node" :class="{ 'group-combination': data.children }">
+                <el-icon class="group-node-icon"><component :is="data.children ? Collection : data.key === 'all' ? Grid : Folder" /></el-icon>
+                <span class="group-node-label">{{ data.label }}</span>
+                <small class="group-count">{{ data.ids.length }}</small>
+              </span>
+            </template>
           </el-tree>
         </aside>
         <section class="model-results">
-          <div class="model-toolbar"><span>{{ currentGroup?.label || '全部型号' }} · {{ total }} 个型号</span><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /></div>
+          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /></div>
       <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="型号名称" min-width="200" fixed="left" show-overflow-tooltip />
@@ -113,7 +119,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
+import { Plus, ArrowUp, ArrowDown, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
 import { getSeriesList, getModels, getSubseries, createModel, updateModel, deleteModel } from '../api/data'
 import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
@@ -312,16 +318,28 @@ onDeactivated(() => { pageActive = false; editorRequest.invalidate(); ++loadRequ
 </script>
 
 <style scoped>
-.model-workspace { display: flex; gap: 16px; min-width: 0; }
-.group-navigation { width: 240px; flex-shrink: 0; max-height: 640px; overflow: auto; border-right: 1px solid #ebeef5; padding-right: 10px; }
-.group-node { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; }
-.group-node span { white-space: normal; overflow-wrap: anywhere; }
-.group-node small { color: #909399; margin-left: auto; padding-right: 6px; }
-.group-navigation :deep(.el-tree-node__content) { height: auto; min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
+.models-card > :deep(.el-card__header) { padding: 12px 16px; }
+.models-card > :deep(.el-card__body) { padding: 16px; }
+.model-workspace { display: flex; gap: 16px; min-width: 0; align-items: flex-start; }
+.group-navigation { width: 256px; flex-shrink: 0; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; }
+.group-navigation-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--el-fill-color-light); border-bottom: 1px solid var(--el-border-color-lighter); font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
+.group-info { color: var(--el-text-color-placeholder); font-size: 14px; }
+.group-navigation :deep(.el-tree) { padding: 6px; max-height: 590px; overflow: auto; font-size: 13px; }
+.group-node { display: flex; gap: 7px; align-items: center; width: 100%; min-width: 0; padding: 3px 8px 3px 0; }
+.group-node-label { white-space: normal; overflow-wrap: anywhere; line-height: 20px; flex: 1; }
+.group-node-icon { color: var(--el-text-color-placeholder); flex-shrink: 0; font-size: 14px; }
+.group-combination .group-node-label { font-weight: 500; }
+.group-count { flex-shrink: 0; min-width: 22px; padding: 0 5px; border-radius: 3px; text-align: center; font-size: 11px; line-height: 18px; color: var(--el-text-color-secondary); background: var(--el-fill-color-light); font-variant-numeric: tabular-nums; }
+.group-navigation :deep(.el-tree-node__content) { height: auto; min-height: 34px; margin: 2px 0; border-radius: 3px; border-left: 2px solid transparent; }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) { background: var(--el-color-primary-light-9); border-left-color: var(--el-color-primary); color: var(--el-color-primary); }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-node-icon,
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { color: var(--el-color-primary); }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { background: var(--el-color-primary-light-8); }
 .model-results { min-width: 0; flex: 1; }
-.model-toolbar { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; align-items: center; font-size: 13px; }
-.group-help { font-size: 12px; color: #909399; margin-bottom: 12px; }
-@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: auto; max-height: 220px; border-right: 0; border-bottom: 1px solid #ebeef5; } .header-actions { flex-wrap: wrap; } }
+.model-toolbar { display: flex; justify-content: space-between; gap: 12px; min-height: 32px; margin-bottom: 12px; align-items: center; font-size: 13px; }
+.model-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--el-text-color-primary); font-weight: 500; }
+.model-result-count { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
+@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: 100%; } .group-navigation :deep(.el-tree) { max-height: 200px; } .card-header { flex-wrap: wrap; gap: 12px; } .header-actions { flex-wrap: wrap; } .model-results { width: 100%; } }
 .models-page {
   padding: 0;
 }
