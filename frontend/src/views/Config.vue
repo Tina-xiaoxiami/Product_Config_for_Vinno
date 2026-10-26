@@ -33,6 +33,7 @@
           >
             <template #header>
               <div style="padding: 4px 12px 8px;">
+                <div v-if="modelSubseriesProblems.length" role="status" style="font-size:12px;color:#b88230;white-space:normal">{{ modelSubseriesProblems.join('；') }}</div>
                 <el-input
                   v-model="modelFilterText"
                   placeholder="输入搜索型号..."
@@ -50,9 +51,12 @@
             </template>
             <el-option-group
               v-for="group in filteredModelGroups"
-              :key="group.seriesId"
-              :label="group.seriesName"
+              :key="group.key"
+              :label="group.label"
             >
+              <div v-if="group.subseries" style="padding: 0 12px 4px">
+                <el-button link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中此子系列 · {{ group.models.length }} 个机型</el-button>
+              </div>
               <el-option
                 v-for="m in group.models"
                 :key="m.id"
@@ -1132,14 +1136,29 @@ const modelGroups = computed(() => {
 // 机型搜索文本（下拉内搜索框）
 const modelFilterText = ref('')
 
+const modelSubseriesProblems = ref([])
+const modelSelectionGroups = computed(() => modelGroups.value.flatMap(series => {
+  const names = [...new Set(series.models.flatMap(model => model.sub_series || []))]
+  if (!names.length) return [{ ...series, key: `${series.seriesId}:all`, label: series.seriesName }]
+  const groups = names.map(name => ({ key: JSON.stringify([series.seriesId, name]), label: `${series.seriesName} / ${name}`, subseries: true, models: series.models.filter(model => model.sub_series?.includes(name)) }))
+  const other = series.models.filter(model => !model.sub_series?.length)
+  if (other.length) groups.push({ key: `${series.seriesId}:other`, label: `${series.seriesName} / 其他机型`, models: other })
+  return groups
+}))
+const selectSubseriesModels = group => {
+  if (applyingModelGroup.value || reviewInteractionLocked.value) return
+  tempSelectedModels.value = [...new Set([...tempSelectedModels.value, ...group.models.map(model => model.id)])]
+  applyModelSelection()
+}
+
 // 根据搜索文本过滤后的型号分组
 const filteredModelGroups = computed(() => {
   const q = modelFilterText.value.trim().toLowerCase()
-  if (!q) return modelGroups.value
-  return modelGroups.value
+  if (!q) return modelSelectionGroups.value
+  return modelSelectionGroups.value
     .map(g => ({
       ...g,
-      models: g.models.filter(m => m.name.toLowerCase().includes(q))
+      models: g.models.filter(m => g.label.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
     }))
     .filter(g => g.models.length > 0)
 })
@@ -2442,12 +2461,7 @@ const invertModelSelection = () => {
 const selectMatchingModels = () => {
   const q = modelFilterText.value.trim().toLowerCase()
   if (!q) return
-  const matched = []
-  for (const [id, m] of allModelsMap.value) {
-    if (m.name.toLowerCase().includes(q)) {
-      matched.push(id)
-    }
-  }
+  const matched = [...new Set(filteredModelGroups.value.flatMap(group => group.models.map(model => model.id)))]
   if (matched.length > 0) {
     const current = new Set(tempSelectedModels.value)
     for (const id of matched) current.add(id)
@@ -2515,10 +2529,11 @@ const loadModels = async ({ modelGroup } = {}) => {
     results.forEach((res, idx) => {
       const seriesId = seriesIds[idx]
       const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
-      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName, source_uuid: m.source_uuid, aliases: m.aliases || [] })
+      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName, source_uuid: m.source_uuid, aliases: m.aliases || [], sub_series: m.sub_series || [] })
     })
     const selection = modelGroup ? resolveGroupModels(modelGroup, models) : null
     if (selection && !selection.ids.length) { ElMessage.warning('该分组的机型已不存在或名称不唯一，请更新分组'); return false }
+    modelSubseriesProblems.value = [...new Set(results.flatMap(result => result.sub_series_problems || []))]
     allModelsMap.value = models
     selectedModels.value = selection ? selection.ids : selectedModels.value.filter(mid => models.has(mid))
     if (!modelGroup) applySavedOrder(selectedModels.value)

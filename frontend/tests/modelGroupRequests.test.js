@@ -39,7 +39,7 @@ test('failed superseded group request preserves newer user series choice', async
  const context = {
   applyingModelGroup: ref(false), resolveGroupSeries,
   seriesList: ref([{ id: 1, name: 'Original' }, { id: 2, name: 'Group' }, { id: 3, name: 'Latest' }]),
-  selectedSeries: ref([1]), allModelsMap: ref(new Map()), currentPage: ref(4), modelFilterText: ref('query'),
+  selectedSeries: ref([1]), modelSubseriesProblems: ref([]), allModelsMap: ref(new Map()), currentPage: ref(4), modelFilterText: ref('query'),
   modelGroupsPopover: ref(null), configReady: ref(true), loadModels: () => pending.promise,
   ElMessage: { warning() {} }, saveSeriesSelection() {}, saveModelOrder() {}
  }
@@ -59,7 +59,7 @@ test('failed model group restores readiness only when configuration state was no
   const context = {
    applyingModelGroup: ref(false), configReady: ref(true), resolveGroupSeries,
    seriesList: ref([{ id: 1, name: 'Original' }, { id: 2, name: 'Group' }]),
-   selectedSeries: ref([1]), allModelsMap: ref(previousModels), currentPage: ref(4), modelFilterText: ref('query'),
+   selectedSeries: ref([1]), modelSubseriesProblems: ref([]), allModelsMap: ref(previousModels), currentPage: ref(4), modelFilterText: ref('query'),
    modelGroupsPopover: ref(null),
    loadModels: async () => {
     context.configReady.value = false
@@ -90,7 +90,7 @@ test('stale draft failure cannot clear a newer series table', async () => {
  let calls = 0
  const context = {
   selectedSeries: ref([1]), seriesList: ref([{ id: 1, name: 'A' }, { id: 2, name: 'B' }]),
-  allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]),
+  modelSubseriesProblems: ref([]), allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]),
   tableData: ref([]), originalData: ref([]), configReady: ref(true), configLoadError: ref(''), showDiffOnly: ref(false), referenceModel: ref(null),
   getModels: async sid => ({ items: [{ id: sid, name: 'model' }] }),
   resolveGroupModels() {}, applySavedOrder() {},

@@ -12,6 +12,8 @@ from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductM
 
 from app.services.model_identity import active_model_filter, model_identity_metadata
 
+from app.services.whitepaper_subseries import read_subseries
+
 router = APIRouter()
 
 
@@ -90,8 +92,13 @@ async def get_models(
     total = count_result.scalar()
 
     identities = await model_identity_metadata(db, [int(item.id) for item in items])
+    # Resolve against all active models so pagination cannot hide ambiguities.
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter()))).scalars().all())
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries))).scalars().all()}
+    memberships, problems = read_subseries(catalog, parents)
     return ProductModelListResponse(
-        items=[_model_response(item, mappings.get(int(item.id), []), identities.get(int(item.id))) for item in items],
+        items=[{**_model_response(item, mappings.get(int(item.id), []), identities.get(int(item.id))), "sub_series": memberships.get(item.id, [])} for item in items],
+        sub_series_problems=problems,
         total=total,
     )
 

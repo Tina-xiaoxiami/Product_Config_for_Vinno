@@ -8,7 +8,7 @@ function modelApp(overrides = {}) {
   const messages = []
   const ctx = {
     selectedSeries: ref([1]), seriesList: ref([{ id:1, name:'A' }, { id:2, name:'B' }]),
-    allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]), tableData: ref([]), originalData: ref([]),
+    modelSubseriesProblems: ref([]), allModelsMap: ref(new Map()), selectedModels: ref([]), tempSelectedModels: ref([]), tableData: ref([]), originalData: ref([]),
     configReady: ref(true), configLoadError: ref(''), loading: ref(false), applyingModelGroup: ref(false),
     getModels: async sid => ({ items:[{ id:sid, name:'model' }] }), resolveGroupModels: () => null,
     applySavedOrder() {}, showDiffOnly: ref(false), referenceModel: ref(null),

@@ -77,7 +77,7 @@ function draftEditor({ createDraft, deleteDraftByKey, batchReady = true, change,
 function draftLoadingController({ getModels, loadData, initDraft }) {
   const context = {
     selectedSeries: ref([10]),
-    allModelsMap: ref(new Map()),
+    modelSubseriesProblems: ref([]), allModelsMap: ref(new Map()),
     selectedModels: ref([]),
     tempSelectedModels: ref([]),
     tableData: ref([]),
