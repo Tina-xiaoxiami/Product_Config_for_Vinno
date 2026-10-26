@@ -813,3 +813,26 @@ async def test_matrix_export_model_scope_preserves_full_matrix_metadata_when_ite
     sheet = openpyxl.load_workbook(io.BytesIO(exported.content)).active
     assert [sheet.cell(3, i).value for i in range(1, 4)] == ["New name", "New description", "X → -"]
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_delete_version_preserves_current_configuration_and_other_snapshots(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    first, second = await _seed_versions(factory, _snapshot(), _snapshot())
+    async with factory() as session:
+        session.add(ConfigItem(id=100, row_index=1, rd_name="Current feature"))
+        await session.flush()
+        session.add(ConfigValue(item_id=100, model_id=10, final_config="X"))
+        await session.commit()
+    async with client:
+        response = await client.delete(f"/api/versions/{first}")
+        repeated = await client.delete(f"/api/versions/{first}")
+    assert response.status_code == 200, response.text
+    assert repeated.status_code == 404
+    async with factory() as session:
+        assert await session.get(ConfigVersion, first) is None
+        assert await session.get(ConfigVersion, second) is not None
+        assert (await session.get(ConfigItem, 100)).rd_name == "Current feature"
+        assert await session.scalar(select(ConfigValue.final_config).where(ConfigValue.item_id == 100)) == "X"
+    await engine.dispose()

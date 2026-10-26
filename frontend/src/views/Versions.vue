@@ -30,6 +30,7 @@
                 <el-button size="small" @click="openCompareDialog(version)">版本对比</el-button>
                 <el-button size="small" type="warning" @click="handleRollback(version)">回滚</el-button>
                 <el-button size="small" type="primary" link @click="handleEditVersion(version)">编辑</el-button>
+                <el-button size="small" type="danger" link :disabled="deletingVersionId !== null" :loading="deletingVersionId === version.id" @click="handleDeleteVersion(version)">删除</el-button>
               </div>
             </div>
 
@@ -118,7 +119,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSeriesList, getVersions, rollbackVersion, updateVersion } from '../api/data'
+import { getSeriesList, getVersions, rollbackVersion, updateVersion, deleteVersion } from '../api/data'
 import { formatTime } from '../utils/modelHelpers'
 
 // 路由
@@ -260,6 +261,38 @@ const handleRollback = async (version) => {
       console.error('回滚失败:', error)
       ElMessage.error('回滚失败')
     }
+  }
+}
+
+const deletingVersionId = ref(null)
+const handleDeleteVersion = async (version) => {
+  if (deletingVersionId.value !== null) return
+  const versionId = version.id
+  const seriesId = version.series_id ?? selectedSeries.value
+  const seriesName = seriesList.value.find(series => series.id === seriesId)?.name || '当前系列'
+  deletingVersionId.value = versionId
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${seriesName} 的版本 ${version.version_number}？该历史快照及关联变更记录将永久删除，无法再用于对比或回滚；当前配置不会改变。`,
+      '删除历史版本',
+      { confirmButtonText: '删除版本', cancelButtonText: '取消', type: 'warning', distinguishCancelAndClose: true }
+    )
+    await deleteVersion(versionId)
+    ElMessage.success('版本已删除，当前配置未改变')
+    if (currentVersion.value?.id === versionId) {
+      detailDialogVisible.value = false
+      currentVersion.value = null
+      versionDetail.value = null
+    }
+    if (editVersionForm.value.id === versionId) editDialogVisible.value = false
+    if (selectedSeries.value === seriesId) {
+      currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil((total.value - 1) / pageSize.value)))
+      await loadVersions()
+    }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.response?.data?.detail || '删除版本失败，请重试')
+  } finally {
+    deletingVersionId.value = null
   }
 }
 
