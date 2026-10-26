@@ -477,6 +477,7 @@ onMounted(() => {
   align-items: center;
 }
 
+.history-card { width: 100%; max-width: 1120px; box-sizing: border-box; }
 .history-card > :deep(.el-card__header) { padding: 12px 16px 8px; }
 .history-card > :deep(.el-card__body) { padding: 14px 16px; }
 .history-card :deep(.el-timeline) { padding-left: 8px; }
