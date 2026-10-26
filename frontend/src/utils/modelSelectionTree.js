@@ -7,7 +7,11 @@ export function buildModelSelectionTree(groups, combinations = []) {
     members.forEach(group => included.add(group.key))
     return [{ key: JSON.stringify(['combination', combination.name]), label: combination.name, combination: true, subseriesCount: new Set(members.map(group => group.subseriesName)).size, groups: members.map(group => ({ ...group, key: JSON.stringify([combination.name, group.key]) })) }]
   })
-  const remaining = groups.filter(group => !included.has(group.key))
+  // Keep unclassified models registered for selected labels and available through search.
+  // When combinations exist, omit their standalone headings from the initial view.
+  const remaining = groups.filter(group => !included.has(group.key)).map(group => ({
+    ...group, searchOnly: sections.length > 0 && !group.subseriesName
+  }))
   if (remaining.length) sections.push({ key: 'standalone', groups: remaining })
   return sections
 }

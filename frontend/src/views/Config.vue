@@ -57,7 +57,7 @@
                 <span>{{ section.label }}</span><small>组合 · {{ section.subseriesCount }} 个子系列</small>
               </button>
               <div v-show="!section.combination || isModelGroupExpanded(section)" :class="{ 'model-tree-children': section.combination }">
-                <div v-for="group in section.groups" :key="group.key">
+                <div v-for="group in section.groups" :key="group.key" v-show="!group.searchOnly || isModelGroupExpanded(group)">
                   <div class="model-tree-group-heading">
                     <button type="button" class="model-tree-heading" :aria-expanded="isModelGroupExpanded(group)" :aria-disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" @click.stop="toggleModelGroup(group)">
                       <span aria-hidden="true">{{ isModelGroupExpanded(group) ? '▾' : '▸' }}</span>
@@ -1168,16 +1168,21 @@ const modelSelectionGroups = computed(() => modelGroups.value.flatMap(series => 
 const modelSelectionTree = computed(() => buildModelSelectionTree(modelSelectionGroups.value, modelSubseriesCombinations.value))
 const filteredModelTree = computed(() => filterModelSelectionTree(modelSelectionTree.value, modelFilterText.value))
 const expandedModelGroupKeys = ref(new Set())
-const isModelGroupExpanded = group => Boolean(modelFilterText.value.trim()) || expandedModelGroupKeys.value.has(group.key)
+const collapsedModelCombinationKeys = ref(new Set())
+const isModelGroupExpanded = group => Boolean(modelFilterText.value.trim()) || (group.combination
+  ? !collapsedModelCombinationKeys.value.has(group.key)
+  : expandedModelGroupKeys.value.has(group.key))
 const toggleModelGroup = group => {
   if (modelFilterText.value.trim()) return
-  const keys = new Set(expandedModelGroupKeys.value)
+  const state = group.combination ? collapsedModelCombinationKeys : expandedModelGroupKeys
+  const keys = new Set(state.value)
   if (keys.has(group.key)) keys.delete(group.key)
   else keys.add(group.key)
-  expandedModelGroupKeys.value = keys
+  state.value = keys
 }
 const expandModelGroupsForKeyboard = event => {
   if (event.target.tagName === 'INPUT' && ['ArrowDown', 'ArrowUp', 'Enter', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+    collapsedModelCombinationKeys.value = new Set()
     expandedModelGroupKeys.value = new Set(modelSelectionTree.value.flatMap(section => [section.key, ...section.groups.map(group => group.key)]))
   }
 }

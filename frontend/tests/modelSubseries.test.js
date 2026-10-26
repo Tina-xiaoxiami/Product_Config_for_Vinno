@@ -64,7 +64,7 @@ test('overlapping branches register one option per model at a visible occurrence
  const [first,second]=a.modelSelectionTree.value
  assert.equal(a.primaryModelGroups.value.size,3)
  assert.equal(a.primaryModelGroups.value.get(40),first.groups[0].key)
- a.toggleModelGroup(second); a.toggleModelGroup(second.groups[0])
+ a.toggleModelGroup(second.groups[0])
  assert.equal(a.primaryModelGroups.value.get(40),second.groups[0].key)
  a.selectSubseriesModels(first.groups[0]);a.selectSubseriesModels(second.groups[0])
  assert.deepEqual(a.tempSelectedModels.value,[99,40])
@@ -89,4 +89,26 @@ test('combination count counts subseries identities rather than parent-series bu
  const [combination]=buildModelSelectionTree(groups,[{name:'跨系列组合',sub_series:['常规']}])
  assert.equal(combination.subseriesCount,1)
  assert.equal(combination.groups.length,2)
+})
+
+
+test('combinations start expanded while subseries and standalone unclassified models stay hidden', () => {
+ const a=app()
+ a.modelSubseriesCombinations.value=[{name:'组合',sub_series:['URM']}]
+ const [combo,standalone]=a.modelSelectionTree.value
+ assert.equal(a.isModelGroupExpanded(combo),true)
+ assert.equal(a.isModelGroupExpanded(combo.groups[0]),false)
+ const other=standalone.groups.find(group=>group.models.some(model=>model.id===43))
+ assert.equal(other.searchOnly,true)
+ assert.equal(a.isModelGroupExpanded(other),false)
+ assert.equal(standalone.groups.find(group=>group.subseriesName==='非URM').searchOnly,false)
+ assert.equal(a.primaryModelGroups.value.has(43),true)
+ a.toggleModelGroup(combo);assert.equal(a.isModelGroupExpanded(combo),false)
+ a.modelFilterText.value='9L';assert.equal(a.filteredModelGroups.value[0].models[0].id,43)
+ assert.equal(a.isModelGroupExpanded(other),true)
+ a.modelFilterText.value='';assert.equal(a.isModelGroupExpanded(combo),false)
+ a.toggleModelGroup(combo);assert.equal(a.isModelGroupExpanded(combo),true)
+ a.modelSubseriesCombinations.value=[]
+ assert.equal(a.modelSelectionTree.value[0].groups.some(group=>group.searchOnly),false)
+ assert.match(source,/v-show="!group.searchOnly \|\| isModelGroupExpanded\(group\)"/)
 })
