@@ -30,6 +30,7 @@
             popper-class="model-select-dropdown"
             @visible-change="onModelDropdownVisibleChange"
             @change="applyModelSelection"
+            @keydown.capture="expandModelGroupsForKeyboard"
           >
             <template #header>
               <div style="padding: 4px 12px 8px;">
@@ -54,15 +55,18 @@
               :key="group.key"
               :label="group.label"
             >
-              <div v-if="group.subseries" style="padding: 0 12px 4px">
-                <el-button link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中此子系列 · {{ group.models.length }} 个机型</el-button>
+              <div style="display:flex;align-items:center;gap:12px;padding:0 12px 4px">
+                <el-button link :disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" :aria-expanded="isModelGroupExpanded(group)" :aria-label="(isModelGroupExpanded(group) ? '收起机型 ' : '展开机型 ') + group.label" @click.stop="toggleModelGroup(group)">{{ isModelGroupExpanded(group) ? '▾ 收起机型' : '▸ 展开机型' }} · {{ group.models.length }} 个</el-button>
+                <el-button v-if="group.subseries" link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中此子系列 · {{ group.models.length }} 个机型</el-button>
               </div>
+              <div v-show="isModelGroupExpanded(group)" class="subseries-model-options">
               <el-option
                 v-for="m in group.models"
                 :key="m.id"
                 :label="m.name"
                 :value="m.id"
               />
+              </div>
             </el-option-group>
           </el-select>
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
@@ -1150,6 +1154,20 @@ const modelSelectionGroups = computed(() => modelGroups.value.flatMap(series => 
   if (other.length) groups.push({ key: `${series.seriesId}:other`, label: `${series.seriesName} / 其他机型`, models: other })
   return groups
 }))
+const expandedModelGroupKeys = ref(new Set())
+const isModelGroupExpanded = group => Boolean(modelFilterText.value.trim()) || expandedModelGroupKeys.value.has(group.key)
+const toggleModelGroup = group => {
+  if (modelFilterText.value.trim()) return
+  const keys = new Set(expandedModelGroupKeys.value)
+  if (keys.has(group.key)) keys.delete(group.key)
+  else keys.add(group.key)
+  expandedModelGroupKeys.value = keys
+}
+const expandModelGroupsForKeyboard = event => {
+  if (event.target.tagName === 'INPUT' && ['ArrowDown', 'ArrowUp', 'Enter', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+    expandedModelGroupKeys.value = new Set(modelSelectionGroups.value.map(group => group.key))
+  }
+}
 const selectSubseriesModels = group => {
   if (applyingModelGroup.value || reviewInteractionLocked.value) return
   tempSelectedModels.value = [...new Set([...tempSelectedModels.value, ...group.models.map(model => model.id)])]
