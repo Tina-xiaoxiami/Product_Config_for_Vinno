@@ -282,3 +282,33 @@ test('result messages wrap and failed submissions provide a return action', () =
   assert.match(source, /@click="returnToBatchSubmit"/)
   assert.match(source, /\.submission-result-message\s*\{[^}]*white-space: pre-wrap/s)
 })
+
+
+test('a refresh failure preserves submission results and the return path', async () => {
+  const app = publishApp({
+    batchSubmitDrafts: async () => ({ results: [{ batch_id: 200, success: false, message: '版本号重复' }, { batch_id: 201, success: true, message: '成功' }] }),
+    loadData: async () => false
+  })
+  await app.handleOpenBatchSubmit(); await app.confirmBatchSubmit()
+  assert.match(app.batchSubmitResultDialog.error, /刷新失败/)
+  assert.equal(app.batchSubmitResultDialog.results[0].message, '版本号重复')
+  await app.returnToBatchSubmit()
+  assert.deepEqual(app.batchSubmitDialog.selectedBatchIds, [200])
+})
+
+test('return refresh failure retains form values and blocks stale retry', async () => {
+  let failPreview = false; const posts = []
+  const app = publishApp({
+    previewDraftSubmission: async id => {
+      if (failPreview) throw new Error('offline')
+      return { batch_id: id, series_id: id - 100, total_changes: 1, models: [], fields: [], drafts: [] }
+    },
+    batchSubmitDrafts: async params => { posts.push(params); return { results: [] } }
+  })
+  await app.handleOpenBatchSubmit(); app.batchSubmitDialog.versionNumber = 'V2'
+  await app.confirmBatchSubmit(); failPreview = true
+  await app.returnToBatchSubmit(); await app.confirmBatchSubmit()
+  assert.equal(app.batchSubmitDialog.versionNumber, 'V2')
+  assert.match(app.batchSubmitDialog.error, /无法核验/)
+  assert.equal(posts.length, 1)
+})
