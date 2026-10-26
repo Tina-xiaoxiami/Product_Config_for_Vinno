@@ -620,7 +620,10 @@ def _table_candidate(
         # 宽矩阵（各机型适用性列）合并成一行，避免一条条目占十几行。
         # 表头里可能带换行（如“9E⏎(URM)”），压成单空格才不会把这一行拆断。
         pairs = [
-            f"{re.sub(r'\s+', ' ', header).strip()}：{re.sub(r'\s+', ' ', value).strip()}"
+            "{}：{}".format(
+                re.sub(r"\s+", " ", header).strip(),
+                re.sub(r"\s+", " ", value).strip(),
+            )
             for header, value in data.items()
         ]
         lines.append("适用配置：" + "；".join(pairs))
