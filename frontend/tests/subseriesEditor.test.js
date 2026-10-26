@@ -46,3 +46,13 @@ test('save blocks duplicate clicks and close until the current write settles',as
  resolve({revision:'r2',groups:[{name:'新组',series:'China',models:['M']}],catalog:[],series:[]});await save
  assert.equal(a.dirty.value,false);assert.deepEqual(a.events,['saved'])
 })
+
+test('unrestricted member labels show every owning series without changing saved identities',()=>{
+ const catalog=[{id:1,name:'VINNO 10',series:'China'},{id:2,name:'VINNO 10',series:'Oversea'},{id:3,name:'ULTIMUS 6S',series:'Tulip-China'}]
+ const group={name:'跨系列',series:'',models:['VINNO 10'],options:[]}
+ const options=subseriesGroupOptions(group,catalog)
+ assert.deepEqual(options.map(o=>o.label),['VINNO 10（China、Oversea）','ULTIMUS 6S（Tulip-China）'])
+ assert.deepEqual(options.map(o=>o.value),['VINNO 10','ULTIMUS 6S'])
+ assert.deepEqual(subseriesPayload('revision',[group]).groups[0].models,['VINNO 10'])
+ assert.equal(subseriesGroupOptions({...group,series:'China'},catalog)[0].label,'VINNO 10')
+})
