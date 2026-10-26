@@ -97,7 +97,7 @@ async def get_models(
     identities = await model_identity_metadata(db, [int(item.id) for item in items])
     # Resolve against all active models so pagination cannot hide ambiguities.
     catalog = list((await db.execute(select(ProductModel).where(active_model_filter()))).scalars().all())
-    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries))).scalars().all()}
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name))).all()}
     memberships, problems = read_subseries(catalog, parents)
     return ProductModelListResponse(
         items=[{**_model_response(item, mappings.get(int(item.id), []), identities.get(int(item.id))), "sub_series": memberships.get(item.id, [])} for item in items],
@@ -108,7 +108,7 @@ async def get_models(
 
 async def _subseries_catalog(db):
     catalog = list((await db.execute(select(ProductModel).where(active_model_filter()).order_by(ProductModel.series_id, ProductModel.sort_order, ProductModel.id))).scalars().all())
-    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries).order_by(ProductSeries.id))).scalars().all()}
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name).order_by(ProductSeries.id))).all()}
     return catalog, parents
 
 
