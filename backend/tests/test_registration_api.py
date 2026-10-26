@@ -82,7 +82,8 @@ def _activate_imported_package(database_path, workbook_path):
 
 
 @pytest.mark.asyncio
-async def test_registration_api_combines_redline_formal_strategy_and_current_auxiliary(tmp_path):
+async def test_registration_api_combines_redline_formal_strategy_and_current_auxiliary(tmp_path, monkeypatch):
+    monkeypatch.setenv("WHITEPAPER_SUBSERIES_FILE", str(tmp_path / "subseries.json"))
     database_path = tmp_path / "product_config.db"
     workbook_path = tmp_path / "registration.xlsx"
     _create_database(database_path)
@@ -109,6 +110,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
             "/api/models",
             params={"series_id": 1, "limit": 100},
         )
+        subseries_response = await client.get("/api/models/subseries")
     await engine.dispose()
 
     assert models_response.status_code == 200
@@ -133,6 +135,10 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
 
     assert probes_response.status_code == 200
     assert product_models_response.status_code == 200
+    assert all(item["sub_series"] == [] for item in product_models_response.json()["items"])
+    assert subseries_response.status_code == 200
+    assert subseries_response.json()["series"]
+    assert len(subseries_response.json()["catalog"]) == len(product_models_response.json()["items"])
     vinno10e = next(
         item for item in product_models_response.json()["items"] if item["id"] == 2
     )
