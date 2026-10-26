@@ -15,6 +15,8 @@
             <div class="select-all-wrapper" :class="{ 'hide-tags': selectedSeries.length === seriesList.length && seriesList.length > 0 }">
             <el-select
               v-model="selectedSeries"
+              :loading="seriesLoading"
+              :disabled="seriesLoading"
               multiple
               collapse-tags
               collapse-tags-tooltip
@@ -39,6 +41,8 @@
             <div class="select-all-wrapper" :class="{ 'hide-tags': selectedModels.length === allModelsMap.size && allModelsMap.size > 0 }">
             <el-select
               v-model="selectedModels"
+              :loading="modelsLoading"
+              :disabled="seriesLoading || modelsLoading || !!seriesLoadError || !!modelLoadError"
               multiple
               collapse-tags
               collapse-tags-tooltip
@@ -127,6 +131,11 @@
         </div>
       </div>
 
+    </el-card>
+
+    <el-card v-if="compareLoadError" shadow="never" class="result-card" role="alert">
+      <el-alert :title="compareLoadError" type="error" :closable="false" show-icon />
+      <el-button :loading="comparisonRetrying" :disabled="seriesLoading || modelsLoading || loading" @click="retryComparison" style="margin-top: 12px">重新加载</el-button>
     </el-card>
 
     <!-- 对比结果 -->
@@ -274,8 +283,8 @@
     </el-card>
 
     <!-- 空状态 -->
-    <el-card v-else shadow="never">
-      <el-empty description="请选择型号进行对比">
+    <el-card v-else-if="!compareLoadError" shadow="never" v-loading="seriesLoading || modelsLoading || loading">
+      <el-empty :description="comparisonEmptyDescription">
         <template #image>
           <el-icon :size="60" color="#C0C4CC"><DataAnalysis /></el-icon>
         </template>
@@ -308,7 +317,7 @@ import { getModelShortName as _getModelShortName, groupModelsBySeries, findSerie
 import { useDraftFilter } from '../utils/useDraftFilter'
 import {
   getSeriesList, getModels, compareConfigs, exportCompareResult,
-  createDraftBatch, getCurrentDraftBatch, getDraftList, createDraft,
+  getCurrentDraftBatch, getDraftList, createDraft,
   submitDraftBatch, discardDraftBatch, deleteDraftByKey,
   getEnumValues
 } from '../api/data'
@@ -322,6 +331,21 @@ const groupedSelectedModels = computed(() => groupModelsBySeries(allModelsMap.va
 // 数据
 const seriesList = ref([])
 const loading = ref(false)
+const seriesLoading = ref(false)
+const modelsLoading = ref(false)
+const seriesLoadError = ref('')
+const modelLoadError = ref('')
+const comparisonError = ref('')
+const comparisonRetrying = ref(false)
+const compareLoadError = computed(() => seriesLoadError.value || modelLoadError.value || comparisonError.value)
+const comparisonEmptyDescription = computed(() => {
+  if (seriesLoading.value || modelsLoading.value || loading.value) return '正在加载对比数据…'
+  if (!seriesList.value.length) return '暂无产品系列'
+  if (!selectedSeries.value.length) return '请选择产品系列'
+  if (selectedModels.value.length < 2) return '请至少选择两个型号进行对比'
+  if (!compareFields.value.length) return '请至少选择一个对比字段'
+  return '暂无对比结果'
+})
 
 // 枚举值
 const enumValues = ref({
@@ -588,46 +612,87 @@ const paginatedTableData = computed(() => {
 })
 
 // 加载产品系列
+let seriesLoadRequest = 0
 const loadSeries = async () => {
+  const request = ++seriesLoadRequest
+  seriesLoading.value = true
+  seriesLoadError.value = ''
+  invalidateComparison()
   try {
     const res = await getSeriesList()
+    if (request !== seriesLoadRequest) return false
     seriesList.value = res.items || []
     if (seriesList.value.length > 0) {
-      if (selectedSeries.value.length === 0) {
-        // 无保存的系列：默认选第一个
-        selectedSeries.value = [seriesList.value[0].id]
-      } else {
-        // 有保存的系列：移除已失效的
+      if (selectedSeries.value.length === 0) selectedSeries.value = [seriesList.value[0].id]
+      else {
         const validIds = new Set(seriesList.value.map(s => s.id))
         selectedSeries.value = selectedSeries.value.filter(id => validIds.has(id))
       }
-      await loadModels()
+    } else {
+      selectedSeries.value = []
     }
+    return await loadModels()
   } catch (error) {
+    if (request !== seriesLoadRequest) return false
+    // 保留可恢复的选择，错误期间不展示缓存机型。
+    pendingModelSelection ||= { models: [...selectedModels.value], reference: referenceModel.value }
+    modelLoadRequest++
+    modelsLoading.value = false
+    seriesList.value = []
+    allModelsMap.value = new Map()
+    selectedModels.value = []
+    referenceModel.value = null
+    seriesLoadError.value = '产品系列加载失败，请重新加载'
     console.error('加载产品系列失败:', error)
+    return false
+  } finally {
+    if (request === seriesLoadRequest) seriesLoading.value = false
   }
 }
 
 // 加载产品型号（从所有选中系列）
+let modelLoadRequest = 0
+let pendingModelSelection = null
 const loadModels = async () => {
-  allModelsMap.value.clear()
-  if (selectedSeries.value.length === 0) return
-
+  const request = ++modelLoadRequest
+  const seriesIds = [...selectedSeries.value]
+  const isCurrent = () => request === modelLoadRequest && seriesIds.length === selectedSeries.value.length && seriesIds.every((id, index) => id === selectedSeries.value[index])
+  const previousSelectedModels = pendingModelSelection?.models || [...selectedModels.value]
+  const previousReferenceModel = pendingModelSelection?.reference ?? referenceModel.value
+  pendingModelSelection = { models: previousSelectedModels, reference: previousReferenceModel }
+  modelsLoading.value = true
+  modelLoadError.value = ''
+  invalidateComparison()
+  allModelsMap.value = new Map()
+  selectedModels.value = []
+  referenceModel.value = null
+  modelFilterText.value = ''
+  if (seriesIds.length === 0) {
+    pendingModelSelection = null
+    modelsLoading.value = false
+    return true
+  }
   try {
-    const results = await Promise.all(
-      selectedSeries.value.map(sid => getModels(sid))
-    )
+    const results = await Promise.all(seriesIds.map(sid => getModels(sid)))
+    if (!isCurrent()) return false
+    const models = new Map()
     results.forEach((res, idx) => {
-      const seriesId = selectedSeries.value[idx]
+      const seriesId = seriesIds[idx]
       const seriesName = seriesList.value.find(s => s.id === seriesId)?.name || ''
-      for (const m of (res.items || [])) {
-        allModelsMap.value.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
-      }
+      for (const m of (res.items || [])) models.set(m.id, { id: m.id, name: m.name, seriesId, seriesName })
     })
-    // 清除无效的已选型号（watcher 会自动触发对比）
-    selectedModels.value = selectedModels.value.filter(mid => allModelsMap.value.has(mid))
+    allModelsMap.value = models
+    selectedModels.value = previousSelectedModels.filter(mid => models.has(mid))
+    referenceModel.value = selectedModels.value.includes(previousReferenceModel) ? previousReferenceModel : selectedModels.value[0] ?? null
+    pendingModelSelection = null
+    return true
   } catch (error) {
+    if (!isCurrent()) return false
+    modelLoadError.value = '机型加载失败，请重新加载'
     console.error('加载产品型号失败:', error)
+    return false
+  } finally {
+    if (request === modelLoadRequest) modelsLoading.value = false
   }
 }
 
@@ -637,195 +702,125 @@ const getModelName = (modelId) => {
   return m ? `${m.seriesName} / ${m.name}` : ''
 }
 
-// 执行对比
-const handleCompare = async () => {
-  if (selectedModels.value.length < 2) {
-    ElMessage.warning('请至少选择2个型号进行对比')
-    return
+// 执行对比：自动和手动入口共用请求范围与结果提交。
+let comparisonRequest = 0
+const clearComparisonResult = () => {
+  compareResult.value = null
+  originalValues.value.clear()
+  draftChanges.value.clear()
+  draftItemTypes.value.clear()
+  draftBatchMap.value.clear()
+  draftStats.value = { total: 0, create: 0, update: 0, delete: 0 }
+  currentPage.value = 1
+}
+const invalidateComparison = () => {
+  comparisonError.value = ''
+  comparisonRequest++
+  loading.value = false
+  clearComparisonResult()
+}
+const runComparison = async (notify = false) => {
+  if (seriesLoading.value || modelsLoading.value || seriesLoadError.value || modelLoadError.value) return false
+  comparisonError.value = ''
+  const request = ++comparisonRequest
+  const seriesIds = [...selectedSeries.value]
+  const modelIds = [...selectedModels.value]
+  const fields = [...compareFields.value]
+  const onlyDiff = showOnlyDiff.value
+  clearComparisonResult()
+  if (!seriesIds.length || modelIds.length < 2 || !fields.length) {
+    loading.value = false
+    if (notify) ElMessage.warning(modelIds.length < 2 ? '请至少选择2个型号进行对比' : '请至少选择1个对比字段')
+    return false
   }
-
-  if (compareFields.value.length === 0) {
-    ElMessage.warning('请至少选择1个对比字段')
-    return
-  }
+  const isCurrent = () => request === comparisonRequest &&
+    seriesIds.length === selectedSeries.value.length && seriesIds.every((id, index) => id === selectedSeries.value[index]) &&
+    modelIds.length === selectedModels.value.length && modelIds.every((id, index) => id === selectedModels.value[index]) &&
+    fields.length === compareFields.value.length && fields.every((field, index) => field === compareFields.value[index]) &&
+    onlyDiff === showOnlyDiff.value
 
   loading.value = true
+  let readStage = '对比结果'
   try {
-    const res = await compareConfigs({
-      model_ids: selectedModels.value,
-      compare_fields: compareFields.value,
-      show_only_diff: showOnlyDiff.value
-    })
-
-    compareResult.value = res
-    currentPage.value = 1
-    // 延迟等table渲染后应用保存的列宽
-    nextTick(() => {
-      nextTick(() => compareTableRef.value?.doLayout())
-    })
-
-    // 保存原始值
-    originalValues.value.clear()
+    const res = await compareConfigs({ model_ids: modelIds, compare_fields: fields, show_only_diff: onlyDiff })
+    if (!isCurrent()) return false
+    // 异步草稿加载期间保存在局部，全部完成后再一起显示。
+    const values = new Map()
     for (const item of res.items) {
-      for (const modelId of Object.keys(item.values)) {
-        const key = `${item.item_id}_${modelId}_${item.field_name}`
-        originalValues.value.set(key, item.values[modelId])
+      for (const [modelId, value] of Object.entries(item.values)) {
+        values.set(`${item.item_id}_${modelId}_${item.field_name}`, value)
       }
     }
-
-    // 初始化草稿批次（跨系列）
-    draftChanges.value.clear()
-    draftItemTypes.value.clear()
-    draftBatchMap.value.clear()
-    const newBatchMap = new Map()
-    const statsAcc = { total: 0, create: 0, update: 0, delete: 0 }
-    for (const seriesId of selectedSeries.value) {
-      try {
-        let batchRes, batchId
-        try { batchRes = await getCurrentDraftBatch(seriesId) } catch { batchRes = null }
-        if (batchRes?.exists) {
-          batchId = batchRes.batch.id
-        } else {
-          // 无现有批次，创建一个新批次
-          const newBatch = await createDraftBatch(seriesId)
-          batchId = newBatch.id
+    const changes = new Map()
+    const itemTypes = new Map()
+    const batches = new Map()
+    const stats = { total: 0, create: 0, update: 0, delete: 0 }
+    for (const seriesId of seriesIds) {
+      readStage = '草稿状态'
+      const batchRes = await getCurrentDraftBatch(seriesId)
+      if (!isCurrent()) return false
+      if (batchRes?.exists === false) continue
+      if (batchRes?.exists !== true || !batchRes.batch?.id) throw new Error('草稿批次响应无效')
+      const batchId = batchRes.batch.id
+      batches.set(seriesId, batchId)
+      readStage = '草稿列表'
+      const drafts = await getDraftList(batchId)
+      if (!isCurrent()) return false
+      for (const d of (drafts.items || drafts || [])) {
+        if (d.model_id && !modelIds.includes(d.model_id)) continue
+        stats.total++
+        if (d.change_type === 'create') stats.create++
+        else if (d.change_type === 'update') stats.update++
+        else if (d.change_type === 'delete') stats.delete++
+        if (d.item_id) {
+          if (!itemTypes.has(d.item_id)) itemTypes.set(d.item_id, new Set())
+          itemTypes.get(d.item_id).add(d.change_type)
         }
-        newBatchMap.set(seriesId, batchId)
-        // 加载该系列的已有草稿（只统计当前选中型号）
-        try {
-          const drafts = await getDraftList(batchId)
-          for (const d of (drafts.items || drafts || [])) {
-            // 只统计当前选中的型号
-            if (d.model_id && !selectedModels.value.includes(d.model_id)) continue
-            statsAcc.total++
-            if (d.change_type === 'create') statsAcc.create++
-            else if (d.change_type === 'update') statsAcc.update++
-            else if (d.change_type === 'delete') statsAcc.delete++
-            // 记录 item_id 的所有草稿类型（用于筛选）
-            if (d.item_id) {
-              if (!draftItemTypes.value.has(d.item_id)) {
-                draftItemTypes.value.set(d.item_id, new Set())
-              }
-              draftItemTypes.value.get(d.item_id).add(d.change_type)
-            }
-            if (d.change_type === 'update') {
-              const key = `${d.item_id}_${d.model_id}_${d.field_name}`
-              draftChanges.value.set(key, {
-                oldValue: d.old_value,
-                newValue: d.new_value,
-                draftId: d.id
-              })
-              if (!originalValues.value.has(key)) {
-                originalValues.value.set(key, d.old_value)
-              }
-            }
-          }
-        } catch (e) { console.error('加载草稿列表失败:', e) }
-      } catch (error) {
-        console.error(`系列 ${seriesId} 初始化草稿失败:`, error)
+        if (d.change_type === 'update') {
+          const key = `${d.item_id}_${d.model_id}_${d.field_name}`
+          changes.set(key, { oldValue: d.old_value, newValue: d.new_value, draftId: d.id })
+          if (!values.has(key)) values.set(key, d.old_value)
+        }
       }
     }
-    draftBatchMap.value = newBatchMap
-    draftStats.value = statsAcc
-
-    // 加载枚举值
     await loadEnumValues()
-
-    if (res.diff_count === 0) {
-      ElMessage.success('所选型号配置完全相同')
-    } else {
-      ElMessage.info(`发现 ${res.diff_count} 项差异`)
+    if (!isCurrent()) return false
+    originalValues.value = values
+    draftChanges.value = changes
+    draftItemTypes.value = itemTypes
+    draftBatchMap.value = batches
+    draftStats.value = stats
+    compareResult.value = res
+    nextTick(() => {
+      if (isCurrent()) nextTick(() => { if (isCurrent()) compareTableRef.value?.doLayout() })
+    })
+    if (notify) {
+      if (res.diff_count === 0) ElMessage.success('所选型号配置完全相同')
+      else ElMessage.info(`发现 ${res.diff_count} 项差异`)
     }
+    return true
   } catch (error) {
+    if (!isCurrent()) return false
+    comparisonError.value = `${readStage}加载失败，请重新加载`
     console.error('对比失败:', error)
-    ElMessage.error('对比失败')
+    ElMessage.error(comparisonError.value)
+    return false
   } finally {
-    loading.value = false
+    if (request === comparisonRequest) loading.value = false
   }
 }
+const handleCompare = () => runComparison(true)
+const autoCompare = () => runComparison()
 
-// 静默自动对比（无 ElMessage 提示）
-const autoCompare = async () => {
-  if (selectedModels.value.length < 2) return
-  if (compareFields.value.length === 0) return
-
-  loading.value = true
+const retryComparison = async () => {
+  if (comparisonRetrying.value || seriesLoading.value || modelsLoading.value || loading.value) return false
+  comparisonRetrying.value = true
   try {
-    const res = await compareConfigs({
-      model_ids: selectedModels.value,
-      compare_fields: compareFields.value,
-      show_only_diff: showOnlyDiff.value
-    })
-
-    compareResult.value = res
-    currentPage.value = 1
-    nextTick(() => {
-      nextTick(() => compareTableRef.value?.doLayout())
-    })
-
-    originalValues.value.clear()
-    for (const item of res.items) {
-      for (const modelId of Object.keys(item.values)) {
-        const key = `${item.item_id}_${modelId}_${item.field_name}`
-        originalValues.value.set(key, item.values[modelId])
-      }
-    }
-
-    draftChanges.value.clear()
-    draftItemTypes.value.clear()
-    draftBatchMap.value.clear()
-    const newBatchMap = new Map()
-    const statsAcc = { total: 0, create: 0, update: 0, delete: 0 }
-    for (const seriesId of selectedSeries.value) {
-      try {
-        let batchRes, batchId
-        try { batchRes = await getCurrentDraftBatch(seriesId) } catch { batchRes = null }
-        if (batchRes?.exists) {
-          batchId = batchRes.batch.id
-        } else {
-          const newBatch = await createDraftBatch(seriesId)
-          batchId = newBatch.id
-        }
-        newBatchMap.set(seriesId, batchId)
-        try {
-          const drafts = await getDraftList(batchId)
-          for (const d of (drafts.items || drafts || [])) {
-            if (d.model_id && !selectedModels.value.includes(d.model_id)) continue
-            statsAcc.total++
-            if (d.change_type === 'create') statsAcc.create++
-            else if (d.change_type === 'update') statsAcc.update++
-            else if (d.change_type === 'delete') statsAcc.delete++
-            if (d.item_id) {
-              if (!draftItemTypes.value.has(d.item_id)) {
-                draftItemTypes.value.set(d.item_id, new Set())
-              }
-              draftItemTypes.value.get(d.item_id).add(d.change_type)
-            }
-            if (d.change_type === 'update') {
-              const key = `${d.item_id}_${d.model_id}_${d.field_name}`
-              draftChanges.value.set(key, {
-                oldValue: d.old_value,
-                newValue: d.new_value,
-                draftId: d.id
-              })
-              if (!originalValues.value.has(key)) {
-                originalValues.value.set(key, d.old_value)
-              }
-            }
-          }
-        } catch (e) { console.error('加载草稿列表失败:', e) }
-      } catch (error) {
-        console.error(`系列 ${seriesId} 初始化草稿失败:`, error)
-      }
-    }
-    draftBatchMap.value = newBatchMap
-    draftStats.value = statsAcc
-
-    await loadEnumValues()
-  } catch (error) {
-    console.error('自动对比失败:', error)
+    if (seriesLoadError.value || !seriesList.value.length) return await loadSeries()
+    if (modelLoadError.value) return await loadModels()
+    return await autoCompare()
   } finally {
-    loading.value = false
+    comparisonRetrying.value = false
   }
 }
 
@@ -1171,24 +1166,25 @@ const updateAllSelectDisplay = () => {
 watch(selectedSeries, updateAllSelectDisplay, { immediate: true })
 watch(selectedModels, updateAllSelectDisplay, { immediate: true })
 
-// 自动对比：下拉框/复选框变化时自动触发
-watch(compareFields, () => {
-  if (compareResult.value) nextTick(() => autoCompare())
-})
-watch(showOnlyDiff, () => {
-  if (compareResult.value) nextTick(() => autoCompare())
-})
+// 对比条件生命周期
+let comparisonScheduled = false
+watch([selectedSeries, selectedModels, compareFields, showOnlyDiff, seriesLoading, modelsLoading], () => {
+  invalidateComparison()
+  if (comparisonScheduled) return
+  comparisonScheduled = true
+  nextTick(() => {
+    comparisonScheduled = false
+    autoCompare()
+  })
+}, { deep: true, flush: 'sync' })
+// 对比条件生命周期结束
+
 watch(selectedModels, () => {
-  // 自动设置参考机型
   if (selectedModels.value.length > 0) {
-    if (referenceModel.value === null || !selectedModels.value.includes(referenceModel.value)) {
-      referenceModel.value = selectedModels.value[0]
-    }
+    if (referenceModel.value === null || !selectedModels.value.includes(referenceModel.value)) referenceModel.value = selectedModels.value[0]
   } else {
     referenceModel.value = null
   }
-  // 排除 loadModels 内的自动调用，只在用户操作时触发
-  if (allModelsMap.value.size > 0) nextTick(() => autoCompare())
 })
 
 // ====== localStorage 持久化 ======

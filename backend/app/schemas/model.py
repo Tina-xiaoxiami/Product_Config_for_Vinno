@@ -38,6 +38,7 @@ class ProductModelRegistrationPackage(BaseModel):
 
 
 class ProductModelResponse(ProductModelBase):
+    sub_series: List[str] = Field(default_factory=list)
     id: int
     series_id: int
     created_at: datetime
@@ -53,5 +54,6 @@ class ProductModelResponse(ProductModelBase):
 
 
 class ProductModelListResponse(BaseModel):
+    sub_series_problems: List[str] = Field(default_factory=list)
     items: List[ProductModelResponse]
     total: int

@@ -21,6 +21,17 @@ export function resolveGroupSeries(group, series) {
 }
 
 export function resolveGroupModels(group, models) {
+  // Fresh server-resolved combinations use exact identities; persisted browser
+  // model groups retain their existing UUID/name recovery behavior below.
+  if (Array.isArray(group.exactModelIds)) {
+    const ids = [...new Set(group.exactModelIds)]
+    const expected = new Map(group.models.map(model => [model.id, model]))
+    const missing = ids.filter(id => {
+      const current = models.get(id), saved = expected.get(id)
+      return !current || !saved || current.name !== saved.name || current.seriesName !== saved.seriesName
+    }).length
+    return { ids: missing ? [] : ids, missing }
+  }
   const ids = []
   let missing = 0
   for (const saved of group.models) {
