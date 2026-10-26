@@ -133,6 +133,7 @@
             <el-table :data="compareResult.added" border stripe max-height="400">
               <el-table-column prop="rd_name" label="研发名称" width="300" />
               <el-table-column prop="ipn" label="IPN号" width="150" />
+              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
             </el-table>
           </el-tab-pane>
 
@@ -140,6 +141,7 @@
             <el-table :data="compareResult.modified" border stripe max-height="400">
               <el-table-column prop="rd_name" label="研发名称" width="250" />
               <el-table-column prop="ipn" label="IPN号" width="120" />
+              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
               <el-table-column prop="model_name" label="型号" width="150" />
               <el-table-column prop="field_name" label="字段" width="100">
                 <template #default="{ row }">
@@ -163,6 +165,7 @@
             <el-table :data="compareResult.deleted" border stripe max-height="400">
               <el-table-column prop="rd_name" label="研发名称" width="300" />
               <el-table-column prop="ipn" label="IPN号" width="150" />
+              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
             </el-table>
           </el-tab-pane>
         </el-tabs>

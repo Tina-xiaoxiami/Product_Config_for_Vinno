@@ -643,3 +643,24 @@ async def test_version_list_reports_filtered_total_and_validates_pagination(tmp_
     assert zero_limit.status_code == 422
     assert excessive_limit.status_code == 422
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_compare_includes_snapshot_chinese_descriptions_for_all_diff_types(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    def described(item_id, text, value="included"):
+        item = _item(item_id, row_index=item_id, ipn=f"IPN-{item_id}", rd_name="", current_config=value)
+        item["zh_desc"] = text
+        return item
+    before = _snapshot(described(100, "原版中文描述"), described(101, "已删除的中文描述"))
+    after = _snapshot(described(100, "新版中文描述", "optional"), described(102, "新增中文描述"), described(103, None))
+    first, second = await _seed_versions(factory, before, after)
+    async with client:
+        response = await client.post("/api/versions/compare", json={"version_id_1": first, "version_id_2": second})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["modified"][0]["zh_desc"] == "原版中文描述"
+    assert result["deleted"][0]["zh_desc"] == "已删除的中文描述"
+    assert {item["ipn"]: item["zh_desc"] for item in result["added"]} == {"IPN-102": "新增中文描述", "IPN-103": None}
+    await engine.dispose()

@@ -411,7 +411,8 @@ async def compare_versions(
             "type": "added",
             "row_index": item.get("row_index"),
             "rd_name": item.get("rd_name"),
-            "ipn": item.get("ipn")
+            "ipn": item.get("ipn"),
+            "zh_desc": item.get("zh_desc")
         })
 
     # 删除项
@@ -421,7 +422,8 @@ async def compare_versions(
             "type": "deleted",
             "row_index": item.get("row_index"),
             "rd_name": item.get("rd_name"),
-            "ipn": item.get("ipn")
+            "ipn": item.get("ipn"),
+            "zh_desc": item.get("zh_desc")
         })
 
     # 修改项
@@ -450,6 +452,7 @@ async def compare_versions(
                         "row_index": item1.get("row_index"),
                         "rd_name": item1.get("rd_name"),
                         "ipn": item1.get("ipn"),
+                        "zh_desc": item1.get("zh_desc"),
                         "model_id": int(model_id),
                         "field_name": field,
                         "old_value": old,

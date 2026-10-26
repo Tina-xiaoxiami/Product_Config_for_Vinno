@@ -54,6 +54,7 @@ class VersionDiffDetail(BaseModel):
     row_index: int
     rd_name: Optional[str] = None
     ipn: Optional[str] = None
+    zh_desc: Optional[str] = None
     model_id: Optional[int] = None
     model_name: Optional[str] = None
     field_name: Optional[str] = None
