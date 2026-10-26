@@ -50,24 +50,33 @@
                 <el-button size="small" @click="selectMatchingModels" :disabled="!modelFilterText">选中匹配</el-button>
               </div>
             </template>
-            <el-option-group
-              v-for="group in filteredModelGroups"
-              :key="group.key"
-              :label="group.label"
-            >
-              <div style="display:flex;align-items:center;gap:12px;padding:0 12px 4px">
-                <el-button link :disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" :aria-expanded="isModelGroupExpanded(group)" :aria-label="(isModelGroupExpanded(group) ? '收起机型 ' : '展开机型 ') + group.label" @click.stop="toggleModelGroup(group)">{{ isModelGroupExpanded(group) ? '▾ 收起机型' : '▸ 展开机型' }} · {{ group.models.length }} 个</el-button>
-                <el-button v-if="group.subseries" link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中此子系列 · {{ group.models.length }} 个机型</el-button>
+            <div v-for="section in filteredModelTree" :key="section.key" class="model-tree-section">
+              <button v-if="section.combination" type="button" class="model-tree-heading model-tree-combination"
+                :aria-expanded="isModelGroupExpanded(section)" :aria-disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" @click.stop="toggleModelGroup(section)">
+                <span aria-hidden="true">{{ isModelGroupExpanded(section) ? '▾' : '▸' }}</span>
+                <span>{{ section.label }}</span><small>组合 · {{ section.subseriesCount }} 个子系列</small>
+              </button>
+              <div v-show="!section.combination || isModelGroupExpanded(section)" :class="{ 'model-tree-children': section.combination }">
+                <div v-for="group in section.groups" :key="group.key">
+                  <div class="model-tree-group-heading">
+                    <button type="button" class="model-tree-heading" :aria-expanded="isModelGroupExpanded(group)" :aria-disabled="!!modelFilterText.trim()" :title="modelFilterText.trim() ? '搜索时自动展开匹配机型' : ''" @click.stop="toggleModelGroup(group)">
+                      <span aria-hidden="true">{{ isModelGroupExpanded(group) ? '▾' : '▸' }}</span>
+                      <span>{{ group.label }}</span><small>{{ group.models.length }}</small>
+                    </button>
+                    <el-button v-if="group.subseries" link type="primary" :aria-label="'选中子系列 ' + group.label" @click.stop="selectSubseriesModels(group)">选中</el-button>
+                  </div>
+                  <div v-show="isModelGroupExpanded(group)" class="subseries-model-options">
+                    <template v-for="m in group.models" :key="m.id">
+                      <el-option v-if="primaryModelGroups.get(m.id) === group.key" :label="m.name" :value="m.id" />
+                      <li v-else role="option" :aria-selected="tempSelectedModels.includes(m.id)" class="el-select-dropdown__item model-tree-duplicate" :class="{ 'is-selected': tempSelectedModels.includes(m.id) }"
+                        tabindex="0" @click.stop="toggleTreeModel(m.id)" @keydown.enter.stop.prevent="toggleTreeModel(m.id)" @keydown.space.stop.prevent="toggleTreeModel(m.id)">
+                        <span>{{ m.name }}</span><span v-if="tempSelectedModels.includes(m.id)" aria-hidden="true">✓</span>
+                      </li>
+                    </template>
+                  </div>
+                </div>
               </div>
-              <div v-show="isModelGroupExpanded(group)" class="subseries-model-options">
-              <el-option
-                v-for="m in group.models"
-                :key="m.id"
-                :label="m.name"
-                :value="m.id"
-              />
-              </div>
-            </el-option-group>
+            </div>
           </el-select>
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
           </div>
@@ -1095,6 +1104,7 @@
 
 <script setup>
 import SubseriesEditor from '../components/SubseriesEditor.vue'
+import { buildModelSelectionTree, filterModelSelectionTree, primaryModelOccurrences } from '../utils/modelSelectionTree'
 import SubseriesCombinations from '../components/SubseriesCombinations.vue'
 import { draftBaseline, draftWorkingValue, updateDraftStats } from '../utils/configDraftHelpers'
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
@@ -1104,7 +1114,7 @@ import { getModelShortName as _getModelShortName, groupModelsBySeries, findSerie
 import { useDraftFilter } from '../utils/useDraftFilter'
 import { buildModelSelectionGroup, resolveGroupSeries, resolveGroupModels, loadModelSelectionGroups, saveModelSelectionGroups } from '../utils/modelSelectionGroups'
 import {
-  getSeriesList, getModels, getConfigRows,
+  getSeriesList, getModels, getConfigRows, getSubseries,
   getCurrentDraftBatch, createDraftBatch, createDraft,
   submitDraftBatch, deleteDraftByKey,
   importExcel, exportExcel, createVersion,
@@ -1146,14 +1156,17 @@ const modelGroups = computed(() => {
 const modelFilterText = ref('')
 
 const modelSubseriesProblems = ref([])
+const modelSubseriesCombinations = ref([])
 const modelSelectionGroups = computed(() => modelGroups.value.flatMap(series => {
   const names = [...new Set(series.models.flatMap(model => model.sub_series || []))]
   if (!names.length) return [{ ...series, key: `${series.seriesId}:all`, label: series.seriesName }]
-  const groups = names.map(name => ({ key: JSON.stringify([series.seriesId, name]), label: `${series.seriesName} / ${name}`, subseries: true, models: series.models.filter(model => model.sub_series?.includes(name)) }))
+  const groups = names.map(name => ({ key: JSON.stringify([series.seriesId, name]), label: `${series.seriesName} / ${name}`, subseries: true, subseriesName: name, models: series.models.filter(model => model.sub_series?.includes(name)) }))
   const other = series.models.filter(model => !model.sub_series?.length)
   if (other.length) groups.push({ key: `${series.seriesId}:other`, label: `${series.seriesName} / 其他机型`, models: other })
   return groups
 }))
+const modelSelectionTree = computed(() => buildModelSelectionTree(modelSelectionGroups.value, modelSubseriesCombinations.value))
+const filteredModelTree = computed(() => filterModelSelectionTree(modelSelectionTree.value, modelFilterText.value))
 const expandedModelGroupKeys = ref(new Set())
 const isModelGroupExpanded = group => Boolean(modelFilterText.value.trim()) || expandedModelGroupKeys.value.has(group.key)
 const toggleModelGroup = group => {
@@ -1165,7 +1178,7 @@ const toggleModelGroup = group => {
 }
 const expandModelGroupsForKeyboard = event => {
   if (event.target.tagName === 'INPUT' && ['ArrowDown', 'ArrowUp', 'Enter', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
-    expandedModelGroupKeys.value = new Set(modelSelectionGroups.value.map(group => group.key))
+    expandedModelGroupKeys.value = new Set(modelSelectionTree.value.flatMap(section => [section.key, ...section.groups.map(group => group.key)]))
   }
 }
 const selectSubseriesModels = group => {
@@ -1174,17 +1187,30 @@ const selectSubseriesModels = group => {
   applyModelSelection()
 }
 
-// 根据搜索文本过滤后的型号分组
-const filteredModelGroups = computed(() => {
-  const q = modelFilterText.value.trim().toLowerCase()
-  if (!q) return modelSelectionGroups.value
-  return modelSelectionGroups.value
-    .map(g => ({
-      ...g,
-      models: g.models.filter(m => g.label.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
-    }))
-    .filter(g => g.models.length > 0)
-})
+const primaryModelGroups = computed(() => primaryModelOccurrences(filteredModelTree.value, isModelGroupExpanded))
+const filteredModelGroups = computed(() => filteredModelTree.value.flatMap(section => section.groups))
+const toggleTreeModel = id => {
+  if (applyingModelGroup.value || reviewInteractionLocked.value) return
+  tempSelectedModels.value = tempSelectedModels.value.includes(id)
+    ? tempSelectedModels.value.filter(value => value !== id)
+    : [...tempSelectedModels.value, id]
+  applyModelSelection()
+}
+
+// Refresh shared combinations when opening; late responses cannot replace a newer request.
+let modelTreeRequest = 0
+const loadModelCombinations = async () => {
+  const request = ++modelTreeRequest
+  try {
+    const data = await getSubseries()
+    if (request === modelTreeRequest) modelSubseriesCombinations.value = data.combinations || []
+  } catch {
+    if (request === modelTreeRequest) {
+      modelSubseriesCombinations.value = []
+      ElMessage.warning('子系列组合加载失败，暂按子系列显示，请重新打开重试')
+    }
+  }
+}
 
 // 根据 modelId 查找对应的 seriesId（使用共享方法）
 const findSeriesIdByModelId = (modelId) => _findSeriesIdByModelId(allModelsMap.value, modelId)
@@ -2458,6 +2484,7 @@ const onModelDropdownVisibleChange = (visible) => {
   } else {
     // 打开时用当前生效的选择初始化临时值
     tempSelectedModels.value = [...selectedModels.value]
+    loadModelCombinations()
   }
 }
 
@@ -4872,6 +4899,17 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.model-tree-heading { display:flex; align-items:center; gap:5px; border:0; background:none; color:var(--el-text-color-regular); cursor:pointer; text-align:left; padding:7px 0; min-width:0; font:inherit; font-size:12px; }
+.model-tree-heading span:nth-child(2) { overflow-wrap:anywhere; }
+.model-tree-heading small { flex-shrink:0; color:var(--el-text-color-secondary); font-weight:normal; }
+.model-tree-heading:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:1px; }
+.model-tree-combination { width:100%; font-weight:600; padding:7px 12px; }
+.model-tree-group-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 12px; }
+.model-tree-group-heading .el-button { flex-shrink:0; }
+.model-tree-children { margin-left:12px; border-left:1px solid var(--el-border-color-lighter); }
+.model-tree-duplicate { display:flex; justify-content:space-between; gap:8px; }
+.model-tree-duplicate:focus-visible { outline:2px solid var(--el-color-primary); outline-offset:-2px; }
+
 .impact-model-list { max-height: 180px; overflow-y: auto; padding: 4px 8px; }
 .impact-model-group { margin-bottom: 10px; }
 .impact-model-group :deep(.el-tag) { margin: 4px 4px 0 0; max-width: 100%; }
