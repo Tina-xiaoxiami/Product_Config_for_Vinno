@@ -149,6 +149,11 @@ def test_embedded_mode_exposes_only_integrated_views_and_parent_navigation(tmp_p
         assert 'data-view="releases"' in page
         assert 'data-view="compare"' in page
         assert 'data-view="features"' not in page
+        assert "确认后进入发布版本记录，正式功能身份在基础数据管理中维护" in page
+        assert ">扫描并同步文件<" in page
+        assert ">目录与扫描<" in page
+        assert "确认后进入功能库与版本中心" not in page
+        assert "重新智能整理" not in page
 
         app_source = client.get("/release-workbench/static/app.js").text
         assert "release-workbench:navigate" in app_source
