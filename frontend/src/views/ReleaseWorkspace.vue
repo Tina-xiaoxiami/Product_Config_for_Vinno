@@ -3,8 +3,9 @@
     <header class="workspace-header">
       <div>
         <h2>功能发布</h2>
-        <p>在一个入口中查资料、做文件同步、查版本并管理已确认的功能版本记录。</p>
+        <p>查发布资料、同步文件、对比版本。</p>
       </div>
+      <a v-if="isWorkbenchTab(activeTab)" :href="releaseWorkbenchStandaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
 
     <el-tabs v-model="activeTab" class="workspace-tabs">
@@ -16,19 +17,6 @@
     </el-tabs>
 
     <section v-show="isWorkbenchTab(activeTab)" class="workspace-body">
-      <div class="workspace-guide">
-        <div>
-          <strong>{{ activeTabInfo.title }}</strong>
-          <span>{{ activeTabInfo.description }}</span>
-        </div>
-        <a
-          :href="releaseWorkbenchStandaloneUrl(activeTab)"
-          class="standalone-link"
-          target="_blank"
-          rel="noopener noreferrer"
-        >在新窗口打开</a>
-      </div>
-
       <div class="workbench-stack">
         <div class="workbench-frame-shell">
           <div v-if="workbenchState.status === 'checking'" class="workbench-status">
@@ -90,7 +78,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 
@@ -107,25 +95,6 @@ import {
 const route = useRoute()
 const router = useRouter()
 
-const tabInfo = {
-  search: {
-    title: '发布资料检索',
-    description: '按产品、版本或关键词定位 Release Note、白皮书等发布来源。'
-  },
-  review: {
-    title: '文件同步与扫描',
-    description: '管理发布资料目录并扫描变化，确认后再进入发布数据。'
-  },
-  releases: {
-    title: '发布版本',
-    description: '查看已组织的发布版本和其资料覆盖情况。'
-  },
-  compare: {
-    title: '发布对比',
-    description: '对比不同发布版本的资料与功能变化。'
-  }
-}
-
 const isWorkbenchTab = tab => RELEASE_WORKBENCH_VIEWS.includes(tab)
 const activeTab = ref(normalizeReleaseTab(route.query.tab))
 const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
@@ -138,8 +107,6 @@ const workbenchState = reactive({
   message: '',
   frameKey: 0
 })
-
-const activeTabInfo = computed(() => tabInfo[activeTab.value] || tabInfo.search)
 
 async function checkWorkbenchAvailability(force = false) {
   if (!force && (workbenchState.status === 'checking' || workbenchState.status === 'ready')) return
@@ -214,7 +181,7 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 <style scoped>
 .release-workspace {
   height: calc(100vh - 24px);
-  min-height: 620px;
+  min-height: 420px;
   display: flex;
   flex-direction: column;
   color: #1f2937;
@@ -225,10 +192,11 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 4px 10px;
+  padding: 4px 2px 12px;
 }
 
-.workspace-header h2 { margin: 0 0 6px; font-size: 22px; }
+.workspace-header h2 { margin: 0 0 4px; font-size: 20px; }
+.workspace-header > .standalone-link { margin-top: 6px; }
 .workspace-header p { margin: 0; color: #64748b; font-size: 13px; }
 .workspace-tabs { flex: 0 0 auto; }
 .workspace-tabs :deep(.el-tabs__header) { margin-bottom: 10px; }
@@ -283,8 +251,8 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 .native-release-pane > :deep(.feature-release) { padding: 14px; }
 
 @media (max-width: 900px) {
-  .release-workspace { min-height: 560px; }
+  .release-workspace { min-height: 420px; }
   .workspace-guide div { align-items: flex-start; flex-direction: column; gap: 4px; }
-  .workspace-header { flex-direction: column; }
+  .workspace-header { flex-wrap: wrap; }
 }
 </style>

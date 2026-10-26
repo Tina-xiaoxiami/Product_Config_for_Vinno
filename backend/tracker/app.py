@@ -139,13 +139,13 @@ def validated_source_root(config: Mapping[str, Any], raw_path: Any) -> str:
 
 
 def static_asset_version(static_folder: str | None) -> str:
-    """静态资源版本号：取 styles.css 与 app.js 的最新修改时间。
+    """静态资源版本号：取样式与脚本的最新修改时间。
 
     无 Cache-Control 的静态文件会被浏览器启发式缓存，改完样式却看不到效果；
     把 mtime 带进 URL 后，文件一改链接就变，页面刷新即拿到新版。
     """
     newest = 0
-    for name in ("styles.css", "app.js", "workspace.js"):
+    for name in ("styles.css", "embedded.css", "app.js", "workspace.js"):
         if not static_folder:
             break
         try:

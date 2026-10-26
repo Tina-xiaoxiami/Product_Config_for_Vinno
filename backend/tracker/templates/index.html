@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>功能研发版本追踪</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ static_version }}">
+  {% if embedded %}<link rel="stylesheet" href="{{ url_for('static', filename='embedded.css') }}?v={{ static_version }}">{% endif %}
 </head>
 <body{% if embedded %} class="workbench-embedded"{% endif %}>
   <div class="app-shell">
@@ -51,7 +52,7 @@
         <div class="topbar-heading"><h1 id="page-title">版本中心</h1><span class="view-scope" id="view-scope">当前项目</span></div>
         <div class="topbar-actions">
           <div class="project-context-actions" id="project-context-actions">
-            <select id="project-switcher" aria-label="切换当前项目"></select>
+            {% if embedded %}<span class="project-context-label">产品项目</span>{% endif %}<select id="project-switcher" aria-label="切换当前项目"></select>
             <button type="button" id="manage-projects" class="ghost-button compact-button">{% if integrated_mode %}目录与扫描{% else %}管理项目{% endif %}</button>
           </div>
           <button type="button" id="search-toggle" class="ghost-button compact-button" aria-controls="release-search-form">全局搜索</button>
@@ -76,12 +77,12 @@
       <section class="view" data-page="search">
         <div class="section-heading"><div><p class="eyebrow">跨来源查询</p><h2>一次搜索版本、配置和资料</h2><p>结果保留来源、适用范围、版本和原文位置；精确匹配优先，同一文件合并命中。文件在首次使用和后台定期更新。</p><p>机型、市场和国家筛选按各来源已登记的范围生效；范围不明确时会显示说明。</p></div></div>
         <form id="release-search-form" class="unified-search-form" aria-label="全局搜索">
-          <label class="unified-search-query"><span aria-hidden="true">⌕</span><input id="release-search" type="search" aria-label="搜索产品资料和版本" placeholder="关键词、中文名称、英文名称、机型或 V 代码，例如 妇科 / X1-5C / V30883" autocomplete="off"></label>
+          {% if embedded %}<div class="search-primary-row">{% endif %}<label class="unified-search-query"><span aria-hidden="true">⌕</span><input id="release-search" type="search" aria-label="搜索产品资料和版本" placeholder="{% if embedded %}搜索功能或发布内容，如 后台导出、VAid+{% else %}关键词、中文名称、英文名称、机型或 V 代码，例如 妇科 / X1-5C / V30883{% endif %}" autocomplete="off"></label>{% if embedded %}<button id="release-search-button" type="submit" class="primary-button">搜索</button></div>{% endif %}
           <div class="search-task-shortcuts" role="group" aria-label="常见查询任务">
+            <button type="button" class="text-button" data-search-task="search">普通搜索</button>
             <button type="button" class="ghost-button" data-search-task="earliest">查首次记载</button>
             <button type="button" class="ghost-button" data-search-task="version">查某版本是否提及</button>
             <button type="button" class="ghost-button" data-search-task="family">查功能包含哪些能力</button>
-            <button type="button" class="text-button" data-search-task="search">普通搜索</button>
           </div>
           <input id="release-search-task" type="hidden" value="search">
           <p id="search-task-hint" class="strategy-note">输入关键词，或选择上方常见查询任务。</p>
@@ -91,12 +92,12 @@
             <label class="checkbox-filter"><input id="release-search-expand" type="checkbox">使用关联词寻找线索</label>
           </div>
           <p id="search-version-help" class="strategy-note">留空查询所有版本；可填系列或用逗号分隔多个版本。下方可勾选已入库版本。</p>
-          <details id="search-version-picker"><summary>从已入库版本选择（可多选）</summary><div id="search-version-options" aria-live="polite"></div></details>
-          <details id="search-version-range"><summary>使用连续版本范围</summary><p class="strategy-note">版本选择与连续范围二选一；填写一种方式会清除另一种。</p><div class="unified-search-controls">
+          {% if embedded %}<div class="search-disclosures">{% endif %}<details id="search-version-picker"><summary>{% if embedded %}选择版本{% else %}从已入库版本选择（可多选）{% endif %}</summary><div id="search-version-options" aria-live="polite"></div></details>
+          <details id="search-version-range"><summary>{% if embedded %}版本范围{% else %}使用连续版本范围{% endif %}</summary><p class="strategy-note">版本选择与连续范围二选一；填写一种方式会清除另一种。</p><div class="unified-search-controls">
             <label>起始版本<input id="release-search-version-from" placeholder="例如 1.14.0" aria-label="起始版本"></label>
             <label>结束版本<input id="release-search-version-to" placeholder="例如 1.14.100" aria-label="结束版本"></label>
           </div></details>
-          <details id="search-advanced"><summary>高级筛选（来源、机型、市场、复核状态）</summary>
+          <details id="search-advanced"><summary>{% if embedded %}更多筛选{% else %}高级筛选（来源、机型、市场、复核状态）{% endif %}</summary>
           <div class="unified-search-controls">
             <label>市场<select id="release-search-market" aria-label="搜索市场"><option value="">全部市场</option><option value="domestic">国内</option><option value="overseas">海外</option></select></label>
             <label>机型<input id="release-search-model" aria-label="按机型筛选搜索结果" placeholder="例如 VINNO 10"></label>
@@ -117,12 +118,23 @@
             <label><input type="checkbox" name="search-source" value="qa" checked>正式问答</label>
           </fieldset>
           </details>
+          {% if embedded %}
+          <details class="search-tools"><summary>资料工具</summary>
+            <div class="search-tools-content">
+              <div class="search-maintenance-actions"><button type="button" id="register-historical-document" class="ghost-button">补充历史资料</button><button type="button" id="search-index-refresh" class="ghost-button">更新资料索引</button></div>
+              <div class="search-save-row"><input id="saved-search-name" maxlength="100" aria-label="常用入口名称" placeholder="常用搜索名称（可选）"><button type="button" class="ghost-button" data-save-search title="保存当前搜索条件">保存搜索</button></div>
+            </div>
+          </details>
+          </div>
+          <div class="search-status-row"><span id="search-index-status" role="status">正在检查资料索引…</span><span title="未找到提及不代表不支持，请结合原文范围核对">结果保留原文出处</span></div>
+          {% else %}
           <div class="unified-search-actions"><button id="release-search-button" type="submit" class="primary-button">搜索</button><button type="button" id="register-historical-document" class="ghost-button">补充历史资料</button><button type="button" id="search-index-refresh" class="ghost-button">更新资料索引</button><button type="button" class="ghost-button" data-save-search title="保存当前搜索条件">保存搜索</button><span id="search-index-status" role="status">资料索引尚未检查</span></div>
           <label>常用入口名称<input id="saved-search-name" maxlength="100" placeholder="例如 V10 当前白皮书"></label>
+          {% endif %}
         </form>
         <div id="saved-searches" class="saved-searches" aria-label="已保存的搜索" hidden></div>
         <section id="global-search-panel" class="global-search-panel" aria-live="polite">
-          <div class="global-search-panel-heading"><div><strong>跨来源搜索结果</strong><span>版本原文、正式配置、受控资料、培训资料与术语</span></div></div>
+          <div class="global-search-panel-heading"><div><strong>{% if embedded %}检索结果{% else %}跨来源搜索结果{% endif %}</strong><span>版本原文、正式配置、受控资料、培训资料与术语</span></div></div>
           <div id="search-active-filters" class="search-active-filters" aria-label="当前搜索筛选" hidden></div>
           <div id="release-search-result"><p class="empty-state compact">输入关键词开始搜索。</p></div>
         </section>
