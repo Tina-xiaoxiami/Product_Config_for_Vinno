@@ -145,10 +145,10 @@ test('publish review is backed by server preview and expected signatures for bot
 
 function publishApp(overrides = {}) {
   const messages = []; const requests = []
-  const review = id => ({ batch_id: id, series_name: `系列 ${id}`, total_items: 2, total_changes: 3, total_models: 1, signature: `signature-${id}`, remaining_changes: 1,
+  const review = id => ({ batch_id: id, series_id: id - 100, series_name: `系列 ${id}`, total_items: 2, total_changes: 3, total_models: 1, signature: `signature-${id}`, remaining_changes: 1,
     models: [{ id: 10, name: '机型' }], fields: ['final_config'], drafts: [{ item_id: 1, model_id: 10, field_name: 'final_config' }, { item_id: 2, model_id: 10, field_name: 'final_config' }, { item_id: 1, model_id: 20, field_name: 'final_config' }] })
   const context = {
-    discardSubmitting: ref(false), submitSubmitting: ref(false), submitPreviewLoading: ref(false), submitPreviewError: ref(''), submitPreviews: ref([]), submitResults: ref([]), submitDialogVisible: ref(false), submitScope: ref(null), submitPreviewRequest: 0,
+    batchVersionCheck: { pending: false, error: '' }, discardSubmitting: ref(false), submitSubmitting: ref(false), submitPreviewLoading: ref(false), submitPreviewError: ref(''), submitPreviews: ref([]), submitResults: ref([]), submitDialogVisible: ref(false), submitScope: ref(null), submitPreviewRequest: 0,
     submitForm: { version_number: '', description: '', item_ids: null, model_ids: null },
     batchSubmitDialog: { visible: false, loading: false, error: '', selectedBatchIds: [], availableBatches: [], scope: null }, batchSubmitSubmitting: ref(false), batchSubmitPreviewRequest: 0, batchSubmitResultDialog: { visible: false, results: [] },
     draftBatchMap: ref(new Map([[100, 200], [101, 201]])), selectedSeries: ref([100, 101]), paginatedTableData: ref([{ id: 1 }]), selectedModels: ref([10]), visibleConfigFields: ref(['final_config']), draftCellOperations: new Map(),
@@ -158,7 +158,7 @@ function publishApp(overrides = {}) {
   }
   const single = source.slice(source.indexOf('const fieldLabels ='), source.indexOf('// 提交选中机型'))
   const batch = source.slice(source.indexOf('const handleOpenBatchSubmit ='), source.indexOf('// 计算表格高度'))
-  const methods = new Function(...Object.keys(context), `${single}\n${batch};return { handleSubmitDraft, refreshSubmitPreview, confirmSubmitDraft, handleOpenBatchSubmit, confirmBatchSubmit, describeSubmission }`)(...Object.values(context))
+  const methods = new Function(...Object.keys(context), `${single}\n${batch};return { handleSubmitDraft, refreshSubmitPreview, confirmSubmitDraft, handleOpenBatchSubmit, confirmBatchSubmit, returnToBatchSubmit, describeSubmission }`)(...Object.values(context))
   return { ...context, ...methods, requests, messages, review }
 }
 test('publish preview identifies hidden rows and models and freezes chosen item scope', async () => {
@@ -239,4 +239,84 @@ test('import shared field labels use readable business names', () => {
   const code = source.match(/const fieldLabels = \{[^\n]+/)[0]
   const labels = new Function(`${code};return fieldLabels`)()
   assert.deepEqual(['row_index', 'zh_desc', 'rd_name', 'v_code', 'ipn', 'en_desc', 'category'].map(field => labels[field]), ['排序位置', '中文描述', '研发名称', 'V代码', 'IPN号', '英文描述', '分类'])
+})
+
+
+test('batch failures return to the preserved form with fresh signatures and retry only failed series', async () => {
+  const posts = []; let attempt = 0
+  const app = publishApp({ batchSubmitDrafts: async params => {
+    posts.push(params); attempt++
+    return { submitted_count: 1, results: params.batch_ids.map(id => ({ batch_id: id, success: attempt > 1 || id === 200, message: id === 201 ? '版本号已存在，请修改版本号' : '成功' })) }
+  } })
+  await app.handleOpenBatchSubmit()
+  app.batchSubmitDialog.versionNumber = '1.51.90'; app.batchSubmitDialog.description = '保留版本说明'
+  await app.confirmBatchSubmit()
+  assert.equal(app.batchSubmitResultDialog.visible, true)
+  await app.returnToBatchSubmit()
+  assert.equal(app.batchSubmitDialog.visible, true)
+  assert.equal(app.batchSubmitResultDialog.visible, false)
+  assert.equal(app.batchSubmitDialog.versionNumber, '1.51.90')
+  assert.equal(app.batchSubmitDialog.description, '保留版本说明')
+  assert.deepEqual(app.batchSubmitDialog.selectedBatchIds, [201])
+  app.batchSubmitDialog.versionNumber = '1.51.91'
+  await app.confirmBatchSubmit()
+  assert.deepEqual(posts[1].batch_ids, [201])
+  assert.equal(posts[1].version_number, '1.51.91')
+  assert.equal(posts[1].expected_signatures[201], 'signature-201')
+})
+
+test('all failed or missing outcomes remain retryable without selecting unsubmitted series', async () => {
+  for (const results of [[], [{ batch_id: 201, success: false, message: '版本号重复' }]]) {
+    const app = publishApp({ batchSubmitDrafts: async () => ({ results }) })
+    await app.handleOpenBatchSubmit(); app.batchSubmitDialog.selectedBatchIds = [201]
+    await app.confirmBatchSubmit()
+    assert.equal(app.batchSubmitResultDialog.results.length, 1)
+    assert.equal(app.batchSubmitResultDialog.results[0].success, false)
+    await app.returnToBatchSubmit()
+    assert.deepEqual(app.batchSubmitDialog.selectedBatchIds, [201])
+  }
+})
+
+test('result messages wrap and failed submissions provide a return action', () => {
+  assert.match(source, /class="submission-result-message"/)
+  assert.match(source, /@click="returnToBatchSubmit"/)
+  assert.match(source, /\.submission-result-message\s*\{[^}]*white-space: pre-wrap/s)
+})
+
+
+test('a refresh failure preserves submission results and the return path', async () => {
+  const app = publishApp({
+    batchSubmitDrafts: async () => ({ results: [{ batch_id: 200, success: false, message: '版本号重复' }, { batch_id: 201, success: true, message: '成功' }] }),
+    loadData: async () => false
+  })
+  await app.handleOpenBatchSubmit(); await app.confirmBatchSubmit()
+  assert.match(app.batchSubmitResultDialog.error, /刷新失败/)
+  assert.equal(app.batchSubmitResultDialog.results[0].message, '版本号重复')
+  await app.returnToBatchSubmit()
+  assert.deepEqual(app.batchSubmitDialog.selectedBatchIds, [200])
+})
+
+test('return refresh failure retains form values and blocks stale retry', async () => {
+  let failPreview = false; const posts = []
+  const app = publishApp({
+    previewDraftSubmission: async id => {
+      if (failPreview) throw new Error('offline')
+      return { batch_id: id, series_id: id - 100, total_changes: 1, models: [], fields: [], drafts: [] }
+    },
+    batchSubmitDrafts: async params => { posts.push(params); return { results: [] } }
+  })
+  await app.handleOpenBatchSubmit(); app.batchSubmitDialog.versionNumber = 'V2'
+  await app.confirmBatchSubmit(); failPreview = true
+  await app.returnToBatchSubmit(); await app.confirmBatchSubmit()
+  assert.equal(app.batchSubmitDialog.versionNumber, 'V2')
+  assert.match(app.batchSubmitDialog.error, /无法核验/)
+  assert.equal(posts.length, 1)
+})
+
+
+test('batch publish blocks pending or failed version preflight', async () => {
+  const app = publishApp(); await app.handleOpenBatchSubmit()
+  app.batchVersionCheck.pending = true; await app.confirmBatchSubmit()
+  app.batchVersionCheck.pending = false; app.batchVersionCheck.error = '版本号重复'; await app.confirmBatchSubmit()
+  assert.equal(app.requests.length, 0)
 })

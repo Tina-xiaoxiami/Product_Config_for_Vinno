@@ -76,7 +76,7 @@ function versionCompareController(compareVersions, { loadAllVersionOptions, erro
   )
   const functions = new Function(
     ...Object.keys(context),
-    `${seriesCode}\n${openCode}\n${compareCode}\nreturn { handleSeriesChange, openCompareDialog, executeCompare }`
+    `${seriesCode}\n${openCode}\n${compareCode}\nreturn { handleSeriesChange, handleCompareSeriesChange, openCompareDialog, executeCompare }`
   )(...Object.values(context))
   return { ...functions, ...context, errors }
 }
@@ -89,7 +89,7 @@ test('version history requests the selected server page and renders pagination',
 
 test('changing series resets version history to its first page', () => {
   assert.match(source, /const handleSeriesChange = \(\) => \{[\s\S]*?currentPage\.value = 1[\s\S]*?loadVersions\(\)/)
-  assert.match(source, /@change="handleSeriesChange"/)
+  assert.match(source, /@tab-change="handleSeriesChange"/)
 })
 
 test('compare selectors load every version through bounded API pages', () => {
@@ -97,7 +97,9 @@ test('compare selectors load every version through bounded API pages', () => {
   assert.match(source, /const loadAllVersionOptions = async/)
   assert.match(source, /getVersions\(seriesId,\s*\{\s*skip,\s*limit:\s*VERSION_OPTION_PAGE_SIZE\s*\}\)/)
   assert.match(source, /while \(skip < total\)/)
-  assert.match(source, /<el-option v-for="v in versionOptions"/)
+  assert.match(source, /:versions="versionOptions"/)
+  const component = readFileSync(new URL('../src/components/VersionComparison.vue', import.meta.url), 'utf8')
+  assert.match(component, /<el-option v-for="version in versions"/)
 })
 
 test('a current version load failure clears the previous series total', async () => {
@@ -197,4 +199,33 @@ test('a stale failed dialog load cannot report an error after a newer dialog suc
   assert.deepEqual(app.errors, [])
   assert.equal(app.compareVersion1.value, 3)
   assert.equal(app.compareVersion2.value, 4)
+})
+
+
+test('comparison series tabs load their own pair and ignore an older series response', async () => {
+  const first=deferred(),second=deferred()
+  const app=versionCompareController(async()=>({}),{loadAllVersionOptions:id=>id===10?first.promise:second.promise})
+  const pending=app.handleCompareSeriesChange()
+  await Promise.resolve()
+  assert.equal(app.compareVersion1.value,null)
+  app.selectedSeries.value=20
+  const current=app.handleCompareSeriesChange()
+  await Promise.resolve()
+  second.resolve([{id:201},{id:202}]);await current
+  first.resolve([{id:101},{id:102}]);await pending
+  assert.equal(app.compareVersion1.value,201)
+  assert.equal(app.compareVersion2.value,202)
+})
+
+test('comparison series with one version clears previous pair and closed dialogs ignore responses', async () => {
+  const app=versionCompareController(async()=>({}),{loadAllVersionOptions:async()=>[{id:31}]})
+  await app.handleCompareSeriesChange()
+  assert.equal(app.compareVersion1.value,31)
+  assert.equal(app.compareVersion2.value,null)
+  const delayed=deferred()
+  const closing=versionCompareController(async()=>({}),{loadAllVersionOptions:()=>delayed.promise})
+  const pending=closing.handleCompareSeriesChange();await Promise.resolve()
+  closing.compareDialogVisible.value=false
+  delayed.resolve([{id:41},{id:42}]);await pending
+  assert.equal(closing.compareVersion1.value,null)
 })

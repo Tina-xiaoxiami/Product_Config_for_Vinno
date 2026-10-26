@@ -1,28 +1,28 @@
 <template>
   <div class="versions-page">
-    <el-card shadow="never">
+    <el-card shadow="never" class="history-card">
       <template #header>
         <div class="card-header">
           <span>版本历史</span>
-          <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="handleSeriesChange" style="width: 200px">
-            <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
-          </el-select>
         </div>
+        <el-tabs v-model="selectedSeries" class="series-tabs" aria-label="产品系列" @tab-change="handleSeriesChange">
+          <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
+        </el-tabs>
       </template>
 
       <el-timeline v-if="versions.length > 0">
         <el-timeline-item
           v-for="version in versions"
           :key="version.id"
-          :timestamp="formatTime(version.published_at)"
-          placement="top"
+          hide-timestamp
           type="primary"
         >
           <el-card shadow="hover" class="version-card">
             <div class="version-header">
               <div class="version-info">
-                <el-tag type="primary" size="large">{{ version.version_number }}</el-tag>
+                <el-tag type="primary" size="small">{{ version.version_number }}</el-tag>
                 <span v-if="version.version_name" class="version-name">{{ version.version_name }}</span>
+                <span class="version-time">{{ formatTime(version.published_at) }}</span>
                 <span class="version-stats">共 {{ version.row_count }} 项配置</span>
               </div>
               <div class="version-actions">
@@ -35,9 +35,6 @@
 
             <p v-if="version.description" class="version-desc">{{ version.description }}</p>
 
-            <div class="version-footer">
-              <span class="publisher">发布人：{{ version.published_by || '系统' }}</span>
-            </div>
           </el-card>
         </el-timeline-item>
       </el-timeline>
@@ -98,77 +95,13 @@
 
     <!-- 版本对比对话框 -->
     <el-dialog v-model="compareDialogVisible" title="版本对比" width="90%" top="5vh">
-      <div class="compare-select" v-if="versionOptions.length > 1" v-loading="versionOptionsLoading">
-        <el-select v-model="compareVersion1" placeholder="选择版本1" style="width: 200px">
-          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
-        </el-select>
-        <span class="compare-vs">VS</span>
-        <el-select v-model="compareVersion2" placeholder="选择版本2" style="width: 200px">
-          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
-        </el-select>
-        <el-select
-          v-model="selectedModels"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          placeholder="选择机型（可选，默认全部）"
-          style="width: 280px; margin-left: 16px;"
-        >
-          <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
-        </el-select>
-        <el-button type="primary" @click="executeCompare" :loading="compareLoading" style="margin-left: 16px;">对比</el-button>
-      </div>
-
-      <div v-if="compareResult" class="compare-result">
-        <el-alert
-          :title="`差异统计：新增 ${compareResult.summary.added} 项，修改 ${compareResult.summary.modified} 项，删除 ${compareResult.summary.deleted} 项`"
-          type="info"
-          show-icon
-          :closable="false"
-          style="margin-bottom: 16px"
-        />
-
-        <el-tabs v-model="activeTab">
-          <el-tab-pane :label="`新增 (${compareResult.added.length})`" name="added">
-            <el-table :data="compareResult.added" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="300" />
-              <el-table-column prop="ipn" label="IPN号" width="150" />
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane :label="`修改 (${compareResult.modified.length})`" name="modified">
-            <el-table :data="compareResult.modified" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="250" />
-              <el-table-column prop="ipn" label="IPN号" width="120" />
-              <el-table-column prop="model_name" label="型号" width="150" />
-              <el-table-column prop="field_name" label="字段" width="100">
-                <template #default="{ row }">
-                  {{ getFieldLabel(row.field_name) }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="old_value" label="原值" width="150">
-                <template #default="{ row }">
-                  <span class="old-value">{{ row.old_value || '-' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="new_value" label="新值" width="150">
-                <template #default="{ row }">
-                  <span class="new-value">{{ row.new_value || '-' }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane :label="`删除 (${compareResult.deleted.length})`" name="deleted">
-            <el-table :data="compareResult.deleted" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="300" />
-              <el-table-column prop="ipn" label="IPN号" width="150" />
-            </el-table>
-          </el-tab-pane>
-        </el-tabs>
-      </div>
-
-      <el-empty v-else-if="!compareLoading" description="请选择两个版本进行对比" />
+      <el-tabs v-model="selectedSeries" class="series-tabs compare-series-tabs" aria-label="对比产品系列" @tab-change="handleCompareSeriesChange">
+        <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
+      </el-tabs>
+      <VersionComparison v-if="compareDialogVisible" :key="selectedSeries"
+        v-model:version1="compareVersion1" v-model:version2="compareVersion2"
+        :versions="versionOptions" :options-loading="versionOptionsLoading" :result="compareResult" :loading="compareLoading"
+        @compare="executeCompare" />
     </el-dialog>
 
     <!-- 编辑版本对话框 -->
@@ -195,6 +128,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import VersionComparison from '../components/VersionComparison.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, compareVersions, rollbackVersion, updateVersion, getModels } from '../api/data'
 import { formatTime, getFieldLabel } from '../utils/modelHelpers'
@@ -296,7 +230,27 @@ const handleSeriesChange = () => {
   currentPage.value = 1
   versionOptions.value = []
   versionOptionLoadRequest++
-  loadVersions()
+  return loadVersions()
+}
+
+const handleCompareSeriesChange = async () => {
+  compareVersion1.value = null
+  compareVersion2.value = null
+  selectedModels.value = []
+  const loadingHistory = handleSeriesChange()
+  const request = compareRequest
+  const seriesId = selectedSeries.value
+  const isCurrent = () => request === compareRequest && selectedSeries.value === seriesId && compareDialogVisible.value
+  try {
+    await loadingHistory
+    if (!isCurrent()) return
+    const options = await loadAllVersionOptions(seriesId)
+    if (!isCurrent()) return
+    compareVersion1.value = options[0]?.id ?? null
+    compareVersion2.value = options[1]?.id ?? null
+  } catch (error) {
+    if (isCurrent()) ElMessage.error('加载该系列的版本失败，请重新切换系列重试')
+  }
 }
 
 const handlePageSizeChange = () => {
@@ -513,65 +467,65 @@ onMounted(() => {
   padding: 0;
 }
 
+.series-tabs { min-width: 0; margin-top: 10px; }
+.series-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.series-tabs :deep(.el-tabs__content) { display: none; }
+
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.version-card {
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.version-card:hover {
-  transform: translateX(5px);
-}
+.history-card > :deep(.el-card__header) { padding: 12px 16px 8px; }
+.history-card > :deep(.el-card__body) { padding: 14px 16px; }
+.history-card :deep(.el-timeline) { padding-left: 8px; }
+.history-card :deep(.el-timeline-item) { padding-bottom: 12px; }
+.history-card :deep(.el-timeline-item__wrapper) { padding-left: 22px; top: -3px; }
+.version-card :deep(.el-card__body) { padding: 10px 12px; }
 
 .version-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 8px 16px;
+  flex-wrap: wrap;
 }
 
 .version-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .version-name {
-  font-size: 16px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
   font-weight: 500;
 }
 
-.version-stats {
+.version-time, .version-stats {
   color: #909399;
   font-size: 13px;
 }
 
 .version-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
+.version-actions .el-button + .el-button { margin-left: 0; }
 
 .version-desc {
   color: #606266;
-  margin: 12px 0;
-  padding-left: 12px;
+  margin: 6px 0 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-left: 8px;
   border-left: 3px solid #409EFF;
-}
-
-.version-footer {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #EBEEF5;
-}
-
-.publisher {
-  color: #909399;
-  font-size: 13px;
 }
 
 .pagination-wrapper {

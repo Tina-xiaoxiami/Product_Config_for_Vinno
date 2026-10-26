@@ -1067,19 +1067,26 @@
             </div>
           </div>
         </el-form-item>
-        <el-form-item label="版本号"><el-input v-model="batchSubmitDialog.versionNumber" placeholder="留空则各系列自动生成" /></el-form-item>
+        <el-form-item label="版本号">
+          <div style="width: 100%">
+            <el-input v-model="batchSubmitDialog.versionNumber" placeholder="留空则各系列自动生成" />
+            <div v-if="batchVersionCheck.error" class="version-validation-error" role="alert">{{ batchVersionCheck.error }}</div>
+            <div v-if="batchVersionCheck.pending" role="status">正在校验版本号…</div>
+            <el-button v-if="batchVersionCheck.error" link type="primary" @click="batchVersionCheck.recheck">重新校验</el-button>
+          </div>
+        </el-form-item>
         <el-form-item label="版本说明"><el-input v-model="batchSubmitDialog.description" type="textarea" :rows="3" /></el-form-item>
       </el-form>
       <p class="scope-note">指定版本号会用于全部选中系列；已有同名版本的系列会提交失败。每个系列的结果将单独显示。</p>
       <template #footer>
         <el-button :disabled="batchSubmitSubmitting" @click="batchSubmitDialog.visible = false">取消</el-button>
         <el-button :disabled="batchSubmitSubmitting || batchSubmitDialog.loading" @click="refreshBatchSubmitPreview">刷新范围</el-button>
-        <el-button type="primary" :loading="batchSubmitSubmitting" :disabled="batchSubmitDialog.loading || !!batchSubmitDialog.error || !batchSubmitDialog.selectedBatchIds.length" @click="confirmBatchSubmit">确认发布 ({{ batchSubmitDialog.selectedBatchIds.length }})</el-button>
+        <el-button type="primary" :loading="batchSubmitSubmitting" :disabled="batchSubmitDialog.loading || !!batchSubmitDialog.error || !batchSubmitDialog.selectedBatchIds.length || batchVersionCheck.pending || !!batchVersionCheck.error" @click="confirmBatchSubmit">确认发布 ({{ batchSubmitDialog.selectedBatchIds.length }})</el-button>
       </template>
     </el-dialog>
 
     <!-- 批量提交结果 -->
-    <el-dialog v-model="batchSubmitResultDialog.visible" :title="batchSubmitResultDialog.action === 'discard' ? '撤销草稿结果' : '批量提交结果'" width="650px"
+    <el-dialog v-model="batchSubmitResultDialog.visible" :title="batchSubmitResultDialog.action === 'discard' ? '撤销草稿结果' : '批量提交结果'" width="min(960px, 95vw)"
       :close-on-click-modal="!discardSubmitting" :close-on-press-escape="!discardSubmitting" :show-close="!discardSubmitting">
       <el-alert v-if="batchSubmitResultDialog.error" :title="batchSubmitResultDialog.error" type="error" :closable="false" show-icon style="margin-bottom: 12px" />
       <el-table :data="batchSubmitResultDialog.results" max-height="400">
@@ -1095,11 +1102,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="message" label="说明" />
+        <el-table-column label="说明" min-width="300"><template #default="{ row }"><div class="submission-result-message">{{ row.message }}</div></template></el-table-column>
       </el-table>
       <template #footer>
         <el-button v-if="batchSubmitResultDialog.action === 'discard' && batchSubmitResultDialog.scope && (batchSubmitResultDialog.error || batchSubmitResultDialog.results.some(row => !row.success))"
           :loading="discardSubmitting" @click="retryDiscardDrafts">重新核验并重试</el-button>
+        <el-button v-if="batchSubmitResultDialog.action === 'submit' && batchSubmitResultDialog.scope?.seriesIds.length" type="primary" :disabled="batchSubmitSubmitting" @click="returnToBatchSubmit">返回修改并重试</el-button>
         <el-button type="primary" :disabled="discardSubmitting" @click="batchSubmitResultDialog.visible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -1116,6 +1124,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
 import { getModelShortName as _getModelShortName, groupModelsBySeries, findSeriesIdByModelId as _findSeriesIdByModelId, isValueChanged as _isValueChanged, isEmptyValue as _isEmptyValue, normalizeValue } from '../utils/modelHelpers'
+import { useVersionPreflight } from '../utils/useVersionPreflight'
 import { useDraftFilter } from '../utils/useDraftFilter'
 import { buildModelSelectionGroup, resolveGroupSeries, resolveGroupModels, loadModelSelectionGroups, saveModelSelectionGroups } from '../utils/modelSelectionGroups'
 import {
@@ -1124,7 +1133,7 @@ import {
   submitDraftBatch, deleteDraftByKey,
   importExcel, exportExcel, createVersion,
   getEnumValues, previewImportBatch, previewDraftSubmission,
-  batchDiscardDrafts, batchSubmitDrafts
+  batchDiscardDrafts, batchSubmitDrafts, checkSubmissionVersion
 } from '../api/data'
 
 const subseriesEditorRef = ref(null)
@@ -2387,6 +2396,13 @@ const batchSubmitDialog = reactive({
   versionNumber: '',
   description: ''
 })
+const batchVersionCheck = useVersionPreflight(() => ({
+  enabled: batchSubmitDialog.visible && !batchSubmitDialog.loading,
+  versionNumber: batchSubmitDialog.versionNumber,
+  seriesIds: batchSubmitDialog.availableBatches
+    .filter(review => batchSubmitDialog.selectedBatchIds.includes(review.batch_id))
+    .map(review => review.series_id)
+}), checkSubmissionVersion)
 const batchSubmitSubmitting = ref(false)
 const discardSubmitting = ref(false)
 let batchSubmitPreviewRequest = 0
@@ -4342,8 +4358,15 @@ const toggleSubmitBatch = (batchId, checked) => {
     ? Array.from(new Set([...batchSubmitDialog.selectedBatchIds, batchId]))
     : batchSubmitDialog.selectedBatchIds.filter(id => id !== batchId)
 }
+const returnToBatchSubmit = async () => {
+  if (batchSubmitSubmitting.value || batchSubmitResultDialog.action !== 'submit' || !batchSubmitResultDialog.scope?.seriesIds.length) return
+  batchSubmitDialog.scope = batchSubmitResultDialog.scope
+  batchSubmitResultDialog.visible = false
+  batchSubmitDialog.visible = true
+  await refreshBatchSubmitPreview()
+}
 const confirmBatchSubmit = async () => {
-  if (batchSubmitSubmitting.value || batchSubmitDialog.loading || batchSubmitDialog.error) return
+  if (batchSubmitSubmitting.value || batchSubmitDialog.loading || batchSubmitDialog.error || batchVersionCheck.pending || batchVersionCheck.error) return
   const reviews = batchSubmitDialog.availableBatches.filter(review => batchSubmitDialog.selectedBatchIds.includes(review.batch_id))
   if (!reviews.length) { ElMessage.warning('请至少选择一个系列'); return }
   const params = {
@@ -4354,14 +4377,32 @@ const confirmBatchSubmit = async () => {
   batchSubmitSubmitting.value = true
   try {
     const res = await batchSubmitDrafts(params)
-    batchSubmitResultDialog.results = (res.results || []).map(result => ({
-      seriesName: reviews.find(review => review.batch_id === result.batch_id)?.series_name || `系列 ${result.series_id}`,
-      versionNumber: result.version_number || '-', changes: result.changes || 0, success: result.success, message: result.message
-    }))
-    batchSubmitResultDialog.action = 'submit'; batchSubmitResultDialog.scope = null; batchSubmitResultDialog.error = ''
+    const outcomes = new Map((res.results || []).map(result => [result.batch_id, result]))
+    batchSubmitResultDialog.results = reviews.map(review => {
+      const result = outcomes.get(review.batch_id)
+      return {
+        seriesName: review.series_name,
+        versionNumber: result?.version_number || params.version_number || '-',
+        changes: result?.changes ?? 0, success: result?.success === true,
+        message: result?.message || (result?.success ? '提交成功' : '未收到该系列的提交结果，请返回核验后重试')
+      }
+    })
+    const failedReviews = reviews.filter(review => outcomes.get(review.batch_id)?.success !== true)
+    batchSubmitResultDialog.action = 'submit'
+    batchSubmitResultDialog.scope = failedReviews.length ? {
+      seriesIds: failedReviews.map(review => review.series_id),
+      visible: batchSubmitDialog.scope.visible
+    } : null
+    batchSubmitResultDialog.error = ''
     batchSubmitDialog.visible = false; batchSubmitResultDialog.visible = true
     if (res.submitted_count) ElMessage.success(`成功提交 ${res.submitted_count} 个系列`)
-    await loadData(); await initDraft()
+    try {
+      const loaded = await loadData()
+      const initialized = await initDraft()
+      if (loaded === false || initialized === false) throw new Error('refresh failed')
+    } catch {
+      batchSubmitResultDialog.error = '提交结果已保留，但配置刷新失败，请刷新页面数据。'
+    }
   } catch (error) {
     batchSubmitDialog.error = '提交失败：' + (error.response?.data?.detail || '请核对结果并刷新范围后重试')
     ElMessage.error(batchSubmitDialog.error)
@@ -4923,6 +4964,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.version-validation-error { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--el-color-danger); }
+.submission-result-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  user-select: text;
+}
+
 .model-tree-heading { display:flex; align-items:center; gap:5px; border:0; background:none; color:var(--el-text-color-regular); cursor:pointer; text-align:left; padding:7px 0; min-width:0; font:inherit; font-size:12px; }
 .model-tree-heading span:nth-child(2) { overflow-wrap:anywhere; }
 .model-tree-heading small { flex-shrink:0; color:var(--el-text-color-secondary); font-weight:normal; }
