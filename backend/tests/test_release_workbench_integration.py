@@ -156,6 +156,8 @@ def test_embedded_mode_exposes_only_integrated_views_and_parent_navigation(tmp_p
         assert "release-workspace:activate" in app_source
         assert "event.source !== window.parent" in app_source
         assert "state.activeView !== view" in app_source
+        assert "const overrideField = integratedMode() ? ''" in app_source
+        assert "const promoteAction = integratedMode() ? ''" in app_source
     finally:
         close_release_workbench(workbench)
 
