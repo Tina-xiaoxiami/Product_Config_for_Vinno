@@ -71,6 +71,37 @@ class SubseriesConflictError(ValueError):
     """Another editor saved after this revision was read."""
 
 
+_OMITTED = object()
+
+
+def _clean_combinations(combinations, group_names):
+    """Validate direct group references before resolving or persisting them."""
+    if not isinstance(combinations, list):
+        raise ValueError('子系列组合必须是数组')
+    cleaned = []
+    names = set()
+    for index, combination in enumerate(combinations):
+        if not isinstance(combination, dict):
+            raise ValueError(f'第 {index + 1} 个子系列组合无效')
+        name = combination.get('name')
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f'第 {index + 1} 个子系列组合名称不能为空')
+        name = name.strip()
+        if name in names:
+            raise ValueError(f'子系列组合名称重复：{name}')
+        names.add(name)
+        references = combination.get('sub_series')
+        if not isinstance(references, list) or not references or any(
+                not isinstance(reference, str) or not reference.strip() for reference in references):
+            raise ValueError(f'子系列组合「{name}」至少选择一个有效子系列')
+        references = list(dict.fromkeys(reference.strip() for reference in references))
+        for reference in references:
+            if reference not in group_names:
+                raise ValueError(f'子系列组合「{name}」引用的子系列不存在：{reference}；请同步更新组合')
+        cleaned.append({'name': name, 'sub_series': references})
+    return cleaned
+
+
 def subseries_path():
     vault = Path(os.environ.get('WP_VAULT', '~/Documents/Obsidian Vault/产品配置管理系统')).expanduser()
     return Path(os.environ.get('WHITEPAPER_SUBSERIES_FILE', str(vault / '白皮书工作区/子系列.json'))).expanduser().resolve()
@@ -145,6 +176,10 @@ def _source_document(path):
     except (ValueError, TypeError, UnicodeError) as error:
         raise SubseriesSourceError('子系列共享定义无效，请先在源文件中修复，当前内容未覆盖') from error
     document = {'sub_series': entries} if isinstance(raw, list) else raw
+    try:
+        _clean_combinations(document.get('sub_series_combinations', []), seen)
+    except ValueError as error:
+        raise SubseriesSourceError(f'子系列组合共享定义无效，请先在源文件中修复，当前内容未覆盖：{error}') from error
     return document, hashlib.sha256(content).hexdigest()
 
 
@@ -199,10 +234,22 @@ def _editor_view(document, revision, models, parents):
                     previous['label'] = ' / '.join(dict.fromkeys(labels)) + '（' + '、'.join(dict.fromkeys(filter(None, series))) + '）'
                     previous.pop('id', None)
                     previous.pop('series', None)
-        groups.append({'name': name, 'series': parent, 'models': members, 'options': list(unique_options.values())})
+        groups.append({'name': name, 'series': parent, 'models': members,
+                       'model_ids': list(original_by_id), 'missing_models': unresolved,
+                       'options': list(unique_options.values())})
+    by_name = {group['name']: group for group in groups}
+    combinations = []
+    for source in _clean_combinations(document.get('sub_series_combinations', []), by_name):
+        referenced = [by_name[name] for name in source['sub_series']]
+        combinations.append({**source,
+                             'model_ids': list(dict.fromkeys(
+                                 model_id for group in referenced for model_id in group['model_ids'])),
+                             'missing_models': [f"{group['name']}：{member}"
+                                                for group in referenced for member in group['missing_models']]})
     return {
         'revision': revision,
         'groups': groups,
+        'combinations': combinations,
         'catalog': [{'id': model.id, 'name': model.name, 'series_id': model.series_id,
                      'series': parents.get(model.series_id, '')} for model in models],
         'series': [{'id': sid, 'name': name} for sid, name in parents.items()],
@@ -215,7 +262,7 @@ def get_subseries_editor(models, parents):
     return _editor_view(document, revision, models, parents)
 
 
-def save_subseries_editor(groups, revision, models, parents):
+def save_subseries_editor(groups, revision, models, parents, combinations=_OMITTED):
     path = subseries_path()
     try:
         with _source_lock(path):
@@ -256,6 +303,13 @@ def save_subseries_editor(groups, revision, models, parents):
                         raise ValueError(f'机型「{member}」不在所选系列的配置机型中')
                 cleaned.append({'name': name, 'series': parent, 'models': members})
             updated = {**document, 'sub_series': cleaned}
+            # Old clients retain references, but cannot delete/rename a referenced
+            # group without explicitly updating its combinations in the same save.
+            cleaned_combinations = _clean_combinations(
+                document.get('sub_series_combinations', []) if combinations is _OMITTED else combinations,
+                names)
+            if combinations is not _OMITTED or 'sub_series_combinations' in document:
+                updated['sub_series_combinations'] = cleaned_combinations
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
             fd, temporary = tempfile.mkstemp(prefix='.subseries-', suffix='.json', dir=path.parent)

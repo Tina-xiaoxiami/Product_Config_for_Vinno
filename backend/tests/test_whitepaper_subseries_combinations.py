@@ -47,10 +47,46 @@ async def test_rename_and_combination_update_are_atomic_and_stale_revision_confl
         body['combinations'] = [{'name': '常用', 'sub_series': ['新名字', '跨系列']}]
         response = await client.put('/api/models/subseries', json=body)
         assert response.status_code == 200, response.text
+        assert json.loads(source.read_text())['sub_series_combinations'] == body['combinations']
+        assert response.json()['combinations'][0]['sub_series'] == ['新名字', '跨系列']
         before = source.read_bytes()
         assert (await client.put('/api/models/subseries', json=body)).status_code == 409
         assert source.read_bytes() == before
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_clear_combinations_allows_group_deletion(tmp_path, monkeypatch):
+    client, source, engine = await editor(tmp_path, monkeypatch, definition())
+    async with client:
+        body = (await client.get('/api/models/subseries')).json()
+        response = await client.put('/api/models/subseries', json={
+            'revision': body['revision'], 'groups': [], 'combinations': []})
+        assert response.status_code == 200, response.text
+        assert response.json()['combinations'] == []
+        assert json.loads(source.read_text())['sub_series_combinations'] == []
+    await engine.dispose()
+
+
+def test_resolution_respects_parent_and_reports_ambiguous_members(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    from app.services.whitepaper_subseries import get_subseries_editor
+    source = tmp_path / 'strict.json'
+    monkeypatch.setenv('WHITEPAPER_SUBSERIES_FILE', str(source))
+    source.write_text(json.dumps({'sub_series': [
+        {'name': 'China', 'series': 'China', 'models': ['VINNO 5', 'VINNO 6']},
+        {'name': 'Oversea', 'series': 'Oversea', 'models': ['VINNO 5']},
+    ], 'sub_series_combinations': [{'name': 'Both', 'sub_series': ['China', 'Oversea']}]}))
+    catalog = [ProductModel(id=1, series_id=1, name='VINNO 5'),
+               ProductModel(id=2, series_id=2, name='VINNO 5'),
+               ProductModel(id=3, series_id=1, name='VINNO 6'),
+               ProductModel(id=4, series_id=1, name='VINNO 6')]
+    body = get_subseries_editor(catalog, {1: 'China', 2: 'Oversea'})
+    assert body['groups'][0]['model_ids'] == [1]
+    assert body['groups'][0]['missing_models'] == ['VINNO 6']
+    assert body['groups'][1]['model_ids'] == [2]
+    assert body['combinations'][0]['model_ids'] == [1, 2]
+    assert body['combinations'][0]['missing_models'] == ['China：VINNO 6']
 
 
 @pytest.mark.asyncio

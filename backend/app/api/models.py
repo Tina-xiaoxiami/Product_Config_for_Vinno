@@ -125,7 +125,8 @@ async def get_shared_subseries(db: AsyncSession = Depends(get_db)):
 async def update_shared_subseries(data: dict = Body(...), db: AsyncSession = Depends(get_db)):
     catalog, parents = await _subseries_catalog(db)
     try:
-        return save_subseries_editor(data.get('groups'), data.get('revision'), catalog, parents)
+        options = {'combinations': data['combinations']} if 'combinations' in data else {}
+        return save_subseries_editor(data.get('groups'), data.get('revision'), catalog, parents, **options)
     except SubseriesSourceError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except SubseriesConflictError as error:
