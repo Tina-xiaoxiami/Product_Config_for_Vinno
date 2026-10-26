@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 import json
+from urllib.parse import quote
 
 from app.database import get_db
 from app.models import (
@@ -31,6 +32,17 @@ from app.services.config_history import (
     restore_series_snapshot,
 )
 from app.services.model_identity import normalize_snapshot
+from app.services.version_comparison import build_comparison_matrix, export_comparison_matrix
+
+
+async def _comparison_snapshot(db, version):
+    try:
+        snapshot = json.loads(version.snapshot_data)
+        for model in snapshot.get("models", []):
+            model["_comparison_name"] = model.get("name")
+        return await normalize_snapshot(db, version.series_id, snapshot)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
 router = APIRouter()
 
@@ -386,8 +398,8 @@ async def compare_versions(
         raise HTTPException(status_code=404, detail="版本不存在")
 
     # 解析快照
-    snapshot1 = await normalize_snapshot(db, version1.series_id, json.loads(version1.snapshot_data))
-    snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
+    snapshot1 = await _comparison_snapshot(db, version1)
+    snapshot2 = await _comparison_snapshot(db, version2)
 
     # 构建索引
     try:
@@ -459,7 +471,13 @@ async def compare_versions(
                         "new_value": new
                     })
 
+    try:
+        matrix_rows, matrix_models = build_comparison_matrix(snapshot1, snapshot2, index1, index2, data.model_ids)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
     return {
+        "matrix_rows": matrix_rows,
+        "matrix_models": matrix_models,
         "version_1": version1,
         "version_2": version2,
         "added": added,
@@ -604,8 +622,8 @@ async def export_version_compare(
         raise HTTPException(status_code=404, detail="版本不存在")
 
     # 解析快照
-    snapshot1 = await normalize_snapshot(db, version1.series_id, json.loads(version1.snapshot_data))
-    snapshot2 = await normalize_snapshot(db, version2.series_id, json.loads(version2.snapshot_data))
+    snapshot1 = await _comparison_snapshot(db, version1)
+    snapshot2 = await _comparison_snapshot(db, version2)
 
     # 构建索引
     try:
@@ -613,6 +631,23 @@ async def export_version_compare(
         index2 = build_snapshot_semantic_value_index(snapshot2, data.model_ids or None)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
+
+    if data.compare_fields is not None or data.name_columns is not None:
+        try:
+            rows, models = build_comparison_matrix(snapshot1, snapshot2, index1, index2, data.model_ids)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
+        workbook = export_comparison_matrix(
+            rows, models, (version1.version_number, version2.version_number),
+            data.compare_fields if data.compare_fields is not None else ["final_config", "current_config"],
+            data.name_columns if data.name_columns is not None else ["rd_name", "zh_desc", "v_code", "ipn"],
+            data.only_diff,
+        )
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        filename = f"version_compare_{version1.version_number}_{version2.version_number}.xlsx"
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=version_compare.xlsx; filename*=UTF-8''{quote(filename, safe='')}"})
 
     # 计算差异
     added = []
@@ -750,5 +785,5 @@ async def export_version_compare(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename=version_compare.xlsx; filename*=UTF-8''{quote(filename, safe='')}"}
     )

@@ -98,80 +98,10 @@
 
     <!-- 版本对比对话框 -->
     <el-dialog v-model="compareDialogVisible" title="版本对比" width="90%" top="5vh">
-      <div class="compare-select" v-if="versionOptions.length > 1" v-loading="versionOptionsLoading">
-        <el-select v-model="compareVersion1" placeholder="选择版本1" style="width: 200px">
-          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
-        </el-select>
-        <span class="compare-vs">VS</span>
-        <el-select v-model="compareVersion2" placeholder="选择版本2" style="width: 200px">
-          <el-option v-for="v in versionOptions" :key="v.id" :label="v.version_number" :value="v.id" />
-        </el-select>
-        <el-select
-          v-model="selectedModels"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          placeholder="选择机型（可选，默认全部）"
-          style="width: 280px; margin-left: 16px;"
-        >
-          <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
-        </el-select>
-        <el-button type="primary" @click="executeCompare" :loading="compareLoading" style="margin-left: 16px;">对比</el-button>
-      </div>
-
-      <div v-if="compareResult" class="compare-result">
-        <el-alert
-          :title="`差异统计：新增 ${compareResult.summary.added} 项，修改 ${compareResult.summary.modified} 项，删除 ${compareResult.summary.deleted} 项`"
-          type="info"
-          show-icon
-          :closable="false"
-          style="margin-bottom: 16px"
-        />
-
-        <el-tabs v-model="activeTab">
-          <el-tab-pane :label="`新增 (${compareResult.added.length})`" name="added">
-            <el-table :data="compareResult.added" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="300" />
-              <el-table-column prop="ipn" label="IPN号" width="150" />
-              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane :label="`修改 (${compareResult.modified.length})`" name="modified">
-            <el-table :data="compareResult.modified" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="250" />
-              <el-table-column prop="ipn" label="IPN号" width="120" />
-              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
-              <el-table-column prop="model_name" label="型号" width="150" />
-              <el-table-column prop="field_name" label="字段" width="100">
-                <template #default="{ row }">
-                  {{ getFieldLabel(row.field_name) }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="old_value" label="原值" width="150">
-                <template #default="{ row }">
-                  <span class="old-value">{{ row.old_value || '-' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="new_value" label="新值" width="150">
-                <template #default="{ row }">
-                  <span class="new-value">{{ row.new_value || '-' }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane :label="`删除 (${compareResult.deleted.length})`" name="deleted">
-            <el-table :data="compareResult.deleted" border stripe max-height="400">
-              <el-table-column prop="rd_name" label="研发名称" width="300" />
-              <el-table-column prop="ipn" label="IPN号" width="150" />
-              <el-table-column prop="zh_desc" label="中文描述" min-width="240" show-overflow-tooltip />
-            </el-table>
-          </el-tab-pane>
-        </el-tabs>
-      </div>
-
-      <el-empty v-else-if="!compareLoading" description="请选择两个版本进行对比" />
+      <VersionComparison v-if="compareDialogVisible"
+        v-model:version1="compareVersion1" v-model:version2="compareVersion2"
+        :versions="versionOptions" :options-loading="versionOptionsLoading" :result="compareResult" :loading="compareLoading"
+        @compare="executeCompare" />
     </el-dialog>
 
     <!-- 编辑版本对话框 -->
@@ -198,6 +128,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import VersionComparison from '../components/VersionComparison.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, compareVersions, rollbackVersion, updateVersion, getModels } from '../api/data'
 import { formatTime, getFieldLabel } from '../utils/modelHelpers'

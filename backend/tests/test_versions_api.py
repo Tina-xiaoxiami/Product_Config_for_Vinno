@@ -664,3 +664,149 @@ async def test_compare_includes_snapshot_chinese_descriptions_for_all_diff_types
     assert result["deleted"][0]["zh_desc"] == "已删除的中文描述"
     assert {item["ipn"]: item["zh_desc"] for item in result["added"]} == {"IPN-102": "新增中文描述", "IPN-103": None}
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_matrix_preserves_unchanged_rows_snapshot_metadata_and_historical_models(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    common = _item(100, row_index=1, ipn="IPN-100", rd_name="Before")
+    common.update(zh_desc="旧描述", en_desc="Old", v_code="V100")
+    changed = {**common, "id": 999, "row_index": 9, "rd_name": "After", "zh_desc": "", "en_desc": "New"}
+    deleted = _item(101, row_index=2, ipn=None, rd_name="Deleted")
+    deleted["values"] = {"90": {"final_config": "X"}}
+    added = _item(102, row_index=3, ipn="IPN-102", rd_name="Added")
+    added["values"] = {"91": {"final_config": "O"}}
+    before = {"models": [{"id": 10, "name": "V10"}, {"id": 90, "name": "Removed historical model"}], "items": [deleted, common]}
+    after = {"models": [{"id": 10, "name": "V10"}, {"id": 91, "name": "New historical model"}], "items": [changed, added]}
+    first, second = await _seed_versions(factory, before, after)
+    async with client:
+        response = await client.post("/api/versions/compare", json={"version_id_1": first, "version_id_2": second})
+        filtered = await client.post("/api/versions/compare", json={"version_id_1": first, "version_id_2": second, "model_ids": [90]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["matrix_models"] == [{"id": 10, "name": "V10"}, {"id": 90, "name": "Removed historical model"}, {"id": 91, "name": "New historical model"}]
+    rows = body["matrix_rows"]
+    assert [row["change_type"] for row in rows] == ["unchanged", "added", "deleted"]
+    assert json.loads(rows[0]["key"]) == ["ipn", "IPN-100"]
+    assert rows[0]["rd_name"] == "After"
+    assert rows[0]["zh_desc"] == ""  # Explicit historical blank is not backfilled.
+    assert rows[0]["en_desc"] == "New"
+    assert rows[0]["v_code"] == "V100"
+    assert rows[2]["old_values"]["90"]["final_config"] == "X"
+    assert rows[2]["new_values"] == {}
+    assert filtered.status_code == 200, filtered.text
+    assert filtered.json()["matrix_models"] == [{"id": 90, "name": "Removed historical model"}]
+    assert len(filtered.json()["matrix_rows"]) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_matrix_export_matches_selected_fields_names_and_difference_scope(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    before_items = [_item(i, row_index=i, ipn=f"IPN-{i}", rd_name=f"Item {i}") for i in range(100, 103)]
+    after_items = json.loads(json.dumps(before_items))
+    # Row 100 differs only in an unselected field; row 101 differs in final_config.
+    after_items[0]["values"]["10"]["rd_status"] = "已完成"
+    after_items[1]["values"]["10"]["final_config"] = "X"
+    after_items[1]["zh_desc"] = "=literal text"
+    after_items.append({**_item(103, row_index=103, ipn="IPN-103", rd_name="Added outside field"), "values": {"10": {"rd_status": "已完成"}}})
+    first, second = await _seed_versions(factory, _snapshot(*before_items), _snapshot(*after_items))
+    payload = {"version_id_1": first, "version_id_2": second, "compare_fields": ["final_config"], "name_columns": ["zh_desc", "ipn"], "only_diff": True}
+    async with client:
+        compared = await client.post("/api/versions/compare", json=payload)
+        response = await client.post("/api/versions/compare/export", json=payload)
+        full = await client.post("/api/versions/compare/export", json={**payload, "only_diff": False})
+        invalid = await client.post("/api/versions/compare/export", json={**payload, "compare_fields": []})
+        invalid_names = await client.post("/api/versions/compare/export", json={**payload, "name_columns": ["unknown"]})
+    assert compared.status_code == response.status_code == full.status_code == 200
+    assert invalid.status_code == invalid_names.status_code == 422
+    assert len(compared.json()["matrix_rows"]) == 4  # View filters locally.
+    sheet = openpyxl.load_workbook(io.BytesIO(response.content)).active
+    assert sheet.title == "版本对比"
+    assert sheet.max_row == 3
+    assert [sheet.cell(1, i).value for i in range(1, 5)] == ["中文描述", "IPN号", "V10 / 1.0.1", "V10 / 1.0.2"]
+    assert [sheet.cell(3, i).value for i in range(1, 5)] == ["=literal text", "IPN-101", "-", "X"]
+    assert sheet.cell(3, 1).data_type == "s"
+    assert sheet.cell(3, 4).fill.fgColor.rgb == "00FFF2CC"
+    assert sheet.freeze_panes == "C3"
+    assert openpyxl.load_workbook(io.BytesIO(full.content)).active.max_row == 6
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_matrix_uses_normalized_identity_but_preserves_historical_model_name(tmp_path):
+    from app.models.product_model import ProductModelIdentity
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    source_uuid = "c5ec14b2-5715-40e8-ac91-31e8507abf26"
+    async with factory() as db:
+        db.add(ProductModelIdentity(series_id=1, model_id=10, source_uuid=source_uuid, aliases_json='["Old name", "Historical new name"]', historical_ids_json='[90]'))
+        await db.commit()
+    before = {"models": [{"id": 90, "name": "Old name", "source_uuid": source_uuid}], "items": [{**_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"), "values": {"90": {"final_config": "X"}}}]}
+    after = {"models": [{"id": 10, "name": "Historical new name", "source_uuid": source_uuid}], "items": [{**_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"), "values": {"10": {"final_config": "O"}}}]}
+    first, second = await _seed_versions(factory, before, after)
+    payload = {"version_id_1": first, "version_id_2": second, "model_ids": [10], "compare_fields": ["final_config"], "name_columns": ["ipn"], "only_diff": True}
+    async with client:
+        response = await client.post("/api/versions/compare", json=payload)
+        exported = await client.post("/api/versions/compare/export", json=payload)
+    assert response.status_code == exported.status_code == 200
+    result = response.json()
+    assert result["matrix_models"] == [{"id": 10, "name": "Historical new name"}]
+    assert result["matrix_rows"][0]["old_values"]["10"]["final_config"] == "X"
+    assert result["matrix_rows"][0]["new_values"]["10"]["final_config"] == "O"
+    sheet = openpyxl.load_workbook(io.BytesIO(exported.content)).active
+    assert sheet.cell(1, 2).value == "Historical new name / 1.0.1"
+    async with factory() as db:
+        persisted = await db.get(ConfigVersion, first)
+        assert json.loads(persisted.snapshot_data) == before
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_matrix_export_unicode_filename_and_formula_like_model_header(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    snapshot = {"models": [{"id": 90, "name": "=Literal model"}], "items": [{**_item(100, row_index=1, ipn="IPN-100", rd_name="Feature"), "values": {"90": {"final_config": "X"}}}]}
+    first, second = await _seed_versions(factory, snapshot, snapshot)
+    async with factory() as db:
+        version = await db.get(ConfigVersion, first)
+        version.version_number = "1.51.90-正式版"
+        await db.commit()
+    payload = {"version_id_1": first, "version_id_2": second, "compare_fields": ["final_config"], "name_columns": ["ipn"]}
+    async with client:
+        response = await client.post("/api/versions/compare/export", json=payload)
+    assert response.status_code == 200, response.text
+    assert "filename=version_compare.xlsx" in response.headers["content-disposition"]
+    assert "%E6%AD%A3%E5%BC%8F%E7%89%88" in response.headers["content-disposition"]
+    sheet = openpyxl.load_workbook(io.BytesIO(response.content)).active
+    assert sheet.cell(1, 2).value == "=Literal model / 1.51.90-正式版"
+    assert sheet.cell(1, 2).data_type == "s"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_matrix_export_model_scope_preserves_full_matrix_metadata_when_item_moves_models(tmp_path):
+    client, factory, engine = await _versions_harness(tmp_path)
+    await _seed_catalog(factory)
+    before_item = {**_item(100, row_index=1, ipn="IPN-100", rd_name="Old name"), "zh_desc": "Old description", "values": {"10": {"final_config": "X"}}}
+    after_item = {**before_item, "rd_name": "New name", "zh_desc": "New description", "values": {"11": {"final_config": "X"}}}
+    models = [{"id": 10, "name": "V10"}, {"id": 11, "name": "V11"}]
+    first, second = await _seed_versions(factory, {"models": models, "items": [before_item]}, {"models": models, "items": [after_item]})
+    payload = {"version_id_1": first, "version_id_2": second}
+    async with client:
+        full = await client.post("/api/versions/compare", json=payload)
+        scoped = await client.post("/api/versions/compare", json={**payload, "model_ids": [10]})
+        exported = await client.post("/api/versions/compare/export", json={**payload, "model_ids": [10], "compare_fields": ["final_config"], "name_columns": ["rd_name", "zh_desc"], "only_diff": True})
+    assert full.status_code == scoped.status_code == exported.status_code == 200
+    full_row = full.json()["matrix_rows"][0]
+    scoped_row = scoped.json()["matrix_rows"][0]
+    assert scoped_row["zh_desc"] == full_row["zh_desc"] == "New description"
+    assert scoped_row["change_type"] == full_row["change_type"] == "modified"
+    assert scoped_row["new_values"] == {}
+    assert scoped.json()["matrix_models"] == [{"id": 10, "name": "V10"}]
+    assert scoped.json()["summary"]["deleted"] == 1  # Legacy differences retain prior semantics.
+    sheet = openpyxl.load_workbook(io.BytesIO(exported.content)).active
+    assert [sheet.cell(3, i).value for i in range(1, 5)] == ["New name", "New description", "X", "-"]
+    await engine.dispose()

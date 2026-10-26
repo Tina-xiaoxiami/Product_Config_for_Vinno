@@ -97,7 +97,9 @@ test('compare selectors load every version through bounded API pages', () => {
   assert.match(source, /const loadAllVersionOptions = async/)
   assert.match(source, /getVersions\(seriesId,\s*\{\s*skip,\s*limit:\s*VERSION_OPTION_PAGE_SIZE\s*\}\)/)
   assert.match(source, /while \(skip < total\)/)
-  assert.match(source, /<el-option v-for="v in versionOptions"/)
+  assert.match(source, /:versions="versionOptions"/)
+  const component = readFileSync(new URL('../src/components/VersionComparison.vue', import.meta.url), 'utf8')
+  assert.match(component, /<el-option v-for="version in versions"/)
 })
 
 test('a current version load failure clears the previous series total', async () => {
