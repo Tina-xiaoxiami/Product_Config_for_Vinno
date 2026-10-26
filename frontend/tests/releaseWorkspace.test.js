@@ -71,6 +71,41 @@ test('embedded workbench keeps one persistent frame while outer tabs activate ch
   assert.doesNotMatch(workspace, /同进程/)
 })
 
+test('switching outer views preserves the child project and selected release state', () => {
+  const workspace = read('../src/views/ReleaseWorkspace.vue')
+  const functionSource = workspace.slice(
+    workspace.indexOf('function mountWorkbench(tab)'),
+    workspace.indexOf('function markWorkbenchLoaded()')
+  )
+  const sent = []
+  const childWindow = {
+    selection: { project: 'VINNO 10', version: '1.14.80' },
+    postMessage: (message, origin) => sent.push({ message, origin })
+  }
+  const context = {
+    isWorkbenchTab: tab => ['search', 'review', 'releases', 'compare'].includes(tab),
+    workbenchFrameUrl: { value: '' },
+    releaseWorkbenchUrl,
+    checkWorkbenchAvailability() {},
+    workbenchFrame: { value: { contentWindow: childWindow } },
+    window: { location: { origin: 'http://127.0.0.1:3006' } }
+  }
+  const { mountWorkbench, postWorkbenchActivation } = new Function(
+    ...Object.keys(context),
+    `${functionSource}; return { mountWorkbench, postWorkbenchActivation }`
+  )(...Object.values(context))
+
+  mountWorkbench('search')
+  postWorkbenchActivation('releases')
+
+  assert.equal(context.workbenchFrameUrl.value, '/release-workbench/?embedded=1#search')
+  assert.deepEqual(childWindow.selection, { project: 'VINNO 10', version: '1.14.80' })
+  assert.deepEqual(sent, [{
+    message: { type: 'release-workspace:activate', view: 'releases' },
+    origin: 'http://127.0.0.1:3006'
+  }])
+})
+
 test('knowledge hub links to release source search and dev server proxies the mounted module', () => {
   const knowledge = read('../src/views/KnowledgeHub.vue')
   const vite = read('../vite.config.js')

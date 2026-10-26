@@ -30,33 +30,28 @@
       </div>
 
       <div class="workbench-stack">
-        <div
-          v-for="tab in mountedWorkbenchTabs"
-          :key="tab"
-          v-show="activeTab === tab"
-          class="workbench-frame-shell"
-        >
-          <div v-if="workbenchState[tab].status === 'checking'" class="workbench-status">
+        <div class="workbench-frame-shell">
+          <div v-if="workbenchState.status === 'checking'" class="workbench-status">
             <el-icon class="is-loading"><Loading /></el-icon>
             <strong>正在连接发布工作台…</strong>
-            <span>工作台由当前产品配置服务同进程提供。</span>
+            <span>正在准备发布资料视图，请稍候。</span>
           </div>
 
           <el-result
-            v-else-if="workbenchState[tab].status === 'error'"
+            v-else-if="workbenchState.status === 'error'"
             icon="warning"
             title="发布工作台暂时无法加载"
-            :sub-title="workbenchState[tab].message"
+            :sub-title="workbenchState.message"
           >
             <template #extra>
               <el-button
                 type="primary"
                 data-testid="release-workbench-retry"
-                @click="checkWorkbenchAvailability(tab, true)"
+                @click="checkWorkbenchAvailability(true)"
               >重试</el-button>
               <el-button
                 tag="a"
-                :href="releaseWorkbenchStandaloneUrl(tab)"
+                :href="releaseWorkbenchStandaloneUrl(lastWorkbenchView)"
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid="release-workbench-standalone"
@@ -65,15 +60,14 @@
           </el-result>
 
           <iframe
-            v-else-if="workbenchState[tab].status === 'ready'"
-            :key="workbenchState[tab].frameKey"
-            ref="workbenchFrames"
+            v-else-if="workbenchState.status === 'ready' && workbenchFrameUrl"
+            :key="workbenchState.frameKey"
+            ref="workbenchFrame"
             class="workbench-frame"
-            :data-view="tab"
-            :src="releaseWorkbenchUrl(tab)"
-            :title="`${tabInfo[tab].title}工作台`"
-            @load="markWorkbenchLoaded(tab, $event)"
-            @error="markWorkbenchError(tab)"
+            :src="workbenchFrameUrl"
+            title="发布资料工作台"
+            @load="markWorkbenchLoaded"
+            @error="markWorkbenchError"
           />
         </div>
       </div>
@@ -96,7 +90,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 
@@ -132,68 +126,66 @@ const tabInfo = {
   }
 }
 
-const activeTab = ref(normalizeReleaseTab(route.query.tab))
-const visitedWorkbenchTabs = ref([])
-const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
-const workbenchFrames = ref([])
-const workbenchState = reactive(Object.fromEntries(
-  RELEASE_WORKBENCH_VIEWS.map(tab => [tab, {
-    status: 'idle',
-    message: '',
-    frameKey: 0
-  }])
-))
-
 const isWorkbenchTab = tab => RELEASE_WORKBENCH_VIEWS.includes(tab)
+const activeTab = ref(normalizeReleaseTab(route.query.tab))
+const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
+const initialWorkbenchView = isWorkbenchTab(activeTab.value) ? activeTab.value : 'search'
+const lastWorkbenchView = ref(initialWorkbenchView)
+const workbenchFrame = ref(null)
+const workbenchFrameUrl = ref('')
+const workbenchState = reactive({
+  status: 'idle',
+  message: '',
+  frameKey: 0
+})
+
 const activeTabInfo = computed(() => tabInfo[activeTab.value] || tabInfo.search)
-const mountedWorkbenchTabs = computed(() => RELEASE_WORKBENCH_VIEWS.filter(
-  tab => visitedWorkbenchTabs.value.includes(tab)
-))
 
-async function checkWorkbenchAvailability(tab, force = false) {
-  if (!isWorkbenchTab(tab)) return
-  const state = workbenchState[tab]
-  if (!force && (state.status === 'checking' || state.status === 'ready')) return
+async function checkWorkbenchAvailability(force = false) {
+  if (!force && (workbenchState.status === 'checking' || workbenchState.status === 'ready')) return
 
-  state.status = 'checking'
-  state.message = ''
+  workbenchState.status = 'checking'
+  workbenchState.message = ''
   try {
     const response = await fetch(releaseWorkbenchHealthUrl(), {
       cache: 'no-store',
       headers: { Accept: 'application/json' }
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    state.frameKey += 1
-    state.status = 'ready'
+    if (force) workbenchState.frameKey += 1
+    workbenchState.status = 'ready'
   } catch (error) {
-    state.status = 'error'
-    state.message = `请确认产品配置后端已启动，然后重试（${error.message || '连接失败'}）。`
+    workbenchState.status = 'error'
+    workbenchState.message = `请确认产品配置后端已启动，然后重试（${error.message || '连接失败'}）。`
   }
 }
 
-function mountWorkbenchTab(tab) {
+function mountWorkbench(tab) {
   if (!isWorkbenchTab(tab)) return
-  if (!visitedWorkbenchTabs.value.includes(tab)) {
-    visitedWorkbenchTabs.value = [...visitedWorkbenchTabs.value, tab]
-  }
-  checkWorkbenchAvailability(tab)
+  if (!workbenchFrameUrl.value) workbenchFrameUrl.value = releaseWorkbenchUrl(tab)
+  checkWorkbenchAvailability()
 }
 
-function markWorkbenchLoaded(tab, event) {
-  event.currentTarget?.contentWindow?.postMessage({
+function postWorkbenchActivation(tab) {
+  if (!isWorkbenchTab(tab)) return
+  workbenchFrame.value?.contentWindow?.postMessage({
     type: 'release-workspace:activate',
     view: tab
   }, window.location.origin)
 }
 
-function markWorkbenchError(tab) {
-  workbenchState[tab].status = 'error'
-  workbenchState[tab].message = '嵌入页面加载失败，请重试或在新窗口打开。'
+function markWorkbenchLoaded() {
+  postWorkbenchActivation(lastWorkbenchView.value)
+}
+
+function markWorkbenchError() {
+  workbenchState.status = 'error'
+  workbenchState.message = '嵌入页面加载失败，请重试或在新窗口打开。'
 }
 
 function handleWorkbenchMessage(event) {
   if (!isWorkbenchNavigationMessage(event, window.location.origin)) return
-  if (!workbenchFrames.value.some(frame => frame?.contentWindow === event.source)) return
+  if (workbenchFrame.value?.contentWindow !== event.source) return
   activeTab.value = event.data.view
 }
 
@@ -203,7 +195,11 @@ watch(() => route.query.tab, value => {
 })
 
 watch(activeTab, tab => {
-  mountWorkbenchTab(tab)
+  if (isWorkbenchTab(tab)) {
+    lastWorkbenchView.value = tab
+    mountWorkbench(tab)
+    nextTick(() => postWorkbenchActivation(tab))
+  }
   if (tab === 'feature-versions') nativeReleaseMounted.value = true
   const routeTab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
   if (routeTab !== tab) {
