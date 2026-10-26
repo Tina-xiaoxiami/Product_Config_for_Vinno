@@ -1,7 +1,7 @@
 """
 产品型号 API
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import bindparam, select, func, text
 from typing import List
@@ -12,7 +12,10 @@ from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductM
 
 from app.services.model_identity import active_model_filter, model_identity_metadata
 
-from app.services.whitepaper_subseries import read_subseries
+from app.services.whitepaper_subseries import (
+    read_subseries, get_subseries_editor, save_subseries_editor,
+    SubseriesSourceError, SubseriesConflictError,
+)
 
 router = APIRouter()
 
@@ -101,6 +104,34 @@ async def get_models(
         sub_series_problems=problems,
         total=total,
     )
+
+
+async def _subseries_catalog(db):
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter()).order_by(ProductModel.series_id, ProductModel.sort_order, ProductModel.id))).scalars().all())
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries).order_by(ProductSeries.id))).scalars().all()}
+    return catalog, parents
+
+
+@router.get("/subseries")
+async def get_shared_subseries(db: AsyncSession = Depends(get_db)):
+    catalog, parents = await _subseries_catalog(db)
+    try:
+        return get_subseries_editor(catalog, parents)
+    except SubseriesSourceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.put("/subseries")
+async def update_shared_subseries(data: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    catalog, parents = await _subseries_catalog(db)
+    try:
+        return save_subseries_editor(data.get('groups'), data.get('revision'), catalog, parents)
+    except SubseriesSourceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except SubseriesConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/{model_id}", response_model=ProductModelResponse)
