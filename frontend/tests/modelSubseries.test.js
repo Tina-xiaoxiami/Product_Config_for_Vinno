@@ -34,3 +34,10 @@ test('model lists start collapsed, expand explicitly or for search and keyboard 
  assert.ok(a.modelSelectionGroups.value.every(a.isModelGroupExpanded))
  assert.deepEqual(a.tempSelectedModels.value,[99])
 })
+test('keyboard navigation expands registered hidden choices before the select consumes the event',()=>{
+ assert.match(source,/@keydown\.capture="expandModelGroupsForKeyboard"/)
+ for (const key of ['Home','End','PageUp','PageDown']) {
+  const a=app();a.expandModelGroupsForKeyboard({key,target:{tagName:'INPUT'}})
+  assert.ok(a.modelSelectionGroups.value.every(a.isModelGroupExpanded))
+ }
+})
