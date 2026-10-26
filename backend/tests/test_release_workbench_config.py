@@ -17,10 +17,10 @@ def test_local_config_resolves_paths_without_overriding_canonical_database(
     local_config.write_text(
         json.dumps(
             {
-                "database": "../runtime/release.db",
-                "release_note_root": "../sources/releases",
+                "database": "runtime/release.db",
+                "release_note_root": "sources/releases",
                 "product_config_database": "/wrong/database.db",
-                "source_roots": ["../sources/history"],
+                "source_roots": ["sources/history"],
             }
         ),
         encoding="utf-8",

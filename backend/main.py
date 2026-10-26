@@ -5,7 +5,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import init_db
+from app.database import engine, init_db
+from app.integrations.release_workbench import install_release_workbench
 from app.api import series, models, config, versions, drafts, import_export, enums, version_cleanup
 from app.api import probe_categories, probe_models as probe_models_api, applications, features, template_features, probe_config, probe_import
 from app.api import knowledge
@@ -55,6 +56,13 @@ app.include_router(
     registration.router,
     prefix="/api/registrations",
     tags=["注册主数据与产品策略"],
+)
+
+if engine.url.get_backend_name() != "sqlite" or not engine.url.database:
+    raise RuntimeError("发布工作区当前仅支持从同一 SQLite 配置主库只读查询。")
+release_workbench_app = install_release_workbench(
+    app,
+    canonical_database=engine.url.database,
 )
 
 

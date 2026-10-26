@@ -41,6 +41,7 @@ release_attachments/
 # Environment
 .env
 .env.local
+backend/config/release_workbench.local.json
 
 # Detached local service state
 .runtime/
