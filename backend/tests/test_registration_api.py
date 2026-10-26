@@ -138,7 +138,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
     assert all(item["sub_series"] == [] for item in product_models_response.json()["items"])
     assert subseries_response.status_code == 200
     assert subseries_response.json()["series"]
-    assert len(subseries_response.json()["catalog"]) == len(product_models_response.json()["items"])
+    assert {item["id"] for item in subseries_response.json()["catalog"] if item["series_id"] == 1} == {item["id"] for item in product_models_response.json()["items"]}
     vinno10e = next(
         item for item in product_models_response.json()["items"] if item["id"] == 2
     )
