@@ -74,9 +74,10 @@ test('collapsing the filter panel preserves selected values and announces its ex
 
 test('documents with no separate excerpt do not repeat their title and retain the format', () => {
   const { compactSearchCard } = functions(['compactSearchCard'], { ...context, fileFormatLabel: value => value.toUpperCase() })
-  const card = compactSearchCard({ source_type: 'controlled', source_label: '受控资料', title: '技术发布记录', file_format: 'pdf', verification: 'unverified' }, { query: '发布' }, '', '', [])
+  const card = compactSearchCard({ source_type: 'controlled', source_label: '受控资料', title: '技术发布记录', file_format: 'pdf', version: '1.50.0', verification: 'unverified' }, { query: '发布' }, '', '', [])
   assert.equal(card.split('技术发布记录').length - 1, 1)
   assert.match(card, /PDF/)
+  assert.match(card, /版本 1\.50\.0/)
 })
 
 test('search and release views share the same project control with its current value', () => {
@@ -96,4 +97,17 @@ test('search and release views share the same project control with its current v
   assert.equal(control.parentElement, header)
   assert.equal(control.value, 'VINNO 10')
   assert.deepEqual(toggles, [['search-focused', true], ['search-focused', false]])
+})
+
+
+test('source restrictions remain visible as one expandable notice with every reason retained', () => {
+  const { compactSearchSourceNotice } = functions(['compactSearchSourceNotice'], { ...context, SEARCH_SOURCE_LABELS: { config: '正式配置', qa: '正式问答' } })
+  const html = compactSearchSourceNotice({ source_errors: { config: '不支持版本范围', qa: '<script>bad</script>' } })
+  assert.equal((html.match(/<summary>/g) || []).length, 1)
+  assert.match(html, /2 类来源受限，结果可能不完整/)
+  assert.match(html, /正式配置/)
+  assert.match(html, /不支持版本范围/)
+  assert.match(html, /正式问答/)
+  assert.doesNotMatch(html, /<script>/)
+  assert.equal(compactSearchSourceNotice({}), '')
 })

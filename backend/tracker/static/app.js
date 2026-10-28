@@ -974,6 +974,56 @@ function searchCoverageMarkup(coverage) {
   return `${versionMarkup}<details class="search-coverage"><summary>资料覆盖与缺口 · ${files.indexed_files || 0}/${files.registered_files || 0} 份已登记资料已索引${issues.length ? ` · ${issues.length} 项待处理` : ''}</summary><p>版本记载仅覆盖下列已入库版本；补充资料按文件独立检索。未找到描述不能据此判断不支持。</p>${projects}${issues.slice(0, 12).map(item => `<p><strong>${escapeHtml(item.title)}</strong>：${escapeHtml(item.action)}</p>`).join('')}${issues.length > 12 ? `<p>另有 ${issues.length - 12} 项，可在受控资料页查看。</p>` : ''}<p>此清单不包含尚未登记的磁盘文件。可用“补充历史资料”接入缺失材料。</p></details>`;
 }
 
+function setSearchFiltersVisible(visible) {
+  const panel = document.querySelector('#search-filters-panel');
+  const button = document.querySelector('#search-filters-toggle');
+  if (!panel || !button) return;
+  panel.hidden = !visible;
+  button.setAttribute('aria-expanded', String(Boolean(visible)));
+  button.textContent = visible ? '收起筛选' : '筛选';
+}
+
+function positionSearchProject(view) {
+  if (!workbenchConfig.embedded) return;
+  const context = document.querySelector('#project-context-actions');
+  const target = document.querySelector(view === 'search' ? '.search-primary-row' : '.topbar-actions');
+  if (context && target && context.parentElement !== target) target.prepend(context);
+  document.body.classList.toggle('search-focused', view === 'search');
+}
+
+function compactSearchSourceNotice(result) {
+  const problems = Object.entries(result.source_errors || {});
+  if (!problems.length) return '';
+  return `<details class="compact-source-notice"><summary>${problems.length} 类来源受限，结果可能不完整 · 查看说明</summary><ul>${problems.map(([source, reason]) => `<li><strong>${escapeHtml(SEARCH_SOURCE_LABELS[source] || source)}</strong>：${escapeHtml(reason)}</li>`).join('')}</ul></details>`;
+}
+
+function compactSearchCard(item, result, action, familyEvidence, evidenceMatches = []) {
+  const query = item.matched_query || result.query || '';
+  const text = item.matched_text || item.title || '';
+  const title = item.source_type === 'release' && item.version ? `版本 ${item.version}` : item.title;
+  const verification = item.verification || 'not_applicable';
+  const cautious = ['unverified', 'pending_review'].includes(verification);
+  const evidence = item.evidence_kind ? searchEvidenceLabel(item.evidence_kind) : '';
+  const version = item.source_type !== 'release' && item.version ? `<span class="compact-source-version">版本 ${escapeHtml(item.version)}</span>` : '';
+  const format = item.file_format ? `<span>${escapeHtml(fileFormatLabel(item.file_format))}</span>` : '';
+  const excerpt = text !== title ? `<p class="compact-result-excerpt">${highlightSearchText(text, query)}</p>` : '';
+  const compare = evidenceMatches.length <= 1 ? searchComparisonButton(item, evidenceMatches[0] || {}, result.query) : '';
+  const limitations = [item.match_kind === 'related' ? '关联线索' : '', item.is_stale ? '索引待更新' : '', evidence].filter(Boolean);
+  const details = `<details class="compact-result-details"><summary>更多信息${evidenceMatches.length > 1 ? ` · ${evidenceMatches.length} 处依据` : ''}</summary><div><p>${escapeHtml(item.scope || '适用范围未登记')} · ${escapeHtml(item.locator || '位置未注明')}</p>${text.length > 220 ? `<p class="compact-full-text">${highlightSearchText(text, query)}</p>` : ''}${familyEvidence}</div></details>`;
+  return `<article class="unified-search-result compact-search-result"><header><h3>${escapeHtml(title || '来源资料')}</h3><span class="pill ${cautious ? 'warning' : ''}">${escapeHtml(verificationLabel(verification))}</span></header><div class="compact-result-context"><span>${escapeHtml(item.source_label || '资料')}</span>${format}${version}<span>${escapeHtml(item.scope || '适用范围未登记')}</span>${limitations.map(label => `<span class="compact-evidence-note">${escapeHtml(label)}</span>`).join('')}</div>${excerpt}<footer><div class="search-result-actions">${action}${compare}</div>${details}</footer></article>`;
+}
+
+function compactSearchAnswer(result) {
+  const records = result.earliest_records || [];
+  if (!records.length) return '';
+  return `<section class="compact-search-answer" aria-label="查询结论"><span class="answer-eyebrow">版本库最早记载</span>${records.map(item => {
+    const suffix = item.version ? ` · ${item.version}` : '';
+    const project = suffix && item.scope?.endsWith(suffix) ? item.scope.slice(0, -suffix.length) : item.scope;
+    const action = item.preview_id ? `<button type="button" class="text-button" data-search-result-preview="${escapeAttribute(item.preview_id)}" data-search-result-locator="${escapeAttribute(item.locator || '')}" data-search-result-query="${escapeAttribute(result.query || '')}">查看依据 →</button>` : '';
+    return `<div class="answer-record"><strong>${escapeHtml(item.version || item.scope || '版本待核对')}</strong><span>${escapeHtml(project || '项目未注明')}</span>${action}</div>`;
+  }).join('')}<p>仅限当前检索范围的版本库记录，不代表首次支持；历史补充资料需另行核对。</p></section>`;
+}
+
 function renderUnifiedSearch(result) {
   state.searchComparisonOptions = [];
   const container = document.querySelector('#release-search-result');
@@ -997,6 +1047,7 @@ function renderUnifiedSearch(result) {
             ? `<a class="ghost-button" href="${escapeAttribute(buildHash(item.detail_action.view, item.detail_action.params))}">查看来源详情</a>`
           : item.source_type === 'term'
             ? '<button type="button" class="ghost-button" data-search-result-term>打开术语词典</button>' : '';
+    if (typeof workbenchConfig !== 'undefined' && workbenchConfig.embedded) return compactSearchCard(item, result, action, familyEvidence, evidenceMatches);
     return `<article class="unified-search-result"><div class="unified-search-result-meta"><span class="pill">${escapeHtml(item.source_label)}</span><span class="pill ${verification === 'unverified' || verification === 'pending_review' || item.is_stale ? 'warning' : ''}">${escapeHtml(verificationLabel(verification))}</span>${item.source_status === 'source_live' ? '<span class="pill">实时只读</span>' : ''}${item.is_stale ? '<span class="pill warning">索引待更新</span>' : ''}${item.file_format ? `<span class="change-tag">${escapeHtml(fileFormatLabel(item.file_format))}</span>` : ''}<span class="search-result-scope">${escapeHtml(item.scope)}</span></div><h3>${escapeHtml(item.title)}</h3><p class="strategy-note">${item.match_kind === 'related' ? '关联线索' : '原词命中'} · ${escapeHtml(matchQuery)}${item.version ? ` · 版本 ${escapeHtml(item.version)}` : ''}</p>${item.evidence_kind ? `<p class="strategy-note">${escapeHtml(searchEvidenceLabel(item.evidence_kind))}</p>` : ''}<p class="search-result-locator">${escapeHtml(item.locator || '')}</p>${item.matched_text ? `<p class="release-search-match"><small>匹配原文</small><span>${highlightSearchText(item.matched_text, matchQuery)}</span></p>` : ''}${familyEvidence}${evidenceMatches.length <= 1 ? searchComparisonButton(item, evidenceMatches[0] || {}, result.query) : ''}${action ? `<div class="search-result-actions">${action}</div>` : ''}</article>`;
   }).join('');
   const pageCount = Math.max(1, Math.ceil(result.total / result.page_size));
@@ -1004,6 +1055,16 @@ function renderUnifiedSearch(result) {
   const count = `<div class="release-search-summary">共找到 <strong>${result.total}</strong> 条 · ${result.scope === 'all' ? '全部项目' : escapeHtml(activeProject()?.name || '当前项目')} · 本机索引只读来源文件</div>`;
   const earliest = (result.earliest_records || []).map(item => `<p><strong>版本库内最早记载：${escapeHtml(item.scope)}</strong> · ${escapeHtml(searchEvidenceLabel(item.evidence_kind))} <button type="button" class="text-button" data-search-result-preview="${escapeAttribute(item.preview_id)}" data-search-result-locator="${escapeAttribute(item.locator || '')}" data-search-result-query="${escapeAttribute(result.query || '')}">查看依据</button></p>`).join('');
   const evidenceSummary = earliest ? `<section class="search-evidence-summary">${earliest}<p>依据当时版本记录，不使用当前功能说明回推历史；历史补充资料需另行核对。最早记载不等于首次支持，仍需核对原文、资料覆盖和适用范围。</p></section>` : '';
+  if (typeof workbenchConfig !== 'undefined' && workbenchConfig.embedded) {
+    const answer = compactSearchAnswer(result);
+    const compactCount = `<div class="release-search-summary"><strong>${result.total}</strong> 条结果</div>`;
+    const showTaskSummary = ['family', 'version'].includes(result.task);
+    const taskSummary = showTaskSummary ? searchTaskSummary(result) : '';
+    const diagnostics = `<details class="search-evidence-details"><summary>检索说明与资料覆盖</summary>${showTaskSummary ? '' : searchTaskSummary(result)}${searchCoverageMarkup(result.coverage)}</details>`;
+    container.innerHTML = `${compactSearchSourceNotice(result)}${answer}${compactCount}${taskSummary}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}${diagnostics}`;
+    renderSearchComparisonTray();
+    return;
+  }
   container.innerHTML = `${count}${errors}${searchTaskSummary(result)}${evidenceSummary}${searchCoverageMarkup(result.coverage)}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}`;
   renderSearchComparisonTray();
 }
@@ -3145,6 +3206,7 @@ function switchView(view, { remember = true, updateHash = true, scroll = true } 
   if (collapsedGroup) collapsedGroup.open = true;
   navigationItem.setAttribute('aria-current', 'page');
   page.classList.add('active');
+  positionSearchProject(view);
   document.querySelector('#page-title').textContent = labels[view];
   updateViewScope(view);
   if (view === 'search') loadSearchIndexStatus().catch(error => { document.querySelector('#search-index-status').textContent = `索引状态读取失败：${error.message}`; });
@@ -3425,6 +3487,9 @@ document.querySelector('#release-search-form').addEventListener('submit', event 
   state.searchPage = 1;
   searchUnified().catch(error => showNotice(error.message));
 });
+document.querySelector('#search-filters-toggle')?.addEventListener('click', () => {
+  setSearchFiltersVisible(document.querySelector('#search-filters-panel').hidden);
+});
 document.querySelector('#search-version-picker').addEventListener('toggle', event => {
   if (event.currentTarget.open) loadSearchVersionChoices();
 });
@@ -3452,6 +3517,7 @@ document.querySelectorAll('[data-search-task]').forEach(button => button.addEven
   }
   state.searchPage = 1;
   if (task === 'version' && !settings.versionFrom && !settings.versions) {
+    setSearchFiltersVisible(true);
     document.querySelector('#release-search-versions').focus();
     syncLocation();
   } else if (document.querySelector('#release-search').value.trim()) {
