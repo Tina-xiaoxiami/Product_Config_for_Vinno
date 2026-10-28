@@ -13,29 +13,10 @@
           <router-link to="/release?tab=search">搜索发布资料</router-link>
         </p>
       </div>
-      <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
+      <el-tag v-if="stats" :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
         {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
       </el-tag>
     </header>
-
-    <section class="stats-grid" v-loading="statsLoading">
-      <div class="stat-card primary">
-        <span class="stat-value">{{ stats.total_features }}</span>
-        <span class="stat-label">功能总数</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.auto_matched }}</span>
-        <span class="stat-label">自动匹配</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.confirmed }}</span>
-        <span class="stat-label">人工确认</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.related }}</span>
-        <span class="stat-label">关系型功能</span>
-      </div>
-    </section>
 
     <el-tabs v-model="activeTab" class="knowledge-tabs">
       <el-tab-pane label="问答查询" name="qa">
@@ -184,6 +165,17 @@
             <el-option label="人工确认" value="confirmed" />
             <el-option label="关系型功能" value="related" />
           </el-select>
+          <el-select
+            v-model="missingName"
+            data-testid="knowledge-missing-name-filter"
+            aria-label="主名称完整度"
+            clearable
+            placeholder="全部主名称"
+            @change="searchFeatures"
+          >
+            <el-option label="缺中文主名" value="cn" />
+            <el-option label="缺英文主名" value="en" />
+          </el-select>
           <el-popover
             v-model:visible="columnSettingsVisible"
             data-testid="column-settings"
@@ -214,6 +206,11 @@
           <el-button type="primary" :icon="Search" @click="searchFeatures">查询</el-button>
         </section>
 
+        <el-alert v-if="featureLoadError" type="error" :closable="false" show-icon>
+          <template #title>
+            功能知识加载失败。<el-button link type="primary" @click="loadFeatures">重试</el-button>
+          </template>
+        </el-alert>
         <div data-testid="feature-knowledge-list" class="feature-list" v-loading="featureLoading">
           <article v-for="feature in features" :key="feature.id" class="feature-card">
             <div
@@ -287,7 +284,7 @@
 
             <span v-if="columnVisible('group')" class="group-name">{{ feature.group_name }}</span>
           </article>
-          <el-empty v-if="!featureLoading && features.length === 0" description="未找到匹配功能" />
+          <el-empty v-if="!featureLoading && !featureLoadError && features.length === 0" description="未找到匹配功能" />
         </div>
 
         <el-pagination
@@ -762,12 +759,13 @@ import {
 } from '../api/data'
 
 const activeTab = ref('qa')
-const stats = ref({ total_features: 0, auto_matched: 0, confirmed: 0, related: 0, pending: 0 })
-const statsLoading = ref(false)
+const stats = ref(null)
 
 const featureQuery = ref('')
 const identityStatus = ref('')
+const missingName = ref('')
 const featureLoading = ref(false)
+const featureLoadError = ref(false)
 const features = ref([])
 const featureTotal = ref(0)
 const featurePage = ref(1)
@@ -1124,31 +1122,39 @@ const formatFileSize = (size) => {
 }
 
 const loadStats = async () => {
-  statsLoading.value = true
   try {
     stats.value = await getKnowledgeStats()
   } catch {
-    ElMessage.error('统计信息加载失败')
-  } finally {
-    statsLoading.value = false
+    stats.value = null
+    ElMessage.error('待确认功能数量加载失败')
   }
 }
 
+let featureRequestId = 0
 const loadFeatures = async () => {
+  const requestId = ++featureRequestId
   featureLoading.value = true
+  featureLoadError.value = false
   try {
     const result = await getKnowledgeFeatures({
       q: featureQuery.value || undefined,
       identity_status: identityStatus.value || undefined,
+      missing_name: missingName.value || undefined,
       skip: (featurePage.value - 1) * featurePageSize.value,
       limit: featurePageSize.value
     })
+    if (requestId !== featureRequestId) return
     features.value = result.items || []
     featureTotal.value = result.total || 0
   } catch {
-    ElMessage.error('功能知识加载失败')
+    if (requestId === featureRequestId) {
+      features.value = []
+      featureTotal.value = 0
+      featureLoadError.value = true
+      ElMessage.error('功能知识加载失败')
+    }
   } finally {
-    featureLoading.value = false
+    if (requestId === featureRequestId) featureLoading.value = false
   }
 }
 
@@ -1445,11 +1451,6 @@ onMounted(() => {
 .knowledge-header :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
 .master-data-note a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
 .master-data-note span { margin: 0 5px; color: #94a3b8; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-.stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 15px 18px; display: flex; flex-direction: column; }
-.stat-card.primary { background: linear-gradient(135deg, #ecf5ff, #fff); border-color: #bfdbfe; }
-.stat-value { color: #111827; font-size: 24px; font-weight: 700; }
-.stat-label { margin-top: 3px; color: #6b7280; font-size: 12px; }
 .knowledge-tabs { background: #fff; border-radius: 12px; padding: 0 18px 18px; border: 1px solid #e5e7eb; }
 .knowledge-tabs :deep(.el-tabs__item) { color: #475569; }
 .knowledge-tabs :deep(.el-tabs__item.is-active) { color: #1d4ed8; }
@@ -1496,7 +1497,7 @@ onMounted(() => {
 .dialog-candidate-card p { max-height: 120px; margin: 7px 0; overflow: auto; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .document-actions { display: flex; align-items: center; gap: 8px; }
 .el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
-.toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto auto; gap: 10px; margin: 10px 0 16px; }
+.toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 150px 150px auto auto; gap: 10px; margin: 10px 0 16px; }
 .feature-list { max-height: calc(100vh - 400px); min-height: 220px; overflow-y: auto; padding-right: 4px; }
 .column-settings { display: flex; flex-direction: column; gap: 10px; }
 .column-settings-head { display: flex; align-items: center; justify-content: space-between; }
@@ -1587,7 +1588,6 @@ onMounted(() => {
 .preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 850px) {
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
   .registration-summary { grid-template-columns: repeat(2, 1fr); }
   .registration-intro, .registration-group-header { flex-direction: column; }

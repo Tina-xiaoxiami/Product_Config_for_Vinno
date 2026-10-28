@@ -3,7 +3,6 @@
     <header class="workspace-header">
       <div>
         <h2>功能发布</h2>
-        <p>查发布资料、同步文件、对比版本。</p>
       </div>
       <a v-if="isWorkbenchTab(activeTab)" :href="releaseWorkbenchStandaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
@@ -66,12 +65,6 @@
       v-show="activeTab === 'feature-versions'"
       class="workspace-body native-release-pane"
     >
-      <div class="workspace-guide">
-        <div>
-          <strong>功能版本与首发记录</strong>
-          <span>这里保留已有的功能版本、候选复核、发布介绍与模板管理。</span>
-        </div>
-      </div>
       <FeatureRelease />
     </section>
   </div>
@@ -197,7 +190,6 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 
 .workspace-header h2 { margin: 0 0 4px; font-size: 20px; }
 .workspace-header > .standalone-link { margin-top: 6px; }
-.workspace-header p { margin: 0; color: #64748b; font-size: 13px; }
 .workspace-tabs { flex: 0 0 auto; }
 .workspace-tabs :deep(.el-tabs__header) { margin-bottom: 10px; }
 .workspace-tabs :deep(.el-tabs__content) { display: none; }
@@ -213,20 +205,6 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
   border-radius: 8px;
 }
 
-.workspace-guide {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f8fafc;
-}
-
-.workspace-guide div { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
-.workspace-guide strong { white-space: nowrap; font-size: 14px; }
-.workspace-guide span { color: #64748b; font-size: 12px; }
 .standalone-link { color: #2563eb; font-size: 12px; white-space: nowrap; text-decoration: none; }
 .standalone-link:hover { text-decoration: underline; }
 
@@ -252,7 +230,6 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 
 @media (max-width: 900px) {
   .release-workspace { min-height: 420px; }
-  .workspace-guide div { align-items: flex-start; flex-direction: column; gap: 4px; }
   .workspace-header { flex-wrap: wrap; }
 }
 </style>

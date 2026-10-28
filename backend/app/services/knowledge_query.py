@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 _FILTER_SQL = """
     (:identity_status IS NULL OR f.identity_status = :identity_status)
+    AND (:missing_name IS NULL
+         OR (:missing_name = 'cn' AND TRIM(COALESCE(f.primary_cn_name, ''), ' ' || CHAR(9) || CHAR(10) || CHAR(13) || CHAR(160) || '　') = '')
+         OR (:missing_name = 'en' AND TRIM(COALESCE(f.primary_en_name, ''), ' ' || CHAR(9) || CHAR(10) || CHAR(13) || CHAR(160) || '　') = ''))
     AND (
         :search_pattern IS NULL
         OR f.name LIKE :search_pattern
@@ -110,12 +113,14 @@ async def list_feature_knowledge(
     *,
     query: str | None = None,
     identity_status: str | None = None,
+    missing_name: str | None = None,
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[list[dict], int]:
     cleaned_query = str(query or "").strip()
     params = {
         "identity_status": identity_status,
+        "missing_name": missing_name,
         "search_pattern": f"%{cleaned_query}%" if cleaned_query else None,
         "skip": skip,
         "limit": limit,

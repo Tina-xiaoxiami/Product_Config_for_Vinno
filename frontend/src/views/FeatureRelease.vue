@@ -2,9 +2,9 @@
   <div class="feature-release">
     <header class="release-header">
       <div>
-        <h2>功能发布</h2>
+        <h2>功能版本管理</h2>
         <p class="release-subtitle">
-          功能版本、发布日期与发布介绍以功能（IPN）为身份单独管理；首发版本只由已确认的版本记录得出。
+          首发版本只由已确认的版本记录得出。
         </p>
       </div>
       <div class="release-operator">
@@ -281,6 +281,11 @@
             v-if="!introVersion"
             description="在「功能版本查询」里选择一个版本后，再维护它的发布介绍"
           />
+          <div v-else-if="introLoadError" role="alert">
+            发布介绍加载失败。
+            <el-button @click="openIntroduction(introVersion)">重试</el-button>
+          </div>
+          <div v-else-if="introLoading">正在加载发布介绍…</div>
           <div v-else>
             <div class="timeline-heading">
               <h3>
@@ -711,8 +716,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑功能版本" width="560px">
-      <el-form label-width="110px">
+    <el-dialog v-model="editDialogVisible" title="编辑功能版本" width="560px" :show-close="!editSaving" :close-on-click-modal="!editSaving" :close-on-press-escape="!editSaving">
+      <el-form label-width="110px" :disabled="editSaving">
         <el-form-item label="软件版本">
           <el-input v-model="editForm.software_version" />
         </el-form-item>
@@ -762,9 +767,9 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="submitEdit">保存</el-button>
-        <el-button type="danger" @click="removeVersion">删除该记录</el-button>
+        <el-button :disabled="editSaving" @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!editDirty || editSaving" :loading="editSaving" @click="submitEdit">保存</el-button>
+        <el-button type="danger" :disabled="editSaving" @click="removeVersion">删除该记录</el-button>
       </template>
     </el-dialog>
 
@@ -866,6 +871,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { releaseVersionPayload, releaseVersionChanged } from '../utils/releaseVersionEdit.js'
 import {
   batchReviewReleaseVersions,
   createFeatureReleaseVersion,
@@ -1146,6 +1152,9 @@ const editForm = reactive({
   change_note: ''
 })
 
+const editBaseline = ref(null)
+const editDirty = computed(() => releaseVersionChanged(editForm, editBaseline.value))
+
 const editVersion = (row) => {
   Object.assign(editForm, {
     id: row.id,
@@ -1158,22 +1167,15 @@ const editVersion = (row) => {
     review_status: row.review_status,
     change_note: row.change_note || ''
   })
+  editBaseline.value = releaseVersionPayload(editForm)
   editDialogVisible.value = true
 }
 
 const submitEdit = async () => {
+  if (editSaving.value || !editDirty.value) return
   editSaving.value = true
   try {
-    await updateReleaseVersion(editForm.id, {
-      software_version: editForm.software_version,
-      product_series: editForm.product_series,
-      release_date: editForm.release_date,
-      change_type: editForm.change_type,
-      configuration_status: editForm.configuration_status,
-      lifecycle_status: editForm.lifecycle_status,
-      review_status: editForm.review_status,
-      change_note: editForm.change_note
-    })
+    await updateReleaseVersion(editForm.id, releaseVersionPayload(editForm))
     ElMessage.success('已保存')
     editDialogVisible.value = false
     await loadTimeline()
@@ -1250,6 +1252,9 @@ const introApplications = ref('')
 const introAttachments = ref([])
 const introHistory = ref([])
 const introSaving = ref(false)
+const introLoading = ref(false)
+const introLoadError = ref(false)
+let introRequestId = 0
 const publishedSwitch = computed({
   get: () => introForm.review_status === 'published',
   set: (value) => {
@@ -1258,12 +1263,16 @@ const publishedSwitch = computed({
 })
 
 const openIntroduction = async (row) => {
+  const requestId = ++introRequestId
   introVersion.value = row
   introFeatureName.value = timeline.value?.feature?.primary_cn_name || timeline.value?.feature?.legacy_name || ''
   activeTab.value = 'introduction'
   introHistory.value = []
+  introLoading.value = true
+  introLoadError.value = false
   try {
     const introduction = await getReleaseIntroduction(row.id)
+    if (requestId !== introRequestId) return
     Object.assign(introForm, {
       summary: introduction.summary || '',
       clinical_significance: introduction.clinical_significance || '',
@@ -1274,25 +1283,26 @@ const openIntroduction = async (row) => {
     introApplications.value = (introduction.applications || []).join('\n')
     introAttachments.value = introduction.attachments || []
   } catch (error) {
+    if (requestId !== introRequestId) return
     if (error?.response?.status === 404) {
       Object.assign(introForm, {
-        summary: '',
-        clinical_significance: '',
-        workflow: '',
-        change_note: '',
-        review_status: 'draft'
+        summary: '', clinical_significance: '', workflow: '', change_note: '', review_status: 'draft'
       })
       introApplications.value = ''
       introAttachments.value = []
     } else {
+      introLoadError.value = true
       ElMessage.error('发布介绍加载失败')
     }
+  } finally {
+    if (requestId === introRequestId) introLoading.value = false
   }
 }
 
 const saveIntroduction = async () => {
-  if (!introVersion.value) return
+  if (!introVersion.value || introLoading.value || introLoadError.value || introSaving.value) return
   introSaving.value = true
+  const requestId = introRequestId
   try {
     const introduction = await saveReleaseIntroduction(introVersion.value.id, {
       summary: introForm.summary,
@@ -1302,8 +1312,9 @@ const saveIntroduction = async () => {
       change_note: introForm.change_note,
       review_status: introForm.review_status
     })
-    introAttachments.value = introduction.attachments || []
     ElMessage.success('发布介绍已保存')
+    if (requestId !== introRequestId) return
+    introAttachments.value = introduction.attachments || []
     await loadIntroductionHistory()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '保存失败')
@@ -1314,10 +1325,12 @@ const saveIntroduction = async () => {
 
 const loadIntroductionHistory = async () => {
   if (!introVersion.value) return
+  const requestId = introRequestId
   try {
-    introHistory.value = (await getReleaseIntroductionHistory(introVersion.value.id)).items || []
+    const result = await getReleaseIntroductionHistory(introVersion.value.id)
+    if (requestId === introRequestId) introHistory.value = result.items || []
   } catch (error) {
-    ElMessage.error('历史版本加载失败')
+    if (requestId === introRequestId) ElMessage.error('历史版本加载失败')
   }
 }
 
@@ -1326,9 +1339,10 @@ const uploadAttachment = async (file) => {
     ElMessage.warning('请先选择功能版本')
     return false
   }
+  const requestId = introRequestId
   try {
     const introduction = await uploadReleaseAttachment(introVersion.value.id, file)
-    introAttachments.value = introduction.attachments || []
+    if (requestId === introRequestId) introAttachments.value = introduction.attachments || []
     ElMessage.success('附件已上传')
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '附件上传失败')
@@ -1337,9 +1351,10 @@ const uploadAttachment = async (file) => {
 }
 
 const removeAttachment = async (row) => {
+  const requestId = introRequestId
   try {
     await deleteReleaseAttachment(row.id)
-    introAttachments.value = introAttachments.value.filter((item) => item.id !== row.id)
+    if (requestId === introRequestId) introAttachments.value = introAttachments.value.filter((item) => item.id !== row.id)
     ElMessage.success('附件已删除')
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '附件删除失败')
@@ -1532,7 +1547,7 @@ onMounted(async () => {
 .feature-release { padding: 16px; }
 .release-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .release-header h2 { margin: 0; font-size: 18px; color: #1f2937; }
-.release-operator { display: flex; align-items: center; gap: 10px; }
+.release-operator { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .release-subtitle { margin: 6px 0 0; color: #64748b; font-size: 12px; }
 .release-panel { padding: 4px 0; }
 .release-search { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }

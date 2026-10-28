@@ -276,3 +276,27 @@ async def test_document_preview_rejects_unknown_or_missing_registered_file(tmp_p
     assert unknown.json()["detail"] == "资料不存在"
     assert missing.status_code == 410
     assert missing.json()["detail"] == "原文件不存在或尚未同步"
+
+@pytest.mark.asyncio
+async def test_missing_primary_name_filter_combines_with_identity_and_pagination(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    _create_knowledge_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute("UPDATE features SET primary_cn_name = '中文', primary_en_name = 'English'")
+    connection.execute("UPDATE features SET primary_cn_name = ? WHERE id = 1", (" \t\n　",))
+    connection.execute("UPDATE features SET primary_en_name = NULL WHERE id = 1")
+    connection.execute("UPDATE features SET primary_en_name = ? WHERE id = 7", ("\r\u00a0",))
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+    async with client:
+        cn = await client.get("/api/knowledge/features", params={"missing_name": "cn"})
+        en = await client.get("/api/knowledge/features", params={"missing_name": "en", "limit": 1, "skip": 1})
+        combined = await client.get("/api/knowledge/features", params={"missing_name": "en", "identity_status": "confirmed"})
+        invalid = await client.get("/api/knowledge/features", params={"missing_name": "other"})
+    await engine.dispose()
+    assert [item["id"] for item in cn.json()["items"]] == [1]
+    assert en.json()["total"] == 2
+    assert [item["id"] for item in en.json()["items"]] == [7]
+    assert [item["id"] for item in combined.json()["items"]] == [7]
+    assert invalid.status_code == 422

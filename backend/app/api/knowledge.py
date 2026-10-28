@@ -299,6 +299,7 @@ async def list_knowledge_features(
         None,
         pattern="^(auto_matched|confirmed|related|pending)$",
     ),
+    missing_name: str | None = Query(None, pattern="^(cn|en)$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -307,6 +308,7 @@ async def list_knowledge_features(
         db,
         query=q,
         identity_status=identity_status,
+        missing_name=missing_name,
         skip=skip,
         limit=limit,
     )
