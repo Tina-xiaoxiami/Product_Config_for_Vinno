@@ -71,3 +71,29 @@ test('collapsing the filter panel preserves selected values and announces its ex
   assert.equal(button['aria-expanded'], 'false')
   assert.equal(selectedVersion.value, '1.51.20')
 })
+
+test('documents with no separate excerpt do not repeat their title and retain the format', () => {
+  const { compactSearchCard } = functions(['compactSearchCard'], { ...context, fileFormatLabel: value => value.toUpperCase() })
+  const card = compactSearchCard({ source_type: 'controlled', source_label: '受控资料', title: '技术发布记录', file_format: 'pdf', verification: 'unverified' }, { query: '发布' }, '', '', [])
+  assert.equal(card.split('技术发布记录').length - 1, 1)
+  assert.match(card, /PDF/)
+})
+
+test('search and release views share the same project control with its current value', () => {
+  const control = { value: 'VINNO 10', parentElement: null }
+  const query = { prepend(node) { node.parentElement = this } }
+  const header = { prepend(node) { node.parentElement = this } }
+  control.parentElement = header
+  const toggles = []
+  const document = {
+    querySelector: key => ({ '#project-context-actions': control, '.search-primary-row': query, '.topbar-actions': header })[key],
+    body: { classList: { toggle: (...args) => toggles.push(args) } },
+  }
+  const { positionSearchProject } = functions(['positionSearchProject'], { document, workbenchConfig: { embedded: true } })
+  positionSearchProject('search')
+  assert.equal(control.parentElement, query)
+  positionSearchProject('releases')
+  assert.equal(control.parentElement, header)
+  assert.equal(control.value, 'VINNO 10')
+  assert.deepEqual(toggles, [['search-focused', true], ['search-focused', false]])
+})
