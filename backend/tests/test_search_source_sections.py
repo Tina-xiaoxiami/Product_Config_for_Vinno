@@ -853,3 +853,102 @@ def test_whitepaper_title_identification_and_long_registered_scope():
     with patch.object(search_module, '_search_exact', return_value={'results':[row],'filters':{},'source_errors':{}}):
         result = search_module.unified_search(DB(), Index(), None, query='x', source_group='whitepaper', whitepaper_model=value)
     assert result['total'] == 1 and result['whitepaper_models']['selected'] == value
+
+
+def test_verified_chapter_groups_require_same_file_project_language_and_full_content(tmp_path, monkeypatch):
+    from tracker.services import release_section_groups as groups
+    db, path, source_id, row_id = _fixture(tmp_path)
+    release_detail, _ = preferred_release_detail(db, f'release:table:{row_id}')
+    index = SearchIndex(tmp_path / 'group-index.db')
+    document_id = db.add_document('Release Note', doc_type='发布记录')
+    version_id = db.add_document_version(document_id, path_docx=str(path))
+    preview_id = f'controlled:{version_id}:docx'
+    index.replace_source(source_id=preview_id, source_type='controlled', title='RN', path=path,
+                         scope='国内 · 机型范围未登记', verification='unverified', is_current=True, chunks=extract_file(path))
+    sections = groups.controlled_word_sections(path, file_sha256(path), preview_id)
+    section = next(s for s in sections if s['section_number'] == '4.4.4')
+    controlled_detail = {key:section[key] for key in ('source_id','locator','section_number','title')}
+    def entries():
+        release = {'source_type':'release','source_group':'release_note','project_id':1,'version':'1.51.80',
+                   'scope':'ULTIMUS G2 · 1.51.80','detail_evidence':dict(release_detail),'matched_text':'新增子宫畸形分类'}
+        return [dict(release, preview_id=f'release:table:{row_id}',verification='approved'),
+                dict(release, preview_id=f'release:source:{source_id}',verification='unverified'),
+                {'source_type':'controlled','source_group':'release_note','version':'1.51.80',
+                 'scope':'国内 · 机型范围未登记','file_format':'docx','preview_id':preview_id,
+                 'detail_evidence':dict(controlled_detail),'verification':'unverified','document_version_id':version_id,'matched_text':section['content']}]
+    resolve = lambda source_id: {'doc_type':'发布记录','file_role':'docx','scope':'国内 · 机型范围未登记','path':path}
+    items=entries(); groups.assign_release_section_groups(db,index,items,{},resolve)
+    assert len({item['chapter_group_id'] for item in items}) == 1
+    assert [i['verification'] for i in items] == ['approved','unverified','unverified']
+    assert items[2]['scope'] == '国内 · 机型范围未登记'
+    conflicting=entries(); conflicting[0]['matched_text']='新增独立限制：不可用于兼容模式'
+    groups.assign_release_section_groups(db,index,conflicting,{},resolve)
+    assert 'chapter_group_id' not in conflicting[0]
+    different=entries(); different[2]['version']='1.51.81'
+    groups.assign_release_section_groups(db,index,different,{},resolve)
+    assert 'chapter_group_id' not in different[2]
+    multi=entries(); multi[2]['matched_versions']=['1.51.80','1.51.90']
+    groups.assign_release_section_groups(db,index,multi,{},resolve)
+    assert 'chapter_group_id' not in multi[2]
+    other_scope=entries(); other_scope.append(dict(other_scope[2],scope='海外 · 机型范围未登记'))
+    groups.assign_release_section_groups(db,index,other_scope,{},resolve)
+    assert 'chapter_group_id' not in other_scope[3]
+    revoked=entries(); groups.assign_release_section_groups(db,index,revoked,{},lambda _: None)
+    assert 'chapter_group_id' not in revoked[2]
+    changed_scope=entries(); groups.assign_release_section_groups(db,index,changed_scope,{},lambda _: {'doc_type':'发布记录','file_role':'docx','scope':'海外','path':path})
+    assert 'chapter_group_id' not in changed_scope[2]
+    original = groups.controlled_word_sections
+    monkeypatch.setattr(groups, 'controlled_word_sections', lambda *a, **kw: [dict(s,content=s['content']+'改变') for s in original(*a, **kw)])
+    changed=entries(); groups.assign_release_section_groups(db,index,changed,{},resolve)
+    assert 'chapter_group_id' not in changed[2]
+    monkeypatch.setattr(groups, 'controlled_word_sections', lambda *a, **kw: [dict(s,complete=False,text_complete=False) for s in original(*a, **kw)])
+    incomplete=entries(); groups.assign_release_section_groups(db,index,incomplete,{},resolve)
+    assert 'chapter_group_id' not in incomplete[2]
+    monkeypatch.setattr(groups, 'controlled_word_sections', original)
+    with db.connect() as conn:
+        row = conn.execute('SELECT * FROM source_documents WHERE id=?', (source_id,)).fetchone()
+        columns = [key for key in row.keys() if key != 'id']
+        alias = tmp_path / 'alias.docx'; alias.symlink_to(path)
+        values = ['en' if key == 'language' else str(alias) if key == 'path' else row[key] for key in columns]
+        conn.execute('INSERT INTO source_documents (' + ','.join(columns) + ') VALUES (' + ','.join('?' for _ in columns) + ')', values)
+    ambiguous_language=entries(); groups.assign_release_section_groups(db,index,ambiguous_language,{},resolve)
+    assert 'chapter_group_id' not in ambiguous_language[2]
+    with db.connect() as conn:
+        conn.execute("DELETE FROM source_documents WHERE id!=? AND language='en'", (source_id,))
+    project = db.create_project('其他项目','other')
+    release = db.upsert_release('1.51.80', project_id=project['id'])
+    db.stage_release_pair(release,[{'path':str(alias),'language':'en','sha256':file_sha256(path),'content':'other'}],[],[])
+    ambiguous=entries(); groups.assign_release_section_groups(db,index,ambiguous,{},resolve)
+    assert 'chapter_group_id' not in ambiguous[2]
+    path.write_bytes(path.read_bytes()+b'changed')
+    stale=entries(); groups.assign_release_section_groups(db,index,stale,{},resolve)
+    assert all('chapter_group_id' not in i for i in stale)
+
+
+def test_unified_search_assigns_verified_group_to_three_real_source_types(tmp_path, monkeypatch):
+    from tracker.services.release_sections import controlled_word_sections
+    db, path, source_id, row_id = _fixture(tmp_path)
+    document = db.add_document('Release Note', doc_type='发布记录')
+    version_id = db.add_document_version(document, path_docx=str(path))
+    preview_id = f'controlled:{version_id}:docx'
+    index = SearchIndex(tmp_path / 'integration-index.db')
+    index.replace_source(source_id=preview_id, source_type='controlled', title='Release Note', path=path,
+                         scope='国内 · 机型范围未登记', verification='unverified', is_current=True, chunks=extract_file(path))
+    chapter = next(s for s in controlled_word_sections(path,file_sha256(path),preview_id) if s['section_number']=='4.4.4')
+    release = {'source_type':'release','source_label':'版本与功能','project_id':1,'version':'1.51.80',
+               'scope':'ULTIMUS G2 · 1.51.80','title':'新增子宫畸形分类','verification':'approved',
+               'is_current':True,'category':'function','matched_text':'子宫畸形分类','locator':'中文记录'}
+    rows = [
+        {'source_type':'controlled','source_label':'受控资料','document_version_id':version_id,'version':'1.51.80',
+         'scope':'国内 · 机型范围未登记','title':'Release Note','verification':'unverified','is_current':True,
+         'file_format':'docx','preview_id':preview_id,'locator':chapter['locator'],'matched_text':'子宫畸形分类'},
+        {**release,'preview_id':f'release:table:{row_id}','evidence_kind':'version_record'},
+        {**release,'preview_id':f'release:source:{source_id}','evidence_kind':'source_snapshot',
+         'verification':'unverified','locator':'原文行 1'},
+    ]
+    monkeypatch.setattr(search_module,'_search_exact',lambda *a,**k:{'results':[dict(row) for row in rows],'filters':{},'source_errors':{}})
+    result=search_module.unified_search(db,index,None,query='子宫畸形分类',source_group='release_note',release_category='function',
+        chapter_candidate=lambda _: {'doc_type':'发布记录','file_role':'docx','scope':'国内 · 机型范围未登记','path':path})
+    assert result['total'] == 3
+    assert len({item['chapter_group_id'] for item in result['results']}) == 1
+    assert [item['verification'] for item in result['results']] == ['unverified','approved','unverified']

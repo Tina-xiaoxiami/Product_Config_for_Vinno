@@ -20,18 +20,17 @@ const context = { escapeHtml: escape, escapeAttribute: escape, highlightSearchTe
   verificationLabel: value => ({approved:'已确认', unverified:'未复核', expired:'已过复核期限'})[value] || value,
   fileFormatLabel: value => ({docx:'Word', pdf:'PDF'})[value] || '', searchEvidenceLabel: value => ({version_record:'当时版本记录', source_snapshot:'Release Note 原文提及'})[value] || value,
   searchQueryOrigin: () => '', state }
-const names = ['preferredSearchEvidence', 'searchEvidenceActions', 'normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'renderSearchGroups', 'searchComparisonButton', 'compactSearchCard']
+const names = ['preferredSearchEvidence', 'searchEvidenceActions', 'normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'renderSearchGroups', 'resultGroupCoversDetail', 'searchComparisonButton', 'compactSearchCard']
 const helpers = functions(names, context)
 
-test('groups by explicit project/version/range and exact document identity without conflating unknown scope', () => {
-  const first = release(), snapshot = release({evidence_kind:'source_snapshot', preview_id:'release:source:12', verification:'unverified'})
-  const word = controlled(), pdf = controlled({file_format:'pdf', preview_id:'controlled:18:pdf'})
-  const items = [first, word, snapshot, pdf, release({project_id:2}), release({scope:'ULTIMUS G2 · 海外 · 1.51.36'}), controlled({document_version_id:19, scope:'适用范围未登记'}), controlled({document_version_id:20, scope:'适用范围未登记'})]
-  const groups = helpers.groupSearchResults(items)
-  assert.deepEqual(groups.map(group => group.items.length), [2, 2, 1, 1, 1, 1])
-  assert.equal(groups[0].items[0], first); assert.equal(groups[0].items[1], snapshot)
-  assert.equal(groups[1].items[0], word); assert.equal(groups[1].items[1], pdf)
-  assert.notEqual(helpers.searchEvidenceGroupKey(word), helpers.searchEvidenceGroupKey(release()))
+test('only server-proven identical chapters group; ordinary same-version evidence stays separate', () => {
+  const first = release(), snapshot = release({evidence_kind:'source_snapshot',preview_id:'release:source:12',verification:'unverified'})
+  const word = controlled(), pdf = controlled({file_format:'pdf',preview_id:'controlled:18:pdf'})
+  assert.deepEqual(helpers.groupSearchResults([first,word,snapshot,pdf]).map(group => group.items.length),[1,1,1,1])
+  const id = 'a'.repeat(64), detail = {source_id:'release:source:12',locator:'原文行 123',title:'新增功能',verification:'unverified',excerpt:'完整章节摘要'}
+  const proven = [release({chapter_group_id:id,detail_evidence:detail}), release({chapter_group_id:id,detail_evidence:detail,evidence_kind:'source_snapshot'}), controlled({chapter_group_id:id,detail_evidence:{...detail,source_id:'controlled:18:docx'}})]
+  assert.deepEqual(helpers.groupSearchResults(proven).map(group=>group.items.length),[3])
+  assert.equal(helpers.searchEvidenceGroupKey({...proven[0],is_stale:true}),null)
 })
 
 test('multi-version historical files and unsupported identity never join a version group', () => {
@@ -43,18 +42,24 @@ test('multi-version historical files and unsupported identity never join a versi
   ]) assert.equal(helpers.searchEvidenceGroupKey(item), null)
 })
 
-test('group shows each summary, format and independent status while retaining every card and action', () => {
+test('one verified chapter card keeps each independent source and original actions folded', () => {
   state.searchComparisonOptions = []
-  const word = controlled(), pdf = controlled({file_format:'pdf', preview_id:'controlled:18:pdf', verification:'expired', is_stale:true, matched_text:'不同限制内容'})
-  const html = helpers.renderSearchGroups([word,pdf], item => helpers.compactSearchCard(item, {query:'原文'}, `<button data-search-result-preview="${escape(item.preview_id)}" data-search-result-locator="${escape(item.locator)}">原文</button>`, '', []))
-  assert.match(html, /本页 2 条独立证据/); assert.match(html, /Word/); assert.match(html, /PDF/)
-  assert.match(html, /来源 1/); assert.match(html, /来源 2/); assert.match(html, /未复核/); assert.match(html, /已过复核期限/); assert.match(html, /索引待更新/); assert.match(html, /当前节选不同，展开核对/); assert.match(html, /不同限制内容/)
-  assert.match(html, /data-search-result-preview="controlled:18:docx"/); assert.match(html, /data-search-result-preview="controlled:18:pdf"/)
-  assert.match(html, /data-search-result-locator="段落 83"/); assert.match(html, /data-search-compare-add/)
-  const visibleSummary = html.slice(html.indexOf('<ul class="search-group-summaries">'), html.indexOf('</ul>'))
-  assert.match(visibleSummary, /data-search-result-preview="controlled:18:docx"/)
-  assert.match(visibleSummary, /data-search-result-refresh/)
-  assert.match(html, /<details class="search-group-details">/); assert.doesNotMatch(html, /<details class="search-group-details" open/)
+  const id='b'.repeat(64), detail={source_id:'release:source:12',locator:'原文行 123',title:'新增子宫畸形分类',excerpt:'唯一章节摘要',verification:'unverified'}
+  const record=release({chapter_group_id:id,detail_evidence:detail,matched_text:'已确认变更记录'})
+  const snapshot=release({chapter_group_id:id,detail_evidence:detail,evidence_kind:'source_snapshot',verification:'unverified',preview_id:'release:source:12',locator:'原文行 123'})
+  const word=controlled({chapter_group_id:id,detail_evidence:{...detail,source_id:'controlled:18:docx',locator:'段落 83'},matched_text:'Word 原命中'})
+  const html=helpers.renderSearchGroups([word,record,snapshot],()=>{throw Error('unexpected ungrouped card')},'子宫')
+  const folded=html.indexOf('<details class="search-group-details">')
+  assert.ok(folded>0); const visible=html.slice(0,folded), sources=html.slice(folded)
+  assert.equal((visible.match(/唯一章节摘要/g)||[]).length,1)
+  assert.equal((visible.match(/查看完整功能描述/g)||[]).length,1)
+  assert.match(visible,/新增子宫畸形分类/); assert.match(visible,/未复核/)
+  assert.doesNotMatch(visible,/已确认变更记录|国内 · 机型范围未登记|Word 原命中/)
+  assert.match(sources,/来源依据（3）/); assert.match(sources,/已确认/); assert.match(sources,/未复核/)
+  assert.match(sources,/国内 · 机型范围未登记/); assert.match(sources,/当时版本记录/); assert.match(sources,/Release Note 原文提及/); assert.match(sources,/中文记录/); assert.match(sources,/原文行 123/)
+  for (const id of ['controlled:18:docx','release:change:603','release:source:12']) assert.ok(sources.includes(id))
+  assert.equal(state.searchComparisonOptions.length,3)
+  assert.deepEqual(state.searchComparisonOptions.map(item=>item.preview_id),['controlled:18:docx','release:change:603','release:source:12'])
 })
 
 test('text equality ignores only whitespace and preserves numbers, case and punctuation', () => {
@@ -77,24 +82,21 @@ test('group summary reflects current comparison selections while collapsed', () 
   state.searchComparison = []; renderSearchComparisonTray(); assert.equal(label.textContent, '')
 })
 
-test('both result layouts use identical groups, preserve source actions and original pagination counts', () => {
-  const word = controlled({ version_matches:[{version:'1.51.36',locator:'段落 83',text:'第一处',query:'导出'},{version:'1.51.36',locator:'段落 84',text:'第二处',query:'导出'}] })
-  const pdf = controlled({file_format:'pdf', preview_id:'controlled:18:pdf', locator:'第8页'})
+test('both result layouts show page card/source counts and preserve original pagination', () => {
+  const id='c'.repeat(64), detail={source_id:'release:source:12',locator:'原文行 123',title:'新增功能',excerpt:'一份章节摘要',verification:'unverified'}
+  const record=release({chapter_group_id:id,detail_evidence:detail})
+  const snapshot=release({chapter_group_id:id,detail_evidence:detail,evidence_kind:'source_snapshot',verification:'unverified',preview_id:'release:source:12',locator:'原文行 123'})
+  const word=controlled({chapter_group_id:id,detail_evidence:{...detail,source_id:'controlled:18:docx',locator:'段落 83'},version_matches:[{version:'1.51.36',locator:'段落 83',text:'第一处',query:'导出'},{version:'1.51.36',locator:'段落 84',text:'第二处',query:'导出'}]})
   for (const embedded of [true, false]) {
-    const container = { innerHTML: '' }, state = { searchComparison: [], searchComparisonOptions: [] }
-    const context = { ...globalContext(), state, workbenchConfig:{embedded}, document:{querySelector:()=>container},
-      SEARCH_SOURCE_LABELS:{}, renderSavedSearches(){}, renderSearchComparisonTray(){}, compactSearchSourceNotice:()=>'', compactSearchAnswer:()=>'',
-      searchTaskSummary:()=>'', searchCoverageMarkup:()=>'', searchEmptyMarkup:()=>'', activeProject:()=>({name:'ULTIMUS G2'}), buildHash:()=>'' }
-    const all = functions([...names, 'searchTaxonomyMarkup', 'renderUnifiedSearch', 'restoreTaxonomyFocus'], {...context, categoryLabels:{function:'功能',source:'Release Note 原文'}})
-    // The renderer resolves its helper names lexically from this same source bundle.
-    all.renderUnifiedSearch({results:[word,pdf],query:'导出',source_errors:{},total:81,page_size:40,page:1,scope:'current',task:'search'})
-    assert.match(container.innerHTML, /本页 2 条独立证据/)
-    assert.match(container.innerHTML, /仅对本页证据分组/)
-    assert.match(container.innerHTML, /共 81 条/)
-    assert.match(container.innerHTML, /data-search-result-locator="段落 83"/)
-    assert.match(container.innerHTML, /data-search-result-locator="段落 84"/)
-    assert.match(container.innerHTML, /data-search-result-preview="controlled:18:pdf"/)
-    assert.equal(state.searchComparisonOptions.length, 3)
+    const container={innerHTML:''}, state={searchComparison:[],searchComparisonOptions:[],searchSourceGroup:'release_note'}
+    const context={...globalContext(),state,workbenchConfig:{embedded},document:{querySelector:()=>container},SEARCH_SOURCE_LABELS:{},renderSavedSearches(){},renderSearchComparisonTray(){},compactSearchSourceNotice:()=>'',compactSearchAnswer:()=>'',searchTaskSummary:()=>'',searchCoverageMarkup:()=>'',searchEmptyMarkup:()=>'',activeProject:()=>({name:'ULTIMUS G2'}),buildHash:()=>''}
+    const all=functions([...names,'searchTaxonomyMarkup','renderUnifiedSearch','restoreTaxonomyFocus'],{...context,categoryLabels:{function:'功能'}})
+    all.renderUnifiedSearch({results:[word,record,snapshot],query:'导出',source_errors:{},total:81,page_size:40,page:1,scope:'current',task:'search'})
+    assert.match(container.innerHTML,/本页 <strong>1<\/strong> 项内容 · 3 条来源/)
+    assert.match(container.innerHTML,/仅合并本页同章来源/); assert.match(container.innerHTML,/共 81 条/)
+    assert.match(container.innerHTML,/data-search-result-locator="段落 83"/); assert.match(container.innerHTML,/data-search-result-locator="段落 84"/)
+    assert.match(container.innerHTML,/第一处/); assert.match(container.innerHTML,/第二处/)
+    assert.equal(state.searchComparisonOptions.length,4)
   }
 })
 
@@ -123,4 +125,30 @@ test('both integrated and standalone result renderers show whitepaper chapter in
     assert.match(container.innerHTML,/查看原命中位置/)
     assert.doesNotMatch(container.innerHTML,/目录 \.\.\.\.\.\.9/)
   }
+})
+
+test('earliest conclusion keeps its qualification without duplicating a grouped chapter action', () => {
+  const id='d'.repeat(64), detail={source_id:'release:source:12',locator:'原文行 123',title:'功能',excerpt:'正文',verification:'unverified'}
+  const record=release({chapter_group_id:id,detail_evidence:detail})
+  const snapshot=release({chapter_group_id:id,detail_evidence:detail,evidence_kind:'source_snapshot',preview_id:'release:source:12'})
+  const {compactSearchAnswer,groupSearchResults}=functions([...names,'compactSearchAnswer'],context)
+  const groups=groupSearchResults([record,snapshot])
+  const html=compactSearchAnswer({query:'功能',earliest_records:[record]},groups)
+  assert.match(html,/版本库最早记载/); assert.match(html,/不代表首次支持/)
+  assert.doesNotMatch(html,/查看完整功能描述/)
+  assert.match(compactSearchAnswer({query:'功能',earliest_records:[record]},[]),/查看完整功能描述/)
+  const differentRecord = {...record,preview_id:'release:change:999'}
+  assert.match(compactSearchAnswer({query:'功能',earliest_records:[differentRecord]},groups),/查看变更依据/)
+})
+
+
+test('a chapter card without a snapshot hit uses the release chapter status, not a controlled document approval', () => {
+  const id='e'.repeat(64), detail={source_id:'release:source:12',locator:'原文行 123',title:'功能章节',excerpt:'完整正文',verification:'unverified'}
+  const record=release({chapter_group_id:id,detail_evidence:detail})
+  const word=controlled({chapter_group_id:id,verification:'approved',detail_evidence:{...detail,source_id:'controlled:18:docx',locator:'段落 83',verification:'approved'}})
+  const html=helpers.renderSearchGroups([word,record],()=>'', '功能')
+  const main=html.slice(0,html.indexOf('<details'))
+  assert.match(main,/未复核/); assert.doesNotMatch(main,/已确认/)
+  assert.match(main,/data-search-result-preview="release:source:12"/)
+  assert.match(html.slice(html.indexOf('<details')),/已确认/)
 })

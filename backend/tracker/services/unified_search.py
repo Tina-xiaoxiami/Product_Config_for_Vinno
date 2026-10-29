@@ -27,6 +27,7 @@ from tracker.services.search_index import (
 from tracker.services.search_sources import STRUCTURED_SOURCE_TYPES, search_structured_sources
 from tracker.services.document_scopes import matches_model_scope, normalize_model_scope, DOCUMENT_CATEGORIES
 from tracker.services.section_cache import section_cache
+from tracker.services.release_section_groups import assign_release_section_groups
 from tracker.services.document_evidence import latest_extraction_review_hashes
 
 
@@ -885,6 +886,7 @@ def unified_search(
     version_from: str = '', version_to: str = '', versions: str = '',
     source_group: str = 'all', release_category: str = 'all', whitepaper_model: str = '',
     prewarm: Callable[[list[tuple[str, str, str]]], None] | None = None,
+    chapter_candidate: Callable[[str], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """Run explicit queries through the same adapters; related hits stay separate clues."""
     groups = {'all', 'release_note', 'whitepaper', 'other'}
@@ -1100,6 +1102,8 @@ def unified_search(
             item['detail_evidence'].update(excerpt=section['content'][:500], evidence_kind='controlled_document',
                                            source_label='白皮书', verification=item['verification'],
                                            scope=item['scope'], has_images=section['has_images'])
+    if source_group == 'release_note' and len(page_results) > 1:
+        assign_release_section_groups(database, index, page_results, source_cache, chapter_candidate)
     if prewarm is not None:
         prewarm(prewarm_candidates)
     payload.update(total=len(results), page=safe_page, page_size=safe_size,

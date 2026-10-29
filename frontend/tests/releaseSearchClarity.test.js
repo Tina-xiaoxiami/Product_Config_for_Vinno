@@ -43,7 +43,7 @@ test('compact cards keep evidence limitations visible and escape source text', (
 })
 
 test('the answer preserves each project earliest record and the distinction from first support', () => {
-  const { compactSearchAnswer } = functions(['preferredSearchEvidence', 'searchEvidenceActions', 'compactSearchAnswer'], context)
+  const { compactSearchAnswer } = functions(['preferredSearchEvidence', 'searchEvidenceActions', 'resultGroupCoversDetail', 'compactSearchAnswer'], context)
   const answer = compactSearchAnswer({ query: '导出', earliest_records: [
     { version: '1.51.36', scope: 'ULTIMUS G2 · 1.51.36', preview_id: 'release:change:603', locator: '中文记录' },
     { version: '1.14.80', scope: 'VINNO 10 · 1.14.80', preview_id: 'release:change:9', locator: '中文记录' },

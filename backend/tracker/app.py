@@ -456,6 +456,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 source_group=request.args.get("source_group", "all"),
                 release_category=request.args.get("release_category", "all"),
                 whitepaper_model=request.args.get("whitepaper_model", ""),
+                chapter_candidate=lambda source_id: resolve_source_candidate(database, source_id, **search_roots()),
                 unavailable_sources=unavailable_sources,
                 prewarm=(lambda candidates: prewarmer.schedule(prewarm_ticket, search_index, candidates,
                     lambda source_id: resolve_source_candidate(database, source_id, **search_roots()))) if prewarmer else None,
