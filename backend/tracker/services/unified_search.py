@@ -7,7 +7,7 @@ from functools import partial
 from hashlib import sha256
 import os
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Callable
 
 from tracker.database import Database
 from tracker.domain import version_key
@@ -25,6 +25,7 @@ from tracker.services.search_index import (
 )
 from tracker.services.search_sources import STRUCTURED_SOURCE_TYPES, search_structured_sources
 from tracker.services.document_scopes import matches_model_scope
+from tracker.services.section_cache import section_cache
 from tracker.services.document_evidence import latest_extraction_review_hashes
 
 
@@ -213,6 +214,7 @@ def refresh_search_index(
 ) -> dict[str, Any]:
     """Incrementally index registered controlled files and files under the training root."""
     with index.refresh_lock:
+        section_cache.clear()
         return _refresh_search_index(
             database, index, materials_root=materials_root, training_root=training_root,
             controlled_extraction_roots=tuple(controlled_extraction_roots),
@@ -846,6 +848,7 @@ def unified_search(
     page: int = 1, page_size: int = 40, task: str = 'search', expand_related: bool = False,
     version_from: str = '', version_to: str = '', versions: str = '',
     source_group: str = 'all', release_category: str = 'all',
+    prewarm: Callable[[list[tuple[str, str, str]]], None] | None = None,
 ) -> dict[str, Any]:
     """Run explicit queries through the same adapters; related hits stay separate clues."""
     groups = {'all', 'release_note', 'whitepaper', 'other'}
@@ -972,6 +975,13 @@ def unified_search(
                                for category in sorted(categories - {'all'})},
     }
     payload['unfiltered_total'] = len(results)
+    prewarm_page = max(1, int(page))
+    prewarm_size = min(100, max(1, int(page_size)))
+    whitepaper_page = [item for item in results if item['source_group'] == 'whitepaper'][
+        (prewarm_page - 1) * prewarm_size:prewarm_page * prewarm_size]
+    prewarm_candidates = [(item['preview_id'], item.get('locator') or '', item.get('matched_query') or needle)
+                          for item in whitepaper_page if item.get('preview_id')
+                          and item.get('file_format') in {'pdf', 'docx'} and not item.get('is_stale')][:40]
     results = [dict(item) for item in results if (source_group == 'all' or item['source_group'] == source_group)
                and (release_category == 'all' or item['source_group'] == 'release_note' and release_category in item['release_categories'])]
     if release_category != 'all':
@@ -1024,6 +1034,8 @@ def unified_search(
             item['detail_evidence'].update(excerpt=section['content'][:500], evidence_kind='controlled_document',
                                            source_label='白皮书', verification=item['verification'],
                                            scope=item['scope'], has_images=section['has_images'])
+    if prewarm is not None:
+        prewarm(prewarm_candidates)
     payload.update(total=len(results), page=safe_page, page_size=safe_size,
                    results=page_results,
                    source_counts={source: sum(r['source_type'] == source for r in results) for source in sorted(selected)},

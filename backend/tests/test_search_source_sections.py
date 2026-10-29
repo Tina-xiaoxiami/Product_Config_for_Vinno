@@ -125,11 +125,16 @@ def test_facets_count_all_results_before_filter_and_pagination(monkeypatch):
              'category': 'function' if i % 2 else 'config', 'evidence_kind': 'version_record'} for i in range(25)]
     rows += [{'source_type': 'controlled', 'source_label': '资料', 'title': str(i), 'scope': 'V',
               'verification': 'unverified', 'is_current': True, 'matched_text': '测试', 'locator': '正文',
-              'preview_id': f'controlled:{i}:docx', 'document_version_id': i} for i in (1, 2)]
+              'preview_id': f'controlled:{i}:docx', 'document_version_id': i, 'file_format': 'docx'} for i in (1, 2)]
     def fake(*args, **kwargs):
         return {'results': [dict(row) for row in rows], 'filters': {}, 'source_errors': {}}
     monkeypatch.setattr(search_module, '_search_exact', fake)
     monkeypatch.setattr(search_module, 'preferred_release_detail', lambda *args, **kwargs: (None, None))
+    queued = []
+    result = search_module.unified_search(DB(), Index(), None, query='测试', source_group='release_note', release_category='function', page=2, page_size=5, prewarm=queued.append)
+    assert queued == [[]]  # no whitepaper on page 2
+    result = search_module.unified_search(DB(), Index(), None, query='测试', source_group='release_note', release_category='function', page=1, page_size=5, prewarm=queued.append)
+    assert queued[-1] == [('controlled:1:docx', '正文', '测试')]
     result = search_module.unified_search(DB(), Index(), None, query='测试', source_group='release_note', release_category='function', page=2, page_size=5)
     assert result['unfiltered_total'] == 27 and result['total'] == 12 and len(result['results']) == 5
     assert result['taxonomy_counts']['sources'] == {'release_note': 25, 'whitepaper': 1, 'other': 1}
@@ -412,3 +417,362 @@ def test_non_preview_result_remains_available_in_other_source_group(monkeypatch)
     monkeypatch.setattr(search_module, '_search_exact', lambda *args, **kwargs: {'results':[dict(row)], 'filters':{}, 'source_errors':{}})
     result = search_module.unified_search(DB(), Index(), None, query='测试', source_group='other')
     assert result['total'] == 1 and result['results'][0]['preview_id'] is None
+
+
+def test_text_section_cache_reuses_parsing_and_revalidates_source(tmp_path, monkeypatch):
+    from tracker.services import release_sections
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    db, path, source_id, _ = _fixture(tmp_path)
+    count = 0
+    original = release_sections._word_sections
+    def counted(*args, **kwargs):
+        nonlocal count
+        count += 1
+        return original(*args, **kwargs)
+    monkeypatch.setattr(release_sections, '_word_sections', counted)
+    one = release_sections.source_sections(db, source_id)
+    assert one and count == 1
+    one[0]['title'] = 'caller mutation'
+    assert release_sections.source_sections(db, source_id)[0]['title'] != 'caller mutation'
+    assert count == 1
+    with db.connect() as conn:
+        conn.execute("UPDATE source_documents SET content = content || ' extra' WHERE id=?", (source_id,))
+    assert release_sections.source_sections(db, source_id)
+    assert count == 2
+    # Different indexed source identifiers cannot share section locators.
+    assert release_sections.controlled_word_sections(path, file_sha256(path), 'controlled:7:docx')
+    assert count == 3
+    assert release_sections.controlled_word_sections(path, file_sha256(path), 'controlled:8:docx')
+    assert count == 4
+    # Preview with images is always parsed on demand, not retained in the cache.
+    release_sections.source_sections(db, source_id, image_locator='原文行 1')
+    assert count == 5
+    with db.connect() as conn:
+        conn.execute('UPDATE project_sources SET enabled=0')
+    assert release_sections.source_sections(db, source_id) == []
+    with db.connect() as conn:
+        conn.execute('UPDATE project_sources SET enabled=1')
+    path.write_bytes(path.read_bytes() + b'changed')
+    assert release_sections.source_sections(db, source_id) == []
+    assert count == 5
+
+
+def test_pdf_cache_retries_failures_and_invalidates_file_changes(tmp_path, monkeypatch):
+    from tracker.services import pdf_sections
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    path = tmp_path / 'paper.pdf'
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(40, 700, '5.63 Target'); pdf.drawString(40, 680, 'Details')
+    pdf.drawString(40, 660, '5.64 Next'); pdf.save()
+    expected = file_sha256(path)
+    original = pdf_sections.PdfReader
+    calls = 0
+    def reader(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError('temporary parser failure')
+        return original(*args, **kwargs)
+    monkeypatch.setattr(pdf_sections, 'PdfReader', reader)
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Target') is None
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Target')
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Target')
+    assert calls == 2
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Not present') is None
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Not present') is None
+    assert calls == 3  # A verified no-match is reusable; a parser failure is not.
+    path.write_bytes(path.read_bytes() + b'changed')
+    assert pdf_sections.pdf_section(path, expected, 'controlled:1:pdf', 'Target') is None
+    assert calls == 3
+
+
+def test_section_cache_is_bounded_and_refresh_invalidates_inflight(tmp_path, monkeypatch):
+    from tracker.services.section_cache import SectionCache, section_cache
+    cache = SectionCache(max_entries=2, max_bytes=1000)
+    generation = cache.generation()
+    for key in ('a', 'b', 'c'):
+        cache.put(key, {'value': key}, generation)
+    assert cache.get('a') is None and cache.get('b') == {'value': 'b'}
+    cache.clear()
+    cache.put('old-inflight', {'value': 'old'}, generation)
+    assert cache.get('old-inflight') is None
+    cache.put('too-large', {'value': 'x' * 2000}, cache.generation())
+    assert cache.get('too-large') is None
+    section_cache.clear()
+    section_cache.put(('fixture',), {'value': 1}, section_cache.generation())
+    db = Database(tmp_path / 'tracker.db'); db.initialize()
+    index = SearchIndex(tmp_path / 'index.db')
+    monkeypatch.setattr(search_module, '_refresh_search_index', lambda *args, **kwargs: {})
+    search_module.refresh_search_index(db, index, materials_root=None, training_root=None)
+    assert section_cache.get(('fixture',)) is None
+
+
+def test_registration_search_reuses_read_only_connection_and_observes_changes(tmp_path, monkeypatch):
+    import sqlite3
+    from tracker.services import registration, search_sources
+    db = Database(tmp_path / 'tracker.db'); db.initialize()
+    for name in ('Model A', 'Model B', 'Model C'):
+        db.add_registration_scope('CN', name, 'P42', certificate_no='CERT')
+        db.add_registration_relation('CN', name, 'P42', certificate_no='CERT', state='已注册', rule='test')
+    monkeypatch.setattr(registration, '_checked_at', lambda: 'fixed')
+    args = dict(query='P42', model='', market='domestic', country='')
+    expected = search_sources._registration_results_with_connection(db, **args)
+    original = sqlite3.connect
+    opens = 0
+    def counted(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        return original(*args, **kwargs)
+    monkeypatch.setattr(sqlite3, 'connect', counted)
+    assert search_sources._registration_results(db, **args) == expected
+    assert opens == 1
+    with db.read_session() as first:
+        with db.connect() as second:
+            assert first is second
+            try:
+                second.execute("INSERT INTO kh_registration_relations(country_code, registration_base_model, probe_code) VALUES ('CN','X','X')")
+                assert False, 'read session must reject writes'
+            except sqlite3.OperationalError:
+                pass
+    db.add_registration_relation('CN', 'Model D', 'P42', certificate_no='CERT', state='已注册')
+    assert len(search_sources._registration_results(db, **args)[0]) == 4
+
+
+def test_pdf_same_source_inflight_requests_parse_once(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from tracker.services import pdf_sections
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    path = tmp_path / 'paper.pdf'
+    pdf = canvas.Canvas(str(path)); pdf.drawString(40, 700, '5.1 Target')
+    pdf.drawString(40, 680, 'Details'); pdf.drawString(40, 660, '5.2 Next'); pdf.save()
+    expected = file_sha256(path)
+    original = pdf_sections.PdfReader
+    started, release = Event(), Event()
+    calls = 0
+    def slow(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(pdf_sections, 'PdfReader', slow)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(pdf_sections.pdf_section, path, expected, 'controlled:1:pdf', 'Target')
+        assert started.wait(3)
+        second = pool.submit(pdf_sections.pdf_section, path, expected, 'controlled:1:pdf', 'Target')
+        release.set()
+        assert first.result(timeout=3) == second.result(timeout=3)
+    assert calls == 1
+
+
+def test_prewarm_discards_old_queue_and_rechecks_registration(tmp_path):
+    from threading import Event, RLock
+    from tracker.services.search_prewarm import WhitepaperPrewarmer
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    file = tmp_path / 'paper.pdf'; file.write_text('fixture')
+    started, release, done = Event(), Event(), Event()
+    calls = []
+    class Index:
+        path = tmp_path / 'index.db'
+        refresh_lock = RLock()
+        def source_metadata(self, source_id):
+            return {'path': str(file), 'status': 'stale' if source_id == 'stale' else 'indexed'}
+        def preview(self, source_id, **kwargs):
+            calls.append(source_id)
+            assert kwargs['include_images'] is False
+            if source_id == 'old-first':
+                started.set(); assert release.wait(3)
+            if source_id == 'new': done.set()
+            return {'stale': False}
+    index = Index(); warmer = WhitepaperPrewarmer()
+    def resolve(source_id):
+        if source_id == 'removed': return None
+        return {'path': file, 'doc_type': '白皮书'}
+    try:
+        old_ticket = warmer.begin('old')
+        warmer.schedule(old_ticket, index, [('old-first', 'p', 'q'), ('old-second', 'p', 'q')], resolve)
+        warmer.finish(old_ticket)
+        assert started.wait(3)
+        for n in range(100):
+            ticket = warmer.begin(f'new-{n}')
+            warmer.schedule(ticket, index, [('discarded', 'p', str(n))], resolve)
+            warmer.finish(ticket)
+        ticket = warmer.begin('latest')
+        warmer.schedule(ticket, index, [('removed', 'p', 'new'), ('stale', 'p', 'new'), ('new', 'p', 'new')], resolve)
+        warmer.schedule(old_ticket, index, [('late-old', 'p', 'q')], resolve)
+        assert len(warmer._pending[3]) == 3
+        warmer.finish(ticket)
+        release.set()
+        assert done.wait(3)
+        assert calls == ['old-first', 'new']
+    finally:
+        release.set(); warmer.close()
+
+
+def test_prewarm_checks_ticket_after_waiting_for_refresh_lock(tmp_path):
+    from threading import Event, Lock
+    from tracker.services.search_prewarm import WhitepaperPrewarmer
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    file = tmp_path / 'file.pdf'; file.write_text('fixture')
+    gate, waiting, done = Lock(), Event(), Event()
+    class RefreshLock:
+        def __enter__(self):
+            waiting.set(); gate.acquire()
+        def __exit__(self, *args):
+            gate.release()
+    calls = []
+    class Index:
+        path = tmp_path / 'index.db'
+        refresh_lock = RefreshLock()
+        def source_metadata(self, source_id): return {'path': str(file), 'status': 'indexed'}
+        def preview(self, source_id, **kwargs): calls.append(source_id); done.set(); return {'stale': False}
+    index = Index(); warmer = WhitepaperPrewarmer()
+    resolve = lambda source_id: {'path': file, 'doc_type': '白皮书'}
+    gate.acquire()
+    try:
+        old = warmer.begin('old')
+        warmer.schedule(old, index, [('old', 'p', 'q')], resolve)
+        warmer.finish(old)
+        assert waiting.wait(3)
+        new = warmer.begin('new')
+        warmer.schedule(new, index, [('new', 'p', 'q')], resolve)
+        warmer.finish(new)
+        gate.release()
+        assert done.wait(3)
+        assert calls == ['new']
+    finally:
+        if gate.locked(): gate.release()
+        warmer.close()
+
+
+def test_prewarm_pagination_uses_actual_page_size(monkeypatch):
+    class DB:
+        def list_documents(self): return [{'id': 1, 'doc_type': '白皮书'}]
+        def list_document_versions(self, document): return [{'id': 1}]
+    class Index:
+        def status(self): return {}
+    rows = [{'source_type': 'controlled', 'title': str(i), 'scope': 'V',
+             'verification': 'unverified', 'is_current': True, 'matched_text': 'x', 'locator': '第 1 页',
+             'preview_id': f'controlled:{i}:pdf', 'document_version_id': 1, 'file_format': 'pdf'} for i in range(130)]
+    rows[0]['is_stale'] = True
+    monkeypatch.setattr(search_module, '_search_exact', lambda *args, **kwargs: {'results':[dict(row) for row in rows], 'filters':{}, 'source_errors':{}})
+    queued = []
+    search_module.unified_search(DB(), Index(), None, query='x', source_group='release_note', page=2, page_size=100, prewarm=queued.append)
+    assert len(queued[0]) == 30 and queued[0][0][0] == 'controlled:100:pdf'
+
+
+def test_prewarm_same_query_newer_page_wins_and_worker_recovers(tmp_path):
+    from threading import Event, RLock
+    from tracker.services.search_prewarm import WhitepaperPrewarmer
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    file = tmp_path / 'file.pdf'; file.write_text('fixture')
+    started, release, recovered = Event(), Event(), Event()
+    calls = []
+    class Index:
+        path = tmp_path / 'index.db'
+        refresh_lock = RLock()
+        def source_metadata(self, source_id):
+            if source_id == 'crash': raise AssertionError('unexpected failure')
+            return {'path': str(file), 'status': 'indexed'}
+        def preview(self, source_id, **kwargs):
+            calls.append(source_id)
+            if source_id == 'first': started.set(); assert release.wait(3)
+            if source_id == 'recovered': recovered.set()
+            return {'stale': False}
+    index = Index(); warmer = WhitepaperPrewarmer()
+    resolve = lambda source_id: {'path': file, 'doc_type': '白皮书'}
+    try:
+        first = warmer.begin('same-query')
+        warmer.schedule(first, index, [('first', 'p', 'q')], resolve)
+        warmer.finish(first)
+        assert started.wait(3)
+        old_page = warmer.begin('same-query')
+        newest_page = warmer.begin('same-query')
+        warmer.schedule(newest_page, index, [('crash', 'p', 'q')], resolve)
+        warmer.schedule(old_page, index, [('old-page', 'p', 'q')], resolve)
+        warmer.finish(old_page)
+        warmer.finish(newest_page)
+        release.set()
+        # The exception is logged and the same worker accepts the next query.
+        from time import monotonic, sleep
+        deadline = monotonic() + 3
+        while warmer._signature is not None and monotonic() < deadline:
+            sleep(.01)
+        assert warmer._signature is None
+        ticket = warmer.begin('new-query')
+        warmer.schedule(ticket, index, [('recovered', 'p', 'q')], resolve)
+        warmer.finish(ticket)
+        assert recovered.wait(3)
+        assert calls == ['first', 'recovered']
+    finally:
+        release.set(); warmer.close()
+
+
+def test_prewarm_waits_for_foreground_before_next_file(tmp_path):
+    from threading import Event, RLock
+    from tracker.services.search_prewarm import WhitepaperPrewarmer
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    file = tmp_path / 'file.pdf'; file.write_text('fixture')
+    first_started, release, second_started = Event(), Event(), Event()
+    class Index:
+        path = tmp_path / 'index.db'
+        refresh_lock = RLock()
+        def source_metadata(self, source_id): return {'path': str(file), 'status': 'indexed'}
+        def preview(self, source_id, **kwargs):
+            if source_id == 'first': first_started.set(); assert release.wait(3)
+            if source_id == 'second': second_started.set()
+            return {'stale': False}
+    warmer = WhitepaperPrewarmer()
+    index = Index(); resolve = lambda source_id: {'path': file, 'doc_type': '白皮书'}
+    try:
+        initial = warmer.begin('same')
+        warmer.schedule(initial, index, [('first', 'p', 'q'), ('second', 'p', 'q')], resolve)
+        warmer.finish(initial)
+        assert first_started.wait(3)
+        foreground = warmer.begin('same')
+        release.set()
+        assert not second_started.wait(.15)
+        warmer.finish(foreground)
+        assert second_started.wait(3)
+    finally:
+        release.set(); warmer.close()
+
+
+def test_prewarm_yields_if_foreground_arrives_while_waiting_for_refresh_lock(tmp_path):
+    from threading import Event, Lock
+    from tracker.services.search_prewarm import WhitepaperPrewarmer
+    from tracker.services.section_cache import section_cache
+    section_cache.clear()
+    file = tmp_path / 'file.pdf'; file.write_text('fixture')
+    gate, waiting, started = Lock(), Event(), Event()
+    class RefreshLock:
+        def __enter__(self): waiting.set(); gate.acquire()
+        def __exit__(self, *args): gate.release()
+    class Index:
+        path = tmp_path / 'index.db'
+        refresh_lock = RefreshLock()
+        def source_metadata(self, source_id): return {'path': str(file), 'status': 'indexed'}
+        def preview(self, source_id, **kwargs): started.set(); return {'stale': False}
+    warmer = WhitepaperPrewarmer(); index = Index()
+    gate.acquire()
+    try:
+        initial = warmer.begin('query')
+        warmer.schedule(initial, index, [('file', 'p', 'q')], lambda _: {'path': file, 'doc_type': '白皮书'})
+        warmer.finish(initial)
+        assert waiting.wait(3)
+        foreground = warmer.begin('query')
+        gate.release()
+        assert not started.wait(.15)
+        warmer.finish(foreground)
+        assert started.wait(3)
+    finally:
+        if gate.locked(): gate.release()
+        warmer.close()

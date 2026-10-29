@@ -1280,15 +1280,27 @@ async function searchUnified(query = document.querySelector('#release-search').v
   if (comparisonKey !== state.searchComparisonKey) state.searchComparison = restoreSearchComparison(comparisonKey);
   state.searchComparisonKey = comparisonKey;
   saveSearchComparison();
-  container.innerHTML = '<p class="empty-state compact"><span class="loading-dot"></span>正在搜索已接入来源…</p>';
+  const pendingFocus = state.searchTaxonomyFocus;
+  const taxonomy = pendingFocus && state.searchTaxonomyKey === comparisonKey
+    ? searchTaxonomyMarkup({ taxonomy_counts: state.searchTaxonomyCounts }) : '';
+  container.innerHTML = `${taxonomy}<p class="empty-state compact" role="status"><span class="loading-dot"></span>正在搜索已接入来源…</p>`;
+  restoreTaxonomyFocus(container);
+  if (pendingFocus) syncLocation();
   try {
     const result = await api(projectPath(`/api/v1/workbench/search?${params.toString()}`), { signal: state.searchController.signal });
     if (requestId !== state.searchRequest) return;
+    state.searchTaxonomyKey = comparisonKey;
+    state.searchTaxonomyCounts = result.taxonomy_counts;
+    if (pendingFocus && container.contains(document.activeElement)) state.searchTaxonomyFocus = pendingFocus;
     renderUnifiedSearch(result);
     document.querySelector('#search-index-status').textContent = searchIndexStatusLabel(result.index);
     syncLocation();
   } catch (error) {
-    if (error.name !== 'AbortError' && requestId === state.searchRequest) container.innerHTML = `<p class="empty-state compact">搜索失败：${escapeHtml(error.message)}</p>`;
+    if (error.name !== 'AbortError' && requestId === state.searchRequest) {
+      if (pendingFocus && container.contains(document.activeElement)) state.searchTaxonomyFocus = pendingFocus;
+      container.innerHTML = `${taxonomy}<p class="empty-state compact" role="alert">搜索失败：${escapeHtml(error.message)}</p>`;
+      restoreTaxonomyFocus(container);
+    }
   }
 }
 

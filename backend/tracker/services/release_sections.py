@@ -14,6 +14,7 @@ from tracker.importers.release_notes import (
     _is_compatibility_statement, BASIS_IGNORED,
 )
 from tracker.services.search_index import _file_signature, file_snapshot
+from tracker.services.section_cache import file_cache_identity, section_cache
 
 _REFERENCE = re.compile(r'(?:详见|参见|see(?:\s+section)?)\s*[:：]?\s*((?:\d+(?:\.\d+)+)(?:\s*[,，、和及与或/]\s*(?:\d+(?:\.\d+)+))*)', re.I)
 _NUMBER = re.compile(r'\d+(?:\.\d+)+')
@@ -96,9 +97,20 @@ def source_sections(database, source_id: int, *, image_locator: str = "", cache:
         if raw.suffix.casefold() != '.docx' or not any(root in resolved.parents for root in roots):
             return []
         signature = _file_signature(resolved)
+        snapshot_hash = sha256((record['content'] or '').encode('utf-8')).hexdigest()
+        identity = file_cache_identity(raw)
+        if identity[0] != resolved:
+            return []
+        key = ('release', source_id, record['sha256'], snapshot_hash, identity)
         cached = cache.get(source_id) if cache is not None and not image_locator else None
-        if cached and cached[:3] == (resolved, record['sha256'], signature):
-            return cached[3]
+        if cached and cached[:4] == (resolved, record['sha256'], signature, snapshot_hash) and file_cache_identity(raw) == identity:
+            return cached[4]
+        generation = section_cache.generation()
+        sections = section_cache.get(key) if not image_locator else None
+        if sections is not None and file_cache_identity(raw) == identity:
+            if cache is not None:
+                cache[source_id] = (resolved, record['sha256'], signature, snapshot_hash, sections)
+            return sections
         before = file_snapshot(raw)
         if before.path != resolved or before.digest != record['sha256']:
             return []
@@ -109,13 +121,38 @@ def source_sections(database, source_id: int, *, image_locator: str = "", cache:
     except (OSError, ValueError, RuntimeError, KeyError):
         return []
     sections = _word_sections(document, f'release:source:{source_id}', record['content'], image_locator)
-    if cache is not None and not image_locator:
-        cache[source_id] = (resolved, record['sha256'], before.signature, sections)
+    if not image_locator:
+        try:
+            if file_cache_identity(raw) != identity:
+                return []
+            section_cache.put(key, sections, generation)
+            if cache is not None:
+                cache[source_id] = (resolved, record['sha256'], before.signature, snapshot_hash, sections)
+        except (OSError, RuntimeError):
+            return []
     return sections
 
 
 def controlled_word_sections(path, expected_sha: str, source_id: str, *, image_locator: str = '') -> list[dict]:
     try:
+        identity = file_cache_identity(path)
+    except (OSError, RuntimeError):
+        return []
+    key = ('controlled_word', source_id, expected_sha, identity)
+    if image_locator:
+        return _read_controlled_word(path, expected_sha, source_id, image_locator, identity, key)
+    with section_cache.singleflight(key):
+        return _read_controlled_word(path, expected_sha, source_id, image_locator, identity, key)
+
+
+def _read_controlled_word(path, expected_sha, source_id, image_locator, identity, key):
+    try:
+        if file_cache_identity(path) != identity:
+            return []
+        generation = section_cache.generation()
+        sections = section_cache.get(key) if not image_locator else None
+        if sections is not None and file_cache_identity(path) == identity:
+            return sections
         before = file_snapshot(path)
         if before.digest != expected_sha or before.path.suffix.casefold() != '.docx':
             return []
@@ -125,7 +162,15 @@ def controlled_word_sections(path, expected_sha: str, source_id: str, *, image_l
         document = Document(BytesIO(data))
     except (OSError, ValueError, RuntimeError, KeyError):
         return []
-    return _word_sections(document, source_id, None, image_locator)
+    sections = _word_sections(document, source_id, None, image_locator)
+    if not image_locator:
+        try:
+            if file_cache_identity(path) != identity:
+                return []
+            section_cache.put(key, sections, generation)
+        except (OSError, RuntimeError):
+            return []
+    return sections
 
 
 def _effective_heading_level(paragraph):

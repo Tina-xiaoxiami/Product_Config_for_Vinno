@@ -6,6 +6,7 @@ from io import BytesIO
 import re
 from pypdf import PdfReader
 from tracker.services.search_index import file_snapshot
+from tracker.services.section_cache import file_cache_identity, section_cache
 
 _HEADING = re.compile(r'^\s*(\d+(?:\.\d+)+)\s+(.+?)\s*$')
 _TOC = re.compile(r'(?:\.{3,}|…{2,}|·{3,}|\s{3,})\s*\d+\s*$')
@@ -15,6 +16,22 @@ def pdf_section(path, expected_sha: str, source_id: str, query: str, locator: st
     if not query:
         return None
     try:
+        identity = file_cache_identity(path)
+    except (OSError, RuntimeError):
+        return None
+    key = ('pdf', source_id, expected_sha, query, locator, identity)
+    with section_cache.singleflight(key):
+        return _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key)
+
+
+def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key):
+    try:
+        if file_cache_identity(path) != identity:
+            return None
+        generation = section_cache.generation()
+        cached = section_cache.get(key)
+        if cached is not None and file_cache_identity(path) == identity:
+            return cached['section']
         before = file_snapshot(path)
         if before.digest != expected_sha:
             return None
@@ -26,6 +43,17 @@ def pdf_section(path, expected_sha: str, source_id: str, query: str, locator: st
                  for line in (page.extract_text() or '').splitlines() if line.strip()]
     except Exception:
         return None
+    result = _parsed_pdf_section(reader, lines, source_id, query, locator)
+    try:
+        if file_cache_identity(path) != identity:
+            return None
+        section_cache.put(key, {'section': result}, generation)
+    except (OSError, RuntimeError):
+        return None
+    return result
+
+
+def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str) -> dict | None:
     headings = []
     for index, (page_no, line) in enumerate(lines):
         match = _HEADING.match(line)

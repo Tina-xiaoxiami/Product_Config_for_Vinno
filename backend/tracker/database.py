@@ -763,6 +763,21 @@ class Database:
             connection.close()
 
     @contextmanager
+    def read_session(self) -> Iterator[sqlite3.Connection]:
+        """Reuse a read-only connection within this execution context."""
+        active = self._active_connection.get()
+        if active is not None:
+            yield active
+            return
+        with self.connect() as connection:
+            connection.execute("PRAGMA query_only = ON")
+            token = self._active_connection.set(connection)
+            try:
+                yield connection
+            finally:
+                self._active_connection.reset(token)
+
+    @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """在当前执行上下文中复用既有写入方法，一次提交或整体回滚。"""
         active = self._active_connection.get()

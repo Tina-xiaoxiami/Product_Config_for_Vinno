@@ -88,6 +88,12 @@ def _country_scope(market: str, country: str, available: Iterable[str]) -> list[
 
 def _registration_results(database: Database, *, query: str, model: str,
                           market: str, country: str) -> tuple[list[dict[str, Any]], str]:
+    with database.read_session():
+        return _registration_results_with_connection(database, query=query, model=model, market=market, country=country)
+
+
+def _registration_results_with_connection(database: Database, *, query: str, model: str,
+                                          market: str, country: str) -> tuple[list[dict[str, Any]], str]:
     countries = _country_scope(market, country, (
         row["country_code"] for row in database.list_registration_relations()
     ))

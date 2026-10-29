@@ -45,6 +45,7 @@ from tracker.services.search_index import SearchIndex
 from tracker.services.personal_workspace import PersonalWorkspace
 from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
+from tracker.services.search_prewarm import WhitepaperPrewarmer
 from tracker.services.release_evidence import release_evidence
 from tracker.services.model_workspace import build_model_workspace
 from tracker.services.document_scope_suggestions import suggest_document_scope
@@ -184,6 +185,8 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     )
     search_index = SearchIndex(search_index_path)
     app.extensions["tracker_search_index"] = search_index
+    prewarmer = None if app.config.get("TESTING") else WhitepaperPrewarmer()
+    app.extensions["search_prewarm"] = prewarmer
     product_strategy_reader = ProductStrategyReader(
         app.config["PRODUCT_CONFIG_DATABASE"]
     )
@@ -421,6 +424,9 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     def workbench_unified_search():
         raw_sources = request.args.get("sources", "release,config,controlled,training,term,registration,product_state,probe_version,knowledge,qa")
         sources = {item.strip() for item in raw_sources.split(",") if item.strip()}
+        query_key = tuple(sorted((key, value) for key, value in request.args.items(multi=True)
+                                 if key not in {"source_group", "release_category", "page"}))
+        prewarm_ticket = prewarmer.begin(query_key) if prewarmer else None
         try:
             if request.args.get("expand_related", "false") not in {"true", "false"}:
                 raise ValueError("关联词扩展须为 true 或 false。")
@@ -450,6 +456,8 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 source_group=request.args.get("source_group", "all"),
                 release_category=request.args.get("release_category", "all"),
                 unavailable_sources=unavailable_sources,
+                prewarm=(lambda candidates: prewarmer.schedule(prewarm_ticket, search_index, candidates,
+                    lambda source_id: resolve_source_candidate(database, source_id, **search_roots()))) if prewarmer else None,
                 page=int(request.args.get("page", "1")),
                 page_size=int(request.args.get("page_size", "40")),
             )
@@ -467,6 +475,9 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 result['coverage'][source].pop('version_files', None)
         except (ValueError, TypeError) as error:
             return failure("validation_error", str(error))
+        finally:
+            if prewarmer:
+                prewarmer.finish(prewarm_ticket)
         return success(result)
 
     @app.get("/api/v1/workbench/search-index/sources/<path:source_id>/preview")

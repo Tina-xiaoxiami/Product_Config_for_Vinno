@@ -68,6 +68,9 @@ def create_integrated_workbench(config: Mapping[str, Any]) -> Flask:
 
 
 def close_release_workbench(workbench: Flask) -> None:
+    prewarmer = workbench.extensions.get("search_prewarm")
+    if prewarmer is not None:
+        prewarmer.close()
     maintenance = workbench.extensions.get("search_maintenance")
     if maintenance is not None:
         maintenance.close()

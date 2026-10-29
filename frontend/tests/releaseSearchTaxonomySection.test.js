@@ -235,3 +235,63 @@ test('compact whitepaper card favors actual chapter excerpt while keeping the or
   assert.match(card,/支持 ESHRE 和 ARSM/); assert.match(card,/原文章节节选（未复核）/)
   assert.doesNotMatch(card,/\.\.\.\.\.\.9/); assert.match(card,/查看原命中位置/); assert.match(card,/第 13 页/)
 })
+
+test('rapid taxonomy switches keep controls responsive and only render the latest response', async () => {
+  const controls = {
+    '#release-search': {value:'子宫'}, '#release-search-scope': {value:'current'},
+    '#release-search-market': {value:'domestic'}, '#release-search-model': {value:''},
+    '#release-search-country': {value:''}, '#release-search-verification': {value:'all'},
+    '#release-search-current': {checked:false}, '#search-index-status': {textContent:''},
+  }
+  const document = {activeElement:null, querySelector:selector=>controls[selector]}
+  let html = ''
+  const container = {focused:[], contains:element=>!!element && element.owner===container,
+    get innerHTML() {return html}, set innerHTML(value) {html=value; document.activeElement=null},
+    querySelector(selector) { return {owner:container, selector, focus() {document.activeElement=this; container.focused.push(selector)}} }}
+  controls['#release-search-result'] = container
+  const pending = [], rendered = [], locations = []
+  let helpers
+  const state = {searchSourceGroup:'release_note',searchReleaseCategory:'all',searchPage:1,activeProjectId:1,searchRequest:0,searchComparison:[]}
+  const context = {state, categoryLabels, escapeAttribute:escape, escapeHtml:escape,
+    document, window:{clearTimeout(){}}, AbortController,
+    renderSearchFilters(){}, selectedSearchSources:()=>['release'], searchTaskParams:()=>({}),
+    restoreSearchComparison:()=>[], saveSearchComparison(){}, syncLocation(){locations.push(state.searchSourceGroup + '/' + state.searchReleaseCategory)},
+    projectPath:p=>p, api:(path, options)=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject})),
+    renderUnifiedSearch:result=>{rendered.push(result); container.innerHTML='RESULT '+result.id; helpers.restoreTaxonomyFocus(container)},
+    searchIndexStatusLabel:()=>'', showNotice(){}
+  }
+  helpers = funcs(['searchTaxonomyMarkup','restoreTaxonomyFocus','searchUnified','selectSearchTaxonomy'], context)
+  const {searchUnified, selectSearchTaxonomy} = helpers
+  const first = searchUnified()
+  pending[0].resolve({id:'initial',index:{},taxonomy_counts:{sources:{release_note:6,whitepaper:11,other:2},release_categories:{function:3}}})
+  await first
+  assert.equal(selectSearchTaxonomy('source','whitepaper'), true)
+  assert.match(container.innerHTML,/data-search-source-group="whitepaper" aria-selected="true"/)
+  assert.match(container.innerHTML,/正在搜索/); assert.doesNotMatch(container.innerHTML,/RESULT initial/)
+  assert.equal(selectSearchTaxonomy('source','release_note'), true)
+  assert.equal(selectSearchTaxonomy('category','function'), true)
+  assert.equal(pending[1].options.signal.aborted,true)
+  assert.equal(pending[2].options.signal.aborted,true)
+  assert.match(container.innerHTML,/data-search-release-category="function" aria-selected="true"/)
+  pending[3].resolve({id:'latest',index:{},taxonomy_counts:{sources:{release_note:6},release_categories:{function:3}}})
+  await new Promise(resolve=>setImmediate(resolve))
+  pending[1].resolve({id:'stale',index:{}})
+  pending[2].resolve({id:'stale2',index:{}})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.deepEqual(rendered.map(r=>r.id),['initial','latest'])
+  assert.equal(container.innerHTML,'RESULT latest')
+  assert.match(document.activeElement.selector,/data-search-release-category="function"/)
+  selectSearchTaxonomy('source','whitepaper')
+  pending[4].reject(new Error('network failure'))
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.match(container.innerHTML,/搜索失败：network failure/)
+  assert.match(container.innerHTML,/data-search-source-group="whitepaper" aria-selected="true"/)
+  assert.doesNotMatch(container.innerHTML,/RESULT latest/)
+  assert.match(document.activeElement.selector,/data-search-source-group="whitepaper"/)
+  assert.equal(locations.at(-1),'whitepaper/function')
+  selectSearchTaxonomy('source','release_note')
+  pending[5].resolve({id:'retried',index:{},taxonomy_counts:{sources:{release_note:6},release_categories:{function:3}}})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(container.innerHTML,'RESULT retried')
+  assert.ok(container.focused.some(selector=>selector.includes('whitepaper')))
+})
