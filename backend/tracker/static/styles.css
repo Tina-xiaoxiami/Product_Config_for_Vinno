@@ -860,3 +860,22 @@ body.workbench-embedded .topbar { top:0; }
 .search-group-summaries li small { color: var(--muted); font-size: inherit; }
 .search-group-details > summary { cursor: pointer; color: var(--primary-strong); font-size: var(--text-caption); }
 .search-group-cards { display: grid; gap: 8px; margin-top: 10px; }
+
+.search-taxonomy { margin: 8px 0 10px; }
+.search-taxonomy-sources, .search-taxonomy-categories { display: flex; flex-wrap: wrap; gap: 4px 8px; border-bottom: 1px solid var(--line); }
+.search-taxonomy-categories { margin-top: 5px; border-bottom: 0; }
+.search-taxonomy [role="tab"] { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); padding: 7px 9px; cursor: pointer; font: inherit; font-size: var(--text-caption); }
+.search-taxonomy [role="tab"][aria-selected="true"] { color: var(--primary-strong); border-color: var(--primary-strong); font-weight: 700; }
+.search-taxonomy [role="tab"]:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: -2px; }
+.search-taxonomy [role="tab"] span { margin-left: 3px; }
+.search-preview-notice { margin: 0 0 6px; color: var(--muted); font-size: var(--text-caption); line-height: 1.4; }
+.search-preview-context { margin: 8px 0; color: var(--muted); font-size: var(--text-caption); }
+.search-preview-context > summary { cursor: pointer; }
+.search-preview-section { margin: 6px 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.search-preview-section > strong { color: var(--primary-strong); font-size: var(--text-caption); }
+.search-preview-section > p, .search-comparison-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.search-preview-section figure { margin: 10px 0; overflow: auto; }
+.search-preview-section figure img { max-width: 100%; height: auto; display: block; }
+.search-section-image-warning { color: var(--warn); }
+.search-preview-section details { margin-top: 10px; color: var(--muted); font-size: var(--text-caption); }
+.search-detail-notice { color: var(--muted); font-size: var(--text-caption); }

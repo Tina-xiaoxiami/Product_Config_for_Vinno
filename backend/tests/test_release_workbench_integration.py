@@ -102,7 +102,8 @@ def test_prefixed_search_opens_the_matching_release_snapshot(tmp_path: Path) -> 
         )
 
         assert preview.status_code == 200
-        assert "后台转换" in preview.json()["data"]["chunks"][0]["text"]
+        assert any(chunk["locator"] == hit["locator"] and "后台转换" in chunk["text"]
+                   for chunk in preview.json()["data"]["chunks"])
         assert "/readonly" not in str(preview.json())
     finally:
         close_release_workbench(workbench)

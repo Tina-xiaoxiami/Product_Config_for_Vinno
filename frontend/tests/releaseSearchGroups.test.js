@@ -20,7 +20,7 @@ const context = { escapeHtml: escape, escapeAttribute: escape, highlightSearchTe
   verificationLabel: value => ({approved:'已确认', unverified:'未复核', expired:'已过复核期限'})[value] || value,
   fileFormatLabel: value => ({docx:'Word', pdf:'PDF'})[value] || '', searchEvidenceLabel: value => ({version_record:'当时版本记录', source_snapshot:'Release Note 原文提及'})[value] || value,
   searchQueryOrigin: () => '', state }
-const names = ['normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'renderSearchGroups', 'searchComparisonButton', 'compactSearchCard']
+const names = ['preferredSearchEvidence', 'searchEvidenceActions', 'normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'renderSearchGroups', 'searchComparisonButton', 'compactSearchCard']
 const helpers = functions(names, context)
 
 test('groups by explicit project/version/range and exact document identity without conflating unknown scope', () => {
@@ -58,7 +58,7 @@ test('group shows each summary, format and independent status while retaining ev
 })
 
 test('text equality ignores only whitespace and preserves numbers, case and punctuation', () => {
-  const { comparisonTextStatus, comparisonNotice } = functions(['normalizeComparisonText','comparisonTextStatus','comparisonNotice'])
+  const { comparisonTextStatus, comparisonNotice } = functions(['readableSearchEvidence','normalizeComparisonText','normalizeChapterComparisonText','comparisonTextStatus','comparisonNotice'])
   const entry = text => ({item:{locator:'p1'}, preview:{chunks:[{locator:'p1',text}]}})
   assert.equal(comparisonTextStatus([entry('A  10\nmm'), entry('A 10 mm')]), 'same')
   assert.doesNotMatch(comparisonNotice([entry('A 10'), entry('A\n10')]), /差异不自动/)
@@ -85,7 +85,7 @@ test('both result layouts use identical groups, preserve source actions and orig
     const context = { ...globalContext(), state, workbenchConfig:{embedded}, document:{querySelector:()=>container},
       SEARCH_SOURCE_LABELS:{}, renderSavedSearches(){}, renderSearchComparisonTray(){}, compactSearchSourceNotice:()=>'', compactSearchAnswer:()=>'',
       searchTaskSummary:()=>'', searchCoverageMarkup:()=>'', searchEmptyMarkup:()=>'', activeProject:()=>({name:'ULTIMUS G2'}), buildHash:()=>'' }
-    const all = functions([...names, 'renderUnifiedSearch'], context)
+    const all = functions([...names, 'searchTaxonomyMarkup', 'renderUnifiedSearch', 'restoreTaxonomyFocus'], {...context, categoryLabels:{function:'功能',source:'Release Note 原文'}})
     // The renderer resolves its helper names lexically from this same source bundle.
     all.renderUnifiedSearch({results:[word,pdf],query:'导出',source_errors:{},total:81,page_size:40,page:1,scope:'current',task:'search'})
     assert.match(container.innerHTML, /本页 2 条独立证据/)
@@ -103,11 +103,24 @@ function globalContext() {
 }
 
 test('copied comparison retains all evidence and varies the warning according to original text', () => {
-  const { buildComparisonCitation } = functions(['normalizeComparisonText','comparisonTextStatus','comparisonNotice','buildComparisonCitation'], {formatEvidenceCitation: (preview, item) => `${item.locator}: ${preview.chunks[0].text}`})
+  const { buildComparisonCitation } = functions(['readableSearchEvidence','normalizeComparisonText','normalizeChapterComparisonText','comparisonTextStatus','comparisonNotice','buildComparisonCitation'], {formatEvidenceCitation: (preview, item) => `${item.locator}: ${preview.chunks[0].text}`})
   const entry = (locator, text) => ({item:{locator},preview:{chunks:[{locator,text}]}})
   const same = buildComparisonCitation([entry('p1', 'A 10'), entry('p2', 'A\n10')], 'url')
   assert.match(same, /所选原文一致/); assert.match(same, /p1: A 10/); assert.match(same, /p2: A\n10/)
   const changed = buildComparisonCitation([entry('p1','A 10'),entry('p2','A 11')], 'url')
   assert.match(changed, /差异不自动代表新增能力/)
   assert.throws(() => buildComparisonCitation([entry('p1','A'),{item:{locator:'p2'},error:'bad'}], 'url'))
+})
+
+test('both integrated and standalone result renderers show whitepaper chapter instead of directory excerpt', () => {
+  const item = controlled({source_label:'白皮书', file_format:'pdf', preview_id:'controlled:35:pdf', locator:'第 3 页', matched_text:'目录 ......9', detail_evidence:{source_id:'controlled:35:pdf',locator:'第 13 页',verification:'unverified',excerpt:'5.63 子宫畸形分类\n支持 ESHRE 和 ARSM。'}})
+  for (const embedded of [true,false]) {
+    const container = {innerHTML:''}, state={searchComparison:[],searchComparisonOptions:[],searchSourceGroup:'whitepaper',searchReleaseCategory:'all'}
+    const context = {...globalContext(),state,workbenchConfig:{embedded},document:{querySelector:()=>container},SEARCH_SOURCE_LABELS:{},renderSavedSearches(){},renderSearchComparisonTray(){},compactSearchSourceNotice:()=>'',compactSearchAnswer:()=>'',searchTaskSummary:()=>'',searchCoverageMarkup:()=>'',searchEmptyMarkup:()=>'',activeProject:()=>({name:'V'}),buildHash:()=>''}
+    const all=functions([...names,'searchTaxonomyMarkup','renderUnifiedSearch','restoreTaxonomyFocus'],{...context,categoryLabels:{function:'功能'}})
+    all.renderUnifiedSearch({results:[item],query:'子宫',source_errors:{},total:1,page_size:40,page:1,scope:'current',task:'search',taxonomy_counts:{sources:{whitepaper:1}}})
+    assert.match(container.innerHTML,/支持 ESHRE 和 ARSM/)
+    assert.match(container.innerHTML,/查看原命中位置/)
+    assert.doesNotMatch(container.innerHTML,/目录 \.\.\.\.\.\.9/)
+  }
 })

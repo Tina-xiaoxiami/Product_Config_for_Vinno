@@ -11,6 +11,7 @@ from functools import wraps
 from hashlib import sha256
 from pathlib import Path
 import sqlite3
+import re
 from threading import Lock, RLock
 from typing import Any, Iterable
 import zipfile
@@ -661,7 +662,7 @@ class SearchIndex:
                     labels.setdefault(source_id, set()).add(version)
         return {source_id: sorted(versions) for source_id, versions in labels.items()}
 
-    def preview(self, source_id: str, *, locator: str = "", query: str = "", limit: int = 200) -> dict[str, Any] | None:
+    def preview(self, source_id: str, *, locator: str = "", query: str = "", limit: int = 200, include_images: bool = True) -> dict[str, Any] | None:
         with closing(sqlite3.connect(self.path)) as connection:
             connection.row_factory = sqlite3.Row
             source = connection.execute(
@@ -690,18 +691,60 @@ class SearchIndex:
                 (source_id,),
             ).fetchone()[0] if query else 0
             selected_locator = locator or (matches[0]["locator"] if matches else "")
+            selected_row = connection.execute(
+                "SELECT content FROM search_fts WHERE source_id=? AND locator=? LIMIT 1",
+                (source_id, selected_locator),
+            ).fetchone() if selected_locator else None
             rows = connection.execute(
-                "SELECT locator, content FROM search_fts WHERE source_id = ? ORDER BY (locator = ?) DESC, rowid LIMIT ?",
-                (source_id, selected_locator, limit),
+                """WITH ordered AS (
+                    SELECT locator, content, ROW_NUMBER() OVER (ORDER BY rowid) AS position
+                    FROM search_fts WHERE source_id = ?
+                ) SELECT locator, content FROM ordered
+                WHERE position >= MAX(1, COALESCE((SELECT position FROM ordered WHERE locator = ? LIMIT 1), 1) - ?)
+                ORDER BY position LIMIT ?""",
+                (source_id, selected_locator, limit // 2, limit),
             ).fetchall()
+        section = None
+        locator_status = 'exact' if locator and selected_row else 'unresolved' if locator else 'query'
+        if not stale and source['file_format'] == 'pdf' and query:
+            from tracker.services.pdf_sections import pdf_section
+            section = pdf_section(source['path'], source['file_sha256'], source_id, query, locator) if not locator or selected_row else None
+            locator_status = section['locator_status'] if section else 'unresolved'
+        elif not stale and source['file_format'] == 'docx':
+            from tracker.services.release_sections import controlled_word_sections, section_for_locator
+            word_sections = controlled_word_sections(
+                source['path'], source['file_sha256'], source_id, image_locator=selected_locator if include_images else '')
+            section = section_for_locator(word_sections, selected_locator) if not locator or selected_row else None
+            toc = bool(selected_row and query and query.casefold() in selected_row['content'].casefold()
+                       and re.search(r'(?:\.{3,}|…{2,}|·{3,})\s*\d+\s*$', selected_row['content']))
+            if section is None and query and (not locator or toc):
+                headings = [entry for entry in word_sections if query.casefold() in entry['title'].casefold()]
+                if len(headings) == 1:
+                    section = section_for_locator(controlled_word_sections(
+                        source['path'], source['file_sha256'], source_id,
+                        image_locator=headings[0]['locator'] if include_images else ''), headings[0]['locator'])
+                    locator_status = 'toc_redirect' if locator else 'query'
+            if locator and (not selected_row or toc and section is None):
+                locator_status = 'unresolved'
+        try:
+            final = file_snapshot(source['path'])
+            stale = stale or final.digest != source['file_sha256'] or final.signature != (
+                source['file_size'], source['mtime_ns'], source['ctime_ns'], source['file_inode'])
+        except (OSError, ValueError, RuntimeError):
+            stale = True
+        if stale:
+            section, rows, matches, match_count, locator_status = None, [], [], 0, 'unresolved'
         return {
+            "locator_status": locator_status,
             "source_id": source["source_id"],
             "source_type": source["source_type"],
             "file_format": source["file_format"],
+            "section": section,
+            "notice": ('未能核实完整章节，请以原文件和页码为准。' if source['file_format'] == 'pdf' and query and not section else None),
             "title": source["title"],
             "scope": source["scope"],
             "verification": source["verification"],
-            "is_current": bool(source["is_current"]),
+            "is_current": bool(source["is_current"]) and not stale,
             "status": source["status"],
             "error": source["error"],
             "stale": stale,

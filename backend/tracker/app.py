@@ -447,6 +447,8 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 version_from=request.args.get("version_from", "").strip(),
                 version_to=request.args.get("version_to", "").strip(),
                 versions=request.args.get("versions", ""),
+                source_group=request.args.get("source_group", "all"),
+                release_category=request.args.get("release_category", "all"),
                 unavailable_sources=unavailable_sources,
                 page=int(request.args.get("page", "1")),
                 page_size=int(request.args.get("page_size", "40")),
@@ -472,7 +474,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         if source_id.startswith("release:"):
             if request.args.get("file") == "1" or request.args.get("download") == "1":
                 return failure("validation_error", "版本记录提供保存的文本快照，请从资料预览获取已登记原文件。")
-            preview = release_evidence(database, source_id, request.args.get("locator", ""))
+            preview = release_evidence(database, source_id, request.args.get("locator", ""), query=request.args.get("q", "")[:200])
             return success(preview) if preview else failure("not_found", "版本原文记录不存在。", 404)
         candidate = resolve_source_candidate(
             database,

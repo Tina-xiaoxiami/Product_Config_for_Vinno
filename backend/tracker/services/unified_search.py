@@ -15,7 +15,10 @@ from tracker.services.search_intent import (
     validate_search_task, parse_version_selection, search_terms, in_version_range, located_version, family_mentions, family_excerpt,
 )
 from tracker.services.feature_families import feature_family
-from tracker.services.release_evidence import release_evidence
+from tracker.services.release_evidence import release_evidence, preferred_release_detail, release_section_detail
+from tracker.services.release_sections import (
+    source_sections, controlled_word_sections, section_for_locator, matching_sections,
+)
 from tracker.services.product_strategy import ProductStrategyReader, ProductStrategySourceUnavailable
 from tracker.services.search_index import (
     SearchIndex, SourceChangedDuringExtraction, extract_file, file_sha256, file_snapshot,
@@ -842,8 +845,13 @@ def unified_search(
     country: str = '', unavailable_sources: dict[str, str] | None = None,
     page: int = 1, page_size: int = 40, task: str = 'search', expand_related: bool = False,
     version_from: str = '', version_to: str = '', versions: str = '',
+    source_group: str = 'all', release_category: str = 'all',
 ) -> dict[str, Any]:
     """Run explicit queries through the same adapters; related hits stay separate clues."""
+    groups = {'all', 'release_note', 'whitepaper', 'other'}
+    categories = {'all', 'function', 'image', 'bug', 'config', 'config_note', 'probe', 'remark', 'unclassified', 'source'}
+    if source_group not in groups or release_category not in categories:
+        raise ValueError('不支持的资料来源或发布分类。')
     validate_search_task(task, version_from, version_to, versions)
     selected_versions = parse_version_selection(versions)
     needle = query.strip()
@@ -896,6 +904,85 @@ def unified_search(
     if task == 'earliest':
         results.sort(key=lambda row: (row['match_kind'] != 'direct', row['source_type'] != 'release',
                                      row.get('project_id', 0), version_key(row.get('version') or '99999.0.0')))
+    # Classify actual registered sources before pagination; do not infer types from titles.
+    document_types = {version['id']: document['doc_type']
+                      for document in database.list_documents()
+                      for version in database.list_document_versions(document['id'])}
+    section_cache = {}
+    source_cache: dict[int, Any] = {}
+    for item in results:
+        kind = item['source_type']
+        doc_type = document_types.get(item.get('document_version_id'), '')
+        item['source_group'] = ('release_note' if kind == 'release' and item.get('evidence_kind') != 'current_description'
+                                or kind == 'controlled' and doc_type == '发布记录'
+                                else 'whitepaper' if kind == 'controlled' and doc_type == '白皮书' else 'other')
+        item['release_category'] = (item.get('category') or 'source') if item['source_group'] == 'release_note' else None
+        item['release_categories'] = [item['release_category']] if item['release_category'] else []
+        category_sections: dict[str, dict[str, Any]] = {}
+        preview = item.get('preview_id') or ''
+        if preview.startswith('release:source:'):
+            source_id = int(preview.rsplit(':', 1)[1])
+            if source_id not in section_cache:
+                section_cache[source_id] = source_sections(database, source_id, cache=source_cache)
+            sections = section_cache[source_id]
+            for match in matching_sections(sections, item.get('matched_query', needle)):
+                category_sections.setdefault(match['category'], match)
+            # Prefer a real heading/body hit over a table of contents line.
+            headings = [section for section in sections if needle.casefold() in section['title'].casefold()]
+            section = headings[0] if len(headings) == 1 else None
+            if section is None:
+                section = section_for_locator(sections, item['locator'])
+            if section:
+                item['detail_evidence'] = release_section_detail(section)
+                item['release_category'] = section['category']
+                if needle.casefold() in section['title'].casefold():
+                    item['locator'] = section['locator']
+                    item['matched_text'] = section['content'][:500]
+        if preview.startswith('release:table:'):
+            item['detail_evidence'], item['detail_evidence_notice'] = preferred_release_detail(database, preview, locator=item.get('locator', ''), cache=source_cache)
+        elif kind == 'controlled' and item['source_group'] == 'release_note' and item.get('file_format') in {'pdf', 'docx'} and not item.get('is_stale'):
+            evidence = index.preview(preview, locator=item.get('locator', ''), query=item.get('matched_query', needle), include_images=False)
+            section = evidence.get('section') if evidence and not evidence.get('stale') else None
+            if section:
+                if item['source_group'] == 'release_note' and item['file_format'] == 'docx':
+                    item['release_category'] = section.get('category') or 'source'
+                    meta = index.source_metadata(preview)
+                    if meta:
+                        word_sections = controlled_word_sections(meta['path'], meta['file_sha256'], preview)
+                        for match in matching_sections(word_sections, item.get('matched_query', needle)):
+                            category_sections.setdefault(match['category'], match)
+                item['detail_evidence'] = {key: section[key] for key in ('source_id', 'locator', 'section_number', 'title')}
+                item['detail_evidence']['excerpt'] = section['content'][:500]
+                item['detail_evidence']['evidence_kind'] = 'controlled_document'
+                item['detail_evidence']['source_label'] = '白皮书' if item['source_group'] == 'whitepaper' else 'Release Note 原文'
+                item['detail_evidence']['verification'] = item['verification']
+                item['detail_evidence']['scope'] = item['scope']
+                item['detail_evidence']['has_images'] = section['has_images']
+        if category_sections:
+            item['release_categories'] = list(category_sections)
+            item['category_sections'] = {category: {'locator': section['locator'], 'title': section['title'],
+                                                   'excerpt': section['content'][:500], 'section_number': section['section_number']}
+                                         for category, section in category_sections.items()}
+        elif item['release_category']:
+            item['release_categories'] = [item['release_category']]
+    payload['taxonomy_counts'] = {
+        'sources': {group: sum(item['source_group'] == group for item in results)
+                    for group in ('release_note', 'whitepaper', 'other')},
+        'release_categories': {category: sum(item['source_group'] == 'release_note' and category in item['release_categories'] for item in results)
+                               for category in sorted(categories - {'all'})},
+    }
+    payload['unfiltered_total'] = len(results)
+    results = [dict(item) for item in results if (source_group == 'all' or item['source_group'] == source_group)
+               and (release_category == 'all' or item['source_group'] == 'release_note' and release_category in item['release_categories'])]
+    if release_category != 'all':
+        for item in results:
+            selected_section = item.get('category_sections', {}).get(release_category)
+            if selected_section:
+                item['locator'] = selected_section['locator']
+                item['matched_text'] = selected_section['excerpt']
+                item['release_category'] = release_category
+                if item.get('detail_evidence') and (item['source_type'] == 'controlled' or item.get('evidence_kind') == 'source_snapshot'):
+                    item['detail_evidence'] = {**item['detail_evidence'], **selected_section}
     payload['earliest_records'] = _earliest_records([
         row for row in results if row['source_type'] == 'release' and row['match_kind'] == 'direct'])
     payload['query_expansion'] = {'enabled': expand_related, 'terms': terms[1:],
@@ -911,11 +998,34 @@ def unified_search(
         for source in selected - version_sources:
             payload['source_errors'][source] = '此来源未接入版本范围筛选，本次未列入结果；清除版本范围可查询。'
     payload['filters'].update(sources=sorted(selected), task=task, expand_related=expand_related,
-                              version_from=version_from, version_to=version_to, versions=','.join(selected_versions))
+                              version_from=version_from, version_to=version_to, versions=','.join(selected_versions),
+                              source_group=source_group, release_category=release_category)
     payload['version_summary'] = _version_summary(results, selected_versions) if scoped else []
     safe_page, safe_size = max(1, int(page)), min(100, max(1, int(page_size)))
+    page_results = results[(safe_page - 1) * safe_size:safe_page * safe_size]
+    # A title association is needed only for visible records and earliest answers.
+    detail_cache: dict[tuple[str, str], tuple[dict | None, str | None]] = {}
+    for item in [*page_results, *payload['earliest_records']]:
+        preview = item.get('preview_id') or ''
+        key = (preview, item.get('locator') or '')
+        if preview.startswith('release:change:'):
+            if key not in detail_cache:
+                detail_cache[key] = preferred_release_detail(database, preview, locator=item.get('locator', ''), cache=source_cache)
+            item['detail_evidence'], item['detail_evidence_notice'] = detail_cache[key]
+    # Whitepaper detail does not affect facets; parse only the visible page.
+    for item in page_results:
+        if item['source_group'] != 'whitepaper' or item.get('file_format') not in {'pdf', 'docx'} or item.get('is_stale'):
+            continue
+        evidence = index.preview(item['preview_id'], locator=item.get('locator', ''),
+                                 query=item.get('matched_query', needle), include_images=False)
+        section = evidence.get('section') if evidence and not evidence.get('stale') else None
+        if section:
+            item['detail_evidence'] = {key: section[key] for key in ('source_id', 'locator', 'section_number', 'title')}
+            item['detail_evidence'].update(excerpt=section['content'][:500], evidence_kind='controlled_document',
+                                           source_label='白皮书', verification=item['verification'],
+                                           scope=item['scope'], has_images=section['has_images'])
     payload.update(total=len(results), page=safe_page, page_size=safe_size,
-                   results=results[(safe_page - 1) * safe_size:safe_page * safe_size],
+                   results=page_results,
                    source_counts={source: sum(r['source_type'] == source for r in results) for source in sorted(selected)},
                    index=index.status())
     return payload
