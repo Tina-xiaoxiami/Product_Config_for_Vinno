@@ -247,9 +247,10 @@ test('rapid taxonomy switches keep controls responsive and only render the lates
   let html = ''
   const container = {focused:[], contains:element=>!!element && element.owner===container,
     get innerHTML() {return html}, set innerHTML(value) {html=value; document.activeElement=null},
-    querySelector(selector) { return {owner:container, selector, focus() {document.activeElement=this; container.focused.push(selector)}} }}
+    querySelector(selector) { return {owner:container, selector, value:state.searchWhitepaperModel, hasAttribute(name) {return selector.includes(name)}, getAttribute(name) {return selector.match(new RegExp(name+'=\"([^\"]+)\"'))?.[1] || null}, focus() {document.activeElement=this; container.focused.push(selector)}} }}
   controls['#release-search-result'] = container
   const pending = [], rendered = [], locations = []
+  const models = {selected:'model:6s',options:[{value:'model:6s',label:'6S',count:1},{value:'model:7p',label:'7P',count:1}]}
   let helpers
   const state = {searchSourceGroup:'release_note',searchReleaseCategory:'all',searchPage:1,activeProjectId:1,searchRequest:0,searchComparison:[]}
   const context = {state, categoryLabels, escapeAttribute:escape, escapeHtml:escape,
@@ -260,10 +261,10 @@ test('rapid taxonomy switches keep controls responsive and only render the lates
     renderUnifiedSearch:result=>{rendered.push(result); container.innerHTML='RESULT '+result.id; helpers.restoreTaxonomyFocus(container)},
     searchIndexStatusLabel:()=>'', showNotice(){}
   }
-  helpers = funcs(['searchTaxonomyMarkup','restoreTaxonomyFocus','searchUnified','selectSearchTaxonomy'], context)
+  helpers = funcs(['searchTaxonomyMarkup','restoreTaxonomyFocus','focusedTaxonomyControl','searchUnified','selectSearchTaxonomy'], context)
   const {searchUnified, selectSearchTaxonomy} = helpers
   const first = searchUnified()
-  pending[0].resolve({id:'initial',index:{},taxonomy_counts:{sources:{release_note:6,whitepaper:11,other:2},release_categories:{function:3}}})
+  pending[0].resolve({id:'initial',index:{},taxonomy_counts:{sources:{release_note:6,whitepaper:11,other:2},release_categories:{function:3}},whitepaper_models:models})
   await first
   assert.equal(selectSearchTaxonomy('source','whitepaper'), true)
   assert.match(container.innerHTML,/data-search-source-group="whitepaper" aria-selected="true"/)
@@ -290,8 +291,101 @@ test('rapid taxonomy switches keep controls responsive and only render the lates
   assert.match(document.activeElement.selector,/data-search-source-group="whitepaper"/)
   assert.equal(locations.at(-1),'whitepaper/function')
   selectSearchTaxonomy('source','release_note')
-  pending[5].resolve({id:'retried',index:{},taxonomy_counts:{sources:{release_note:6},release_categories:{function:3}}})
+  pending[5].resolve({id:'retried',index:{},taxonomy_counts:{sources:{release_note:6},release_categories:{function:3}},whitepaper_models:models})
   await new Promise(resolve=>setImmediate(resolve))
   assert.equal(container.innerHTML,'RESULT retried')
   assert.ok(container.focused.some(selector=>selector.includes('whitepaper')))
+  selectSearchTaxonomy('source','whitepaper')
+  selectSearchTaxonomy('model','model:7p')
+  assert.equal(pending[6].options.signal.aborted,true)
+  assert.equal(new URLSearchParams(pending[7].path.split('?')[1]).get('whitepaper_model'),'model:7p')
+  assert.match(container.innerHTML,/value="model:7p" selected/)
+  pending[7].resolve({id:'7p',index:{},taxonomy_counts:{sources:{whitepaper:11}},whitepaper_models:{...models,selected:'model:7p'}})
+  await new Promise(resolve=>setImmediate(resolve))
+  pending[6].resolve({id:'stale-6s',index:{},whitepaper_models:models})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(container.innerHTML,'RESULT 7p'); assert.equal(state.searchWhitepaperModel,'model:7p')
+  assert.match(document.activeElement.selector,/data-search-whitepaper-model/)
+  selectSearchTaxonomy('model','model:6s')
+  container.querySelector('[data-search-source-group="whitepaper"]').focus()
+  pending[8].resolve({id:'6s',index:{},taxonomy_counts:{sources:{whitepaper:11}},whitepaper_models:models})
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(container.innerHTML,'RESULT 6s')
+  assert.match(document.activeElement.selector,/data-search-source-group="whitepaper"/)
+})
+
+test('whitepaper model selector uses server options and changes only whitepaper model state', () => {
+  const state = {searchSourceGroup:'whitepaper', searchReleaseCategory:'function', searchPage:3,
+    searchWhitepaperModel:'model:6s', activeProjectId:4, searchComparison:[{preview_id:'x'}],
+    searchWhitepaperOptions:[{value:'model:6s',label:'6S',count:1}, {value:'model:7p妇产版',label:'7P妇产版',count:2}]}
+  let calls = 0
+  const {searchTaxonomyMarkup,selectSearchTaxonomy} = funcs(['searchTaxonomyMarkup','selectSearchTaxonomy'], {
+    state,categoryLabels,escapeAttribute:escape,escapeHtml:escape,searchUnified:()=>{calls++; return Promise.resolve()},showNotice(){}
+  })
+  const html = searchTaxonomyMarkup({taxonomy_counts:{sources:{whitepaper:3}}})
+  assert.match(html,/aria-label="白皮书型号"/)
+  assert.match(html, /value="model:6s" selected>6S（1）/)
+  assert.match(html, /7P妇产版（2）/)
+  assert.equal(selectSearchTaxonomy('model','model:7p妇产版'),true)
+  assert.equal(state.searchWhitepaperModel,'model:7p妇产版')
+  assert.equal(state.searchPage,1); assert.equal(state.activeProjectId,4)
+  assert.equal(state.searchReleaseCategory,'function'); assert.equal(state.searchComparison.length,1)
+  assert.equal(selectSearchTaxonomy('model','model:unknown'),false); assert.equal(calls,1)
+})
+
+
+test('model selector change listener is connected to the shared taxonomy action', () => {
+  let listener, selection
+  const document = {querySelector:()=>({addEventListener:(name, callback)=>{if(name === 'change') listener = callback}})}
+  const start = source.indexOf("document.querySelector('#global-search-panel').addEventListener('change'")
+  const end = source.indexOf("document.querySelector('#global-search-panel').addEventListener('keydown'", start)
+  new Function('document','selectSearchTaxonomy', source.slice(start,end))(document,(kind,value)=>{selection=[kind,value]})
+  listener({target:{closest:()=>({value:'model:7p'})}})
+  assert.deepEqual(selection,['model','model:7p'])
+})
+
+
+test('loading completion keeps focus on the taxonomy control the user moved to', () => {
+  const container = {contains: element => element.owner === container}
+  const active = {owner:container, value:'model:6s', hasAttribute:name=>name==='data-search-whitepaper-model'}
+  const document = {activeElement:active}
+  const {focusedTaxonomyControl} = funcs(['focusedTaxonomyControl'], {document})
+  assert.deepEqual(focusedTaxonomyControl(container),{kind:'model',value:'model:6s'})
+  document.activeElement = {owner:container,hasAttribute:name=>name==='data-search-source-group',getAttribute:()=> 'whitepaper'}
+  assert.deepEqual(focusedTaxonomyControl(container),{kind:'source',value:'whitepaper'})
+  document.activeElement = {owner:null,hasAttribute:()=>true}
+  assert.equal(focusedTaxonomyControl(container),null)
+})
+
+test('automatic model changes with search context while an explicit choice persists', async () => {
+  const controls = {'#release-search':{value:'first'}, '#release-search-scope':{value:'current'},
+    '#release-search-market':{value:''}, '#release-search-model':{value:''}, '#release-search-country':{value:''},
+    '#release-search-verification':{value:''}, '#release-search-current':{checked:false}, '#search-index-status':{textContent:''}}
+  const container = {innerHTML:'',contains:()=>false,querySelector:()=>null}
+  controls['#release-search-result'] = container
+  const state = {searchSourceGroup:'whitepaper', searchReleaseCategory:'all', searchWhitepaperSelectionMode:'auto',
+    searchWhitepaperModel:'',searchRequest:0,searchPage:1,activeProjectId:1,searchComparison:[]}
+  const requests = []
+  let finishLinkedRequest
+  const context = {state, categoryLabels, escapeAttribute:escape,escapeHtml:escape,
+    document:{querySelector:s=>controls[s],activeElement:null}, window:{clearTimeout(){}}, AbortController,
+    renderSearchFilters(){},selectedSearchSources:()=>['controlled'],searchTaskParams:()=>({}),
+    restoreSearchComparison:()=>[], saveSearchComparison(){}, syncLocation(){}, projectPath:p=>p,
+    api:async path=>{const params = new URLSearchParams(path.split('?')[1]); requests.push(params); const selected=params.get('whitepaper_model') || (params.get('q')==='first'?'model:6s':'model:7p'); const result={index:{},taxonomy_counts:{},whitepaper_models:{selected,options:[{value:selected,label:selected,count:1}]}}; if(params.get('q')==='linked-pending') return new Promise(resolve=>{finishLinkedRequest=()=>resolve(result)}); return result},
+    renderUnifiedSearch(){},searchIndexStatusLabel:()=>'',showNotice(){}
+  }
+  const {searchUnified,restoreSearchWhitepaperSelection} = funcs(['searchTaxonomyMarkup','restoreTaxonomyFocus','focusedTaxonomyControl','restoreSearchWhitepaperSelection','searchUnified'], context)
+  await searchUnified('first'); assert.equal(state.searchWhitepaperModel,'model:6s')
+  await searchUnified('second'); assert.equal(requests[1].get('whitepaper_model'),''); assert.equal(state.searchWhitepaperModel,'model:7p')
+  state.searchWhitepaperSelectionMode='selected'
+  await searchUnified('third'); assert.equal(requests[2].get('whitepaper_model'),'model:7p')
+  restoreSearchWhitepaperSelection({whitepaper_model:'model:6s',whitepaper_model_mode:'auto'})
+  await searchUnified('linked-query'); assert.equal(requests[3].get('whitepaper_model'),'model:6s')
+  assert.match(source, /restoreSearchWhitepaperSelection\(params\)/)
+  restoreSearchWhitepaperSelection({whitepaper_model:'model:6s',whitepaper_model_mode:'auto'})
+  const pending = searchUnified('linked-pending')
+  await searchUnified('next-before-link-completes')
+  assert.equal(requests[5].get('whitepaper_model'),'')
+  finishLinkedRequest(); await pending
+  assert.equal(state.searchWhitepaperModel,'model:7p')
 })

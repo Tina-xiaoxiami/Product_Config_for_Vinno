@@ -1,4 +1,4 @@
-const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
+const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -1170,12 +1170,27 @@ function searchTaxonomyMarkup(result) {
     .map(([key, label]) => tab(key, label, sources[key], key === group, 'data-search-source-group')).join('');
   const categoryTabs = group === 'release_note'
     ? `<div class="search-taxonomy-categories" role="tablist" aria-label="Release Note 分类">${tab('all', '全部', sources.release_note, category === 'all', 'data-search-release-category')}${Object.entries(categoryLabels).filter(([key]) => Number(categories[key]) > 0 || key === category).map(([key,label]) => tab(key, label, categories[key], key === category, 'data-search-release-category')).join('')}</div>` : '';
-  return `<nav class="search-taxonomy" aria-label="检索结果分类"><div class="search-taxonomy-sources" role="tablist" aria-label="资料类型">${sourceTabs}</div>${categoryTabs}</nav>`;
+  const models = result.whitepaper_models?.options || state.searchWhitepaperOptions || [];
+  const selectedModel = state.searchWhitepaperModel || result.whitepaper_models?.selected || '';
+  const modelSelector = group === 'whitepaper' && models.length
+    ? `<label class="search-whitepaper-model" title="型号可能取自资料名称，适用范围以原文与复核状态为准">白皮书型号 <select data-search-whitepaper-model aria-label="白皮书型号">${models.map(option => `<option value="${escapeAttribute(option.value)}" ${option.value === selectedModel ? 'selected' : ''}>${escapeHtml(option.label)}（${Number(option.count) || 0}）</option>`).join('')}</select></label>` : '';
+  return `<nav class="search-taxonomy" aria-label="检索结果分类"><div class="search-taxonomy-sources" role="tablist" aria-label="资料类型">${sourceTabs}</div>${categoryTabs}${modelSelector}</nav>`;
+}
+
+function restoreSearchWhitepaperSelection(params) {
+  state.searchWhitepaperModel = params.whitepaper_model || '';
+  state.searchWhitepaperSelectionMode = params.whitepaper_model && params.whitepaper_model_mode !== 'auto' ? 'selected' : 'auto';
+  // Bind the restored automatic choice to the first request using this URL.
+  state.searchWhitepaperAutoQueryKey = null;
 }
 
 function selectSearchTaxonomy(kind, value) {
   if (kind === 'source' && ['release_note', 'whitepaper', 'other'].includes(value)) state.searchSourceGroup = value;
   else if (kind === 'category' && (value === 'all' || Object.hasOwn(categoryLabels, value))) state.searchReleaseCategory = value;
+  else if (kind === 'model' && (state.searchWhitepaperOptions || []).some(option => option.value === value)) {
+    state.searchWhitepaperModel = value;
+    state.searchWhitepaperSelectionMode = 'selected';
+  }
   else return false;
   state.searchPage = 1;
   state.searchTaxonomyFocus = { kind, value };
@@ -1235,9 +1250,19 @@ function renderUnifiedSearch(result) {
 function restoreTaxonomyFocus(container) {
   const target = state.searchTaxonomyFocus;
   if (!target) return;
-  const attr = target.kind === 'source' ? 'data-search-source-group' : 'data-search-release-category';
-  container.querySelector(`[${attr}="${target.value}"]`)?.focus();
+  const selector = target.kind === 'model' ? '[data-search-whitepaper-model]' : target.kind === 'source'
+    ? `[data-search-source-group="${target.value}"]` : `[data-search-release-category="${target.value}"]`;
+  container.querySelector(selector)?.focus();
   state.searchTaxonomyFocus = null;
+}
+
+function focusedTaxonomyControl(container) {
+  const active = document.activeElement;
+  if (!active || !container.contains(active)) return null;
+  if (active.hasAttribute('data-search-whitepaper-model')) return { kind: 'model', value: active.value };
+  if (active.hasAttribute('data-search-source-group')) return { kind: 'source', value: active.getAttribute('data-search-source-group') };
+  if (active.hasAttribute('data-search-release-category')) return { kind: 'category', value: active.getAttribute('data-search-release-category') };
+  return null;
 }
 
 async function searchUnified(query = document.querySelector('#release-search').value) {
@@ -1274,9 +1299,17 @@ async function searchUnified(query = document.querySelector('#release-search').v
     page_size: '40',
     source_group: state.searchSourceGroup || 'release_note',
     release_category: state.searchSourceGroup === 'release_note' ? (state.searchReleaseCategory || 'all') : 'all',
+    whitepaper_model: state.searchWhitepaperModel || '',
     ...searchTaskParams(),
   });
-  const comparisonKey = JSON.stringify({ query: needle, project: state.activeProjectId, filters: [...params].filter(([key]) => !['page', 'source_group', 'release_category'].includes(key)) });
+  const comparisonKey = JSON.stringify({ query: needle, project: state.activeProjectId, filters: [...params].filter(([key]) => !['page', 'source_group', 'release_category', 'whitepaper_model'].includes(key)) });
+  if (state.searchWhitepaperSelectionMode !== 'selected') {
+    if (state.searchWhitepaperAutoQueryKey && comparisonKey !== state.searchWhitepaperAutoQueryKey) {
+      state.searchWhitepaperModel = '';
+      params.set('whitepaper_model', '');
+    }
+    state.searchWhitepaperAutoQueryKey = comparisonKey;
+  }
   if (comparisonKey !== state.searchComparisonKey) state.searchComparison = restoreSearchComparison(comparisonKey);
   state.searchComparisonKey = comparisonKey;
   saveSearchComparison();
@@ -1291,13 +1324,15 @@ async function searchUnified(query = document.querySelector('#release-search').v
     if (requestId !== state.searchRequest) return;
     state.searchTaxonomyKey = comparisonKey;
     state.searchTaxonomyCounts = result.taxonomy_counts;
-    if (pendingFocus && container.contains(document.activeElement)) state.searchTaxonomyFocus = pendingFocus;
+    state.searchWhitepaperModel = result.whitepaper_models?.selected || '';
+    state.searchWhitepaperOptions = result.whitepaper_models?.options || [];
+    state.searchTaxonomyFocus = focusedTaxonomyControl(container);
     renderUnifiedSearch(result);
     document.querySelector('#search-index-status').textContent = searchIndexStatusLabel(result.index);
     syncLocation();
   } catch (error) {
     if (error.name !== 'AbortError' && requestId === state.searchRequest) {
-      if (pendingFocus && container.contains(document.activeElement)) state.searchTaxonomyFocus = pendingFocus;
+      state.searchTaxonomyFocus = focusedTaxonomyControl(container);
       container.innerHTML = `${taxonomy}<p class="empty-state compact" role="alert">搜索失败：${escapeHtml(error.message)}</p>`;
       restoreTaxonomyFocus(container);
     }
@@ -2223,7 +2258,7 @@ async function loadWorkbenchHome() {
 // `project` 是全局范围，所有视图都接受。
 const VIEW_PARAMS = {
   home: ['project'],
-  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category'],
+  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category', 'whitepaper_model', 'whitepaper_model_mode'],
   model: ['model', 'market', 'country', 'series'],
   releases: ['project', 'version'],
   compare: ['project', 'a', 'b'],
@@ -2284,6 +2319,10 @@ function currentViewParams() {
     Object.assign(params, searchTaskParams());
     params.source_group = state.searchSourceGroup || 'release_note';
     params.release_category = state.searchReleaseCategory || 'all';
+    if (state.searchWhitepaperModel) {
+      params.whitepaper_model = state.searchWhitepaperModel;
+      params.whitepaper_model_mode = state.searchWhitepaperSelectionMode === 'selected' ? 'selected' : 'auto';
+    }
     if (state.searchPage > 1) params.page = String(state.searchPage);
     Object.assign(params, state.previewLocation || {});
   }
@@ -2445,6 +2484,7 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
     document.querySelectorAll('input[name="search-source"]').forEach(input => { input.checked = sources.has(input.value); });
     state.searchSourceGroup = ['release_note', 'whitepaper', 'other'].includes(params.source_group) ? params.source_group : 'release_note';
     state.searchReleaseCategory = params.release_category === 'all' || Object.hasOwn(categoryLabels, params.release_category || '') ? params.release_category : 'all';
+    restoreSearchWhitepaperSelection(params);
     state.searchPage = Math.max(1, Number.parseInt(params.page || '1', 10) || 1);
     restoreSearchTask({ task: params.task, expandRelated: params.expand_related === 'true', versionFrom: params.version_from, versionTo: params.version_to, versions: params.versions });
     const search = params.q ? searchUnified(params.q) : null;
@@ -3793,6 +3833,11 @@ document.querySelectorAll('input[name="search-source"]').forEach(control => cont
   if (document.querySelector('#release-search').value.trim()) searchUnified().catch(error => showNotice(error.message));
   else syncLocation();
 }));
+document.querySelector('#global-search-panel').addEventListener('change', event => {
+  const selector = event.target.closest('[data-search-whitepaper-model]');
+  if (!selector) return;
+  selectSearchTaxonomy('model', selector.value);
+});
 document.querySelector('#global-search-panel').addEventListener('keydown', event => {
   const current = event.target.closest('[role="tab"]');
   if (!current || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;

@@ -776,3 +776,80 @@ def test_prewarm_yields_if_foreground_arrives_while_waiting_for_refresh_lock(tmp
     finally:
         if gate.locked(): gate.release()
         warmer.close()
+
+
+def test_whitepaper_model_filters_before_preview_and_preserves_facets(monkeypatch):
+    class DB:
+        documents = [
+            {'id': 1, 'doc_type': '白皮书', 'title': '6S_白皮书_1.51.80', 'model_scope': ''},
+            {'id': 2, 'doc_type': '白皮书', 'title': '6S_白皮书_1.51.90', 'model_scope': ''},
+            {'id': 3, 'doc_type': '白皮书', 'title': '7P全身应用版_白皮书_1.51.80', 'model_scope': ''},
+            {'id': 4, 'doc_type': '白皮书', 'title': '7P妇产版_白皮书_1.51.80', 'model_scope': ''},
+            {'id': 5, 'doc_type': '白皮书', 'title': '未命名白皮书', 'model_scope': ''},
+            {'id': 6, 'doc_type': '白皮书', 'title': '范围已登记的资料', 'model_scope': '6S、8S'},
+        ]
+        def list_documents(self): return self.documents
+        def list_document_versions(self, doc_id): return [{'id': doc_id}]
+    class Index:
+        def __init__(self): self.calls = []
+        def status(self): return {}
+        def preview(self, source_id, **kwargs):
+            self.calls.append(source_id)
+            return {'section': {'source_id':source_id,'locator':'第 1 页','section_number':'1.1',
+                                'title':'功能','content':'正文','has_images':False}, 'stale':False}
+    rows = [{'source_type':'controlled','source_label':'受控资料','title':doc['title'],
+             'scope':'机型范围未登记' if not doc['model_scope'] else doc['model_scope'],
+             'verification':'unverified','is_current':True,'matched_text':'功能',
+             'locator':'第 1 页','preview_id':f"controlled:{doc['id']}:pdf",
+             'document_version_id':doc['id'],'file_format':'pdf'} for doc in DB.documents]
+    rows += [{'source_type':'release','source_label':'版本','title':'功能','scope':'项目',
+              'verification':'approved','is_current':True,'matched_text':'功能','locator':'记录',
+              'preview_id':None,'version':'1.1.1','project_id':1,'category':'function','evidence_kind':'version_record'}]
+    monkeypatch.setattr(search_module, '_search_exact', lambda *a, **k: {'results':[dict(row) for row in rows], 'filters':{}, 'source_errors':{}})
+    index = Index(); queued = []
+    result = search_module.unified_search(DB(), index, None, query='功能', source_group='whitepaper',
+                                          page=1, page_size=2, prewarm=queued.append)
+    assert result['taxonomy_counts']['sources'] == {'release_note':1, 'whitepaper':6, 'other':0}
+    assert result['whitepaper_models']['selected'] == 'model:6s'
+    assert [(o['label'], o['count']) for o in result['whitepaper_models']['options']] == [('6S',3),('7P全身应用版',1),('7P妇产版',1),('8S',1),('未标识',1)]
+    assert result['total'] == 3 and len(result['results']) == 2
+    assert index.calls == ['controlled:1:pdf', 'controlled:2:pdf']
+    assert [item[0] for item in queued[0]] == index.calls
+    assert all(item['scope'] == '机型范围未登记' and item['verification'] == 'unverified' for item in result['results'])
+    index.calls.clear()
+    selected = search_module.unified_search(DB(), index, None, query='功能', source_group='whitepaper',
+                                            whitepaper_model='model:7p妇产版', prewarm=queued.append)
+    assert selected['total'] == 1 and index.calls == ['controlled:4:pdf']
+    assert queued[-1][0][0] == 'controlled:4:pdf'
+    index.calls.clear()
+    absent = search_module.unified_search(DB(), index, None, query='功能', source_group='whitepaper', whitepaper_model='model:missing')
+    assert absent['total'] == 0 and index.calls == []
+    assert absent['whitepaper_models']['selected'] == 'model:missing'
+    rn = search_module.unified_search(DB(), index, None, query='功能', source_group='release_note', whitepaper_model='model:7p妇产版')
+    assert rn['total'] == 1 and rn['taxonomy_counts']['sources']['whitepaper'] == 6
+
+
+def test_whitepaper_title_identification_and_long_registered_scope():
+    labels = search_module._whitepaper_model_labels
+    assert labels({'title':'2024年度_白皮书_1.0', 'model_scope':''}) == [('unknown','未标识','unknown')]
+    assert labels({'title':'A2024文档编号_白皮书_1.0', 'model_scope':''}) == [('unknown','未标识','unknown')]
+    assert labels({'title':'6S_白皮书_1.0', 'model_scope':''}) == [('model:6s','6S','title')]
+    assert labels({'title':'VINNO 10E白皮书_1.0', 'model_scope':''}) == [('model:vinno 10e','VINNO 10E','title')]
+    long_name = '机型' * 150
+    value, label, basis = labels({'title':'说明','model_scope':long_name})[0]
+    assert len(value) < 200 and value.startswith('model-sha256:')
+    assert label == long_name and basis == 'scope'
+    assert search_module._natural_model_key('1' * 5000)
+    assert search_module._natural_model_key('²')
+    assert search_module._natural_model_key('6S') < search_module._natural_model_key('10S')
+    class DB:
+        def list_documents(self): return [{'id':1,'doc_type':'白皮书','title':'说明','model_scope':long_name}]
+        def list_document_versions(self, document): return [{'id':1}]
+    class Index:
+        def status(self): return {}
+    row = {'source_type':'controlled', 'title':'说明','scope':long_name,'verification':'unverified', 'is_current':True,
+           'matched_text':'x','locator':'p','preview_id':None,'document_version_id':1}
+    from unittest.mock import patch
+    with patch.object(search_module, '_search_exact', return_value={'results':[row],'filters':{},'source_errors':{}}):
+        result = search_module.unified_search(DB(), Index(), None, query='x', source_group='whitepaper', whitepaper_model=value)
+    assert result['total'] == 1 and result['whitepaper_models']['selected'] == value

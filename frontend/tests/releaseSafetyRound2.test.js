@@ -224,3 +224,10 @@ test('delete locks the editor until completion and uses the captured version id'
   finishDelete(); await pending
   assert.equal(context.editSaving.value, false); assert.equal(context.introVersion.value.id, 3)
 })
+
+test('standalone workbench link keeps the independent whitepaper model selection', () => {
+  const origin = 'http://127.0.0.1:3006'
+  const url = `${origin}/release-workbench/?embedded=1#search?q=子宫&source_group=whitepaper&whitepaper_model=model%3A6s`
+  assert.equal(releaseWorkbenchStandaloneUrl('search', url, origin), '/release-workbench/#search?q=%E5%AD%90%E5%AE%AB&source_group=whitepaper&whitepaper_model=model%3A6s')
+  assert.equal(releaseWorkbenchStandaloneUrl('search', 'https://evil.test/release-workbench/#search?whitepaper_model=model%3A6s', origin), '/release-workbench/#search')
+})

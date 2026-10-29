@@ -864,6 +864,8 @@ body.workbench-embedded .topbar { top:0; }
 .search-taxonomy { margin: 8px 0 10px; }
 .search-taxonomy-sources, .search-taxonomy-categories { display: flex; flex-wrap: wrap; gap: 4px 8px; border-bottom: 1px solid var(--line); }
 .search-taxonomy-categories { margin-top: 5px; border-bottom: 0; }
+.search-whitepaper-model { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; font-size: var(--text-caption); }
+.search-whitepaper-model select { max-width: min(320px, 65vw); }
 .search-taxonomy [role="tab"] { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); padding: 7px 9px; cursor: pointer; font: inherit; font-size: var(--text-caption); }
 .search-taxonomy [role="tab"][aria-selected="true"] { color: var(--primary-strong); border-color: var(--primary-strong); font-weight: 700; }
 .search-taxonomy [role="tab"]:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: -2px; }

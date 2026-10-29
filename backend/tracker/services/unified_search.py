@@ -6,6 +6,7 @@ from datetime import datetime
 from functools import partial
 from hashlib import sha256
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterable, Callable
 
@@ -24,7 +25,7 @@ from tracker.services.search_index import (
     SearchIndex, SourceChangedDuringExtraction, extract_file, file_sha256, file_snapshot,
 )
 from tracker.services.search_sources import STRUCTURED_SOURCE_TYPES, search_structured_sources
-from tracker.services.document_scopes import matches_model_scope
+from tracker.services.document_scopes import matches_model_scope, normalize_model_scope, DOCUMENT_CATEGORIES
 from tracker.services.section_cache import section_cache
 from tracker.services.document_evidence import latest_extraction_review_hashes
 
@@ -840,6 +841,41 @@ def _search_exact(
     }
 
 
+def _whitepaper_model_id(name: str) -> str:
+    normalized = name.casefold()
+    if len(normalized) > 180:
+        return 'model-sha256:' + sha256(normalized.encode('utf-8')).hexdigest()
+    return 'model:' + normalized
+
+
+def _whitepaper_model_labels(document: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Use registered scope or a clearly identified title label, never infer applicability."""
+    scope = normalize_model_scope(document.get('model_scope') or '')
+    if scope and scope not in DOCUMENT_CATEGORIES:
+        return [(_whitepaper_model_id(name), name, 'scope') for name in scope.split('、')]
+    title = str(document.get('title') or '')
+    match = re.match(r'^\s*(.{1,80}?)\s*白皮书(?:\s|[_\-（(]|$)', title, re.I)
+    label = match.group(1).strip(' _-') if match else ''
+    if label:
+        # Reuse the existing brand/model recognizer; short unbranded labels are
+        # limited to the established numbered VINNO variants and their editions.
+        from tracker.services.document_scope_suggestions import _models
+        compact = re.sub(r'\s+', '', label).casefold()
+        recognized = any(re.sub(r'\s+', '', model).casefold() == compact for model in _models(label))
+        short_model = re.fullmatch(
+            r'\d{1,2}(?:EXP|PRO|[EPLGST])(?:\s*(?:Super|Max|Pro|Exp|Plus|Elite|Expert|Mega|Premium|Prime|Senior))?(?:全身应用版|妇产版|综合版|旗舰版|科研版(?:[（(]URM[）)])?)?',
+            label, re.I)
+        if recognized or short_model:
+            return [(_whitepaper_model_id(label), label, 'title')]
+    return [('unknown', '未标识', 'unknown')]
+
+
+def _natural_model_key(label: str) -> tuple:
+    return tuple((0, len(part.lstrip('0') or '0'), part.lstrip('0') or '0', len(part))
+                 if re.fullmatch(r'[0-9]+', part) else (1, part.casefold())
+                 for part in re.split(r'([0-9]+)', label))
+
+
 def unified_search(
     database: Database, index: SearchIndex, reader: ProductStrategyReader, *, query: str,
     sources: set[str] | None = None, project_id: int | None = None, scope: str = 'current',
@@ -847,12 +883,16 @@ def unified_search(
     country: str = '', unavailable_sources: dict[str, str] | None = None,
     page: int = 1, page_size: int = 40, task: str = 'search', expand_related: bool = False,
     version_from: str = '', version_to: str = '', versions: str = '',
-    source_group: str = 'all', release_category: str = 'all',
+    source_group: str = 'all', release_category: str = 'all', whitepaper_model: str = '',
     prewarm: Callable[[list[tuple[str, str, str]]], None] | None = None,
 ) -> dict[str, Any]:
     """Run explicit queries through the same adapters; related hits stay separate clues."""
     groups = {'all', 'release_note', 'whitepaper', 'other'}
     categories = {'all', 'function', 'image', 'bug', 'config', 'config_note', 'probe', 'remark', 'unclassified', 'source'}
+    if len(whitepaper_model) > 200 or (whitepaper_model and whitepaper_model != 'unknown'
+            and not whitepaper_model.startswith('model:')
+            and not re.fullmatch(r'model-sha256:[0-9a-f]{64}', whitepaper_model)):
+        raise ValueError('不支持的白皮书型号。')
     if source_group not in groups or release_category not in categories:
         raise ValueError('不支持的资料来源或发布分类。')
     validate_search_task(task, version_from, version_to, versions)
@@ -908,14 +948,14 @@ def unified_search(
         results.sort(key=lambda row: (row['match_kind'] != 'direct', row['source_type'] != 'release',
                                      row.get('project_id', 0), version_key(row.get('version') or '99999.0.0')))
     # Classify actual registered sources before pagination; do not infer types from titles.
-    document_types = {version['id']: document['doc_type']
-                      for document in database.list_documents()
-                      for version in database.list_document_versions(document['id'])}
+    document_info = {version['id']: document
+                     for document in database.list_documents()
+                     for version in database.list_document_versions(document['id'])}
     section_cache = {}
     source_cache: dict[int, Any] = {}
     for item in results:
         kind = item['source_type']
-        doc_type = document_types.get(item.get('document_version_id'), '')
+        doc_type = document_info.get(item.get('document_version_id'), {}).get('doc_type', '')
         item['source_group'] = ('release_note' if kind == 'release' and item.get('evidence_kind') != 'current_description'
                                 or kind == 'controlled' and doc_type == '发布记录'
                                 else 'whitepaper' if kind == 'controlled' and doc_type == '白皮书' else 'other')
@@ -975,15 +1015,41 @@ def unified_search(
                                for category in sorted(categories - {'all'})},
     }
     payload['unfiltered_total'] = len(results)
+    # Options count all matching whitepaper evidence before model filtering and pagination.
+    options: dict[str, dict[str, Any]] = {}
+    whitepaper_memberships: dict[int, set[str]] = {}
+    for item in results:
+        if item['source_group'] != 'whitepaper':
+            continue
+        labels = _whitepaper_model_labels(document_info.get(item.get('document_version_id'), {}))
+        whitepaper_memberships[id(item)] = {key for key, _, _ in labels}
+        seen_labels: set[str] = set()
+        for model_key, label, basis in labels:
+            if model_key in seen_labels:
+                continue
+            seen_labels.add(model_key)
+            option = options.setdefault(model_key, {'value': model_key, 'label': label, 'basis': basis, 'count': 0})
+            if option['basis'] != basis:
+                option['basis'] = 'mixed'
+            option['count'] += 1
+    model_options = sorted(options.values(), key=lambda option: (_natural_model_key(option['label']), option['value']))
+    selected_model = whitepaper_model or (model_options[0]['value'] if model_options else '')
+    if selected_model and selected_model not in options:
+        label = ('未标识' if selected_model == 'unknown' else '已选型号（本次无结果）'
+                 if selected_model.startswith('model-sha256:') else selected_model.split(':', 1)[-1])
+        model_options.append({'value': selected_model, 'label': label, 'basis': 'unavailable', 'count': 0})
+    payload['whitepaper_models'] = {'selected': selected_model, 'options': model_options}
     prewarm_page = max(1, int(page))
     prewarm_size = min(100, max(1, int(page_size)))
-    whitepaper_page = [item for item in results if item['source_group'] == 'whitepaper'][
-        (prewarm_page - 1) * prewarm_size:prewarm_page * prewarm_size]
+    whitepaper_results = [item for item in results if item['source_group'] == 'whitepaper'
+                          and selected_model in whitepaper_memberships.get(id(item), set())]
+    whitepaper_page = whitepaper_results[(prewarm_page - 1) * prewarm_size:prewarm_page * prewarm_size]
     prewarm_candidates = [(item['preview_id'], item.get('locator') or '', item.get('matched_query') or needle)
                           for item in whitepaper_page if item.get('preview_id')
                           and item.get('file_format') in {'pdf', 'docx'} and not item.get('is_stale')][:40]
     results = [dict(item) for item in results if (source_group == 'all' or item['source_group'] == source_group)
-               and (release_category == 'all' or item['source_group'] == 'release_note' and release_category in item['release_categories'])]
+               and (release_category == 'all' or item['source_group'] == 'release_note' and release_category in item['release_categories'])
+               and (source_group != 'whitepaper' or selected_model in whitepaper_memberships.get(id(item), set()))]
     if release_category != 'all':
         for item in results:
             selected_section = item.get('category_sections', {}).get(release_category)
@@ -1009,7 +1075,7 @@ def unified_search(
             payload['source_errors'][source] = '此来源未接入版本范围筛选，本次未列入结果；清除版本范围可查询。'
     payload['filters'].update(sources=sorted(selected), task=task, expand_related=expand_related,
                               version_from=version_from, version_to=version_to, versions=','.join(selected_versions),
-                              source_group=source_group, release_category=release_category)
+                              source_group=source_group, release_category=release_category, whitepaper_model=selected_model)
     payload['version_summary'] = _version_summary(results, selected_versions) if scoped else []
     safe_page, safe_size = max(1, int(page)), min(100, max(1, int(page_size)))
     page_results = results[(safe_page - 1) * safe_size:safe_page * safe_size]

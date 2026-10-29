@@ -177,3 +177,40 @@ def test_close_release_workbench_stops_search_maintenance(tmp_path: Path) -> Non
 
     assert maintenance._closed is True
 
+
+
+def test_whitepaper_model_parameter_filters_real_mounted_search_before_preview(tmp_path: Path, monkeypatch) -> None:
+    from reportlab.pdfgen import canvas
+    from tracker.services.search_index import extract_file, file_sha256
+    materials = tmp_path / 'materials'; materials.mkdir()
+    workbench = _workbench(tmp_path)
+    workbench.config['CONTROLLED_MATERIALS_ROOT'] = str(materials)
+    database = workbench.extensions['tracker_database']
+    index = workbench.extensions['tracker_search_index']
+    for model in ('6S', '7P'):
+        path = materials / f'{model}.pdf'
+        pdf = canvas.Canvas(str(path)); pdf.drawString(40,700,'1.1 Uterine feature')
+        pdf.drawString(40,680,'Details'); pdf.drawString(40,660,'1.2 Next'); pdf.save()
+        document = database.add_document(f'{model}_白皮书_1.0.0', doc_type='白皮书')
+        version = database.add_document_version(document, version_label='1.0.0', sha256=file_sha256(path), path_pdf=str(path))
+        index.replace_source(source_id=f'controlled:{version}:pdf', source_type='controlled', title=f'{model}_白皮书_1.0.0',
+                             path=path, scope='国内 · 机型范围未登记', verification='unverified', is_current=True, chunks=extract_file(path))
+    calls = []
+    original = index.preview
+    def preview(source_id, **kwargs):
+        calls.append(source_id)
+        return original(source_id, **kwargs)
+    monkeypatch.setattr(index, 'preview', preview)
+    host = FastAPI(); mount_release_workbench(host, workbench)
+    try:
+        client = TestClient(host)
+        response = client.get('/release-workbench/api/v1/workbench/search', params={
+            'q':'Uterine', 'sources':'controlled', 'source_group':'whitepaper', 'whitepaper_model':'model:7p'})
+        assert response.status_code == 200
+        result = response.json()['data']
+        assert result['taxonomy_counts']['sources']['whitepaper'] == 2
+        assert result['whitepaper_models']['selected'] == 'model:7p'
+        assert result['total'] == 1 and '7P' in result['results'][0]['title']
+        assert len(calls) == 1 and calls[0] == result['results'][0]['preview_id']
+    finally:
+        close_release_workbench(workbench)
