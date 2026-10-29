@@ -667,6 +667,15 @@
       width="720px"
       destroy-on-close
     >
+      <el-alert
+        v-if="qaReviewNotice(answerForm.review_status)"
+        :title="qaReviewNotice(answerForm.review_status)"
+        type="warning"
+        :closable="false"
+        show-icon
+        data-testid="knowledge-answer-evidence-review"
+      />
+      <p v-if="answerForm.previous_change_note" class="answer-previous-change">上次变更说明：{{ answerForm.previous_change_note }}</p>
       <el-form label-position="top">
         <el-form-item label="问题">
           <div class="dialog-question">{{ answerForm.question_text }}</div>
@@ -842,6 +851,8 @@ const answerForm = ref({
   question_id: null,
   question_text: '',
   version: 0,
+  review_status: '',
+  previous_change_note: '',
   answer_text: '',
   alias_text: '',
   citations: [],
@@ -1317,11 +1328,19 @@ const loadQaQuestions = async () => {
   }
 }
 
+const qaReviewNotice = (status) => ({
+  source_changed: '引用资料原文已变化，请核对依据后重新确认答案。',
+  scope_changed: '引用资料的适用范围已变化，请核对范围后重新确认答案。',
+  evidence_changed: '引用原文和适用范围均已变化，请核对依据后重新确认答案。'
+}[status] || '')
+
 const openAnswerDialog = async (question) => {
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
     version: question.answer?.version || 0,
+    review_status: question.answer?.review_status || '',
+    previous_change_note: question.answer?.change_note || '',
     answer_text: question.answer?.answer_text || '',
     alias_text: (question.alias_questions || []).join('\n'),
     citations: (question.answer?.citations || []).map(citation => ({
@@ -1487,6 +1506,7 @@ onMounted(() => {
 .qa-queue :deep(.el-radio-button__inner) { color: #475569; }
 .qa-queue :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
 .qa-queue :deep(.el-table .cell), .qa-queue :deep(.el-table__empty-text) { color: #334155; }
+.answer-previous-change { margin: 10px 0; color: #64748b; font-size: 12px; }
 .dialog-question { width: 100%; padding: 10px 12px; border-radius: 7px; background: #f8fafc; color: #334155; }
 .citation-editor { display: flex; flex-direction: column; gap: 9px; width: 100%; }
 .citation-editor-row { display: grid; grid-template-columns: 1.1fr 0.8fr 1.2fr auto; gap: 8px; }

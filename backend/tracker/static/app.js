@@ -359,11 +359,32 @@ function formatEvidenceCitation(preview, selection = {}, searchUrl = '') {
     selection.preview_id ? evidenceLink({...selection, locator: chunk?.locator || locator}, searchUrl) : searchUrl].filter(Boolean).join('\n');
 }
 
+function normalizeComparisonText(value) {
+  return String(value || '').replace(/\s+/gu, ' ').trim();
+}
+
+function comparisonTextStatus(entries) {
+  if (entries.length < 2) return 'incomplete';
+  const chunks = entries.map(entry => entry.error || !entry.preview || !entry.item.locator
+    ? null : entry.preview.chunks?.find(row => row.locator === entry.item.locator));
+  if (chunks.some(chunk => !chunk || typeof chunk.text !== 'string')) return 'incomplete';
+  const normalized = chunks.map(chunk => normalizeComparisonText(chunk.text));
+  if (normalized.some(text => !text)) return 'incomplete';
+  return normalized.every(text => text === normalized[0]) ? 'same' : 'different';
+}
+
+function comparisonNotice(entries) {
+  const status = comparisonTextStatus(entries);
+  if (status === 'same') return '所选原文一致（仅忽略空白差异）；请核对各自适用范围与复核状态。';
+  if (status === 'different') return '原文存在表述差异；差异不自动代表新增能力，请核对适用范围与复核状态。';
+  return '部分原文不可用，暂无法比较；请重新选择依据。';
+}
+
 function buildComparisonCitation(entries, searchUrl) {
   if (entries.length < 2 || entries.some(entry => entry.error || !entry.preview || !entry.item.locator || !entry.preview.chunks.some(row => row.locator === entry.item.locator))) {
     throw new Error('部分原文位置不可用，无法复制完整对照，请重新选择依据。');
   }
-  return '原文对照（表述差异不自动代表新增能力；请核对适用范围与复核状态）\n\n' + entries.map((entry, index) =>
+  return `原文对照（${comparisonNotice(entries)}）\n\n` + entries.map((entry, index) =>
     `【${index + 1}】\n${formatEvidenceCitation(entry.preview, entry.item, searchUrl)}`).join('\n\n');
 }
 
@@ -396,6 +417,11 @@ function renderSearchComparisonTray() {
   const tray = document.querySelector('#search-comparison-tray');
   if (!tray) return;
   const selected = state.searchComparison || [];
+  document.querySelectorAll('[data-group-preview]').forEach(row => {
+    const count = selected.filter(item => item.preview_id === row.dataset.groupPreview).length;
+    const label = row.querySelector('[data-group-selected]');
+    if (label) label.textContent = count ? ` · 已选 ${count} 处对照` : '';
+  });
   tray.innerHTML = `<strong>原文对照 · 已选 ${selected.length}/4 处</strong><span>在结果中选择不同版本的原文，可跨页选择。</span>${selected.map((item, n) => `<button type="button" class="ghost-button compact-button" data-search-compare-remove="${n}" aria-label="移除 ${escapeAttribute(item.version || item.title)} 的对照">${escapeHtml(item.version || '版本未注明')} · ${escapeHtml(item.title)} ×</button>`).join('')}<button type="button" class="primary-button" data-search-compare-open ${selected.length < 2 ? 'disabled' : ''}>并排对照原文</button>${selected.length ? '<button type="button" class="text-button" data-search-compare-clear>清空</button>' : ''}`;
   document.querySelectorAll('[data-search-compare-add]').forEach(button => {
     const candidate = state.searchComparisonOptions[Number(button.dataset.searchCompareAdd)];
@@ -418,11 +444,13 @@ async function openSearchComparison() {
   state.searchComparisonUrl = window.location.href;
   dialog.querySelector('[data-citation-fallback]').hidden = true;
   content.innerHTML = '<p>正在核对原文件并读取所选位置…</p>';
+  document.querySelector('#search-compare-notice').textContent = '正在核对所选原文和适用范围…';
   if (!dialog.open) dialog.showModal();
   const responses = await Promise.allSettled(selected.map(item => api(`/api/v1/workbench/search-index/sources/${encodeURIComponent(item.preview_id)}/preview?${new URLSearchParams({locator: item.locator, q: item.query})}`)));
   if (requestId !== state.searchCompareRequest || !dialog.open) return;
   state.searchComparisonDocuments = selected.map((item, index) => responses[index].status === 'fulfilled'
     ? {item, preview: responses[index].value} : {item, error: responses[index].reason.message});
+  document.querySelector('#search-compare-notice').textContent = comparisonNotice(state.searchComparisonDocuments);
   try { buildComparisonCitation(state.searchComparisonDocuments, state.searchComparisonUrl); copyButton.disabled = false; }
   catch (error) { copyButton.title = error.message; }
   content.innerHTML = selected.map((item, index) => {
@@ -1024,13 +1052,69 @@ function compactSearchAnswer(result) {
   }).join('')}<p>仅限当前检索范围的版本库记录，不代表首次支持；历史补充资料需另行核对。</p></section>`;
 }
 
+function searchEvidenceGroupKey(item) {
+  const version = String(item.version || '').trim();
+  if (!/^\d+(?:\.\d+){2,3}$/.test(version)) return null;
+  const scope = String(item.scope || '').trim();
+  if (!scope || /多版本|多版|多个版本/.test(String(item.title || ''))) return null;
+  const versions = new Set([...(item.matched_versions || []), ...(item.version_matches || []).map(match => match.version)].filter(Boolean));
+  if (versions.size > 1 || (versions.size === 1 && !versions.has(version))) return null;
+  if (item.source_type === 'release' && /^[1-9]\d*$/.test(String(item.project_id || '')) && ['version_record', 'source_snapshot'].includes(item.evidence_kind)) {
+    return JSON.stringify(['release', String(item.project_id), version, scope]);
+  }
+  if (item.source_type === 'controlled' && item.source_label !== '历史补充资料' && /^[1-9]\d*$/.test(String(item.document_version_id || '')) && ['docx', 'pdf'].includes(item.file_format)) {
+    return JSON.stringify(['document', String(item.document_version_id), version, scope]);
+  }
+  return null;
+}
+
+function groupSearchResults(items) {
+  const groups = [], byKey = new Map();
+  for (const item of items) {
+    const key = searchEvidenceGroupKey(item);
+    if (key && byKey.has(key)) byKey.get(key).items.push(item);
+    else {
+      const group = { key, items: [item] };
+      groups.push(group);
+      if (key) byKey.set(key, group);
+    }
+  }
+  return groups;
+}
+
+function searchGroupItemSummary(item, originalQuery = '', primaryText = null, position = 0) {
+  const format = fileFormatLabel(item.file_format) || (item.evidence_kind === 'source_snapshot' ? 'Release 快照' : item.evidence_kind === 'version_record' ? '版本记录' : '资料');
+  const labels = [item.source_label || '资料', format, verificationLabel(item.verification || 'not_applicable'), item.is_stale ? '索引待更新' : '', item.is_current === false ? '历史版本' : '', item.match_kind === 'related' ? '关联线索' : '', item.evidence_kind ? searchEvidenceLabel(item.evidence_kind) : ''].filter(Boolean);
+  const excerpt = String(item.matched_text || item.title || '').trim();
+  const action = item.is_stale
+    ? '<button type="button" class="text-button" data-search-result-refresh>更新资料索引</button>'
+    : item.preview_id
+      ? `<button type="button" class="text-button" data-search-result-preview="${escapeAttribute(item.preview_id)}" data-search-result-locator="${escapeAttribute(item.locator || '')}" data-search-result-query="${escapeAttribute(item.matched_query || originalQuery)}" data-search-result-input-query="${escapeAttribute(originalQuery)}">查看原文</button>`
+      : '';
+  const primary = normalizeComparisonText(primaryText);
+  const comparison = primary && excerpt ? (primary === normalizeComparisonText(excerpt) ? '当前节选相同' : '当前节选不同，展开核对') : '节选待查看';
+  const summary = primaryText === null ? `<p>${escapeHtml(excerpt)}</p>` : '';
+  const note = primaryText === null ? '' : `<small> · ${escapeHtml(comparison)}</small>`;
+  return `<li data-group-preview="${escapeAttribute(item.preview_id || '')}"><span>来源 ${position + 1} · ${labels.map(escapeHtml).join(' · ')}${note}<b data-group-selected></b> ${action}</span>${summary}</li>`;
+}
+
+function renderSearchGroups(items, renderCard, originalQuery = '') {
+  return groupSearchResults(items).map(group => {
+    if (group.items.length === 1) return renderCard(group.items[0]);
+    const first = group.items[0];
+    const title = first.source_type === 'release' ? first.scope : `${first.title} · ${first.scope}`;
+    const cards = group.items.map(renderCard).join('');
+    return `<section class="search-evidence-group"><header><strong>${escapeHtml(title)}</strong><span>本页 ${group.items.length} 条独立证据</span></header><ul class="search-group-summaries">${group.items.map((item, index) => searchGroupItemSummary(item, originalQuery, index ? (first.matched_text || first.title || '') : null, index)).join('')}</ul><details class="search-group-details"><summary>展开各条原文与操作</summary><div class="search-group-cards">${cards}</div></details></section>`;
+  }).join('');
+}
+
 function renderUnifiedSearch(result) {
   state.searchComparisonOptions = [];
   const container = document.querySelector('#release-search-result');
   renderSavedSearches();
   const sourceLabels = SEARCH_SOURCE_LABELS;
   const errors = Object.entries(result.source_errors || {}).map(([source, message]) => `<p class="search-source-error"><strong>${escapeHtml(sourceLabels[source] || source)}</strong>：${escapeHtml(message)}</p>`).join('');
-  const cards = result.results.map(item => {
+  const renderCard = item => {
     const verification = item.verification || 'not_applicable';
     const matchQuery = item.matched_query || result.query || '';
     const evidenceMatches = item.version_matches?.length ? item.version_matches : (item.family_matches || []);
@@ -1049,7 +1133,10 @@ function renderUnifiedSearch(result) {
             ? '<button type="button" class="ghost-button" data-search-result-term>打开术语词典</button>' : '';
     if (typeof workbenchConfig !== 'undefined' && workbenchConfig.embedded) return compactSearchCard(item, result, action, familyEvidence, evidenceMatches);
     return `<article class="unified-search-result"><div class="unified-search-result-meta"><span class="pill">${escapeHtml(item.source_label)}</span><span class="pill ${verification === 'unverified' || verification === 'pending_review' || item.is_stale ? 'warning' : ''}">${escapeHtml(verificationLabel(verification))}</span>${item.source_status === 'source_live' ? '<span class="pill">实时只读</span>' : ''}${item.is_stale ? '<span class="pill warning">索引待更新</span>' : ''}${item.file_format ? `<span class="change-tag">${escapeHtml(fileFormatLabel(item.file_format))}</span>` : ''}<span class="search-result-scope">${escapeHtml(item.scope)}</span></div><h3>${escapeHtml(item.title)}</h3><p class="strategy-note">${item.match_kind === 'related' ? '关联线索' : '原词命中'} · ${escapeHtml(matchQuery)}${item.version ? ` · 版本 ${escapeHtml(item.version)}` : ''}</p>${item.evidence_kind ? `<p class="strategy-note">${escapeHtml(searchEvidenceLabel(item.evidence_kind))}</p>` : ''}<p class="search-result-locator">${escapeHtml(item.locator || '')}</p>${item.matched_text ? `<p class="release-search-match"><small>匹配原文</small><span>${highlightSearchText(item.matched_text, matchQuery)}</span></p>` : ''}${familyEvidence}${evidenceMatches.length <= 1 ? searchComparisonButton(item, evidenceMatches[0] || {}, result.query) : ''}${action ? `<div class="search-result-actions">${action}</div>` : ''}</article>`;
-  }).join('');
+  };
+  const groups = groupSearchResults(result.results);
+  const cards = renderSearchGroups(result.results, renderCard, result.query || '');
+  const groupNote = groups.some(group => group.items.length > 1) ? '<p class="search-group-note">仅对本页证据分组；其他页可能还有相关来源。每条证据独立保留原文和状态。</p>' : '';
   const pageCount = Math.max(1, Math.ceil(result.total / result.page_size));
   const pagination = pageCount > 1 ? `<nav class="search-pagination" aria-label="搜索结果分页"><button type="button" class="ghost-button" data-search-page="${result.page - 1}" ${result.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${result.page} / ${pageCount} 页 · 共 ${result.total} 条</span><button type="button" class="ghost-button" data-search-page="${result.page + 1}" ${result.page >= pageCount ? 'disabled' : ''}>下一页</button></nav>` : '';
   const count = `<div class="release-search-summary">共找到 <strong>${result.total}</strong> 条 · ${result.scope === 'all' ? '全部项目' : escapeHtml(activeProject()?.name || '当前项目')} · 本机索引只读来源文件</div>`;
@@ -1061,11 +1148,11 @@ function renderUnifiedSearch(result) {
     const showTaskSummary = ['family', 'version'].includes(result.task);
     const taskSummary = showTaskSummary ? searchTaskSummary(result) : '';
     const diagnostics = `<details class="search-evidence-details"><summary>检索说明与资料覆盖</summary>${showTaskSummary ? '' : searchTaskSummary(result)}${searchCoverageMarkup(result.coverage)}</details>`;
-    container.innerHTML = `${compactSearchSourceNotice(result)}${answer}${compactCount}${taskSummary}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}${diagnostics}`;
+    container.innerHTML = `${compactSearchSourceNotice(result)}${answer}${compactCount}${taskSummary}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `${groupNote}<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}${diagnostics}`;
     renderSearchComparisonTray();
     return;
   }
-  container.innerHTML = `${count}${errors}${searchTaskSummary(result)}${evidenceSummary}${searchCoverageMarkup(result.coverage)}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}`;
+  container.innerHTML = `${count}${errors}${searchTaskSummary(result)}${evidenceSummary}${searchCoverageMarkup(result.coverage)}<section id="search-comparison-tray" class="search-comparison-tray" aria-label="待对照原文" aria-live="polite"></section>${cards ? `${groupNote}<div class="release-search-results">${cards}</div>${pagination}` : searchEmptyMarkup(result)}`;
   renderSearchComparisonTray();
 }
 

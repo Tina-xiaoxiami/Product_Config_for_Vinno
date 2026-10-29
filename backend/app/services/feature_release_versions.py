@@ -108,6 +108,20 @@ _ROW_COLUMNS = """
     version.evidence_excerpt, version.evidence_kind, version.matched_by,
     version.lifecycle_status, version.source, version.review_status,
     version.change_note, version.created_at, version.updated_at,
+    CASE WHEN version.review_status = 'pending' THEN (
+        SELECT revision.change_note
+        FROM feature_version_revisions revision
+        WHERE revision.feature_version_id = version.id
+          AND revision.changed_by = 'source_revalidation'
+          AND revision.action = 'updated'
+          AND revision.revision_no > COALESCE((
+              SELECT MAX(boundary.revision_no)
+              FROM feature_version_revisions boundary
+              WHERE boundary.feature_version_id = version.id
+                AND json_extract(boundary.after_json, '$.review_status') IN ('confirmed', 'rejected')
+          ), 0)
+        ORDER BY revision.revision_no DESC LIMIT 1
+    ) END AS evidence_review_reason,
     document.title AS evidence_document_title,
     document.version AS evidence_document_version,
     introduction.id AS introduction_id,
@@ -141,6 +155,7 @@ def _row_payload(row) -> dict:
         "source": row.source,
         "review_status": row.review_status,
         "change_note": row.change_note,
+        "evidence_review_reason": row.evidence_review_reason,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
         "introduction_id": int(row.introduction_id) if row.introduction_id else None,

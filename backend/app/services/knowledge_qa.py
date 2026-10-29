@@ -105,7 +105,7 @@ async def _answer_for_question(session: AsyncSession, question_id: int) -> dict 
             """
             SELECT id, answer_text, review_status, version, change_note, updated_at
             FROM knowledge_answers
-            WHERE question_id = :question_id AND review_status = 'published'
+            WHERE question_id = :question_id
             """
         ),
         {"question_id": question_id},
@@ -193,6 +193,11 @@ async def _published_candidates(session: AsyncSession) -> list[dict]:
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
             WHERE question.status = 'answered'
+              AND NOT EXISTS (
+                  SELECT 1 FROM knowledge_answer_citations citation
+                  JOIN knowledge_documents document ON document.id = citation.document_id
+                  WHERE citation.answer_id = answer.id AND document.source_status != 'active'
+              )
             ORDER BY question.id, phrasing.id
             """
         )
@@ -266,6 +271,18 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
                 )
         await session.commit()
         item = await get_question(session, best_question_id)
+        if item["status"] != "answered" or not item["answer"] or item["answer"]["review_status"] != "published":
+            from app.services.knowledge_content import find_candidate_evidence
+
+            return {
+                "status": "pending",
+                "question_id": best_question_id,
+                "question": item["question_text"],
+                "match_type": "none",
+                "similarity": best_score,
+                "answer": None,
+                "candidates": await find_candidate_evidence(session, item["question_text"]),
+            }
         return {
             "status": "answered",
             "question_id": best_question_id,
@@ -319,12 +336,12 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
 
     candidates = await find_candidate_evidence(session, item["question_text"])
     return {
-        "status": item["status"],
+        "status": "pending",
         "question_id": question_id,
         "question": item["question_text"],
         "match_type": "none",
         "similarity": best_score,
-        "answer": item["answer"],
+        "answer": None,
         "candidates": candidates,
     }
 
@@ -593,6 +610,12 @@ async def merge_question(
     target = questions[target_question_id]
     if source.status != "pending":
         raise KnowledgeQaError("只能合并尚未发布答案的待确认问题")
+    source_answer = await session.execute(
+        text("SELECT 1 FROM knowledge_answers WHERE question_id = :question_id"),
+        {"question_id": source_question_id},
+    )
+    if source_answer.one_or_none() is not None:
+        raise KnowledgeQaError("已有答案的问题不能合并，请先复核原答案")
     if target.status != "answered":
         raise KnowledgeQaError("目标问题必须已有正式发布答案")
 

@@ -139,11 +139,12 @@
                   </el-button>
                 </template>
               </el-table-column>
-              <el-table-column label="复核" width="100">
+              <el-table-column label="复核" min-width="150">
                 <template #default="{ row }">
                   <el-tag :type="reviewTagType(row.review_status)" size="small">
                     {{ reviewLabel(row.review_status) }}
                   </el-tag>
+                  <small v-if="row.review_status === 'pending' && row.evidence_review_reason" class="evidence-review-reason">{{ row.evidence_review_reason }}</small>
                 </template>
               </el-table-column>
               <el-table-column label="证据" min-width="200">
@@ -260,11 +261,12 @@
               </template>
             </el-table-column>
             <el-table-column prop="release_date" label="发布日期" width="120" />
-            <el-table-column label="复核" width="100">
+            <el-table-column label="复核" min-width="150">
               <template #default="{ row }">
                 <el-tag :type="reviewTagType(row.review_status)" size="small">
                   {{ reviewLabel(row.review_status) }}
                 </el-tag>
+                <small v-if="row.review_status === 'pending' && row.evidence_review_reason" class="evidence-review-reason">{{ row.evidence_review_reason }}</small>
               </template>
             </el-table-column>
             <el-table-column label="证据" min-width="180">
@@ -723,6 +725,7 @@
     </el-dialog>
 
     <el-dialog v-model="editDialogVisible" title="编辑功能版本" width="560px" :before-close="requestEditClose" :show-close="!editSaving" :close-on-click-modal="!editSaving" :close-on-press-escape="!editSaving">
+      <el-alert v-if="editEvidenceReason" :title="editEvidenceReason" type="warning" :closable="false" show-icon />
       <el-form label-width="110px" :disabled="editSaving">
         <el-form-item label="软件版本">
           <el-input v-model="editForm.software_version" />
@@ -1159,6 +1162,7 @@ const submitCreate = async () => {
 
 const editDialogVisible = ref(false)
 const editSaving = ref(false)
+const editEvidenceReason = ref('')
 const editForm = reactive({
   id: null,
   software_version: '',
@@ -1182,6 +1186,7 @@ const requestEditClose = async (done) => {
 }
 
 const editVersion = (row) => {
+  editEvidenceReason.value = row.evidence_review_reason || ''
   Object.assign(editForm, {
     id: row.id,
     software_version: row.software_version,
@@ -1657,6 +1662,7 @@ onMounted(async () => {
 .timeline-heading h4 { margin: 0; font-size: 14px; color: #1f2937; }
 .timeline-heading small { margin-left: 8px; color: #64748b; font-weight: normal; }
 .coverage-note { margin: 8px 0; }
+.evidence-review-reason { display: block; margin-top: 4px; color: #92400e; line-height: 1.4; }
 .release-total { margin: 10px 0 0; color: #64748b; font-size: 12px; }
 .intro-form { max-width: 860px; margin-top: 12px; }
 .section-tag { margin: 0 4px 4px 0; }

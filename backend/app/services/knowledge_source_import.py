@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 import sqlite3
 
+from app.services.knowledge_evidence_review import (
+    change_reason, installed_modules, mark_changed_sqlite, TABLES_SQL,
+)
+
 
 @dataclass(frozen=True)
 class KnowledgeSource:
@@ -146,13 +150,16 @@ def import_knowledge_sources(
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
+        installed_modules({row[0] for row in connection.execute(TABLES_SQL)})
         for source in sources:
             file_path = str(source.path)
             digest = _sha256(source.path)
             existing = connection.execute(
                 """
                 SELECT id, document_type, title, file_name, file_path, version,
-                       market, country, product_series, mime_type, sha256
+                       market, country, product_series, mime_type, sha256,
+                       (SELECT source_sha256 FROM knowledge_document_extractions
+                        WHERE document_id = knowledge_documents.id)
                 FROM knowledge_documents
                 WHERE file_path = ?
                 """,
@@ -170,6 +177,15 @@ def import_knowledge_sources(
                 source.mime_type,
                 digest,
             )
+            if existing is not None and (
+                (existing[10] and existing[10] != digest)
+                or (existing[11] and existing[11] != digest)
+            ):
+                # Preserve old chunks for audit, but neither search nor backfill may use them.
+                connection.execute(
+                    "UPDATE knowledge_document_extractions SET status = 'stale', updated_at = CURRENT_TIMESTAMP WHERE document_id = ? AND status = 'completed'",
+                    (existing[0],),
+                )
             if existing is None:
                 connection.execute(
                     """
@@ -181,7 +197,7 @@ def import_knowledge_sources(
                     values,
                 )
                 counters["inserted"] += 1
-            elif tuple(existing[1:]) != values:
+            elif tuple(existing[1:11]) != values:
                 connection.execute(
                     """
                     UPDATE knowledge_documents
@@ -193,6 +209,13 @@ def import_knowledge_sources(
                     """,
                     (*values, existing[0]),
                 )
+                old_hash = existing[10] or existing[11]
+                reason = change_reason(
+                    source_changed=bool(old_hash and old_hash != digest),
+                    scope_changed=tuple(existing[5:9]) != values[4:8],
+                )
+                if reason:
+                    mark_changed_sqlite(connection, existing[0], reason)
                 counters["updated"] += 1
             else:
                 counters["unchanged"] += 1

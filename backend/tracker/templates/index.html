@@ -518,7 +518,7 @@
   <dialog id="search-compare-dialog" class="search-preview-dialog" aria-labelledby="search-compare-title">
     <div class="search-preview-shell">
       <div class="dialog-heading"><h2 id="search-compare-title">跨版本原文对照</h2><button type="button" data-close-dialog aria-label="关闭对照">×</button></div>
-      <p>并排核对原文和适用范围；表述差异不自动代表新增能力。当前功能说明、关联线索和历史快照均保留各自提示。</p>
+      <p id="search-compare-notice" aria-live="polite">正在核对所选原文和适用范围…</p>
       <div id="search-compare-content" class="search-comparison-columns" aria-live="polite"></div>
       <div class="dialog-actions"><span>复制所选原文及出处，保留适用范围和线索提示。</span><button type="button" id="copy-search-comparison" class="primary-button" disabled>复制对照引用</button></div>
       <div data-citation-fallback hidden><label>引用文字（可手动复制）<textarea readonly rows="8"></textarea></label></div>

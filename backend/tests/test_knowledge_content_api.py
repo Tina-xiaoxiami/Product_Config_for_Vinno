@@ -525,3 +525,75 @@ async def test_candidate_ranking_excludes_other_registration_product_unit(tmp_pa
     document_ids = [item["document_id"] for item in response.json()["candidates"]]
     assert document_ids[0] == 2
     assert 3 not in document_ids
+
+
+@pytest.mark.asyncio
+async def test_changed_source_requires_review_preserving_answer_and_history(tmp_path):
+    database = tmp_path / 'knowledge.db'
+    source = tmp_path / 'source.txt'
+    source.write_text('原文一：亮度调节功能。', encoding='utf-8')
+    _create_qa_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE knowledge_documents SET file_path = ?, mime_type = ?, sha256 = ? WHERE id = 1',
+                           (str(source), 'text/plain', hashlib.sha256(source.read_bytes()).hexdigest()))
+    client, engine = await _client_for(database)
+    async with client:
+        first = await client.post('/api/knowledge/documents/1/extract')
+        asked = await client.post('/api/knowledge/questions/ask', json={'question': '亮度调节功能是什么？'})
+        question_id = asked.json()['question_id']
+        payload = {'answer_text': '原答案', 'alias_questions': [], 'citations': [{'document_id': 1, 'source_ref': '第1节', 'excerpt': '原文一'}], 'change_note': '原审核说明'}
+        assert (await client.put(f'/api/knowledge/questions/{question_id}/answer', json=payload)).status_code == 200
+        forced = await client.post('/api/knowledge/documents/1/extract?force=true')
+        assert (await client.get(f'/api/knowledge/questions/{question_id}')).json()['answer']['review_status'] == 'published'
+        source.write_text('原文二：亮度调节功能有变化。', encoding='utf-8')
+        changed = await client.post('/api/knowledge/documents/1/extract')
+        detail = await client.get(f'/api/knowledge/questions/{question_id}')
+        query = await client.post('/api/knowledge/questions/ask', json={'question': '亮度调节功能是什么？'})
+        assert detail.json()['status'] == 'pending'
+        assert detail.json()['answer']['review_status'] == 'source_changed'
+        assert detail.json()['answer']['answer_text'] == '原答案'
+        assert detail.json()['answer']['change_note'] == '原审核说明'
+        assert detail.json()['answer']['citations'][0]['excerpt'] == '原文一'
+        assert query.json()['status'] == 'pending' and query.json()['answer'] is None
+        confirmed = await client.put(f'/api/knowledge/questions/{question_id}/answer', json=payload)
+        repeated = await client.post('/api/knowledge/documents/1/extract?force=true')
+        detail_again = await client.get(f'/api/knowledge/questions/{question_id}')
+        history = await client.get(f'/api/knowledge/questions/{question_id}/history')
+    await engine.dispose()
+    assert first.status_code == forced.status_code == changed.status_code == repeated.status_code == 200
+    assert confirmed.json()['answer']['version'] == 2
+    assert detail_again.json()['answer']['review_status'] == 'published'
+    assert [item['version'] for item in history.json()['items']] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_changed_source_failed_extraction_still_invalidates_answer_and_index(tmp_path):
+    database = tmp_path / 'knowledge.db'
+    source = tmp_path / 'source.txt'
+    source.write_text('此前的正文', encoding='utf-8')
+    _create_qa_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE knowledge_documents SET file_path = ?, mime_type = ?, sha256 = ? WHERE id = 1',
+                           (str(source), 'text/plain', hashlib.sha256(source.read_bytes()).hexdigest()))
+    client, engine = await _client_for(database)
+    async with client:
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 200
+        question_id = (await client.post('/api/knowledge/questions/ask', json={'question': '此前的正文是什么'})).json()['question_id']
+        await client.put(f'/api/knowledge/questions/{question_id}/answer', json={
+            'answer_text': '此前答案', 'citations': [{'document_id': 1, 'excerpt': '此前的正文'}], 'change_note': '原确认'})
+        source.write_text('', encoding='utf-8')
+        failed = await client.post('/api/knowledge/documents/1/extract')
+        detail = await client.get(f'/api/knowledge/questions/{question_id}')
+        candidates = await client.get(f'/api/knowledge/questions/{question_id}/candidates')
+        assert failed.status_code == 422
+        assert detail.json()['answer']['review_status'] == 'source_changed'
+        assert detail.json()['answer']['citations'][0]['excerpt'] == '此前的正文'
+        assert candidates.json()['items'] == []
+        with sqlite3.connect(database) as connection:
+            row = connection.execute('SELECT d.sha256, e.status, e.source_sha256 FROM knowledge_documents d JOIN knowledge_document_extractions e ON d.id=e.document_id WHERE d.id=1').fetchone()
+            assert row == (hashlib.sha256(b'').hexdigest(), 'failed', hashlib.sha256('此前的正文'.encode()).hexdigest())
+        # A second failed attempt sees the same baseline and does not alter the review state.
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 422
+        source.write_text('恢复后的新正文', encoding='utf-8')
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 200
+    await engine.dispose()

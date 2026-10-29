@@ -846,3 +846,17 @@ body.workbench-embedded .topbar { top:0; }
 .search-query-origin { color: #53635f; font-size: 13px; }
 .unified-search-result mark, .search-preview-content mark, .search-comparison-columns mark { background: #ffe393; color: #302800; border-radius: 2px; padding: 0 1px; }
 @media (max-width: 680px) { .search-comparison-columns { grid-auto-flow: row; grid-template-columns: 1fr; } .search-comparison-tray { position: static; } }
+
+/* Same-version evidence remains separate within a page-local display group. */
+.search-evidence-group { padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.search-evidence-group > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.search-evidence-group > header span, .search-group-note { color: var(--muted); font-size: var(--text-caption); }
+.search-group-note { margin: 6px 0 0; }
+.search-group-summaries { display: grid; gap: 8px; padding: 0; margin: 10px 0; list-style: none; }
+.search-group-summaries li { border-left: 2px solid var(--line-strong); padding-left: 9px; min-width: 0; }
+.search-group-summaries li span { color: var(--muted); font-size: var(--text-caption); overflow-wrap: anywhere; }
+.search-group-summaries li b { color: var(--primary-strong); font-weight: 600; }
+.search-group-summaries li p { color: var(--ink); margin: 3px 0 0; overflow-wrap: anywhere; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.search-group-summaries li small { color: var(--muted); font-size: inherit; }
+.search-group-details > summary { cursor: pointer; color: var(--primary-strong); font-size: var(--text-caption); }
+.search-group-cards { display: grid; gap: 8px; margin-top: 10px; }
