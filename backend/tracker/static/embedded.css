@@ -194,6 +194,7 @@ body.workbench-embedded.search-focused .compact-search-result h3 { flex: 1; min-
 body.workbench-embedded .compact-result-context { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 5px 0 8px; color: #909399; font-size: 12px; }
 body.workbench-embedded .compact-evidence-note { color: #606266; }
 body.workbench-embedded.search-focused .compact-result-excerpt { margin: 0; color: #303133; font-size: 13px; line-height: 1.65; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+body.workbench-embedded.search-focused .compact-result-excerpt.config-record-excerpt { display: block; white-space: pre-line; }
 body.workbench-embedded .compact-search-result > footer { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; margin-top: 10px; }
 body.workbench-embedded.search-focused .compact-search-result .search-result-actions { display: flex; align-items: baseline; gap: 16px; }
 body.workbench-embedded.search-focused .compact-search-result .search-result-actions > :is(button,a) { min-height: 24px; padding: 0; border: 0; background: transparent; color: #409eff; font-size: 12px; }

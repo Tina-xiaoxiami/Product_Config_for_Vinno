@@ -7,6 +7,9 @@ import re
 
 from tracker.services.release_sections import source_sections, controlled_word_sections, section_for_locator
 from tracker.services.search_index import file_snapshot
+from tracker.services.pdf_sections import pdf_section, pdf_explicit_reference
+from docx import Document
+from docx.oxml.ns import qn
 
 
 def _single_version(item):
@@ -24,6 +27,66 @@ def _single_version(item):
 def _matches_chapter_text(item, section):
     matched = ' '.join(str(item.get('matched_text') or '').split())
     return not matched or matched in ' '.join(str(section.get('content') or '').split())
+
+
+def _pdf_matches_word(pdf, word, path):
+    if (pdf.get('section_number') != word.get('section_number')
+            or any(str(block.get('locator', '')).startswith('表格 ') for block in word.get('blocks', []))):
+        return False
+    lines = pdf['content'].splitlines()
+    if not lines:
+        return False
+    lines[0] = re.sub(r'^\s*' + re.escape(pdf['section_number']) + r'\.?\s+', '', lines[0], count=1)
+    # Numbered PDF paragraphs must correspond to explicit Word decimal-list
+    # metadata; never strip numbers just because they appear sequentially.
+    try:
+        document = Document(path)
+        counters = {}
+        rendered = []
+        target_ids = set()
+        for paragraph in document.paragraphs[word['start']-1:word['end']]:
+            props = paragraph._p.pPr
+            num = props.numPr if props is not None else None
+            if num is not None and num.numId is not None and num.numId.val:
+                target_ids.add(int(num.numId.val))
+        for paragraph in document.paragraphs[:word['end']]:
+            properties = paragraph._p.pPr
+            numpr = properties.numPr if properties is not None else None
+            number = ''
+            if numpr is not None and numpr.numId is not None and numpr.numId.val and int(numpr.numId.val) in target_ids:
+                numid = int(numpr.numId.val)
+                level = int(numpr.ilvl.val) if numpr.ilvl is not None else 0
+                nums = document.part.numbering_part.element.xpath(f'./w:num[@w:numId="{numid}"]')
+                if len(nums) != 1 or nums[0].abstractNumId is None:
+                    return False
+                abstracts = document.part.numbering_part.element.xpath(f'./w:abstractNum[@w:abstractNumId="{int(nums[0].abstractNumId.val)}"]')
+                if len(abstracts) != 1:
+                    return False
+                levels = [node for node in abstracts[0] if node.tag == qn('w:lvl') and node.get(qn('w:ilvl')) == str(level)]
+                if len(levels) != 1:
+                    return False
+                fmt, pattern, start = (levels[0].find(qn(tag)) for tag in ('w:numFmt','w:lvlText','w:start'))
+                if fmt is None or pattern is None or fmt.get(qn('w:val')) != 'decimal' or pattern.get(qn('w:val')) != '%1.' or level != 0:
+                    return False
+                overrides = nums[0].xpath(f'./w:lvlOverride[@w:ilvl="{level}"]/w:startOverride/@w:val')
+                initial = int((overrides or ([start.get(qn('w:val'))] if start is not None else ['1']))[0])
+                counters[numid] = counters.get(numid, initial - 1) + 1
+                number = f'{counters[numid]}.'
+            rendered.append((paragraph, number))
+        expected = []
+        for paragraph, number in rendered[word['start'] - 1:word['end']]:
+            text = paragraph.text.strip()
+            if text:
+                expected.append((number + ' ' if number else '') + text)
+        def normalize(value):
+            value = re.sub(r'(?<=[\u3400-\u9fff])\s+|\s+(?=[\u3400-\u9fff])', '', value)
+            return ' '.join(value.split())
+        raw_word = ' '.join(p.text.strip() for p, _ in rendered[word['start']-1:word['end']] if p.text.strip())
+        if normalize(raw_word) != normalize(word.get('content', '')):
+            return False
+        return normalize(' '.join(lines)) == normalize(' '.join(expected))
+    except (OSError, ValueError, IndexError, KeyError, AttributeError):
+        return False
 
 
 def assign_release_section_groups(database, index, items, source_cache, resolve_controlled=None):
@@ -46,7 +109,7 @@ def assign_release_section_groups(database, index, items, source_cache, resolve_
         section = section_for_locator(sections, detail.get('locator') or '')
         if (not section or section['locator'] != detail.get('locator') or not section.get('section_number')
                 or not section.get('complete') or not section.get('text_complete')
-                or not _matches_chapter_text(item, section)):
+                or (not _matches_chapter_text(item, section) and not (item.get('category') in {'config', 'config_note'} and item.get('config_evidence')))):
             continue
         try:
             snapshot = file_snapshot(row['path'])
@@ -142,6 +205,40 @@ def assign_release_section_groups(database, index, items, source_cache, resolve_
                         or not index.source_signature_matches(item['preview_id'], entry['snapshot'].path)):
                     continue
             except (OSError, RuntimeError):
+                continue
+            valid_controlled.append(item)
+        # A PDF is distinct evidence; only the paired registered document/version
+        # may join when its complete chapter text matches the verified Word text.
+        paired_versions = {item.get('document_version_id') for item in valid_controlled}
+        for item in items:
+            detail = item.get('detail_evidence') or {}
+            if (item.get('source_type') != 'controlled' or item.get('file_format') != 'pdf'
+                    or item.get('is_stale') or item.get('document_version_id') not in paired_versions
+                    or _single_version(item) != identity[2] or not resolve_controlled):
+                continue
+            candidate = resolve_controlled(item['preview_id'])
+            meta = index.source_metadata(item['preview_id'])
+            try:
+                if (not candidate or candidate.get('doc_type') != '发布记录' or candidate.get('file_role') != 'pdf'
+                        or candidate.get('scope') != item.get('scope') or not meta or meta['status'] != 'indexed'
+                        or candidate['path'].resolve(strict=True) != Path(meta['path']).resolve(strict=True)
+                        or not index.source_signature_matches(item['preview_id'], candidate['path'])):
+                    continue
+                known_config = next((record.get('config_evidence', '') for record in entry['release'] if (record.get('preview_id') or '').startswith('release:table:') and record.get('config_evidence')), '')
+                reference = pdf_explicit_reference(candidate['path'], meta['file_sha256'], item.get('matched_query') or '', item.get('locator') or '', known_config)
+                if not reference or reference[0] != entry['section']['section_number']:
+                    continue
+                chapter = pdf_section(candidate['path'], meta['file_sha256'], item['preview_id'], item.get('matched_query') or '', reference=reference[0])
+                word_item = next((word for word in valid_controlled if word.get('document_version_id') == item.get('document_version_id')), None)
+                word_section = section_for_locator(controlled_word_sections(entry['snapshot'].path, entry['snapshot'].digest, word_item['preview_id']), word_item['detail_evidence']['locator']) if word_item else None
+                if (not chapter or not chapter.get('complete') or not chapter.get('text_complete') or not word_section
+                        or not _pdf_matches_word(chapter, word_section, entry['snapshot'].path)):
+                    continue
+                item['config_evidence'] = reference[1]
+                item['detail_evidence'] = {'source_id':item['preview_id'],'locator':chapter['locator'],
+                    'section_number':chapter['section_number'],'title':chapter['title'],'excerpt':chapter['content'][:500],
+                    'verification':item['verification'],'scope':item['scope'],'source_label':'Release Note 原文','evidence_kind':'controlled_document'}
+            except (OSError, ValueError, RuntimeError, KeyError):
                 continue
             valid_controlled.append(item)
         # Distinct controlled ranges remain separate, even when their files match.

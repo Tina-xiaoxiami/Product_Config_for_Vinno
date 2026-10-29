@@ -443,7 +443,7 @@ function searchEvidenceActions(item, query, originalQuery, buttonClass = 'ghost-
     const secondaryLabel = item.source_type === 'release' && item.evidence_kind === 'version_record' ? '查看变更依据' : '查看原命中位置';
     return button(preferred.preview_id, preferred.locator, '查看完整功能描述', buttonClass) + `<small class="search-detail-notice">${escapeHtml(status + note)}</small>` + (item.preview_id && !samePosition ? button(item.preview_id, item.locator, secondaryLabel, 'text-button') : '');
   }
-  if (item.preview_id) return button(item.preview_id, item.locator, `查看命中原文${item.match_count > 1 ? `（${item.match_count} 处）` : ''}`, buttonClass);
+  if (item.preview_id) return button(item.preview_id, item.locator, item.config_evidence ? '查看配置依据' : `查看命中原文${item.match_count > 1 ? `（${item.match_count} 处）` : ''}`, buttonClass);
   return '';
 }
 
@@ -1079,14 +1079,14 @@ function compactSearchSourceNotice(result) {
 function compactSearchCard(item, result, action, familyEvidence, evidenceMatches = []) {
   const query = item.matched_query || result.query || '';
   const text = item.detail_evidence?.excerpt || item.matched_text || item.title || '';
-  const title = item.source_type === 'release' && item.version ? `版本 ${item.version}` : item.title;
+  const title = item.config_evidence ? item.title : item.source_type === 'release' && item.version ? `版本 ${item.version}` : item.title;
   const verification = item.verification || 'not_applicable';
   const cautious = ['unverified', 'pending_review'].includes(verification);
   const evidence = item.evidence_kind ? searchEvidenceLabel(item.evidence_kind) : '';
   const version = item.source_type !== 'release' && item.version ? `<span class="compact-source-version">版本 ${escapeHtml(item.version)}</span>` : '';
   const format = item.file_format ? `<span>${escapeHtml(fileFormatLabel(item.file_format))}</span>` : '';
   const detailLabel = item.detail_evidence?.excerpt ? `原文章节节选（${item.detail_evidence.verification ? verificationLabel(item.detail_evidence.verification) : '状态见预览'}）：` : '';
-  const excerpt = text !== title ? `<p class="compact-result-excerpt">${detailLabel ? `<small>${escapeHtml(detailLabel)}</small>` : ''}${highlightSearchText(text, query)}</p>` : '';
+  const excerpt = text !== title ? `<p class="compact-result-excerpt${item.config_evidence ? ' config-record-excerpt' : ''}">${detailLabel ? `<small>${escapeHtml(detailLabel)}</small>` : ''}${highlightSearchText(text, query)}</p>` : '';
   const compare = evidenceMatches.length <= 1 ? searchComparisonButton(item, evidenceMatches[0] || {}, result.query) : '';
   const limitations = [item.match_kind === 'related' ? '关联线索' : '', item.is_stale ? '索引待更新' : '', evidence, item.detail_evidence_notice || ''].filter(Boolean);
   const details = `<details class="compact-result-details"><summary>更多信息${evidenceMatches.length > 1 ? ` · ${evidenceMatches.length} 处依据` : ''}</summary><div><p>${escapeHtml(item.scope || '适用范围未登记')} · ${escapeHtml(item.locator || '位置未注明')}</p>${text.length > 220 ? `<p class="compact-full-text">${highlightSearchText(text, query)}</p>` : ''}${familyEvidence}</div></details>`;
@@ -1099,7 +1099,8 @@ function compactSearchAnswer(result, groups = []) {
   return `<section class="compact-search-answer" aria-label="查询结论"><span class="answer-eyebrow">版本库最早记载</span>${records.map(item => {
     const suffix = item.version ? ` · ${item.version}` : '';
     const project = suffix && item.scope?.endsWith(suffix) ? item.scope.slice(0, -suffix.length) : item.scope;
-    const action = resultGroupCoversDetail(item, groups) ? '' : searchEvidenceActions(item, result.query, result.query, 'text-button');
+    const viewItem = state.searchSourceGroup === 'release_note' && ['config', 'config_note'].includes(state.searchReleaseCategory) ? {...item, detail_evidence:null} : item;
+    const action = resultGroupCoversDetail(viewItem, groups) ? '' : searchEvidenceActions(viewItem, result.query, result.query, 'text-button');
     const notice = item.detail_evidence_notice ? `<small>${escapeHtml(item.detail_evidence_notice)}</small>` : '';
     return `<div class="answer-record"><strong>${escapeHtml(item.version || item.scope || '版本待核对')}</strong><span>${escapeHtml(project || '项目未注明')}</span>${action}${notice}</div>`;
   }).join('')}<p>仅限当前检索范围的版本库记录，不代表首次支持；历史补充资料需另行核对。</p></section>`;
@@ -1131,9 +1132,44 @@ function searchGroupItemSummary(item, originalQuery = '') {
   const matches = item.version_matches?.length ? item.version_matches : (item.family_matches || []);
   const action = searchEvidenceActions(original, item.matched_query || originalQuery, originalQuery, 'text-button');
   const compare = matches.length <= 1 ? searchComparisonButton(original, matches[0] || {}, originalQuery) : '';
-  const positions = matches.length > 1 ? `<div class="search-group-positions">${matches.map(match => `<p>${escapeHtml(match.version || '版本未注明')} · ${escapeHtml(match.locator || '')} ${match.text ? highlightSearchText(match.text, match.query || originalQuery) : ''} ${searchEvidenceActions({...original, locator:match.locator, match_count:1}, match.query || originalQuery, originalQuery, 'text-button')}${searchComparisonButton(original, match, originalQuery)}</p>`).join('')}</div>` : '';
-  const excerpt = item.matched_text ? `<p>${highlightSearchText(item.matched_text, item.matched_query || originalQuery)}</p>` : '';
+  const positions = matches.length > 1 ? `<div class="search-group-positions">${matches.map(match => `<p>${escapeHtml(match.version || '版本未注明')} · ${escapeHtml(match.locator || '')} ${match.text && !(state.searchReleaseCategory === 'function' && item.config_evidence && match.locator === item.locator) ? highlightSearchText(match.text, match.query || originalQuery) : ''} ${searchEvidenceActions({...original, locator:match.locator, match_count:1}, match.query || originalQuery, originalQuery, 'text-button')}${searchComparisonButton(original, match, originalQuery)}</p>`).join('')}</div>` : '';
+  const text = state.searchReleaseCategory === 'function' && item.config_evidence ? item.detail_evidence?.excerpt : (item.config_evidence || item.matched_text);
+  const excerpt = text ? `<p${item.config_evidence ? ' class="search-config-evidence"' : ''}>${highlightSearchText(text, item.matched_query || originalQuery)}</p>` : '';
   return `<li data-group-preview="${escapeAttribute(item.preview_id || '')}"><span>${labels.map(escapeHtml).join(' · ')}<b data-group-selected></b></span>${excerpt}<div>${action}${compare}</div>${positions}</li>`;
+}
+
+function searchConfigurationSummary(items, query) {
+  if (!items.length) return '';
+  const preferred = items.find(item => item.preview_id?.startsWith('release:table:')) || items[0];
+  const text = preferred.config_evidence.split('\n')[0];
+  const normalize = value => String(value || '').trim().replace(/\s+/g, ' ');
+  const columnPattern = value => {
+    const chars = Array.from(normalize(value));
+    const escape = char => char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return chars.map((char, index) => {
+      const previous = chars[index - 1] || '';
+      const boundary = previous && ((/[\u3400-\u9fff]/.test(previous) && /[A-Za-z0-9]/.test(char)) || (/[A-Za-z0-9]/.test(previous) && /[\u3400-\u9fff]/.test(char)));
+      return (boundary ? '\\s*' : '') + (char === ' ' ? '\\s+' : escape(char));
+    }).join('');
+  };
+  const columns = text.split('|').map(part => part.trim());
+  const rowPattern = columns.length >= 5 ? new RegExp(`^${columns.map(columnPattern).join('\\s+')}$`, 'u') : null;
+  const fields = columns.length >= 5 ? new Map([
+    ['IPN', columns[1]], ['适用机型/探头', columns[3]], ['变更说明', columns.slice(4).join(' | ')],
+  ]) : new Map();
+  const duplicateTitle = columns.length >= 5 ? new Set([`${columns[0]}（${columns[2]}）`, `${columns[0]}(${columns[2]})`]) : new Set();
+  const seen = new Set([normalize(text)]);
+  const additional = [];
+  for (const item of items) for (const raw of item.config_evidence.split('\n')) {
+    const line = raw.trim(), key = normalize(line);
+    if (!key || seen.has(key)) continue;
+    const field = line.match(/^(IPN|适用机型\/探头|变更说明)\s*[：:]\s*(.*)$/i);
+    if ((rowPattern && rowPattern.test(line)) || duplicateTitle.has(line)
+        || (field && fields.has(field[1]) && normalize(fields.get(field[1])) === normalize(field[2]))
+        || line === '更新后，各功能支持的探头/应用如下：') continue;
+    seen.add(key); additional.push(line);
+  }
+  return `<p class="compact-result-excerpt config-record-excerpt"><strong>配置变更：</strong>${highlightSearchText([text, ...additional].join('\n'), query)}</p>`;
 }
 
 function renderSearchGroups(items, renderCard, originalQuery = '') {
@@ -1144,8 +1180,10 @@ function renderSearchGroups(items, renderCard, originalQuery = '') {
     const detail = first.detail_evidence;
     const project = group.items.find(item => item.source_type === 'release')?.scope || first.scope || '';
     const query = first.matched_query || originalQuery;
+    const configItems = state.searchReleaseCategory === 'all' ? group.items.filter(item => item.config_evidence) : [];
+    const configSummary = searchConfigurationSummary(configItems, originalQuery);
     const action = `<button type="button" class="ghost-button" data-search-result-preview="${escapeAttribute(detail.source_id)}" data-search-result-locator="${escapeAttribute(detail.locator)}" data-search-result-query="${escapeAttribute(query)}" data-search-result-input-query="${escapeAttribute(originalQuery)}">查看完整功能描述</button>`;
-    return `<article class="search-evidence-group chapter-search-group"><header><h3>${escapeHtml(detail.title || '原文章节')}</h3><span class="pill warning">${escapeHtml(verificationLabel(detail.verification || 'unverified'))}</span></header><div class="compact-result-context"><span>${escapeHtml(project)}</span></div><p class="compact-result-excerpt">${highlightSearchText(detail.excerpt || '', query)}</p><div class="search-result-actions">${action}</div><details class="search-group-details"><summary>来源依据（${group.items.length}）</summary><ul class="search-group-summaries">${group.items.map(item => searchGroupItemSummary(item, originalQuery)).join('')}</ul></details></article>`;
+    return `<article class="search-evidence-group chapter-search-group"><header><h3>${escapeHtml(detail.title || '原文章节')}</h3><span class="pill warning">${escapeHtml(verificationLabel(detail.verification || 'unverified'))}</span></header><div class="compact-result-context"><span>${escapeHtml(project)}</span></div><p class="compact-result-excerpt">${highlightSearchText(detail.excerpt || '', query)}</p>${configSummary}<div class="search-result-actions">${action}</div><details class="search-group-details"><summary>来源依据（${group.items.length}）</summary><ul class="search-group-summaries">${group.items.map(item => searchGroupItemSummary(item, originalQuery)).join('')}</ul></details></article>`;
   }).join('');
 }
 
@@ -1202,7 +1240,9 @@ function renderUnifiedSearch(result) {
   renderSavedSearches();
   const sourceLabels = SEARCH_SOURCE_LABELS;
   const errors = Object.entries(result.source_errors || {}).map(([source, message]) => `<p class="search-source-error"><strong>${escapeHtml(sourceLabels[source] || source)}</strong>：${escapeHtml(message)}</p>`).join('');
-  const renderCard = item => {
+  const configView = state.searchSourceGroup === 'release_note' && ['config', 'config_note'].includes(state.searchReleaseCategory);
+  const renderCard = rawItem => {
+    const item = configView && rawItem.config_evidence ? {...rawItem, detail_evidence:null, matched_text:rawItem.config_evidence} : rawItem;
     const verification = item.verification || 'not_applicable';
     const matchQuery = item.matched_query || result.query || '';
     const excerpt = item.detail_evidence?.excerpt || item.matched_text || '';
@@ -1229,7 +1269,7 @@ function renderUnifiedSearch(result) {
   const pageSummary = hasGroupedChapters ? `本页 <strong>${groups.length}</strong> 项内容 · ${result.results.length} 条来源` : `<strong>${result.total}</strong> 条结果`;
   const count = `<div class="release-search-summary">${pageSummary} · ${result.scope === 'all' ? '全部项目' : escapeHtml(activeProject()?.name || '当前项目')}</div>`;
   const taxonomy = searchTaxonomyMarkup(result);
-  const earliest = (result.earliest_records || []).map(item => `<p><strong>版本库内最早记载：${escapeHtml(item.scope)}</strong> · ${escapeHtml(searchEvidenceLabel(item.evidence_kind))} ${resultGroupCoversDetail(item, groups) ? '' : searchEvidenceActions(item, result.query, result.query, 'text-button')} ${item.detail_evidence_notice ? escapeHtml(item.detail_evidence_notice) : ''}</p>`).join('');
+  const earliest = (result.earliest_records || []).map(item => `<p><strong>版本库内最早记载：${escapeHtml(item.scope)}</strong> · ${escapeHtml(searchEvidenceLabel(item.evidence_kind))} ${resultGroupCoversDetail(item, groups) ? '' : searchEvidenceActions(configView ? {...item,detail_evidence:null} : item, result.query, result.query, 'text-button')} ${item.detail_evidence_notice ? escapeHtml(item.detail_evidence_notice) : ''}</p>`).join('');
   const evidenceSummary = earliest ? `<section class="search-evidence-summary">${earliest}<p>依据当时版本记录，不使用当前功能说明回推历史；历史补充资料需另行核对。最早记载不等于首次支持，仍需核对原文、资料覆盖和适用范围。</p></section>` : '';
   if (typeof workbenchConfig !== 'undefined' && workbenchConfig.embedded) {
     const answer = state.searchSourceGroup === 'release_note' ? compactSearchAnswer(result, groups) : '';
@@ -1392,6 +1432,7 @@ async function openSearchPreview(sourceId, locator = '', query = '', originalQue
   const title = document.querySelector('#search-preview-title');
   const meta = document.querySelector('#search-preview-meta');
   const requestId = ++state.searchPreviewRequest;
+  const requestedLocator = locator;
   if (state.activeView === 'search') {
     state.previewLocation = {preview: sourceId, locator, preview_query: query, preview_input: originalQuery};
     syncLocation();
@@ -1430,10 +1471,10 @@ async function openSearchPreview(sourceId, locator = '', query = '', originalQue
     const fallback = '<p class="strategy-note">未能核实完整章节；以下为匹配片段，其他片段不代表连续正文，请核对原文件。</p>';
     const matchMarkup = matchedChunk ? `<article class="search-preview-chunk search-preview-match"><strong>${escapeHtml(matchedChunk.locator)} · 命中位置</strong><p>${highlightSearchText(matchedChunk.text, query)}</p></article>` : '';
     if (['pdf', 'png', 'jpg', 'jpeg'].includes(preview.file_format)) {
-      const pageNumber = (preview.section?.complete && preview.section.locator ? preview.section.locator : locator).match(/第 (\d+) 页/);
+      const pageNumber = searchPdfPageLocator(preview, locator, requestedLocator).match(/第 (\d+) 页/);
       const url = workbenchUrl(`/api/v1/workbench/search-index/sources/${encodeURIComponent(sourceId)}/preview?file=1${preview.file_format === 'pdf' && pageNumber ? `#page=${pageNumber[1]}` : ''}`);
       content.innerHTML = preview.file_format === 'pdf'
-        ? `${sectionMarkup ? sectionReading : notice + queryOrigin + matchNavigation + fallback + matchMarkup}<iframe class="search-preview-frame" title="${escapeAttribute(preview.title)}" src="${escapeAttribute(url)}"></iframe>`
+        ? searchPdfPreviewMarkup(url, preview.title, sectionMarkup ? sectionReading : notice + queryOrigin + matchNavigation + fallback + matchMarkup, missingLocation ? '<p role="alert">链接指定的原文位置不可用，请核对原文件并重新选择位置。</p>' : '')
         : `<img class="search-preview-image" alt="${escapeAttribute(preview.title)}" src="${escapeAttribute(url)}">`;
       return;
     }
@@ -1447,6 +1488,15 @@ async function openSearchPreview(sourceId, locator = '', query = '', originalQue
   } catch (error) {
     if (requestId === state.searchPreviewRequest) content.innerHTML = `<p class="empty-state compact">无法预览：${escapeHtml(error.message)}。若原文件已更新，请先刷新资料索引。</p>`;
   }
+}
+
+function searchPdfPageLocator(preview, locator, requestedLocator) {
+  if (preview.section?.complete && preview.section.locator && (preview.locator_status === 'toc_redirect' || !requestedLocator)) return preview.section.locator;
+  return locator || '';
+}
+
+function searchPdfPreviewMarkup(url, title, auxiliary, warning = '') {
+  return `${warning}<iframe class="search-preview-frame" title="${escapeAttribute(title)}" src="${escapeAttribute(url)}"></iframe>${auxiliary ? `<details class="search-pdf-auxiliary"><summary>命中与章节内容</summary>${auxiliary}</details>` : ''}`;
 }
 
 async function openGlobalSearchConfig(scope) {
@@ -1577,6 +1627,13 @@ function filteredCandidates() {
 
 function renderCandidateReview({ focusTab = false, focusCategoryTab = false } = {}) {
   const versions = candidateVersions();
+  const hasCandidates = state.candidates.length > 0;
+  const navigation = document.querySelector('.candidate-version-navigation');
+  const filters = document.querySelector('.candidate-filter-panel');
+  const page = document.querySelector('#candidate-version-page');
+  if (navigation) navigation.hidden = !hasCandidates;
+  if (filters) filters.hidden = !hasCandidates;
+  page?.classList.toggle('is-empty', !hasCandidates);
   if (!versions.includes(state.activeCandidateVersion)) state.activeCandidateVersion = versions[0] || null;
   renderCandidateVersionTabs({ focusTab });
   renderCandidateCategoryTabs({ focusTab: focusCategoryTab });
@@ -1597,7 +1654,7 @@ function renderCandidateReview({ focusTab = false, focusCategoryTab = false } = 
   const container = document.querySelector('#candidate-list');
   container.innerHTML = candidates.length
     ? renderCandidateHierarchy(candidates, versionCandidates, categoryCandidates)
-    : '<div class="empty-state">当前筛选条件下没有待审核记录。</div>';
+    : hasCandidates ? '<div class="empty-state compact">当前筛选条件下没有待审核记录。</div>' : '<div class="empty-state compact">暂无待审核记录。</div>';
   // 推荐处置按“当前可见候选”批量取一次，避免每张卡片各发一次请求。
   ensureCandidateRecommendations(candidates);
 }
@@ -3833,6 +3890,7 @@ document.querySelectorAll('input[name="search-source"]').forEach(control => cont
   if (document.querySelector('#release-search').value.trim()) searchUnified().catch(error => showNotice(error.message));
   else syncLocation();
 }));
+document.querySelector('#review-directory-settings')?.addEventListener('click', () => document.querySelector('#manage-projects')?.click());
 document.querySelector('#global-search-panel').addEventListener('change', event => {
   const selector = event.target.closest('[data-search-whitepaper-model]');
   if (!selector) return;

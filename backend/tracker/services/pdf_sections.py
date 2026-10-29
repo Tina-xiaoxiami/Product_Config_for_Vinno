@@ -8,23 +8,23 @@ from pypdf import PdfReader
 from tracker.services.search_index import file_snapshot
 from tracker.services.section_cache import file_cache_identity, section_cache
 
-_HEADING = re.compile(r'^\s*(\d+(?:\.\d+)+)\s+(.+?)\s*$')
+_HEADING = re.compile(r'^\s*(\d+(?:\.\d+)+)\.?\s+(.+?)\s*$')
 _TOC = re.compile(r'(?:\.{3,}|…{2,}|·{3,}|\s{3,})\s*\d+\s*$')
 
 
-def pdf_section(path, expected_sha: str, source_id: str, query: str, locator: str = '') -> dict | None:
+def pdf_section(path, expected_sha: str, source_id: str, query: str, locator: str = '', *, reference: str = '') -> dict | None:
     if not query:
         return None
     try:
         identity = file_cache_identity(path)
     except (OSError, RuntimeError):
         return None
-    key = ('pdf', source_id, expected_sha, query, locator, identity)
+    key = ('pdf', source_id, expected_sha, query, locator, reference, identity)
     with section_cache.singleflight(key):
-        return _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key)
+        return _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key, reference)
 
 
-def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key):
+def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key, reference):
     try:
         if file_cache_identity(path) != identity:
             return None
@@ -43,7 +43,7 @@ def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity,
                  for line in (page.extract_text() or '').splitlines() if line.strip()]
     except Exception:
         return None
-    result = _parsed_pdf_section(reader, lines, source_id, query, locator)
+    result = _parsed_pdf_section(reader, lines, source_id, query, locator, reference)
     try:
         if file_cache_identity(path) != identity:
             return None
@@ -53,7 +53,7 @@ def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity,
     return result
 
 
-def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str) -> dict | None:
+def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str, reference: str = '') -> dict | None:
     headings = []
     for index, (page_no, line) in enumerate(lines):
         match = _HEADING.match(line)
@@ -68,11 +68,29 @@ def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str)
         if end is None:
             continue
         content = lines[start:end]
+        # Remove only a demonstrable page header: the first line of successive
+        # pages consists of consecutive printed page numbers.
+        page_first = {}
+        for page, line in lines:
+            page_first.setdefault(page, line)
+        filtered = []
+        for page, line in content:
+            previous = page_first.get(page - 1, '')
+            current = page_first.get(page, '')
+            header = (page != page_no and line == current and re.fullmatch(r'[0-9]{1,4}', current)
+                      and re.fullmatch(r'[0-9]{1,4}', previous) and int(current) == int(previous) + 1)
+            if not header:
+                filtered.append((page, line))
+        content = filtered
         if query.casefold() not in '\n'.join(line for _, line in content).casefold():
             continue
         options.append((query.casefold() not in title.casefold(), start, page_no, number, title, content))
     if not options:
         return None
+    if reference:
+        options = [item for item in options if item[3] == reference]
+        if len(options) != 1:
+            return None
     locator_match = re.fullmatch(r'第 (\d+) 页(?: · \d+)?', locator or '')
     locator_status = 'query'
     if locator:
@@ -104,3 +122,34 @@ def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str)
             'title': title, 'start': page_no, 'end': content[-1][0],
             'content': '\n'.join(line for _, line in content), 'complete': True, 'text_complete': True,
             'has_images': has_images, 'images_complete': not has_images, 'blocks': []}
+
+
+def pdf_explicit_reference(path, expected_sha: str, query: str, locator: str, config_evidence: str = '') -> tuple[str, str] | None:
+    """Read one unambiguous referenced section from the actual matched PDF row."""
+    from tracker.services.release_sections import referenced_sections
+    match = re.fullmatch(r'第 (\d+) 页(?: · \d+)?', locator or '')
+    if not match or not query:
+        return None
+    try:
+        before = file_snapshot(path)
+        data = before.path.read_bytes()
+        if before.digest != expected_sha or sha256(data).hexdigest() != expected_sha or file_snapshot(path) != before:
+            return None
+        lines = [line.strip() for line in (PdfReader(BytesIO(data), strict=False).pages[int(match.group(1))-1].extract_text() or '').splitlines() if line.strip()]
+        hits = [i for i, line in enumerate(lines) if query.casefold() in line.casefold() and not (_HEADING.match(line) and _TOC.search(line))]
+        if len(hits) != 1:
+            return None
+        position = hits[0]
+        row = lines[position]
+        if not referenced_sections(row) and position + 1 < len(lines):
+            next_line = lines[position + 1]
+            joined = row + next_line
+            normalized = lambda text: re.sub(r'[\s|｜]', '', text)
+            known = config_evidence.split('\n')[0] if config_evidence else ''
+            if (known and not _HEADING.match(next_line) and not re.search(r'\bV\d{3,}\b', next_line)
+                    and normalized(joined) == normalized(known)):
+                row = joined
+        references = referenced_sections(row)
+        return (next(iter(references)), row) if len(references) == 1 else None
+    except (OSError, ValueError, RuntimeError, IndexError, KeyError):
+        return None

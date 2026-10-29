@@ -71,7 +71,7 @@ test('preview and URL wiring preserve source/category and use real PDF section p
   assert.match(source, /'source_group', 'release_category'/)
   assert.match(source, /source_group: state\.searchSourceGroup/)
   assert.match(source, /release_category: state\.searchSourceGroup/)
-  assert.match(source, /preview\.section\?\.complete && preview\.section\.locator \? preview\.section\.locator : locator/)
+  assert.match(source, /searchPdfPageLocator\(preview, locator, requestedLocator\)/)
   assert.match(source, /未能核实完整章节；以下为匹配片段/)
   assert.match(source, /ArrowLeft.*ArrowRight.*Home.*End/)
 })

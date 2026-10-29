@@ -112,6 +112,7 @@ def test_pdf_section_ignores_toc_and_uses_actual_page(tmp_path):
 
 
 def test_facets_count_all_results_before_filter_and_pagination(monkeypatch):
+    monkeypatch.setattr(search_module, 'release_evidence', lambda *args, **kwargs: None)
     class DB:
         def list_documents(self):
             return [{'id': 1, 'doc_type': '白皮书'}, {'id': 2, 'doc_type': '说明书'}]
@@ -321,6 +322,7 @@ def test_pdf_non_toc_page_never_redirects_to_another_section(tmp_path):
 
 
 def test_earliest_only_uses_visible_source_and_category(monkeypatch):
+    monkeypatch.setattr(search_module, 'release_evidence', lambda *args, **kwargs: None)
     class DB:
         def list_documents(self): return [{'id': 1, 'doc_type': '白皮书'}]
         def list_document_versions(self, doc_id): return [{'id': 1}]
@@ -952,3 +954,126 @@ def test_unified_search_assigns_verified_group_to_three_real_source_types(tmp_pa
     assert result['total'] == 3
     assert len({item['chapter_group_id'] for item in result['results']}) == 1
     assert [item['verification'] for item in result['results']] == ['unverified','approved','unverified']
+
+
+def test_pdf_directory_excluded_before_count_pagination_and_preview(tmp_path):
+    index = SearchIndex(tmp_path / 'index.db')
+    mixed = tmp_path / 'whitepaper.pdf'
+    pdf = canvas.Canvas(str(mixed))
+    pdf.drawString(40,700,'5.63 Uterine classification ........ 9'); pdf.showPage()
+    pdf.drawString(40,700,'5.63 Uterine classification')
+    pdf.drawString(40,680,'Uterine classification supports 2 systems.')
+    pdf.drawString(40,660,'5.64 Other section'); pdf.save()
+    index.replace_source(source_id='controlled:1:pdf', source_type='controlled',title='whitepaper',path=mixed,
+                         scope='V10',verification='unverified',is_current=True,chunks=extract_file(mixed))
+    only = tmp_path / 'toc.pdf'; pdf = canvas.Canvas(str(only))
+    pdf.drawString(40,700,'5.63 Uterine classification ........ 9'); pdf.save()
+    index.replace_source(source_id='controlled:2:pdf', source_type='controlled',title='whitepaper',path=only,
+                         scope='V10',verification='unverified',is_current=True,chunks=extract_file(only))
+    counted = index.search('Uterine classification',source_types={'controlled'},limit=0)
+    assert counted['total'] == 1
+    result = index.search('Uterine classification',source_types={'controlled'},limit=1)
+    assert result['total'] == 1 and len(result['results']) == 1
+    assert result['results'][0]['locator'] == '第 2 页' and result['results'][0]['match_count'] == 1
+    assert '........' not in result['results'][0]['matched_text']
+    assert index.search('Uterine classification',source_types={'controlled'},limit=1,offset=1)['results'] == []
+    preview = index.preview('controlled:1:pdf',query='Uterine classification')
+    assert preview['match_count'] == 1 and [m['locator'] for m in preview['matches']] == ['第 2 页']
+    assert preview['section']['locator'] == '第 2 页'
+    assert index.preview('controlled:2:pdf',query='Uterine classification')['matches'] == []
+
+
+def test_pdf_body_line_with_dots_and_numbers_is_not_mistaken_for_directory(tmp_path):
+    index = SearchIndex(tmp_path / 'index.db'); path=tmp_path / 'text.pdf'
+    pdf=canvas.Canvas(str(path)); pdf.drawString(40,700,'Target measurement .... 32'); pdf.save()
+    index.replace_source(source_id='controlled:1:pdf',source_type='controlled',title='document',path=path,
+                         scope='V10',verification='unverified',is_current=True,chunks=extract_file(path))
+    result=index.search('Target measurement',source_types={'controlled'})
+    assert result['total'] == 1 and result['results'][0]['locator'] == '第 1 页'
+
+
+def test_pdf_word_chapter_comparison_preserves_real_numbers_and_punctuation(tmp_path):
+    from tracker.services.release_section_groups import _pdf_matches_word
+    doc = Document(); doc.add_paragraph('Heading'); doc.add_paragraph('Supports 3 systems.'); doc.add_paragraph('Next 2.')
+    path=tmp_path/'body.docx'; doc.save(path)
+    word={'section_number':'4.4.4','start':1,'end':3,'content':'Heading\nSupports 3 systems.\nNext 2.'}
+    pdf={'section_number':'4.4.4','content':'4.4.4. Heading\nSupports 3 systems.\nNext 2.'}
+    assert _pdf_matches_word(pdf,word,path)
+    assert not _pdf_matches_word({**pdf,'content':'4.4.4. Heading\n1. Supports 3 systems.\n2. Next 2.'},word,path)
+    assert not _pdf_matches_word({**pdf,'content':pdf['content'].replace('3 systems','4 systems')},word,path)
+    assert not _pdf_matches_word({**pdf,'content':pdf['content'].replace('Next 2.','Next 2!')},word,path)
+    pdf['content']='4.4.4. Heading\nin valid\nNext 2.'
+    assert not _pdf_matches_word(pdf,{**word,'content':'Heading\ninvalid\nNext 2.'},path)
+
+
+def test_same_page_directory_chunk_cannot_borrow_a_later_chunk_body(tmp_path):
+    path=tmp_path/'split.pdf'; pdf=canvas.Canvas(str(path)); text=pdf.beginText(30,750)
+    text.textLine('5.63 Target ........ 9'); text.textLine('x' * 2600); text.textLine('Target actual body')
+    pdf.drawText(text); pdf.save()
+    index=SearchIndex(tmp_path/'split.db'); index.replace_source(source_id='controlled:1:pdf',source_type='controlled',
+        title='paper',path=path,scope='V',verification='unverified',is_current=True,chunks=extract_file(path))
+    result=index.search('Target',source_types={'controlled'})
+    assert result['total']==1 and result['results'][0]['locator']=='第 1 页 · 2'
+    assert result['results'][0]['match_count']==1 and 'actual body' in result['results'][0]['matched_text']
+    preview=index.preview('controlled:1:pdf',query='Target')
+    assert preview['match_count']==1 and preview['matches'][0]['locator']=='第 1 页 · 2'
+
+
+def test_word_directory_style_excluded_without_losing_body(tmp_path):
+    from docx.enum.style import WD_STYLE_TYPE
+    path=tmp_path/'word.docx'; doc=Document(); style=doc.styles.add_style('TOC 1',WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_paragraph('4.4.4 Target ........ 9',style=style)
+    doc.add_heading('4.4.4 Target',level=2); doc.add_paragraph('Target actual body'); doc.save(path)
+    only=tmp_path/'only.docx'; doc=Document(); style=doc.styles.add_style('TOC 1',WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_paragraph('4.4.4 Target ........ 9',style=style); doc.save(only)
+    index=SearchIndex(tmp_path/'word.db')
+    for number,file in enumerate((path,only),1):
+        index.replace_source(source_id=f'controlled:{number}:docx',source_type='controlled',title='paper',path=file,
+                             scope='V',verification='unverified',is_current=True,chunks=extract_file(file))
+    result=index.search('Target',source_types={'controlled'})
+    assert result['total']==1 and result['results'][0]['locator']=='段落 2' and result['results'][0]['match_count']==2
+    preview=index.preview('controlled:1:docx',query='Target')
+    assert [row['locator'] for row in preview['matches']]==['段落 2','段落 3']
+    assert index.preview('controlled:2:docx',query='Target')['matches']==[]
+
+
+def test_pdf_reference_cannot_borrow_next_independent_record(tmp_path):
+    from tracker.services.pdf_sections import pdf_explicit_reference
+    path=tmp_path/'adjacent.pdf'; pdf=canvas.Canvas(str(path))
+    pdf.drawString(40,700,'Target A unsupported'); pdf.drawString(40,680,'Other B see section 4.4.4'); pdf.save()
+    assert pdf_explicit_reference(path,file_sha256(path),'Target','第 1 页') is None
+    assert pdf_explicit_reference(path,file_sha256(path),'Target','第 1 页','Target A unsupported') is None
+
+
+def test_chapter_with_table_cannot_compare_using_paragraphs_only(tmp_path):
+    from tracker.services.release_section_groups import _pdf_matches_word
+    path=tmp_path/'table.docx'; doc=Document(); doc.add_paragraph('Heading')
+    table=doc.add_table(rows=1,cols=1); table.cell(0,0).text='Only for model X'; doc.save(path)
+    word={'section_number':'4.4.4','start':1,'end':1,'content':'Heading\nOnly for model X',
+          'blocks':[{'type':'text','locator':'段落 1','text':'Heading'}, {'type':'text','locator':'表格 1','text':'Only for model X'}]}
+    assert not _pdf_matches_word({'section_number':'4.4.4','content':'4.4.4. Heading'},word,path)
+
+
+def test_multiline_pdf_reference_requires_exact_same_configuration_record(tmp_path):
+    from tracker.services.pdf_sections import pdf_explicit_reference
+    path=tmp_path/'row.pdf'; pdf=canvas.Canvas(str(path))
+    pdf.drawString(40,700,'Target 123 V12345 all'); pdf.drawString(40,680,'see section 4.4.4'); pdf.save()
+    digest=file_sha256(path)
+    assert pdf_explicit_reference(path,digest,'Target','第 1 页','prefix Target 123 V12345 all see section 4.4.4 suffix') is None
+    assert pdf_explicit_reference(path,digest,'Target','第 1 页','Target 123 V12345 all see section 4.4.4')[0]=='4.4.4'
+
+
+def test_search_hashes_pdf_once_per_request_not_once_per_matching_page(tmp_path, monkeypatch):
+    from tracker.services import search_index
+    path=tmp_path/'many.pdf'; pdf=canvas.Canvas(str(path))
+    for i in range(5):
+        pdf.drawString(40,700,f'Target body {i}'); pdf.showPage()
+    pdf.save(); index=SearchIndex(tmp_path/'index.db')
+    index.replace_source(source_id='controlled:1:pdf',source_type='controlled',title='paper',path=path,
+        scope='V',verification='unverified',is_current=True,chunks=extract_file(path))
+    original=search_index.file_snapshot; calls=[]
+    def counted(path): calls.append(path); return original(path)
+    monkeypatch.setattr(search_index,'file_snapshot',counted)
+    result=index.search('Target',source_types={'controlled'})
+    assert result['total']==1 and result['results'][0]['match_count']==5
+    assert len(calls)==2

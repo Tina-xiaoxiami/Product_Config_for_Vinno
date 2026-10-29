@@ -857,6 +857,7 @@ body.workbench-embedded .topbar { top:0; }
 .search-group-summaries li span { color: var(--muted); font-size: var(--text-caption); overflow-wrap: anywhere; }
 .search-group-summaries li b { color: var(--primary-strong); font-weight: 600; }
 .search-group-summaries li p { color: var(--ink); margin: 3px 0 0; overflow-wrap: anywhere; line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.search-group-summaries li p.search-config-evidence { display: block; white-space: pre-line; }
 .search-group-summaries li small { color: var(--muted); font-size: inherit; }
 .search-group-details > summary { cursor: pointer; color: var(--primary-strong); font-size: var(--text-caption); }
 .search-group-cards { display: grid; gap: 8px; margin-top: 10px; }
@@ -881,3 +882,10 @@ body.workbench-embedded .topbar { top:0; }
 .search-section-image-warning { color: var(--warn); }
 .search-preview-section details { margin-top: 10px; color: var(--muted); font-size: var(--text-caption); }
 .search-detail-notice { color: var(--muted); font-size: var(--text-caption); }
+
+/* Review empty state and searchable controls keep the existing view state. */
+.candidate-version-navigation[hidden], .candidate-filter-panel[hidden] { display: none !important; }
+.candidate-version-navigation ~ #candidate-version-page.is-empty { min-height: 0; }
+.search.scoped-search input:focus, .search.scoped-search input:focus-visible { border: 0; outline: 0; box-shadow: none; }
+.search-pdf-auxiliary { margin-top: 10px; }
+.search-pdf-auxiliary > summary { cursor: pointer; color: var(--primary-strong); }

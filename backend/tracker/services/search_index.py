@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from functools import wraps
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 import sqlite3
 import re
@@ -230,6 +231,75 @@ def extract_file(path: str | Path) -> list[TextChunk]:
         with zipfile.ZipFile(file_path) as archive:
             return [TextChunk("压缩包目录", " · ".join(info.filename for info in archive.infolist() if not info.is_dir()))]
     raise ValueError(f"不支持的资料格式：{suffix or '无扩展名'}")
+
+
+def _indexed_search_text(path, file_format, locator, content, expected_hash, status, needle, cache):
+    """Exclude only proven directory hits from the exact indexed source chunk."""
+    if file_format not in {'pdf', 'docx'} or status != 'indexed' or needle.casefold() not in str(content).casefold():
+        return content
+    pattern = r'第 (\d+) 页(?: · (\d+))?' if file_format == 'pdf' else r'段落 (\d+)(?: · (\d+))?'
+    match = re.fullmatch(pattern, str(locator))
+    if not match or not expected_hash:
+        return content
+    try:
+        from tracker.services.pdf_sections import _HEADING, _TOC
+        from tracker.services.section_cache import file_cache_identity
+        file_key = ('file', path, expected_hash, file_format)
+        identity = file_cache_identity(path)
+        cached = cache.get(file_key)
+        if cached is None:
+            snapshot = file_snapshot(path)
+            raw = snapshot.path.read_bytes()
+            if snapshot.digest != expected_hash or sha256(raw).hexdigest() != expected_hash or file_snapshot(path) != snapshot:
+                return content
+            parsed = PdfReader(BytesIO(raw), strict=False) if file_format == 'pdf' else Document(BytesIO(raw))
+            cached = (identity, parsed)
+            cache[file_key] = cached
+        if cached[0] != identity:
+            return content
+        parsed = cached[1]
+        number = int(match.group(1)); part = int(match.group(2) or '1')
+        if file_format == 'docx':
+            paragraph = parsed.paragraphs[number - 1]
+            chunks = _chunks(f'段落 {number}', paragraph.text)
+            if part > len(chunks) or chunks[part - 1].locator != locator or chunks[part - 1].text != content:
+                return content
+            style = str(getattr(paragraph.style, 'name', '')).casefold()
+            if style.startswith(('toc', '目录')) or (_HEADING.match(paragraph.text) and _TOC.search(paragraph.text)):
+                return ''
+            return content
+        page_key = ('page', file_key, number)
+        if page_key not in cache:
+            raw_text = parsed.pages[number - 1].extract_text() or ''
+            cache[page_key] = raw_text
+        raw_text = cache[page_key]
+        chunks = _chunks(f'第 {number} 页', raw_text)
+        if part > len(chunks) or chunks[part - 1].locator != locator or chunks[part - 1].text != content:
+            return content
+        # Reproduce the index's exact whitespace normalization and chunk offsets.
+        lines = [' '.join(line.split()) for line in raw_text.splitlines() if line.split()]
+        if ' '.join(lines) != ' '.join(raw_text.split()):
+            return content
+        start = (part - 1) * MAX_CHUNK_CHARACTERS
+        end = start + len(content)
+        position = 0; body_parts = []; has_body_hit = False; has_toc_hit = False
+        for line in lines:
+            line_start, line_end = position, position + len(line)
+            position = line_end + 1
+            if line_end <= start or line_start >= end:
+                continue
+            fragment = line[max(0, start-line_start):min(len(line), end-line_start)]
+            is_toc = bool(_HEADING.match(line) and _TOC.search(line))
+            if needle.casefold() in fragment.casefold():
+                has_toc_hit |= is_toc
+                has_body_hit |= not is_toc
+            if not is_toc:
+                body_parts.append(fragment)
+        if file_cache_identity(path) != identity or (not has_body_hit and not has_toc_hit):
+            return content
+        return ' '.join(body_parts) if has_body_hit else ''
+    except Exception:
+        return content
 
 
 class SearchIndex:
@@ -520,6 +590,7 @@ class SearchIndex:
         family_query: str = "",
         limit: int = 50,
         offset: int = 0,
+        text_cache: dict | None = None,
     ) -> dict[str, Any]:
         needle = query.strip()
         if not needle:
@@ -558,8 +629,15 @@ class SearchIndex:
         else:
             where_query = "search_fts MATCH ?"
             query_values = [f'"{needle.replace(chr(34), chr(34) * 2)}"']
+        pdf_hits: dict = text_cache if text_cache is not None else {}
+        def pdf_search_text(path, file_format, locator, content, expected_hash, status):
+            return _indexed_search_text(path, file_format, locator, content, expected_hash, status, needle, pdf_hits)
+
+        clauses.append("pdf_search_text(s.path, s.file_format, f.locator, f.content, s.file_sha256, s.status) != ''")
+        where_filters = (" AND " + " AND ".join(clauses)) if clauses else ""
         with closing(sqlite3.connect(self.path)) as connection:
             connection.row_factory = sqlite3.Row
+            connection.create_function("pdf_search_text", 6, pdf_search_text)
             connection.create_function("matches_controlled_scope", 2, _matches_controlled_scope)
             connection.create_function("matches_family", 1, lambda text: int(family_mentions(text, family_query)))
             connection.create_function("version_in_range", 2, lambda locator, title:
@@ -571,7 +649,7 @@ class SearchIndex:
             rows = connection.execute(
                     f"""WITH matching AS (
                     SELECT f.source_id, f.source_type, f.title, f.scope, f.verification,
-                           f.is_current, f.locator, f.content, s.file_format, s.path,
+                           f.is_current, f.locator, pdf_search_text(s.path, s.file_format, f.locator, f.content, s.file_sha256, s.status) AS content, s.file_format, s.path,
                            s.file_size, s.mtime_ns, s.ctime_ns, s.file_inode, s.status,
                            COUNT(*) OVER (PARTITION BY f.source_id) AS match_count,
                            ROW_NUMBER() OVER (
@@ -591,7 +669,7 @@ class SearchIndex:
             if include_locations:
                 for row in rows:
                     matches = connection.execute(
-                        f"SELECT f.locator, f.content, f.title FROM search_fts f JOIN search_sources s "
+                        f"SELECT f.locator, pdf_search_text(s.path, s.file_format, f.locator, f.content, s.file_sha256, s.status) AS content, f.title FROM search_fts f JOIN search_sources s "
                         f"ON s.source_id=f.source_id WHERE {where_query}{where_filters} AND f.source_id=? ORDER BY f.rowid LIMIT 200",
                         (*query_values, *values, row['source_id']),
                     ).fetchall()
@@ -690,6 +768,17 @@ class SearchIndex:
                 "SELECT COUNT(*) FROM search_fts WHERE source_id=? AND matches_preview(content) = 1",
                 (source_id,),
             ).fetchone()[0] if query else 0
+            if query and not stale and source['file_format'] in {'pdf', 'docx'}:
+                all_matches = connection.execute(
+                    "SELECT locator, content FROM search_fts WHERE source_id=? AND matches_preview(content) = 1 ORDER BY rowid",
+                    (source_id,),
+                ).fetchall()
+                pdf_hits: dict[tuple, str] = {}
+                matches = [{'locator': row['locator'], 'content': body} for row in all_matches
+                           if (body := _indexed_search_text(source['path'], source['file_format'], row['locator'], row['content'],
+                                                       source['file_sha256'], source['status'], query, pdf_hits))]
+                match_count = len(matches)
+                matches = matches[:limit]
             selected_locator = locator or (matches[0]["locator"] if matches else "")
             selected_row = connection.execute(
                 "SELECT content FROM search_fts WHERE source_id=? AND locator=? LIMIT 1",

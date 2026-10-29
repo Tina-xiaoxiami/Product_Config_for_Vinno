@@ -774,6 +774,7 @@ def _search_exact(
 
     index_verification = verification if verification in {"verified", "unverified", "not_applicable"} else ""
     indexed_totals: dict[str, int] = {}
+    text_cache: dict = {}
     for source_type in ("controlled", "training"):
         if source_type not in index_types or verification in {"approved", "pending_review", "source_live"}:
             indexed_totals[source_type] = 0
@@ -785,7 +786,7 @@ def _search_exact(
             current_only=current_only,
             model=model,
             market=market,
-            limit=0, version_from=version_from, version_to=version_to, selected_versions=selected_versions, family_query=family_query,
+            limit=0, text_cache=text_cache, version_from=version_from, version_to=version_to, selected_versions=selected_versions, family_query=family_query,
         )["total"]
 
     results = [item for group in live_groups.values() for item in group] + structured["results"]
@@ -796,7 +797,7 @@ def _search_exact(
         if not count:
             continue
         indexed = index.search(needle, source_types={source_type}, verification=index_verification,
-                               current_only=current_only, model=model, market=market, limit=count,
+                               current_only=current_only, model=model, market=market, limit=count, text_cache=text_cache,
                                version_from=version_from, version_to=version_to, selected_versions=selected_versions, family_query=family_query)
         for item in indexed["results"]:
             extra = {}
@@ -965,6 +966,12 @@ def unified_search(
         item['release_categories'] = [item['release_category']] if item['release_category'] else []
         category_sections: dict[str, dict[str, Any]] = {}
         preview = item.get('preview_id') or ''
+        if item.get('category') in {'config', 'config_note'} and preview.startswith(('release:table:', 'release:change:')):
+            config_record = release_evidence(database, preview, item.get('locator', ''), limit=None)
+            if config_record:
+                chunk = next((entry for entry in config_record['chunks'] if entry['locator'] == item.get('locator')), None)
+                if chunk:
+                    item['config_evidence'] = chunk['text']
         if preview.startswith('release:source:'):
             source_id = int(preview.rsplit(':', 1)[1])
             if source_id not in section_cache:
@@ -1102,7 +1109,7 @@ def unified_search(
             item['detail_evidence'].update(excerpt=section['content'][:500], evidence_kind='controlled_document',
                                            source_label='白皮书', verification=item['verification'],
                                            scope=item['scope'], has_images=section['has_images'])
-    if source_group == 'release_note' and len(page_results) > 1:
+    if source_group == 'release_note' and release_category not in {'config', 'config_note'} and len(page_results) > 1:
         assign_release_section_groups(database, index, page_results, source_cache, chapter_candidate)
     if prewarm is not None:
         prewarm(prewarm_candidates)

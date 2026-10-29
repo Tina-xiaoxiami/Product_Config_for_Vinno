@@ -20,7 +20,7 @@ const context = { escapeHtml: escape, escapeAttribute: escape, highlightSearchTe
   verificationLabel: value => ({approved:'已确认', unverified:'未复核', expired:'已过复核期限'})[value] || value,
   fileFormatLabel: value => ({docx:'Word', pdf:'PDF'})[value] || '', searchEvidenceLabel: value => ({version_record:'当时版本记录', source_snapshot:'Release Note 原文提及'})[value] || value,
   searchQueryOrigin: () => '', state }
-const names = ['preferredSearchEvidence', 'searchEvidenceActions', 'normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'renderSearchGroups', 'resultGroupCoversDetail', 'searchComparisonButton', 'compactSearchCard']
+const names = ['preferredSearchEvidence', 'searchEvidenceActions', 'normalizeComparisonText', 'searchEvidenceGroupKey', 'groupSearchResults', 'searchGroupItemSummary', 'searchConfigurationSummary', 'renderSearchGroups', 'resultGroupCoversDetail', 'searchComparisonButton', 'compactSearchCard']
 const helpers = functions(names, context)
 
 test('only server-proven identical chapters group; ordinary same-version evidence stays separate', () => {
@@ -151,4 +151,70 @@ test('a chapter card without a snapshot hit uses the release chapter status, not
   assert.match(main,/未复核/); assert.doesNotMatch(main,/已确认/)
   assert.match(main,/data-search-result-preview="release:source:12"/)
   assert.match(html.slice(html.indexOf('<details')),/已确认/)
+})
+
+test('configuration category displays configuration records and original evidence, not feature description', () => {
+  const detail={source_id:'release:source:16',locator:'原文行 123',title:'功能全文',excerpt:'完整功能描述',verification:'unverified'}
+  const config='子宫畸形分类 | 6000363 | V30894 | 全系列 | 妇产机标配，其他机型选配'
+  const items=[release({preview_id:'release:table:4',locator:'表格记录',category:'config',title:'子宫畸形分类',detail_evidence:detail,config_evidence:config}),
+    release({preview_id:'release:change:8',category:'config',title:'子宫畸形分类（V30894）',detail_evidence:detail,config_evidence:config+'\n更新后，各功能支持的探头/应用如下：'})]
+  for (const embedded of [true,false]) {
+    const container={innerHTML:''},state={searchComparison:[],searchComparisonOptions:[],searchSourceGroup:'release_note',searchReleaseCategory:'config'}
+    const ctx={...globalContext(),state,workbenchConfig:{embedded},document:{querySelector:()=>container},SEARCH_SOURCE_LABELS:{},renderSavedSearches(){},renderSearchComparisonTray(){},compactSearchSourceNotice:()=>'',searchTaskSummary:()=>'',searchCoverageMarkup:()=>'',searchEmptyMarkup:()=>'',activeProject:()=>({name:'V'}),buildHash:()=>''}
+    const all=functions([...names,'compactSearchAnswer','searchTaxonomyMarkup','renderUnifiedSearch','restoreTaxonomyFocus'],{...ctx,categoryLabels:{config:'配置'}})
+    all.renderUnifiedSearch({results:items,earliest_records:[items[0]],query:'子宫',source_errors:{},total:2,page_size:40,page:1,scope:'current',task:'search'})
+    assert.match(container.innerHTML,/6000363/); assert.match(container.innerHTML,/V30894/)
+    assert.match(container.innerHTML,/妇产机标配，其他机型选配/); assert.match(container.innerHTML,/探头\/应用/)
+    assert.match(container.innerHTML,/查看配置依据/); assert.doesNotMatch(container.innerHTML,/完整功能描述/)
+    assert.doesNotMatch(container.innerHTML,/功能全文|完整功能描述/)
+  }
+})
+
+test('all-category chapter retains an explicit configuration summary and full source details', () => {
+  const id='f'.repeat(64), detail={source_id:'release:source:12',locator:'原文行 123',title:'功能章节',excerpt:'功能正文',verification:'unverified'}
+  const state={searchComparison:[],searchComparisonOptions:[],searchReleaseCategory:'all'}
+  const all=functions(names,{...context,state})
+  const table=release({chapter_group_id:id,preview_id:'release:table:4',locator:'表格记录',category:'config',detail_evidence:detail,
+    config_evidence:'子宫畸形分类 | 6000363 | V30894 | 全系列 | 妇产机标配，其他机型选配'})
+  const change=release({chapter_group_id:id,preview_id:'release:change:8',category:'config',detail_evidence:detail,
+    config_evidence:'IPN：6000363\nV30894\n妇产机标配，其他机型选配\n更新后各功能支持的探头/应用如下：'})
+  const html=all.renderSearchGroups([table,change],()=>'', '子宫')
+  const first=html.slice(0,html.indexOf('<details'))
+  assert.match(first,/配置变更/); assert.match(first,/6000363/); assert.match(first,/妇产机标配，其他机型选配/)
+  assert.match(first,/更新后各功能支持的探头\/应用如下/); assert.match(html,/class="search-config-evidence"/)
+  assert.match(html,/更新后各功能支持的探头\/应用如下/)
+})
+
+
+test('configuration fields are never lost through substring matching and function cards do not add config text', () => {
+  const state={searchComparison:[],searchComparisonOptions:[],searchReleaseCategory:'all'}
+  const all=functions(names,{...context,state})
+  const text=all.searchConfigurationSummary([{config_evidence:'不支持6S'}, {config_evidence:'适用机型/探头：6S'}], '')
+  assert.match(text,/不支持6S/); assert.match(text,/适用机型\/探头：6S/)
+  state.searchReleaseCategory='function'
+  const row=all.searchGroupItemSummary(release({config_evidence:'配置额外文本',detail_evidence:{excerpt:'功能章节'},
+    version_matches:[{version:'1.51.36',locator:'中文记录',text:'配置额外文本'}, {version:'1.51.36',locator:'其他功能位置',text:'其他功能正文'}]}),'')
+  assert.match(row,/功能章节/); assert.doesNotMatch(row,/配置额外文本/); assert.match(row,/其他功能正文/)
+  assert.match(row,/其他功能位置/)
+
+})
+
+
+test('all summary deduplicates identical labeled fields and preserves actual differing constraints', () => {
+  const {searchConfigurationSummary}=functions(['searchConfigurationSummary'],context)
+  const items=[{preview_id:'release:table:1',config_evidence:'子宫畸形分类 | 6000363 | V30894 | 全系列 | 妇产机标配，其他机型选配\nIPN：6000363\n适用机型/探头：全系列\n变更说明：妇产机标配，其他机型选配'},
+    {preview_id:'release:change:2',config_evidence:'子宫畸形分类（V30894）\nIPN：6000363\n适用机型/探头：全系列\n变更说明：妇产机标配，其他机型选配\n更新后，各功能支持的探头/应用如下：'},
+    {preview_id:'controlled:1:pdf',config_evidence:'子宫畸形分类 6000363 V30894 全系列 妇产机标配，其他机型选配'}]
+  const one=searchConfigurationSummary(items,'')
+  assert.equal((one.match(/6000363/g)||[]).length,1); assert.doesNotMatch(one,/更新后，各功能支持/)
+  const changed=searchConfigurationSummary([...items,{config_evidence:'适用机型/探头：6S\n变更说明：不支持6S'}],'')
+  assert.match(changed,/适用机型\/探头：6S/); assert.match(changed,/变更说明：不支持6S/)
+})
+
+
+test('configuration row deduplication preserves field and word boundaries', () => {
+  const {searchConfigurationSummary}=functions(['searchConfigurationSummary'],context)
+  const items=[{preview_id:'release:table:1',config_evidence:'型号 | AB | C | 全系列 | 选配'},
+    {preview_id:'controlled:1:pdf',config_evidence:'型号 A BC 全系列 选配'}]
+  assert.match(searchConfigurationSummary(items,''),/型号 A BC 全系列 选配/)
 })
