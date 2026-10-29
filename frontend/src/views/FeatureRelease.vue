@@ -25,7 +25,7 @@
       </div>
     </header>
 
-    <el-tabs v-model="activeTab" class="release-tabs">
+    <el-tabs v-model="activeTab" :before-leave="beforeNativeTabLeave" class="release-tabs">
       <el-tab-pane label="功能版本查询" name="timeline">
         <section class="release-panel">
           <div class="release-search">
@@ -74,6 +74,10 @@
             </el-table-column>
           </el-table>
 
+          <el-alert v-if="timelineError" type="error" :closable="false" show-icon>
+            <template #title>{{ timelineError }} <el-button link type="primary" @click="loadTimeline">重试</el-button></template>
+          </el-alert>
+          <div v-if="timelineLoading">正在加载发布版本…</div>
           <div v-if="timeline" class="timeline-result" data-testid="release-timeline">
             <div class="timeline-heading">
               <h3>
@@ -179,7 +183,7 @@
           </div>
 
           <el-empty
-            v-else-if="!featureLoading"
+            v-else-if="!featureLoading && !timelineLoading && !timelineError"
             description="先搜索并选择一个功能，查看它的发布版本"
           />
         </section>
@@ -300,7 +304,7 @@
               </el-tag>
             </div>
 
-            <el-form label-width="110px" class="intro-form">
+            <el-form label-width="110px" class="intro-form" :disabled="introBusy">
               <el-form-item label="功能概述">
                 <el-input
                   v-model="introForm.summary"
@@ -368,6 +372,7 @@
                 <el-button
                   type="primary"
                   :loading="introSaving"
+                  :disabled="!introDirty || introBusy"
                   data-testid="release-intro-save"
                   @click="saveIntroduction"
                 >
@@ -389,9 +394,10 @@
                 <el-upload
                   :show-file-list="false"
                   :before-upload="uploadAttachment"
+                  :disabled="introBusy"
                   accept="image/*,video/*,.pdf,.doc,.docx"
                 >
-                  <el-button size="small">上传附件</el-button>
+                  <el-button size="small" :disabled="introBusy">上传附件</el-button>
                 </el-upload>
               </div>
               <el-table v-if="introAttachments.length" :data="introAttachments" border size="small">
@@ -402,7 +408,7 @@
                 </el-table-column>
                 <el-table-column label="操作" width="100">
                   <template #default="{ row }">
-                    <el-button link type="danger" @click="removeAttachment(row)">删除</el-button>
+                    <el-button link type="danger" :disabled="introBusy" @click="removeAttachment(row)">删除</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -716,7 +722,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑功能版本" width="560px" :show-close="!editSaving" :close-on-click-modal="!editSaving" :close-on-press-escape="!editSaving">
+    <el-dialog v-model="editDialogVisible" title="编辑功能版本" width="560px" :before-close="requestEditClose" :show-close="!editSaving" :close-on-click-modal="!editSaving" :close-on-press-escape="!editSaving">
       <el-form label-width="110px" :disabled="editSaving">
         <el-form-item label="软件版本">
           <el-input v-model="editForm.software_version" />
@@ -767,7 +773,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button :disabled="editSaving" @click="editDialogVisible = false">取消</el-button>
+        <el-button :disabled="editSaving" @click="requestEditClose">取消</el-button>
         <el-button type="primary" :disabled="!editDirty || editSaving" :loading="editSaving" @click="submitEdit">保存</el-button>
         <el-button type="danger" :disabled="editSaving" @click="removeVersion">删除该记录</el-button>
       </template>
@@ -869,7 +875,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { releaseVersionPayload, releaseVersionChanged } from '../utils/releaseVersionEdit.js'
 import {
@@ -934,6 +940,9 @@ const seriesFilter = ref('')
 const timeline = ref(null)
 const selectedFeatureId = ref(null)
 const evidenceDocuments = ref([])
+const timelineLoading = ref(false)
+const timelineError = ref('')
+let timelineRequestId = 0
 
 const searchFeatures = async () => {
   featureLoading.value = true
@@ -942,6 +951,10 @@ const searchFeatures = async () => {
     featureOptions.value = result.items || []
     if (!featureOptions.value.length) {
       ElMessage.info('没有匹配的功能')
+      ++timelineRequestId
+      selectedFeatureId.value = null
+      timelineLoading.value = false
+      timelineError.value = ''
       timeline.value = null
     }
   } catch (error) {
@@ -967,20 +980,26 @@ const selectFeature = async (row) => {
 
 const loadTimeline = async () => {
   if (!selectedFeatureId.value) return
-  featureLoading.value = true
+  const requestId = ++timelineRequestId
+  const featureId = selectedFeatureId.value
+  const series = seriesFilter.value
+  timeline.value = null
+  timelineError.value = ''
+  timelineLoading.value = true
   try {
-    const params = {}
-    if (seriesFilter.value) params.product_series = seriesFilter.value
-    timeline.value = await getFeatureReleaseTimeline(selectedFeatureId.value, params)
-    introVersion.value = null
-  } catch (error) {
-    if (error?.response?.status === 404) {
-      ElMessage.error('功能不存在')
-    } else {
-      ElMessage.error('发布版本加载失败')
+    const params = series ? { product_series: series } : {}
+    const result = await getFeatureReleaseTimeline(featureId, params)
+    if (requestId !== timelineRequestId) return
+    if (featureId !== selectedFeatureId.value || series !== seriesFilter.value) {
+      timelineError.value = '查询条件已更改，请重新查询。'
+      return
     }
+    timeline.value = result
+  } catch (error) {
+    if (requestId !== timelineRequestId) return
+    timelineError.value = error?.response?.status === 404 ? '功能不存在' : '发布版本加载失败，请重试。'
   } finally {
-    featureLoading.value = false
+    if (requestId === timelineRequestId) timelineLoading.value = false
   }
 }
 
@@ -1155,6 +1174,13 @@ const editForm = reactive({
 const editBaseline = ref(null)
 const editDirty = computed(() => releaseVersionChanged(editForm, editBaseline.value))
 
+const requestEditClose = async (done) => {
+  if (editSaving.value) return
+  if (editDirty.value && !(await confirmDiscard('功能版本修改尚未保存，确定放弃修改并关闭？'))) return
+  editDialogVisible.value = false
+  if (typeof done === 'function') done()
+}
+
 const editVersion = (row) => {
   Object.assign(editForm, {
     id: row.id,
@@ -1188,21 +1214,40 @@ const submitEdit = async () => {
 }
 
 const removeVersion = async () => {
+  if (introBusy.value || editSaving.value) return
+  const versionId = editForm.id
+  if (introDirty.value && introVersion.value?.id === versionId) {
+    ElMessage.warning('该版本的发布介绍尚未保存，请先处理后再删除')
+    return
+  }
+  editSaving.value = true
   try {
     await ElMessageBox.confirm('删除后该版本记录与发布介绍都会移除，确认删除？', '确认删除', {
       type: 'warning'
     })
   } catch (error) {
+    editSaving.value = false
     return
   }
   try {
-    await deleteReleaseVersion(editForm.id)
+    await deleteReleaseVersion(versionId)
+    if (introVersion.value?.id === versionId) {
+      ++introRequestId
+      introVersion.value = null
+      introBaseline.value = null
+      introAttachments.value = []
+      introHistory.value = []
+      introLoading.value = false
+      introLoadError.value = false
+    }
     ElMessage.success('已删除')
     editDialogVisible.value = false
     await loadTimeline()
     await loadOverview()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '删除失败')
+  } finally {
+    editSaving.value = false
   }
 }
 
@@ -1252,9 +1297,47 @@ const introApplications = ref('')
 const introAttachments = ref([])
 const introHistory = ref([])
 const introSaving = ref(false)
+const attachmentBusy = ref(false)
+const introBusy = computed(() => introSaving.value || attachmentBusy.value)
+const introBaseline = ref(null)
+const introSnapshot = () => ({ ...introForm, applications: introApplications.value })
+const introDirty = computed(() => introBaseline.value !== null && JSON.stringify(introSnapshot()) !== JSON.stringify(introBaseline.value))
 const introLoading = ref(false)
 const introLoadError = ref(false)
 let introRequestId = 0
+async function confirmDiscard(message) {
+  try {
+    await ElMessageBox.confirm(message, '未保存的修改', {
+      confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning'
+    })
+    return true
+  } catch { return false }
+}
+
+async function requestWorkspaceLeave() {
+  if (editSaving.value || introBusy.value) return false
+  const editChanged = editDialogVisible.value && editDirty.value
+  if ((editChanged || introDirty.value) && !(await confirmDiscard('修改尚未保存，确定放弃修改并离开？'))) return false
+  if (editDialogVisible.value) editDialogVisible.value = false
+  if (introDirty.value) {
+    const { applications, ...form } = introBaseline.value
+    Object.assign(introForm, form)
+    introApplications.value = applications
+  }
+  return true
+}
+
+defineExpose({ requestWorkspaceLeave })
+const beforeNativeTabLeave = () => !editSaving.value && !introBusy.value
+const handleBeforeUnload = event => {
+  if ((editDialogVisible.value && editDirty.value) || introDirty.value || editSaving.value || introBusy.value) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+
 const publishedSwitch = computed({
   get: () => introForm.review_status === 'published',
   set: (value) => {
@@ -1263,6 +1346,8 @@ const publishedSwitch = computed({
 })
 
 const openIntroduction = async (row) => {
+  if (introBusy.value) return
+  if (introDirty.value && !(await confirmDiscard('发布介绍尚未保存，确定放弃修改并切换或重新加载？'))) return
   const requestId = ++introRequestId
   introVersion.value = row
   introFeatureName.value = timeline.value?.feature?.primary_cn_name || timeline.value?.feature?.legacy_name || ''
@@ -1270,6 +1355,7 @@ const openIntroduction = async (row) => {
   introHistory.value = []
   introLoading.value = true
   introLoadError.value = false
+  introBaseline.value = null
   try {
     const introduction = await getReleaseIntroduction(row.id)
     if (requestId !== introRequestId) return
@@ -1282,6 +1368,7 @@ const openIntroduction = async (row) => {
     })
     introApplications.value = (introduction.applications || []).join('\n')
     introAttachments.value = introduction.attachments || []
+    introBaseline.value = introSnapshot()
   } catch (error) {
     if (requestId !== introRequestId) return
     if (error?.response?.status === 404) {
@@ -1290,6 +1377,7 @@ const openIntroduction = async (row) => {
       })
       introApplications.value = ''
       introAttachments.value = []
+      introBaseline.value = introSnapshot()
     } else {
       introLoadError.value = true
       ElMessage.error('发布介绍加载失败')
@@ -1300,7 +1388,7 @@ const openIntroduction = async (row) => {
 }
 
 const saveIntroduction = async () => {
-  if (!introVersion.value || introLoading.value || introLoadError.value || introSaving.value) return
+  if (!introVersion.value || introLoading.value || introLoadError.value || introBusy.value || !introDirty.value) return
   introSaving.value = true
   const requestId = introRequestId
   try {
@@ -1315,6 +1403,7 @@ const saveIntroduction = async () => {
     ElMessage.success('发布介绍已保存')
     if (requestId !== introRequestId) return
     introAttachments.value = introduction.attachments || []
+    introBaseline.value = introSnapshot()
     await loadIntroductionHistory()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '保存失败')
@@ -1339,6 +1428,11 @@ const uploadAttachment = async (file) => {
     ElMessage.warning('请先选择功能版本')
     return false
   }
+  if (introBusy.value) {
+    ElMessage.warning('请等待当前操作完成后再上传附件')
+    return false
+  }
+  attachmentBusy.value = true
   const requestId = introRequestId
   try {
     const introduction = await uploadReleaseAttachment(introVersion.value.id, file)
@@ -1346,11 +1440,15 @@ const uploadAttachment = async (file) => {
     ElMessage.success('附件已上传')
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '附件上传失败')
+  } finally {
+    attachmentBusy.value = false
   }
   return false
 }
 
 const removeAttachment = async (row) => {
+  if (introBusy.value) return
+  attachmentBusy.value = true
   const requestId = introRequestId
   try {
     await deleteReleaseAttachment(row.id)
@@ -1358,6 +1456,8 @@ const removeAttachment = async (row) => {
     ElMessage.success('附件已删除')
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '附件删除失败')
+  } finally {
+    attachmentBusy.value = false
   }
 }
 

@@ -64,7 +64,7 @@ const introSource = source.slice(source.indexOf('const openIntroduction = async 
 function setupIntroduction(fetch) {
   const context = {
     introVersion: { value: null }, introFeatureName: { value: '' }, timeline: { value: null }, activeTab: { value: '' },
-    introHistory: { value: [] }, introLoading: { value: false }, introLoadError: { value: false },
+    introHistory: { value: [] }, introLoading: { value: false }, introLoadError: { value: false }, introBusy: { value: false }, introDirty: { value: false }, introBaseline: { value: null }, introSnapshot: () => ({}), confirmDiscard: async () => true,
     introForm: { summary: '上一个版本的内容' }, introApplications: { value: '' }, introAttachments: { value: [] },
     getReleaseIntroduction: fetch, ElMessage: { error() {} }
   }
@@ -104,7 +104,7 @@ test('actual introduction save action refuses failed or pending loads', async ()
   const saveSource = source.slice(source.indexOf('const saveIntroduction = async () => {'), source.indexOf('\nconst loadIntroductionHistory'))
   let calls = 0
   const context = {
-    introRequestId: 1, introVersion: { value: { id: 2 } }, introLoading: { value: true }, introLoadError: { value: false }, introSaving: { value: false },
+    introRequestId: 1, introBusy: { value: false }, introDirty: { value: true }, introBaseline: { value: null }, introSnapshot: () => ({}), introVersion: { value: { id: 2 } }, introLoading: { value: true }, introLoadError: { value: false }, introSaving: { value: false },
     introForm: { summary: '旧内容' }, introApplications: { value: '' }, introAttachments: { value: [] },
     saveReleaseIntroduction: async () => { calls++; return {} }, ElMessage: { success() {}, error() {} },
     loadIntroductionHistory: async () => {}
@@ -122,7 +122,7 @@ test('saving a previous introduction cannot replace the current attachments', as
   let resolveSave
   const pendingSave = new Promise(resolve => { resolveSave = resolve })
   const context = {
-    introVersion: { value: { id: 1 } }, introLoading: { value: false }, introLoadError: { value: false }, introSaving: { value: false },
+    introBusy: { value: false }, introDirty: { value: true }, introBaseline: { value: null }, introSnapshot: () => ({}), introVersion: { value: { id: 1 } }, introLoading: { value: false }, introLoadError: { value: false }, introSaving: { value: false },
     introForm: { summary: '旧版本' }, introApplications: { value: '' }, introAttachments: { value: [] },
     saveReleaseIntroduction: () => pendingSave, ElMessage: { success() {}, error() {} },
     loadIntroductionHistory: async () => { throw new Error('must not load history for changed version') }
@@ -149,7 +149,7 @@ test('old attachment upload does not overwrite the newly selected version', asyn
   const attachmentSource = source.slice(source.indexOf('const uploadAttachment = async (file) => {'), source.indexOf('\nconst removeAttachment'))
   let resolveUpload
   const context = {
-    introVersion: { value: { id: 1 } }, introAttachments: { value: [] },
+    introBusy: { value: false }, attachmentBusy: { value: false }, introVersion: { value: { id: 1 } }, introAttachments: { value: [] },
     uploadReleaseAttachment: () => new Promise(resolve => { resolveUpload = resolve }),
     ElMessage: { success() {}, warning() {}, error() {} }
   }
@@ -167,7 +167,7 @@ test('old attachment deletion does not alter the newly selected version', async 
   const removeSource = source.slice(source.indexOf('const removeAttachment = async (row) => {'), source.indexOf('\n// ---------- 候选回填'))
   let resolveDelete
   const context = {
-    introAttachments: { value: [{ id: 7 }] },
+    introBusy: { value: false }, attachmentBusy: { value: false }, introAttachments: { value: [{ id: 7 }] },
     deleteReleaseAttachment: () => new Promise(resolve => { resolveDelete = resolve }),
     ElMessage: { success() {}, error() {} }
   }

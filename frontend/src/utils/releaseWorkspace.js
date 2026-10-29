@@ -21,10 +21,18 @@ export function releaseWorkbenchUrl(tab) {
     : ''
 }
 
-export function releaseWorkbenchStandaloneUrl(tab) {
-  return RELEASE_WORKBENCH_VIEWS.includes(tab)
-    ? `/release-workbench/#${tab}`
-    : ''
+export function releaseWorkbenchStandaloneUrl(tab, sourceUrl = '', expectedOrigin = '') {
+  if (!RELEASE_WORKBENCH_VIEWS.includes(tab)) return ''
+  if (sourceUrl && expectedOrigin) {
+    try {
+      const url = new URL(sourceUrl, expectedOrigin)
+      const view = url.hash.slice(1).split('?')[0]
+      if (url.origin === expectedOrigin && url.pathname === '/release-workbench/' && view === tab && url.hash.length <= 8192) {
+        return `/release-workbench/${url.hash}`
+      }
+    } catch { /* Use the safe tab-only fallback. */ }
+  }
+  return `/release-workbench/#${tab}`
 }
 
 export function releaseWorkbenchHealthUrl() {

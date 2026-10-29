@@ -2379,8 +2379,14 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
 
 let locationSyncTimer;
 function scheduleLocationSync() {
+  notifyEmbeddedLocation(buildHash(state.activeView, currentViewParams()));
   window.clearTimeout(locationSyncTimer);
   locationSyncTimer = window.setTimeout(syncLocation, 200);
+}
+
+function notifyEmbeddedLocation(hash) {
+  if (!state.activeView || !workbenchConfig.embedded || window.parent === window) return;
+  window.parent.postMessage({ type: 'release-workbench:location', url: `${window.location.origin}/release-workbench/${hash}` }, window.location.origin);
 }
 
 // 视图切换用 pushState（新增一条历史），页内筛选变化用 replaceState（原地更新）。
@@ -2390,6 +2396,7 @@ function syncLocation() {
   const target = buildHash(state.activeView, currentViewParams());
   if (window.location.hash !== target) window.history.replaceState(null, '', target);
   appliedLocation = window.location.href;
+  notifyEmbeddedLocation(target);
 }
 
 let appliedLocation = null;

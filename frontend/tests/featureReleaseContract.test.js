@@ -13,7 +13,7 @@ test('feature release records are reachable inside the unified release workspace
   assert.match(router, /name:\s*'ReleaseWorkspace'/)
   assert.match(router, /views\/ReleaseWorkspace\.vue/)
   assert.match(workspace, /import FeatureRelease from '\.\/FeatureRelease\.vue'/)
-  assert.match(workspace, /<FeatureRelease\s+\/>/)
+  assert.match(workspace, /<FeatureRelease\s+ref="nativeRelease"\s+\/>/)
   assert.match(layout, /index="\/release"/)
   assert.match(layout, />\s*功能发布\s*</)
   assert.match(layout, /Promotion/)

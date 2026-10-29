@@ -4,10 +4,10 @@
       <div>
         <h2>功能发布</h2>
       </div>
-      <a v-if="isWorkbenchTab(activeTab)" :href="releaseWorkbenchStandaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
+      <a v-if="isWorkbenchTab(activeTab)" :href="standaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
 
-    <el-tabs v-model="activeTab" class="workspace-tabs">
+    <el-tabs v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs">
       <el-tab-pane label="发布资料检索" name="search" />
       <el-tab-pane label="文件同步" name="review" />
       <el-tab-pane label="发布版本" name="releases" />
@@ -65,14 +65,14 @@
       v-show="activeTab === 'feature-versions'"
       class="workspace-body native-release-pane"
     >
-      <FeatureRelease />
+      <FeatureRelease ref="nativeRelease" />
     </section>
   </div>
 </template>
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 
 import FeatureRelease from './FeatureRelease.vue'
@@ -94,6 +94,21 @@ const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
 const initialWorkbenchView = isWorkbenchTab(activeTab.value) ? activeTab.value : 'search'
 const lastWorkbenchView = ref(initialWorkbenchView)
 const workbenchFrame = ref(null)
+const nativeRelease = ref(null)
+const workbenchLocations = reactive({})
+const standaloneUrl = tab => releaseWorkbenchStandaloneUrl(tab, workbenchLocations[tab], window.location.origin)
+
+async function beforeWorkspaceTabLeave(next, current) {
+  if (current !== 'feature-versions' || next === current) return true
+  return await nativeRelease.value?.requestWorkspaceLeave() ?? true
+}
+
+onBeforeRouteLeave(() => beforeWorkspaceTabLeave('', activeTab.value))
+onBeforeRouteUpdate((to, from) => {
+  const next = normalizeReleaseTab(to.query.tab)
+  const current = normalizeReleaseTab(from.query.tab)
+  return beforeWorkspaceTabLeave(next, current)
+})
 const workbenchFrameUrl = ref('')
 const workbenchState = reactive({
   status: 'idle',
@@ -144,9 +159,18 @@ function markWorkbenchError() {
 }
 
 function handleWorkbenchMessage(event) {
-  if (!isWorkbenchNavigationMessage(event, window.location.origin)) return
-  if (workbenchFrame.value?.contentWindow !== event.source) return
-  activeTab.value = event.data.view
+  if (event.origin !== window.location.origin || workbenchFrame.value?.contentWindow !== event.source) return
+  if (event.data?.type === 'release-workbench:location') {
+    try {
+      const url = new URL(event.data.url)
+      const tab = url.hash.slice(1).split('?')[0]
+      const safe = releaseWorkbenchStandaloneUrl(tab, url.href, window.location.origin)
+      if (isWorkbenchTab(tab) && safe !== `/release-workbench/#${tab}`) workbenchLocations[tab] = url.href
+      else if (safe === `/release-workbench/#${tab}` && url.origin === window.location.origin && url.pathname === '/release-workbench/' && url.hash === `#${tab}`) workbenchLocations[tab] = url.href
+    } catch { /* Ignore invalid or untrusted locations. */ }
+    return
+  }
+  if (activeTab.value !== 'feature-versions' && isWorkbenchNavigationMessage(event, window.location.origin)) activeTab.value = event.data.view
 }
 
 watch(() => route.query.tab, value => {
