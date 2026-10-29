@@ -75,7 +75,23 @@
       </section>
 
       <section class="view" data-page="search">
-        <div class="section-heading"><div><p class="eyebrow">跨来源查询</p><h2>一次搜索版本、配置和资料</h2><p>结果保留来源、适用范围、版本和原文位置；精确匹配优先，同一文件合并命中。文件在首次使用和后台定期更新。</p><p>机型、市场和国家筛选按各来源已登记的范围生效；范围不明确时会显示说明。</p></div></div>
+        <section class="scenario-search" aria-label="按任务查询">
+          <h2>你想查什么？</h2>
+          <div class="scenario-tasks" role="group" aria-label="选择查询任务">
+            <button type="button" data-scenario-task="probe" aria-pressed="true">查探头首次支持</button>
+            <button type="button" data-scenario-task="feature" aria-pressed="false">查功能当前完整描述</button>
+            <button type="button" data-scenario-task="version" aria-pressed="false">查版本变化</button>
+          </div>
+          <form id="scenario-form" class="scenario-controls">
+            <label id="scenario-query-label">探头名称<input id="scenario-query" placeholder="例如 F4-9E" autocomplete="off"></label>
+            <label id="scenario-model-label" hidden>白皮书型号<select id="scenario-model"><option value="">自动选择</option></select></label>
+            <label id="scenario-target-label" hidden>目标版本<select id="scenario-target"></select></label>
+            <label id="scenario-base-label" hidden>对比基准（可选）<select id="scenario-base"></select></label>
+            <button type="submit" class="primary-button">查询</button>
+          </form>
+          <div id="scenario-result" aria-live="polite"></div>
+        </section>
+        <details id="advanced-search-wrap" class="scenario-advanced"><summary>高级检索与原文依据</summary>
         <form id="release-search-form" class="unified-search-form" aria-label="全局搜索">
           {% if embedded %}<div class="search-primary-row">{% endif %}<label class="unified-search-query"><span aria-hidden="true">⌕</span><input id="release-search" type="search" aria-label="搜索产品资料和版本" placeholder="{% if embedded %}搜索功能或发布内容，如 后台导出、VAid+{% else %}关键词、中文名称、英文名称、机型或 V 代码，例如 妇科 / X1-5C / V30883{% endif %}" autocomplete="off"></label>{% if embedded %}<button id="release-search-button" type="submit" class="primary-button">搜索</button></div>{% endif %}
           {% if embedded %}<div class="search-mode-row">{% endif %}<div class="search-task-shortcuts" role="group" aria-label="常见查询任务">
@@ -140,6 +156,7 @@
             </div>
           <div class="search-status-row"><span id="search-index-status" role="status">正在检查资料索引…</span><span title="未找到提及不代表不支持，请结合原文范围核对">结果保留原文出处</span></div>
         </details>{% endif %}
+        </details>
       </section>
 
       <section class="view" data-page="features">

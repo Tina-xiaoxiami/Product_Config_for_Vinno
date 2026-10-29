@@ -1,4 +1,5 @@
 const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
+const scenarioState = { task: 'probe', code: '', series: '', model: '', document: '', section: '', request: 0 };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -96,6 +97,9 @@ async function loadProjects() {
 async function switchProject(projectId) {
   if (!state.projects.some(project => Number(project.id) === Number(projectId))) return;
   state.activeProjectId = Number(projectId);
+  scenarioState.request++; scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = '';
+  document.querySelector('#scenario-result').innerHTML = '';
+  document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>';
   state.searchPage = 1;
   localStorage.setItem('featureTracker.activeProject', String(state.activeProjectId));
   document.querySelector('#project-switcher').value = String(state.activeProjectId);
@@ -107,7 +111,7 @@ async function switchProject(projectId) {
   renderProjectList();
   updateViewScope(state.activeView);
   await refreshAll({ includeExperience: true });
-  if (state.activeView === 'search' && document.querySelector('#release-search').value.trim()) {
+  if (state.activeView === 'search' && document.querySelector('#advanced-search-wrap').open && document.querySelector('#release-search').value.trim()) {
     await searchUnified();
   }
   showNotice(`已切换到 ${activeProject()?.name || '所选项目'}。`);
@@ -836,6 +840,7 @@ async function loadReleases() {
     ? activeVersion
     : state.releases[0]?.version || null;
   renderReleaseCenter();
+  renderScenarioVersionOptions();
   if (document.querySelector('#search-version-picker').open) loadSearchVersionChoices();
   const options = state.releases.map(item => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)}</option>`).join('');
   document.querySelector('#from-version').innerHTML = options;
@@ -1065,7 +1070,7 @@ function setSearchFiltersVisible(visible) {
 function positionSearchProject(view) {
   if (!workbenchConfig.embedded) return;
   const context = document.querySelector('#project-context-actions');
-  const target = document.querySelector(view === 'search' ? '.search-primary-row' : '.topbar-actions');
+  const target = document.querySelector(view === 'search' ? '.scenario-controls' : '.topbar-actions');
   if (context && target && context.parentElement !== target) target.prepend(context);
   document.body.classList.toggle('search-focused', view === 'search');
 }
@@ -2118,9 +2123,15 @@ async function scanNotes() {
 async function compareVersions() {
   const from = document.querySelector('#from-version').value, to = document.querySelector('#to-version').value;
   if (!from || !to) return showNotice('请先导入至少两个版本。');
+  const requestId = state.comparisonRequest = (state.comparisonRequest || 0) + 1;
+  const project = state.activeProjectId;
+  const isCurrent = () => requestId === state.comparisonRequest && project === state.activeProjectId
+    && document.querySelector('#from-version').value === from && document.querySelector('#to-version').value === to;
   const container = document.querySelector('#compare-result');
   const button = document.querySelector('#compare-button');
-  const originalLabel = button.textContent;
+  const originalLabel = button.dataset.idleLabel || button.textContent;
+  button.dataset.idleLabel = originalLabel;
+  state.comparisonKey = null;
   container.className = 'empty-state compact';
   container.textContent = '正在比较两个版本，请稍候…';
   button.disabled = true;
@@ -2128,10 +2139,19 @@ async function compareVersions() {
   let data;
   try {
     data = await api(projectPath(`/api/v1/comparisons?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`));
-    state.comparisonKey = `${state.activeProjectId}:${from}::${to}`;
+    if (!isCurrent()) return;
+    state.comparisonKey = `${project}:${from}::${to}`;
+  } catch (error) {
+    if (isCurrent()) {
+      container.textContent = '比较失败，请重试。';
+      throw error;
+    }
+    return;
   } finally {
-    button.disabled = false;
-    button.textContent = originalLabel;
+    if (requestId === state.comparisonRequest) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   }
   const buckets = [['added','目标版本新增'],['removed','起始版本独有'],['common','两个版本共有']];
   const structuredBuckets = [['added','目标版本新增'],['modified','值发生变化'],['removed','起始版本独有']];
@@ -2315,7 +2335,7 @@ async function loadWorkbenchHome() {
 // `project` 是全局范围，所有视图都接受。
 const VIEW_PARAMS = {
   home: ['project'],
-  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category', 'whitepaper_model', 'whitepaper_model_mode'],
+  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category', 'whitepaper_model', 'whitepaper_model_mode', 'scenario', 'scenario_q', 'scenario_model', 'scenario_code', 'scenario_series', 'scenario_target', 'scenario_base', 'scenario_document', 'scenario_section'],
   model: ['model', 'market', 'country', 'series'],
   releases: ['project', 'version'],
   compare: ['project', 'a', 'b'],
@@ -2365,6 +2385,19 @@ function currentViewParams() {
   };
   if (view === 'releases' && state.activeReleaseVersion) params.version = state.activeReleaseVersion;
   if (view === 'search') {
+    if (!document.querySelector('#advanced-search-wrap').open) {
+      params.scenario = scenarioState.task;
+      if (text('#scenario-query')) params.scenario_q = text('#scenario-query');
+      if (scenarioState.model) params.scenario_model = scenarioState.model;
+      if (scenarioState.document) params.scenario_document = scenarioState.document;
+      if (scenarioState.section) params.scenario_section = scenarioState.section;
+      if (scenarioState.code) params.scenario_code = scenarioState.code;
+      if (scenarioState.series) params.scenario_series = scenarioState.series;
+      if (text('#scenario-target')) params.scenario_target = text('#scenario-target');
+      if (text('#scenario-base')) params.scenario_base = text('#scenario-base');
+      Object.assign(params, state.previewLocation || {});
+      return params;
+    }
     if (text('#release-search')) params.q = text('#release-search');
     params.scope = document.querySelector('#release-search-scope').value;
     params.sources = selectedSearchSources().sort().join(',');
@@ -2528,6 +2561,24 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
   }
 
   if (view === 'search') {
+    const advanced = document.querySelector('#advanced-search-wrap');
+    advanced.open = !params.scenario && Boolean(params.q);
+    if (params.scenario) {
+      scenarioState.request++;
+      document.querySelector('#scenario-result').innerHTML = '';
+      state.previewLocation = null;
+      setScenarioTask(params.scenario);
+      document.querySelector('#scenario-query').value = params.scenario_q || '';
+      scenarioState.code = params.scenario_code || '';
+      scenarioState.series = params.scenario_series || '';
+      scenarioState.model = params.scenario_model || '';
+      scenarioState.document = params.scenario_document || '';
+      scenarioState.section = params.scenario_section || '';
+      renderScenarioVersionOptions(params.scenario_target || '', params.scenario_base || '');
+      if (params.scenario_q || (scenarioState.task === 'version' && params.scenario_target)) await runScenario();
+      if (navigation === state.evidenceNavigation) await restoreEvidenceLocation(params);
+      return;
+    }
     state.previewLocation = null;
     document.querySelector('#release-search').value = params.q || '';
     document.querySelector('#release-search-scope').value = params.scope === 'all' ? 'all' : 'current';
@@ -3523,6 +3574,109 @@ function ensureStrategyLoaded() {
   }).catch(error => showNotice(error.message));
 }
 
+function renderScenarioVersionOptions(target = null, base = null) {
+  const targetNode = document.querySelector('#scenario-target');
+  const baseNode = document.querySelector('#scenario-base');
+  if (!targetNode || !baseNode) return;
+  target = target ?? targetNode.value;
+  base = base ?? baseNode.value;
+  const options = state.releases.map(item => `<option value="${escapeAttribute(item.version)}">${escapeHtml(item.version)}</option>`).join('');
+  targetNode.innerHTML = `<option value="">${scenarioState.task === 'feature' ? '最新资料版本' : '选择目标版本'}</option>${options}`;
+  baseNode.innerHTML = `<option value="">不对比</option>${options}`;
+  targetNode.value = target || '';
+  baseNode.value = base || '';
+}
+
+function setScenarioTask(task) {
+  if (!['probe', 'feature', 'version'].includes(task)) task = 'probe';
+  scenarioState.task = task;
+  document.querySelectorAll('[data-scenario-task]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioTask === task)));
+  const queryLabel = document.querySelector('#scenario-query-label');
+  queryLabel.hidden = task === 'version';
+  queryLabel.firstChild.textContent = task === 'feature' ? '功能名称' : '探头名称';
+  document.querySelector('#scenario-query').placeholder = task === 'feature' ? '例如 子宫畸形分类' : '例如 F4-9E';
+  document.querySelector('#scenario-model-label').hidden = task !== 'feature';
+  document.querySelector('#scenario-target-label').hidden = task === 'probe';
+  document.querySelector('#scenario-base-label').hidden = task !== 'version';
+  renderScenarioVersionOptions();
+}
+
+function scenarioPreviewButton(source, locator, query, label = '查看原文') {
+  return `<button type="button" class="ghost-button compact-button" data-scenario-preview="${escapeAttribute(source)}" data-scenario-locator="${escapeAttribute(locator || '')}" data-scenario-query="${escapeAttribute(query || '')}">${escapeHtml(label)}</button>`;
+}
+
+function scenarioProbeMarkup(data, query) {
+  if (!data.identities.length) return '<p class="empty-state compact">未找到该名称的探头记录。资料缺失不代表不支持。</p>';
+  if (!data.selected) return `<section class="scenario-answer"><h3>请选择探头身份</h3><p>同名探头存在多个 V 代码或系列。</p>${data.identities.map(item => `<button type="button" class="ghost-button compact-button" data-scenario-code="${escapeAttribute(item.code)}" data-scenario-series="${escapeAttribute(item.series)}">${escapeHtml(item.model)} · ${escapeHtml(item.code)} · ${escapeHtml(item.series)}</button>`).join(' ')}</section>`;
+  const selected = data.selected;
+  const evidence = data.evidence;
+  const conclusion = evidence ? `<h3>最早可证实新增支持 · ${escapeHtml(evidence.version)}</h3><p>${escapeHtml(selected.model)} · ${escapeHtml(selected.code)} · ${escapeHtml(selected.series)}</p>${scenarioPreviewButton(evidence.preview_id, evidence.locator, query, '查看版本原文')}` : `<h3>尚无可核实的新增支持原文</h3><p>${escapeHtml(selected.model)} · ${escapeHtml(selected.code)} · ${escapeHtml(selected.series)}</p>${data.candidates.length ? `<p>关系记录：${data.candidates.map(row => escapeHtml(row.software_version)).join('、')}，需核对原文。</p>` : ''}`;
+  return `<section class="scenario-answer">${conclusion}${data.identities.length > 1 ? '<button type="button" class="text-button" data-scenario-reselect>重新选择身份</button>' : ''}<details><summary>依据与覆盖范围</summary><p>仅限当前项目和所选系列。已登记资料可能不完整，最早可证实记录不等于已确认的绝对首次；未找到记录不代表不支持。</p></details></section>`;
+}
+
+function scenarioFeatureMarkup(data, query) {
+  const item = data.baseline, section = data.section;
+  if (!item || !section) {
+    if ((data.documents || []).length > 1 && !data.selected_document) return `<section class="scenario-answer"><h3>请选择资料范围</h3><p>这些资料未登记为同一版本链，请按市场和语言选择。</p>${data.documents.map(doc => `<button type="button" class="ghost-button compact-button" data-scenario-document="${escapeAttribute(doc.value)}">${escapeHtml(doc.label)} · ${escapeHtml(doc.scope)}</button>`).join(' ')}</section>`;
+    if ((data.section_options || []).length) return `<section class="scenario-answer"><h3>请选择原文章节</h3><p>同版章节内容不同，请核对后选择。</p>${data.section_options.map(option => `<button type="button" class="ghost-button compact-button" data-scenario-section="${escapeAttribute(option.value)}">${escapeHtml(option.label)} · ${escapeHtml(option.version)} · ${escapeHtml(option.scope)}</button>`).join(' ')}</section>`;
+    return `<p class="empty-state compact">未找到可核实的完整章节。请检查型号、资料范围或使用高级检索查看原文。${data.coverage_complete ? '' : '部分来源受限或候选过多，结果可能不完整。'}</p>`;
+  }
+  const detail = item.detail_evidence;
+  const heading = data.latest_certified ? '所选资料链中已检索的最新完整描述' : '完整描述候选（较新资料或范围待核对）';
+  const changes = data.later_changes || [];
+  const later = changes.length ? `<details><summary>后续变更待整合（${changes.length}）</summary>${changes.map(change => `<article><p><strong>${escapeHtml(change.version)} · ${escapeHtml(categoryLabels[change.category] || change.category || '变更')}</strong> · ${escapeHtml(change.evidence_type === 'clue' ? (change.status || '原文线索，未确认') : (change.review_status || '状态未登记'))}</p><p>${escapeHtml(change.description_cn || change.description_en || change.matched_text || change.title_cn || change.title_en || '')}</p>${scenarioPreviewButton(change.preview_id, change.locator || (change.description_cn || change.title_cn ? '中文记录' : 'English record'), query, '查看变更原文')}</article>`).join('')}</details>` : '<p>未找到后续相关变更；资料覆盖仍需核对。</p>';
+  return `<section class="scenario-answer"><h3>${heading} · ${escapeHtml(item.version)}</h3><p>${escapeHtml(detail.title || item.title)} · ${escapeHtml(verificationLabel(detail.verification || 'unverified'))} · ${escapeHtml(detail.scope || item.scope || '适用范围未登记')}</p><div class="scenario-content">${escapeHtml(section.content)}</div><p>以上为完整章节文本；图片和原始版式可在原文预览中查看。未索引或未登记的资料不在本次结论中。</p>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}${later}<details><summary>来源与适用范围</summary><p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · ${escapeHtml(item.title)}</p><p>资料型号取自登记信息或资料名称，未登记的适用范围需要核对；后续变化不会自动合并到正文。</p></details></section>`;
+}
+
+function scenarioVersionMarkup(data) {
+  if (!data.target) return '<p class="empty-state compact">请选择当前项目已登记的目标版本。</p>';
+  const release = data.target;
+  const changes = release.changes || [];
+  const comparison = data.comparison;
+  const counts = comparison ? ['added', 'removed', 'common'].map(key => Object.values(comparison[key] || {}).reduce((sum, rows) => sum + rows.length, 0)) : null;
+  return `<section class="scenario-answer"><h3>版本 ${escapeHtml(release.version)} · ${changes.length} 条变化</h3>${counts ? `<p>对比基准：新增 ${counts[0]} · 基准独有 ${counts[1]} · 共有 ${counts[2]}（文本条目）</p><button type="button" class="ghost-button compact-button" data-scenario-compare>查看完整对比</button>` : ''}<details><summary>查看版本变化（${changes.length}）</summary>${changes.map(change => `<article><p><strong>${escapeHtml(categoryLabels[change.category] || change.category || '变更')} · ${escapeHtml(change.title_cn || change.title_en || '未命名')}</strong> · ${escapeHtml(change.review_status || '状态未登记')}</p><p>${escapeHtml(change.description_cn || change.description_en || '')}</p>${scenarioPreviewButton(`release:change:${change.id}`, change.description_cn || change.title_cn ? '中文记录' : 'English record', '', '查看版本原文')}</article>`).join('') || '<p>该版本暂无已登记变化。</p>'}</details></section>`;
+}
+
+async function runScenario() {
+  document.querySelector('#advanced-search-wrap').open = false;
+  const task = scenarioState.task;
+  const query = document.querySelector('#scenario-query').value.trim();
+  const target = document.querySelector('#scenario-target').value;
+  const base = document.querySelector('#scenario-base').value;
+  const container = document.querySelector('#scenario-result');
+  const requestId = ++scenarioState.request;
+  const project = state.activeProjectId;
+  if ((task !== 'version' && !query) || (task === 'version' && !target)) {
+    container.innerHTML = '<p class="empty-state compact">请先填写查询内容。</p>';
+    return;
+  }
+  const params = new URLSearchParams({ task, q: query });
+  if (task === 'probe' && scenarioState.code) { params.set('code', scenarioState.code); params.set('series', scenarioState.series); }
+  if (task === 'feature' && scenarioState.model) params.set('model', scenarioState.model);
+  if (task === 'feature' && scenarioState.document) params.set('document', scenarioState.document);
+  if (task === 'feature' && scenarioState.section) params.set('section', scenarioState.section);
+  if (target && task !== 'probe') params.set('target', target);
+  if (base && task === 'version') params.set('base', base);
+  container.innerHTML = loadingMarkup('正在查询资料…');
+  syncLocation();
+  try {
+    const result = await api(projectPath(`/api/v1/workbench/scenario?${params}`));
+    if (requestId !== scenarioState.request || task !== scenarioState.task || project !== state.activeProjectId) return;
+    if (task === 'feature') {
+      const model = document.querySelector('#scenario-model');
+      const options = result.models?.options || [];
+      model.innerHTML = options.map(option => `<option value="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</option>`).join('') || '<option value="">暂无匹配型号</option>';
+      scenarioState.model = result.models?.selected || '';
+      scenarioState.document = result.selected_document || '';
+      model.value = scenarioState.model;
+      container.innerHTML = scenarioFeatureMarkup(result, query);
+    } else container.innerHTML = task === 'probe' ? scenarioProbeMarkup(result, query) : scenarioVersionMarkup(result);
+    syncLocation();
+  } catch (error) {
+    if (requestId === scenarioState.request) container.innerHTML = `<p class="empty-state compact" role="alert">查询失败：${escapeHtml(error.message)}。请重试。</p>`;
+  }
+}
+
 function switchView(view, { remember = true, updateHash = true, scroll = true } = {}) {
   const allowedViews = new Set(workbenchConfig.allowedViews || []);
   if (integratedMode() && !allowedViews.has(view)) view = 'releases';
@@ -3600,11 +3754,42 @@ document.addEventListener('click', event => {
     if (loader) Promise.resolve(loader()).then(() => focusExpandedList(key)).catch(error => showNotice(error.message));
   }
 });
+document.querySelectorAll('[data-scenario-task]').forEach(button => button.addEventListener('click', () => {
+  document.querySelector('#advanced-search-wrap').open = false;
+  scenarioState.request++; scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = '';
+  if (scenarioState.task !== button.dataset.scenarioTask) document.querySelector('#scenario-query').value = '';
+  document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>';
+  setScenarioTask(button.dataset.scenarioTask);
+  document.querySelector('#scenario-result').innerHTML = '';
+  syncLocation();
+}));
+document.querySelector('#scenario-query').addEventListener('input', () => { scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = ''; scenarioState.request++; document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>'; document.querySelector('#scenario-result').innerHTML = ''; });
+for (const id of ['#scenario-target', '#scenario-base']) document.querySelector(id).addEventListener('change', () => { scenarioState.request++; document.querySelector('#scenario-result').innerHTML = ''; });
+document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); runScenario(); });
+document.querySelector('#scenario-model').addEventListener('change', event => { scenarioState.model = event.target.value; scenarioState.document = ''; scenarioState.section = ''; runScenario(); });
+document.querySelector('#scenario-result').addEventListener('click', event => {
+  if (event.target.closest('[data-scenario-reselect]')) { scenarioState.code = ''; scenarioState.series = ''; runScenario(); return; }
+  const doc = event.target.closest('[data-scenario-document]');
+  if (doc) { scenarioState.document = doc.dataset.scenarioDocument; scenarioState.section = ''; runScenario(); return; }
+  const section = event.target.closest('[data-scenario-section]');
+  if (section) { scenarioState.section = section.dataset.scenarioSection; runScenario(); return; }
+  const identity = event.target.closest('[data-scenario-code]');
+  if (identity) { scenarioState.code = identity.dataset.scenarioCode; scenarioState.series = identity.dataset.scenarioSeries; runScenario(); return; }
+  const preview = event.target.closest('[data-scenario-preview]');
+  if (preview) { openSearchPreview(preview.dataset.scenarioPreview, preview.dataset.scenarioLocator, preview.dataset.scenarioQuery).catch(error => showNotice(error.message)); return; }
+  if (event.target.closest('[data-scenario-compare]')) {
+    const target = document.querySelector('#scenario-target').value, base = document.querySelector('#scenario-base').value;
+    document.querySelector('#from-version').value = base; document.querySelector('#to-version').value = target;
+    switchView('compare');
+  }
+});
+document.querySelector('#advanced-search-wrap').addEventListener('toggle', () => { if (state.activeView === 'search') syncLocation(); });
 const searchToggle = document.querySelector('#search-toggle');
 const searchForm = document.querySelector('#release-search-form');
 if (searchToggle && searchForm) {
   searchToggle.addEventListener('click', () => {
     switchView('search');
+    document.querySelector('#advanced-search-wrap').open = true;
     document.querySelector('#release-search').focus();
     if (document.querySelector('#release-search').value.trim()) searchUnified().catch(error => showNotice(error.message));
   });

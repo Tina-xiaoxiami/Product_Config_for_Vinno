@@ -226,3 +226,11 @@ body.workbench-embedded .compact-source-notice { margin: 0 0 12px; padding: 8px 
 body.workbench-embedded .compact-source-notice > summary { cursor: pointer; }
 body.workbench-embedded .compact-source-notice ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.7; overflow-wrap: anywhere; }
 body.workbench-embedded .compact-source-version { color: #337ecc; }
+body.workbench-embedded.search-focused .scenario-controls .project-context-actions { flex: 0 0 154px; gap: 0; }
+body.workbench-embedded.search-focused .scenario-controls .project-context-label,
+body.workbench-embedded.search-focused .scenario-controls #manage-projects { display: none; }
+body.workbench-embedded.search-focused .scenario-controls #project-switcher { width: 154px; max-width: 100%; }
+@media (max-width: 600px) {
+  body.workbench-embedded.search-focused .scenario-controls .project-context-actions { flex: 1 1 100%; }
+  body.workbench-embedded.search-focused .scenario-controls #project-switcher { width: 100%; }
+}

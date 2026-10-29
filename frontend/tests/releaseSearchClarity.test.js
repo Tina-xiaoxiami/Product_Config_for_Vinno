@@ -87,7 +87,7 @@ test('search and release views share the same project control with its current v
   control.parentElement = header
   const toggles = []
   const document = {
-    querySelector: key => ({ '#project-context-actions': control, '.search-primary-row': query, '.topbar-actions': header })[key],
+    querySelector: key => ({ '#project-context-actions': control, '.scenario-controls': query, '.topbar-actions': header })[key],
     body: { classList: { toggle: (...args) => toggles.push(args) } },
   }
   const { positionSearchProject } = functions(['positionSearchProject'], { document, workbenchConfig: { embedded: true } })

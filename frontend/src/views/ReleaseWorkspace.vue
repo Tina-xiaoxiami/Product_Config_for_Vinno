@@ -7,8 +7,11 @@
       <a v-if="isWorkbenchTab(activeTab)" :href="standaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
 
-    <el-tabs v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs">
-      <el-tab-pane label="发布资料检索" name="search" />
+    <el-tabs v-model="workspaceMode" :before-leave="beforeWorkspaceModeLeave" class="workspace-tabs">
+      <el-tab-pane label="查询" name="query" />
+      <el-tab-pane label="资料管理" name="manage" />
+    </el-tabs>
+    <el-tabs v-if="activeTab !== 'search'" v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs workspace-management-tabs">
       <el-tab-pane label="文件同步" name="review" />
       <el-tab-pane label="发布版本" name="releases" />
       <el-tab-pane label="发布对比" name="compare" />
@@ -71,7 +74,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 
@@ -90,6 +93,11 @@ const router = useRouter()
 
 const isWorkbenchTab = tab => RELEASE_WORKBENCH_VIEWS.includes(tab)
 const activeTab = ref(normalizeReleaseTab(route.query.tab))
+const lastManagementTab = ref(activeTab.value === 'search' ? 'review' : activeTab.value)
+const workspaceMode = computed({
+  get: () => activeTab.value === 'search' ? 'query' : 'manage',
+  set: mode => { activeTab.value = mode === 'query' ? 'search' : lastManagementTab.value }
+})
 const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
 const initialWorkbenchView = isWorkbenchTab(activeTab.value) ? activeTab.value : 'search'
 const lastWorkbenchView = ref(initialWorkbenchView)
@@ -101,6 +109,10 @@ const standaloneUrl = tab => releaseWorkbenchStandaloneUrl(tab, workbenchLocatio
 async function beforeWorkspaceTabLeave(next, current) {
   if (current !== 'feature-versions' || next === current) return true
   return await nativeRelease.value?.requestWorkspaceLeave() ?? true
+}
+
+function beforeWorkspaceModeLeave(next) {
+  return beforeWorkspaceTabLeave(next === 'query' ? 'search' : lastManagementTab.value, activeTab.value)
 }
 
 onBeforeRouteLeave(() => beforeWorkspaceTabLeave('', activeTab.value))
@@ -179,6 +191,7 @@ watch(() => route.query.tab, value => {
 })
 
 watch(activeTab, tab => {
+  if (tab !== 'search') lastManagementTab.value = tab
   if (isWorkbenchTab(tab)) {
     lastWorkbenchView.value = tab
     mountWorkbench(tab)
@@ -217,6 +230,7 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 .workspace-tabs { flex: 0 0 auto; }
 .workspace-tabs :deep(.el-tabs__header) { margin-bottom: 10px; }
 .workspace-tabs :deep(.el-tabs__content) { display: none; }
+.workspace-management-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
 
 .workspace-body {
   min-height: 0;
