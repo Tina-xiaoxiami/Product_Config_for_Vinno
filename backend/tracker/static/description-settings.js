@@ -1,9 +1,9 @@
 /* Provider settings follow the guide application's separate private profiles. */
 (() => {
-  const controls = document.querySelector('.scenario-controls');
+  const controls = document.querySelector('#review-model-settings');
   if (!controls) return;
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'ghost-button compact-button'; button.textContent = 'API 设置';
+  button.type = 'button'; button.className = 'ghost-button compact-button'; button.textContent = '自动整理设置';
   button.dataset.descriptionSettings = '';
   controls.append(button);
   const dialog = document.createElement('dialog');

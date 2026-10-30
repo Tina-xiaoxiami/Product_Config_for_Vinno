@@ -96,7 +96,7 @@ test('search and release views share the same project control with its current v
   positionSearchProject('releases')
   assert.equal(control.parentElement, header)
   assert.equal(control.value, 'VINNO 10')
-  assert.deepEqual(toggles, [['search-focused', true], ['search-focused', false]])
+  assert.deepEqual(toggles.filter(([name]) => name === 'search-focused'), [['search-focused', true], ['search-focused', false]])
 })
 
 

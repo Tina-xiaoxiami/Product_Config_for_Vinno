@@ -15,15 +15,15 @@ test('empty review hides only navigation and filters; filtered-empty keeps contr
   const nav={hidden:false}, filters={hidden:false}, page={classList:{toggle(_name,value){this.empty=value}}}
   const summary={textContent:''}, list={innerHTML:''}
   const controls={'.candidate-version-navigation':nav,'.candidate-filter-panel':filters,'#candidate-version-page':page,'#candidate-filter-summary':summary,'#candidate-list':list}
-  const state={candidates:[],activeCandidateVersion:null,activeCandidateCategory:'all'}
+  const state={candidates:[],activeCandidateVersion:null,activeCandidateCategory:'all',reviewStage:'confirm'}
   const context={state,document:{querySelector:s=>controls[s]},candidateVersions:()=>state.candidates.map(x=>x.version),
     renderCandidateVersionTabs(){},renderCandidateCategoryTabs(){},filteredCandidates:()=>[],
-    currentVersionCandidates:()=>state.candidates,ensureCandidateRecommendations(){},renderCandidateHierarchy:()=>''}
+    currentVersionCandidates:()=>state.candidates,ensureCandidateRecommendations(){},renderCandidateHierarchy:()=>'',renderReviewOverview(){}}
   const render=extract('renderCandidateReview',context)
   render(); assert.equal(nav.hidden,true); assert.equal(filters.hidden,true); assert.equal(page.classList.empty,true)
   assert.match(list.innerHTML,/暂无待审核记录/)
   state.candidates=[{version:'1.2.3',category:'function'}]; render()
-  assert.equal(nav.hidden,false); assert.equal(filters.hidden,false); assert.equal(page.classList.empty,false)
+  assert.equal(nav.hidden,true); assert.equal(filters.hidden,false); assert.equal(page.classList.empty,false)
   assert.match(list.innerHTML,/当前筛选条件下没有待审核记录/)
 })
 

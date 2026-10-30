@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ static_version }}">
   {% if embedded %}<link rel="stylesheet" href="{{ url_for('static', filename='embedded.css') }}?v={{ static_version }}">{% endif %}
   <link rel="stylesheet" href="{{ url_for('static', filename='description.css') }}?v={{ static_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='release-design.css') }}?v={{ static_version }}">
 </head>
 <body{% if embedded %} class="workbench-embedded"{% endif %}>
   <div class="app-shell">
@@ -77,16 +78,24 @@
 
       <section class="view" data-page="search">
         <section class="scenario-search" aria-label="按任务查询">
-          <h2>你想查什么？</h2>
+          <header class="scenario-header">
+            <h2>发布资料查询</h2>
+            <p>围绕同一个功能，查看最早记录、完整说明和版本变化。</p>
+            <div class="scenario-domains" role="group" aria-label="查询对象">
+              <button type="button" data-scenario-domain="feature" aria-pressed="true">功能</button>
+              <button type="button" data-scenario-domain="probe" aria-pressed="false">探头</button>
+            </div>
+          </header>
           <div class="scenario-tasks" role="group" aria-label="选择查询任务">
-            <button type="button" data-scenario-task="probe" aria-pressed="true">查探头首次支持</button>
-            <button type="button" data-scenario-task="feature" aria-pressed="false">查功能当前完整描述</button>
-            <button type="button" data-scenario-task="version" aria-pressed="false">查版本变化</button>
+            <button type="button" data-scenario-task="first" aria-pressed="false">首次支持</button>
+            <button type="button" data-scenario-task="feature" aria-pressed="true">完整描述</button>
+            <button type="button" data-scenario-task="version" aria-pressed="false">版本变化</button>
+            <button type="button" data-scenario-task="probe" hidden aria-pressed="false">探头首次支持</button>
           </div>
           <form id="scenario-form" class="scenario-controls">
-            <label id="scenario-query-label">探头名称<input id="scenario-query" placeholder="例如 F4-9E" autocomplete="off"></label>
-            <label id="scenario-model-label" hidden>白皮书型号<select id="scenario-model"><option value="">自动选择</option></select></label>
-            <label id="scenario-target-label" hidden>目标版本<select id="scenario-target"></select></label>
+            <label id="scenario-query-label">功能名称或关键词<input id="scenario-query" maxlength="200" placeholder="例如 VAid GYN、子宫畸形分类" autocomplete="off"></label>
+            <label id="scenario-model-label">白皮书型号<select id="scenario-model"><option value="">自动选择</option></select></label>
+            <label id="scenario-target-label">目标版本<select id="scenario-target"></select></label>
             <label id="scenario-base-label" hidden>对比基准（可选）<select id="scenario-base"></select></label>
             <button type="submit" class="primary-button">查询</button>
           </form>
@@ -388,12 +397,20 @@
       </section>
 
       <section class="view" data-page="review">
-        <div class="section-heading compact"><div><p class="page-note">扫描已登记目录中的新或变更发布文件；审核后进入发布版本。</p></div><div class="workspace-actions"><button type="button" class="ghost-button" id="review-directory-settings">目录设置</button><button class="primary-button" id="scan-notes">{% if integrated_mode %}扫描并同步文件{% else %}重新智能整理{% endif %}</button></div></div>
+        <section id="review-overview" class="review-overview" aria-label="资料同步流程">
+          <article class="review-flow-card"><h3>1. 同步发布文件</h3><p>把新 Release Note 放入登记目录，再点击同步。</p>
+            <div id="review-source-summary" aria-live="polite"></div><div class="review-sync-actions"><button class="primary-button" id="scan-notes">扫描并同步文件</button><button type="button" class="ghost-button" id="review-directory-settings">设置目录</button><span id="review-model-settings"></span></div></article>
+          <article class="review-flow-card"><h3>2. 确认导入内容</h3><div id="review-pending-summary" aria-live="polite"></div><button type="button" class="text-button" data-review-releases>查看已发布版本</button></article>
+          <div class="review-query-next"><strong>3. 开始查询</strong><span>已入库的内容可在查询页查版本、探头和功能原文。</span><button type="button" class="ghost-button" data-review-query>前往查询</button></div>
+        </section>
+        <section id="review-detail" hidden>
+        <div class="review-detail-heading"><button type="button" class="text-button" data-review-overview>← 返回同步概览</button><h3>确认导入内容</h3><span id="review-detail-context"></span></div>
         <div class="candidate-version-navigation" role="group" aria-label="待审核版本切换">
           <button type="button" class="release-step-button" data-candidate-version-step="-1" aria-label="切换到前一版本" title="前一版本">‹</button>
           <div id="candidate-version-tabs" class="release-version-tabs" role="tablist" aria-label="待审核版本号"></div>
           <button type="button" class="release-step-button" data-candidate-version-step="1" aria-label="切换到后一版本" title="后一版本">›</button>
         </div>
+        <details id="review-filter-options" class="review-filter-options"><summary>分类与筛选</summary>
         <section class="candidate-filter-panel" aria-label="审核筛选">
           <div id="candidate-category-tabs" class="candidate-category-tabs" role="tablist" aria-label="待审核内容分类"></div>
           <label class="search scoped-search"><span class="scope-chip">当前版本</span><input id="candidate-search" aria-label="筛选当前版本候选" placeholder="筛选中文、英文或术语，例如 VATT"></label>
@@ -401,6 +418,7 @@
           <label>处理优先级<select id="review-priority-filter"><option value="focus">先处理风险项</option><option value="all">全部候选</option><option value="missing_language">缺少中文/英文</option><option value="semantic_review">语义待核对</option><option value="ready">可快速确认</option></select></label>
           <strong id="candidate-filter-summary">正在载入…</strong>
         </section>
+        </details>
         <div id="candidate-version-page" role="tabpanel"><div id="candidate-list" class="candidate-list"></div></div>
         <details class="review-guidance">
           <summary>审核规则说明</summary>
@@ -408,6 +426,7 @@
         </details>
         <div id="review-issue-list" class="review-issue-list"></div>
         <details class="rejected-panel"><summary>已拒绝记录（<span id="rejected-count">0</span>）</summary><div id="rejected-candidate-list" class="candidate-list"></div></details>
+        </section>
       </section>
     </main>
   </div>

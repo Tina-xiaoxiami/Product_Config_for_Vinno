@@ -1,0 +1,189 @@
+/* Shared presentation for release queries, document management and evidence readers. */
+body, body.workbench-embedded {
+  --bg: #eef3f9;
+  --surface: #fff;
+  --surface-2: #f5f8fc;
+  --ink: #20334e;
+  --ink-2: #52657e;
+  --ink-3: #667a94;
+  --muted: #667a94;
+  --line: #dbe4ef;
+  --line-strong: #c6d4e5;
+  --primary: #2563c9;
+  --primary-strong: #174ca2;
+  --primary-hover: #174ca2;
+  --primary-weak: #eaf2ff;
+  --primary-line: #b8cff5;
+  --green: var(--primary);
+  --green-dark: var(--primary-strong);
+  --mint: var(--primary-weak);
+  color: var(--ink);
+  background: var(--bg);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+body.workbench-embedded { background: var(--bg); color: var(--ink); font-size: 14px; }
+body main, body.workbench-embedded main, body.workbench-embedded.search-focused main { padding: 20px 24px 32px; background: var(--bg); }
+body .view { min-width: 0; }
+body .sidebar { background: #192f50; color: #e5edfa; }
+body .brand-mark { background: #a9c8fa; color: #192f50; }
+body .sidebar .nav-item { color: #b6c6de; }
+body .sidebar .nav-item:hover, body .sidebar .nav-item.active { color: #fff; background: #2a4977; }
+body .sidebar .nav-count { color: #d7e5fa; }
+body .sidebar .source-note small { color: #b6c6de; }
+body h2, body h3, body h4 { color: var(--ink); }
+body :is(button, input, select, textarea) { font: inherit; }
+body :is(button, .primary-button, .ghost-button), body.workbench-embedded button { min-height: 36px; border-radius: 7px; padding: 7px 14px; line-height: 20px; }
+body :is(input:not([type="checkbox"]):not([type="radio"]), select), body.workbench-embedded #project-switcher {
+  min-height: 38px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 11px; color: var(--ink); background: var(--surface); min-width: 0;
+}
+body textarea { border-color: var(--line-strong); border-radius: 7px; color: var(--ink); }
+body input::placeholder { color: #8291a7; }
+body .primary-button, body.workbench-embedded .primary-button { color: #fff; background: var(--primary); border: 1px solid var(--primary); }
+body .primary-button:hover, body.workbench-embedded .primary-button:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+body .ghost-button, body.workbench-embedded .ghost-button { color: var(--ink-2); background: var(--surface); border-color: var(--line-strong); }
+body .ghost-button:hover, body.workbench-embedded .ghost-button:hover { color: var(--primary-strong); border-color: var(--primary-line); background: var(--primary-weak); }
+body :is(button, input, select, summary):focus-visible { outline: 2px solid #3b76d6; outline-offset: 3px; }
+body button:disabled { cursor: not-allowed; opacity: .5; }
+body .topbar, body.workbench-embedded .topbar { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 0 0 16px; background: var(--surface); }
+body .topbar-actions { align-items: center; gap: 12px; }
+body .section-heading { gap: 12px; margin-bottom: 16px; }
+body .section-heading h2 { font-size: 20px; }
+body .section-heading p { font-size: 13px; }
+
+/* A stable query composer: domain, intent, then one aligned input row. */
+body .scenario-search { margin: 0; }
+body .scenario-tasks[hidden], body .scenario-domains[hidden] { display: none; }
+body .scenario-header { padding: 20px 24px 14px; border: 1px solid var(--line); border-bottom: 0; border-radius: 12px 12px 0 0; background: linear-gradient(115deg, #e6efff, #f5f8ff); }
+body .scenario-header h2 { margin: 0; font-size: 22px; line-height: 1.4; font-weight: 650; }
+body .scenario-header p { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+body .scenario-domains { display: flex; align-items: center; gap: 6px; margin-top: 16px; }
+body .scenario-domains button { min-width: 88px; border: 1px solid transparent; color: var(--ink-2); background: transparent; font-weight: 600; }
+body .scenario-domains button[aria-pressed="true"] { color: #fff; background: var(--primary); border-color: var(--primary); }
+body .scenario-tasks { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; padding: 14px 24px 0; border-inline: 1px solid var(--line); background: #fff; }
+body .scenario-tasks button { min-width: 108px; border: 1px solid transparent; color: var(--ink-2); background: var(--surface-2); font-size: 13px; }
+body .scenario-tasks button[aria-pressed="true"] { color: var(--primary-strong); border-color: var(--primary-line); background: var(--primary-weak); font-weight: 600; }
+body .scenario-controls { display: grid; grid-template-columns: 170px minmax(0, 170px) minmax(0, 170px) minmax(0, 1fr) 92px; align-items: end; gap: 12px; margin: 0; padding: 18px 24px 22px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; background: #fff; }
+body .scenario-controls label { display: grid; min-width: 0; gap: 6px; color: var(--ink-2); font-size: 12px; }
+body .scenario-controls #scenario-query-label { grid-column: 2 / 5; grid-row: 1; min-width: 0; }
+body .scenario-controls #scenario-model-label { grid-column: 1; grid-row: 2; }
+body .scenario-controls #scenario-target-label { grid-column: 2; grid-row: 2; }
+body .scenario-controls #scenario-base-label { grid-column: 3; grid-row: 2; }
+body .scenario-controls:has(#scenario-model-label[hidden]) #scenario-target-label { grid-column: 1; }
+body .scenario-controls:has(#scenario-model-label[hidden]) #scenario-base-label { grid-column: 2; }
+body .scenario-controls :is(input, select) { width: 100%; max-width: none; height: 40px; font-size: 14px; }
+body .scenario-controls .project-context-actions { display: grid; grid-template-columns: minmax(0, 1fr); grid-column: 1; grid-row: 1; align-items: end; gap: 6px; padding-bottom: 0; min-width: 0; }
+body .scenario-controls .project-context-actions::before { content: "产品系列"; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
+body .scenario-controls .project-context-label { display: none; }
+body .scenario-controls #project-switcher, body.workbench-embedded .scenario-controls #project-switcher { width: 100%; max-width: none; height: 40px; margin: 0; }
+body .scenario-controls > button[type="submit"] { grid-column: 5; grid-row: 1; min-width: 92px; height: 40px; }
+body .scenario-examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+body .scenario-examples button { color: var(--ink-2); border: 1px solid var(--line); background: #fff; font-size: 13px; }
+body #scenario-result:empty { display: none; }
+body .scenario-answer { padding: 24px; margin: 18px 0 0; border: 1px solid var(--line); border-top: 3px solid var(--primary); border-radius: 10px; background: #fff; }
+body .scenario-answer h3 { font-size: 18px; line-height: 1.5; }
+body .scenario-answer > p { color: var(--ink-2); font-size: 13px; }
+body .scenario-description-heading { padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+body .scenario-description-heading > button { margin-left: auto; }
+body .scenario-content { width: 100%; min-width: 0; max-width: none; font-size: 14px; line-height: 1.85; overflow-wrap: anywhere; white-space: pre-wrap; }
+body .scenario-content p { margin: 0 0 12px; }
+body .scenario-answer > details { padding: 12px 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+body .scenario-answer summary { color: var(--ink-2); cursor: pointer; font-size: 13px; }
+body .scenario-answer details[open] > summary { margin-bottom: 12px; color: var(--primary-strong); }
+body .scenario-answer details article { padding: 12px 0; border-bottom: 1px solid var(--line); }
+body .scenario-answer details article:last-child { border-bottom: 0; }
+body .scenario-advanced { padding: 12px 16px; margin-top: 18px; border: 1px solid var(--line); border-radius: 9px; background: #f7faff; }
+body .scenario-advanced > summary { color: var(--ink-2); font-size: 13px; }
+body .scenario-advanced[open] > summary { margin-bottom: 16px; }
+body.workbench-embedded .unified-search-form, body.workbench-embedded .global-search-panel { background: transparent; }
+
+/* Management uses short overview cards, with dense tools inside disclosure panels. */
+body .review-overview { gap: 16px; }
+body .review-flow-card { padding: 22px; border-color: var(--line); border-radius: 10px; background: #fff; }
+body .review-flow-card:first-child { border-top: 3px solid var(--primary); }
+body .review-flow-card:nth-child(2) { border-top: 3px solid #55a5a4; }
+body .review-flow-card h3 { font-size: 18px; margin-bottom: 12px; }
+body .review-flow-card p { font-size: 13px; line-height: 1.7; }
+body .review-source-path { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+body .review-sync-actions { margin-top: 16px; gap: 8px; }
+body .review-query-next { padding: 16px 20px; border: 1px solid var(--primary-line); border-radius: 9px; background: #eaf2ff; }
+body .review-detail-heading { padding: 10px 0 16px; }
+body .review-filter-options, body .review-bulk-tools { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: #fff; }
+body .review-filter-options > summary, body .review-bulk-tools > summary { color: var(--ink-2); }
+body .review-filter-options[open] > summary, body .review-bulk-tools[open] > summary { margin-bottom: 12px; }
+body .review-filter-options .candidate-filter-panel { gap: 10px; margin: 0; padding: 0; }
+body .candidate-filter-panel .scoped-search { min-height: 38px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: #fff; }
+body .candidate-filter-panel .scoped-search input { min-height: 36px; padding: 6px; border: 0; background: transparent; }
+body .candidate-filter-panel .scope-chip { padding: 3px 6px; white-space: nowrap; font-size: 12px; }
+body .candidate-filter-panel select { min-width: 0; }
+body .candidate-category-tabs { gap: 6px; }
+body .candidate-category-tabs button { padding: 6px 12px; font-size: 13px; }
+body .review-item { background: #fff; border-radius: 8px; }
+body .review-item > summary { min-height: 54px; padding: 12px 16px; gap: 10px; }
+body .review-item[open] > summary { background: var(--primary-weak); border-radius: 8px 8px 0 0; }
+body .review-item > summary > span { padding: 2px 7px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); }
+body .review-item > summary > small { color: #916124; }
+body .candidate-card { gap: 14px; padding: 18px; }
+body .candidate-bilingual-columns { border-radius: 7px; background: var(--surface-2); }
+body .candidate-language-column { padding: 14px; }
+body .candidate-actions { max-width: 260px; }
+body .review-guidance, body .rejected-panel { padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+body .review-guidance summary, body .rejected-panel summary { color: var(--ink-2); font-size: 13px; }
+
+/* The same surfaces, type scale and controls extend to version records and comparison. */
+body .release-version-navigation, body .candidate-version-navigation { border-radius: 8px; padding: 8px; background: #fff; }
+body .release-version-tab { border-radius: 7px; padding: 7px 12px; }
+body .release-version-tab span { font-family: inherit; font-size: 15px; }
+body .release-step-button { width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 7px; font-size: 22px; }
+body .release-row, body .diff-column, body .compare-controls, body .structured-release-summary { border-color: var(--line); border-radius: 9px; }
+body .release-row { background: #fff; }
+body .compare-controls { flex-wrap: wrap; gap: 12px; background: #e8f0fd; padding: 18px; }
+body .compare-controls label { gap: 6px; }
+body .compare-controls select { min-width: 170px; padding: 7px 11px; }
+body .diff-column { background: #fff; border-top: 3px solid var(--primary-line); }
+body .diff-column h3 { font-size: 16px; }
+body .structured-release-summary { background: #eaf2ff; }
+body table th { color: var(--ink-2); background: #edf3fb; font-size: 13px; }
+body table td { font-size: 13px; }
+
+/* Readers have one scrollable content area; auxiliary text never consumes fixed space. */
+body dialog { color: var(--ink); background: #fff; border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 18px 60px #17335730; }
+body dialog::backdrop { background: #1c304c73; }
+body .dialog-heading { gap: 16px; }
+body .dialog-heading h2 { color: var(--ink); font-size: 19px; line-height: 1.5; }
+body .dialog-heading p { color: var(--ink-2); font-size: 12px; }
+body .dialog-actions { flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+body .dialog-actions > span { color: var(--muted); font-size: 12px; }
+body .search-preview-shell { padding: 20px; gap: 14px; }
+body .search-preview-content { border-radius: 8px; border-color: var(--line); background: var(--surface-2); }
+body .search-preview-content .scenario-content { padding: 16px; background: #fff; }
+body .search-pdf-auxiliary { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+body .search-preview-content article { border-color: var(--line); }
+body .configuration-table-wrap, body .archive-record, body .effective-configuration-grid article { border-color: var(--line); border-radius: 7px; }
+body .empty-state { min-height: 100px; padding: 20px; color: var(--ink-2); background: #f5f8fc; border-color: var(--line); border-radius: 8px; }
+
+@media (max-width: 1000px) {
+  body main, body.workbench-embedded main, body.workbench-embedded.search-focused main { padding: 16px; }
+  body .scenario-header { padding: 18px 18px 12px; }
+  body .scenario-tasks { padding: 12px 18px 0; }
+  body .scenario-controls { padding: 16px 18px 18px; }
+  body .candidate-actions { max-width: none; }
+}
+@media (max-width: 700px) {
+  body main, body.workbench-embedded main, body.workbench-embedded.search-focused main { padding: 12px; }
+  body .scenario-header h2 { font-size: 20px; }
+  body .scenario-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+  body .scenario-controls label, body .scenario-controls .project-context-actions { flex: 1 1 160px; min-width: 0; }
+  body .scenario-controls #scenario-query-label { flex: 1 1 100%; min-width: 0; }
+  body .scenario-controls > button[type="submit"] { flex: 1 1 100%; }
+  body .scenario-tasks { gap: 5px; }
+  body .scenario-tasks button { flex: 1; min-width: 0; padding-inline: 8px; }
+  body .scenario-answer, body .review-flow-card { padding: 18px; }
+  body .review-overview { grid-template-columns: minmax(0, 1fr); }
+  body .review-query-next { align-items: flex-start; }
+  body .review-query-next > span { flex: 1 1 100%; }
+  body .compare-controls { display: flex; }
+  body .compare-controls label { flex: 1 1 160px; min-width: 0; }
+  body .compare-controls select { min-width: 0; width: 100%; }
+  body .search-preview-shell { padding: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { body .view.active { animation: none; } }

@@ -11,12 +11,15 @@
       <el-tab-pane label="查询" name="query" />
       <el-tab-pane label="资料管理" name="manage" />
     </el-tabs>
-    <el-tabs v-if="activeTab !== 'search'" v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs workspace-management-tabs">
+    <details v-if="activeTab !== 'search'" class="workspace-management-tools" :open="activeTab !== 'review'">
+      <summary>版本记录与维护工具</summary>
+    <el-tabs v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs workspace-management-tabs">
       <el-tab-pane label="文件同步" name="review" />
       <el-tab-pane label="发布版本" name="releases" />
       <el-tab-pane label="发布对比" name="compare" />
       <el-tab-pane label="功能版本管理" name="feature-versions" />
     </el-tabs>
+    </details>
 
     <section v-show="isWorkbenchTab(activeTab)" class="workspace-body">
       <div class="workbench-stack">
@@ -214,60 +217,61 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
   min-height: 420px;
   display: flex;
   flex-direction: column;
-  color: #1f2937;
+  color: #20334e;
+  background: #eef3f9;
 }
-
 .workspace-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 2px 12px;
+  padding: 8px 6px 14px;
 }
-
-.workspace-header h2 { margin: 0 0 4px; font-size: 20px; }
-.workspace-header > .standalone-link { margin-top: 6px; }
+.workspace-header h2 { margin: 0; font-size: 22px; font-weight: 650; color: #20334e; }
 .workspace-tabs { flex: 0 0 auto; }
-.workspace-tabs :deep(.el-tabs__header) { margin-bottom: 10px; }
+.workspace-tabs :deep(.el-tabs__header) { margin: 0 0 12px; }
+.workspace-tabs :deep(.el-tabs__nav-wrap::after) { background-color: #dbe4ef; height: 1px; }
+.workspace-tabs :deep(.el-tabs__item) { height: 42px; color: #52657e; font-size: 14px; }
+.workspace-tabs :deep(.el-tabs__item.is-active) { color: #174ca2; font-weight: 600; }
+.workspace-tabs :deep(.el-tabs__active-bar) { height: 3px; background: #2563c9; border-radius: 3px; }
 .workspace-tabs :deep(.el-tabs__content) { display: none; }
-.workspace-management-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
-
+.workspace-management-tools { flex: 0 0 auto; margin-bottom: 12px; padding: 10px 14px; border: 1px solid #dbe4ef; border-radius: 8px; background: #e6eef9; }
+.workspace-management-tools > summary { cursor: pointer; color: #52657e; font-size: 13px; }
+.workspace-management-tools[open] > summary { margin-bottom: 8px; }
+.workspace-management-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.workspace-management-tabs :deep(.el-tabs__item) { height: 36px; font-size: 13px; }
 .workspace-body {
   min-height: 0;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
-  border: 1px solid #dbe3ec;
-  border-radius: 8px;
+  background: #eef3f9;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
 }
-
-.standalone-link { color: #2563eb; font-size: 12px; white-space: nowrap; text-decoration: none; }
-.standalone-link:hover { text-decoration: underline; }
-
+.standalone-link { color: #52657e; font-size: 12px; white-space: nowrap; text-decoration: none; }
+.standalone-link:hover { color: #174ca2; text-decoration: underline; }
+.standalone-link:focus-visible { outline: 2px solid #2563c9; outline-offset: 4px; }
 .workbench-stack,
 .workbench-frame-shell { min-height: 0; flex: 1 1 auto; }
 .workbench-frame-shell { height: 100%; }
-.workbench-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
-.workbench-status {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #64748b;
-}
-.workbench-status .el-icon { font-size: 28px; color: #409eff; }
-.workbench-status strong { color: #334155; }
+.workbench-frame { display: block; width: 100%; height: 100%; border: 0; background: #eef3f9; }
+.workbench-status { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #667a94; }
+.workbench-status .el-icon { font-size: 28px; color: #2563c9; }
+.workbench-status strong { color: #20334e; }
 .workbench-status span { font-size: 12px; }
-
 .native-release-pane { overflow: auto; }
-.native-release-pane > :deep(.feature-release) { padding: 14px; }
-
+.native-release-pane > :deep(.feature-release) { padding: 18px; background: #eef3f9; color: #20334e; }
+.native-release-pane :deep(.el-card) { border-color: #dbe4ef; border-radius: 9px; box-shadow: none; }
+.native-release-pane :deep(.el-card__header) { background: #e8f0fd; color: #20334e; }
+.native-release-pane :deep(.el-button) { min-height: 36px; border-radius: 7px; }
+.native-release-pane :deep(.el-input__wrapper),
+.native-release-pane :deep(.el-select__wrapper) { min-height: 38px; border-radius: 7px; }
+.native-release-pane :deep(.el-table th.el-table__cell) { background: #edf3fb; color: #52657e; }
 @media (max-width: 900px) {
   .release-workspace { min-height: 420px; }
-  .workspace-header { flex-wrap: wrap; }
+  .workspace-header { flex-wrap: wrap; padding-inline: 2px; }
+  .workspace-header h2 { font-size: 20px; }
 }
 </style>

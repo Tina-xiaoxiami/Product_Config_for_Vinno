@@ -1,5 +1,5 @@
 const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
-const scenarioState = { task: 'probe', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
+const scenarioState = { task: 'feature', drafts: {feature: '', probe: ''}, featureTask: 'feature', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -100,6 +100,10 @@ async function switchProject(projectId) {
   scenarioState.request++; scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = '';
   document.querySelector('#scenario-result').innerHTML = '';
   document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>';
+  state.reviewStage = 'overview';
+  state.candidates = [];
+  state.importBatches = [];
+  renderReviewOverview();
   state.searchPage = 1;
   localStorage.setItem('featureTracker.activeProject', String(state.activeProjectId));
   document.querySelector('#project-switcher').value = String(state.activeProjectId);
@@ -190,8 +194,12 @@ function renderImportBatches() {
 
 async function loadImportBatches() {
   if (!state.activeProjectId) return;
-  state.importBatches = await api(projectPath('/api/v1/import-batches'));
+  const project = state.activeProjectId;
+  const batches = await api(projectPath('/api/v1/import-batches'));
+  if (project !== state.activeProjectId) return;
+  state.importBatches = batches;
   renderImportBatches();
+  renderReviewOverview();
 }
 
 async function undoImportBatch(batchId) {
@@ -1068,6 +1076,7 @@ function setSearchFiltersVisible(visible) {
 }
 
 function positionSearchProject(view) {
+  document.body.classList.toggle('review-focused', view === 'review');
   if (!workbenchConfig.embedded) return;
   const context = document.querySelector('#project-context-actions');
   const target = document.querySelector(view === 'search' ? '.scenario-controls' : '.topbar-actions');
@@ -1529,10 +1538,12 @@ async function openGlobalSearchVersion(version, projectId = null) {
 }
 
 async function loadCandidates() {
+  const project = state.activeProjectId;
   const [candidates, rejectedCandidates] = await Promise.all([
     api(projectPath('/api/v1/import-candidates')),
     api(projectPath('/api/v1/import-candidates?status=rejected')),
   ]);
+  if (project !== state.activeProjectId) return;
   state.candidates = candidates;
   state.rejectedCandidates = rejectedCandidates;
   const versions = candidateVersions();
@@ -1630,14 +1641,59 @@ function filteredCandidates() {
   });
 }
 
+function reviewStageFromParams(params) {
+  if (params.review_mode === 'overview') return 'overview';
+  return params.review_mode === 'confirm' || ['version', 'category', 'quality', 'priority', 'q'].some(key => params[key]) ? 'confirm' : 'overview';
+}
+
+function setReviewStage(stage, { sync = true } = {}) {
+  state.reviewStage = stage === 'confirm' ? 'confirm' : 'overview';
+  renderCandidateReview();
+  if (sync) syncLocation();
+}
+
+function reviewOverviewMarkup(project, candidates, batches) {
+  const sources = (project?.sources || []).filter(source => source.enabled !== 0 && source.enabled !== false);
+  const paths = sources.length ? sources.map(source => `<p class="review-source-path">${escapeHtml(source.path)}</p>`).join('') : '<p>尚未设置发布目录，请先设置目录。</p>';
+  const latest = batches[0];
+  const labels = { completed: '最近同步', failed: '同步失败', undone: '最近同步已撤销', running: '正在同步' };
+  const recent = latest ? `<p class="review-sync-state">${escapeHtml(labels[latest.status] || '最近同步状态未知')} · ${escapeHtml(formatDateTime(latest.completed_at || latest.created_at))}${latest.status === 'completed' ? ` · 本次新增 ${Number(latest.stats?.candidates_created) || 0} 条待确认` : ''}</p>` : '<p class="review-sync-state">暂无同步记录。</p>';
+  const versions = new Set(candidates.map(item => item.version || '未标注'));
+  return { source: paths + recent, pending: candidates.length
+    ? `<p>待确认总计 ${candidates.length} 条 · ${versions.size} 个版本（含历史记录）</p><button type="button" class="primary-button" data-review-confirm>处理待确认内容</button>`
+    : '<p>没有待确认内容。</p>' };
+}
+
+function renderReviewOverview() {
+  const overview = document.querySelector('#review-overview');
+  const detail = document.querySelector('#review-detail');
+  const confirming = state.reviewStage === 'confirm';
+  if (overview) overview.hidden = confirming;
+  if (detail) detail.hidden = !confirming;
+  const project = activeProject();
+  const markup = reviewOverviewMarkup(project, state.candidates, state.importBatches || []);
+  const source = document.querySelector('#review-source-summary');
+  const pending = document.querySelector('#review-pending-summary');
+  if (source) source.innerHTML = markup.source;
+  if (pending) pending.innerHTML = markup.pending;
+  const scan = document.querySelector('#scan-notes');
+  if (scan) {
+    scan.disabled = Boolean(state.reviewSyncing) || !(project?.sources || []).some(item => item.enabled !== 0 && item.enabled !== false);
+    scan.textContent = state.reviewSyncing ? '正在同步…' : '扫描并同步文件';
+  }
+}
+
 function renderCandidateReview({ focusTab = false, focusCategoryTab = false } = {}) {
+  renderReviewOverview();
   const versions = candidateVersions();
   const hasCandidates = state.candidates.length > 0;
   const navigation = document.querySelector('.candidate-version-navigation');
   const filters = document.querySelector('.candidate-filter-panel');
   const page = document.querySelector('#candidate-version-page');
-  if (navigation) navigation.hidden = !hasCandidates;
+  if (navigation) navigation.hidden = versions.length < 2;
   if (filters) filters.hidden = !hasCandidates;
+  const filterOptions = document.querySelector('#review-filter-options');
+  if (filterOptions) filterOptions.hidden = !hasCandidates;
   page?.classList.toggle('is-empty', !hasCandidates);
   if (!versions.includes(state.activeCandidateVersion)) state.activeCandidateVersion = versions[0] || null;
   renderCandidateVersionTabs({ focusTab });
@@ -1656,12 +1712,14 @@ function renderCandidateReview({ focusTab = false, focusCategoryTab = false } = 
   document.querySelector('#candidate-filter-summary').textContent = state.activeCandidateVersion
     ? `显示 ${candidates.length}/${categoryTotal} · 高风险 ${highRisk} · 待核对 ${mediumRisk} · 缺中 ${missingCn} · 缺英 ${missingEn}`
     : '没有待审核记录';
+  const context = document.querySelector('#review-detail-context');
+  if (context) context.textContent = state.activeCandidateVersion ? `版本 ${state.activeCandidateVersion} · 显示 ${candidates.length}/${categoryTotal} 条` : '暂无待确认内容';
   const container = document.querySelector('#candidate-list');
-  container.innerHTML = candidates.length
+  container.innerHTML = state.reviewStage !== 'confirm' ? '' : candidates.length
     ? renderCandidateHierarchy(candidates, versionCandidates, categoryCandidates)
     : hasCandidates ? '<div class="empty-state compact">当前筛选条件下没有待审核记录。</div>' : '<div class="empty-state compact">暂无待审核记录。</div>';
   // 推荐处置按“当前可见候选”批量取一次，避免每张卡片各发一次请求。
-  ensureCandidateRecommendations(candidates);
+  if (state.reviewStage === 'confirm') ensureCandidateRecommendations(candidates);
 }
 
 const candidateRecommendationRequests = { key: '', pending: null };
@@ -1821,6 +1879,7 @@ function activeCandidateAction(item) {
 }
 
 function renderCandidateRecommendation(item) {
+  if (integratedMode()) return '';
   const recommendation = candidateRecommendation(item);
   if (!recommendation) {
     return '<p class="candidate-recommendation pending"><span>推荐：</span><strong>正在生成…</strong></p>';
@@ -1977,7 +2036,12 @@ function renderCandidateHierarchy(candidates, versionCandidates = candidates, ca
   const projectControls = state.candidates.length > versionCandidates.length
     ? renderScopeControls(state.candidates, 'project')
     : '';
-  return `${selectionToolbar}${projectControls}${renderScopeControls(versionCandidates, 'version')}${categoryControls}<div class="candidate-page-items">${candidates.map(renderCandidateCard).join('')}</div>`;
+  return `${selectionToolbar}<details class="review-bulk-tools"><summary>批量处理</summary>${projectControls}${renderScopeControls(versionCandidates, 'version')}${categoryControls}</details><div class="candidate-page-items">${candidates.map(renderReviewItem).join('')}</div>`;
+}
+
+function renderReviewItem(item) {
+  const missing = !item.title_cn ? '缺中文' : !item.title_en ? '缺英文' : '待确认';
+  return `<details class="review-item"><summary><span>${escapeHtml(categoryLabels[item.category] || item.category || '其他')}</span><strong>${escapeHtml(item.title_cn || item.title_en || '未命名记录')}</strong><small>${escapeHtml(missing)}</small></summary>${renderCandidateCard(item)}</details>`;
 }
 
 async function approveCandidates(candidateIds) {
@@ -2115,9 +2179,18 @@ function openFeaturePromotion(id) {
 }
 
 async function scanNotes() {
-  const result = await api('/api/v1/import-batches/scan', { method: 'POST', body: JSON.stringify({ project_id: state.activeProjectId }) });
-  showNotice(`整理完成：${result.versions_found} 个版本，清理 ${result.candidates_removed} 条旧解析记录，新增 ${result.candidates_created} 条候选，${result.auto_approved} 条 Bug 已直接进入版本。${scanWarningText(result)}`);
-  await refreshAll({ includeExperience: true });
+  if (state.reviewSyncing) return;
+  const project = state.activeProjectId;
+  state.reviewSyncing = true;
+  renderReviewOverview();
+  try {
+    const result = await api('/api/v1/import-batches/scan', { method: 'POST', body: JSON.stringify({ project_id: project }) });
+    showNotice(`同步完成：新增 ${result.candidates_created} 条待确认。${scanWarningText(result)}`);
+    if (project === state.activeProjectId) await refreshAll({ includeExperience: true });
+  } finally {
+    state.reviewSyncing = false;
+    renderReviewOverview();
+  }
 }
 
 async function compareVersions() {
@@ -2351,7 +2424,7 @@ const VIEW_PARAMS = {
   probe_versions: ['probe', 'series', 'version'],
   training: ['q'],
   terms: ['project', 'q', 'status', 'category'],
-  review: ['project', 'version', 'category', 'quality', 'priority', 'q'],
+  review: ['project', 'version', 'category', 'quality', 'priority', 'q', 'review_mode'],
 };
 
 function parseLocation(rawHash = window.location.hash) {
@@ -2488,6 +2561,8 @@ function currentViewParams() {
     if (text('#term-category-filter')) params.category = text('#term-category-filter');
   }
   if (view === 'review') {
+    params.review_mode = state.reviewStage === 'confirm' ? 'confirm' : 'overview';
+    if (params.review_mode === 'overview') return params;
     if (state.activeCandidateVersion) params.version = state.activeCandidateVersion;
     if (state.activeCandidateCategory !== 'all') params.category = state.activeCandidateCategory;
     if (text('#candidate-quality-filter')) params.quality = text('#candidate-quality-filter');
@@ -2608,6 +2683,7 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
   }
 
   if (view === 'review') {
+    state.reviewStage = reviewStageFromParams(params);
     const version = params.version || candidateVersions()[0] || null;
     if (version) {
       if (candidateVersions().includes(version)) selectCandidateVersion(version);
@@ -2619,6 +2695,7 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
     if (!setSelectValue('#candidate-quality-filter', params.quality || '')) missed.push(`双语质量 ${params.quality}`);
     if (!setSelectValue('#review-priority-filter', params.priority || 'focus')) missed.push(`处理优先级 ${params.priority}`);
     document.querySelector('#candidate-search').value = params.q || '';
+    document.querySelector('#review-filter-options').open = Boolean(params.category || params.quality || params.priority || params.q);
     renderCandidateReview();
   }
 
@@ -3588,17 +3665,52 @@ function renderScenarioVersionOptions(target = null, base = null) {
 }
 
 function setScenarioTask(task) {
-  if (!['probe', 'feature', 'version'].includes(task)) task = 'probe';
+  if (!['first', 'probe', 'feature', 'version'].includes(task)) task = 'feature';
   scenarioState.task = task;
-  document.querySelectorAll('[data-scenario-task]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioTask === task)));
+  if (task !== 'probe') scenarioState.featureTask = task;
+  const probe = task === 'probe';
+  document.querySelectorAll('[data-scenario-domain]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioDomain === (probe ? 'probe' : 'feature'))));
+  document.querySelectorAll('[data-scenario-task]').forEach(button => {
+    button.hidden = probe ? button.dataset.scenarioTask !== 'probe' : button.dataset.scenarioTask === 'probe';
+    button.setAttribute('aria-pressed', String(button.dataset.scenarioTask === task));
+  });
   const queryLabel = document.querySelector('#scenario-query-label');
-  queryLabel.hidden = task === 'version';
-  queryLabel.firstChild.textContent = task === 'feature' ? '功能名称' : '探头名称';
-  document.querySelector('#scenario-query').placeholder = task === 'feature' ? '例如 子宫畸形分类' : '例如 F4-9E';
+  queryLabel.hidden = false;
+  queryLabel.firstChild.textContent = probe ? '探头名称' : '功能名称或关键词';
+  document.querySelector('#scenario-query').placeholder = probe ? '例如 F4-9E' : '例如 VAid GYN、子宫畸形分类';
   document.querySelector('#scenario-model-label').hidden = task !== 'feature';
-  document.querySelector('#scenario-target-label').hidden = task === 'probe';
+  document.querySelector('#scenario-target-label').hidden = probe || task === 'first';
   document.querySelector('#scenario-base-label').hidden = task !== 'version';
   renderScenarioVersionOptions();
+}
+
+function changeScenarioTask(task) {
+  const query = document.querySelector('#scenario-query');
+  const previousDomain = scenarioState.task === 'probe' ? 'probe' : 'feature';
+  const domain = task === 'probe' ? 'probe' : 'feature';
+  scenarioState.drafts[previousDomain] = query.value;
+  if (previousDomain !== domain) query.value = scenarioState.drafts[domain] || '';
+  if (domain === 'feature') scenarioState.featureTask = task;
+  scenarioState.request++;
+  scenarioState.code = ''; scenarioState.series = ''; scenarioState.result = null;
+  document.querySelector('#advanced-search-wrap').open = false;
+  document.querySelector('#scenario-result').innerHTML = '';
+  setScenarioTask(task);
+  syncLocation();
+}
+
+function scenarioFirstMarkup(data, query) {
+  const records = data.earliest_records || [];
+  if (!records.length) return '<section class="scenario-answer"><h3>未找到可核实的历史记录</h3><p>可换用功能名称、曾用名或关键词继续查询。</p></section>';
+  return `<section class="scenario-answer"><h3>最早记载 · ${escapeHtml(records[0].version)}</h3><p>这是已收录资料中的最早记载，尚不能据此认定为首次支持。</p>${records.map(item => `<article><h4>${escapeHtml(item.title || query)}</h4><div class="scenario-content">${escapeHtml(item.config_evidence || item.matched_text || item.snippet || '')}</div>${scenarioPreviewButton(item.preview_id, item.locator, query, '查看原文依据')}</article>`).join('')}</section>`;
+}
+
+function filterScenarioVersion(data, query) {
+  if (!query) return data;
+  const matches = row => [row.title_cn, row.title_en, row.description_cn, row.description_en].some(value => String(value || '').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const filtered = {...data, target: data.target ? {...data.target, changes: (data.target.changes || []).filter(matches)} : null};
+  if (data.comparison) filtered.comparison = Object.fromEntries(Object.entries(data.comparison).map(([key, groups]) => [key, ['added', 'removed', 'common'].includes(key) ? Object.fromEntries(Object.entries(groups || {}).map(([category, rows]) => [category, rows.filter(matches)])) : groups]));
+  return filtered;
 }
 
 function scenarioPreviewButton(source, locator, query, label = '查看原文') {
@@ -3649,8 +3761,8 @@ function scenarioFeatureMarkup(data, query) {
     return `<section class="scenario-answer">${scenarioDescriptionMarkup(description)}<p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · 基线 ${escapeHtml(item.version)}</p>
       <details><summary>原文章节</summary><div class="scenario-content">${escapeHtml(section.content)}</div>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}</details>
       <details><summary>整理引用与版本</summary>${sources}</details>${later}
-      <p class="strategy-note">自动稿按已入库资料整理；原文引用已校验，内容含义仍可手工修订。${description.excluded_count ? `${description.excluded_count} 条其他语言、重复或非正文记录保留在依据中。` : ''}未登记和未索引的资料不在整理范围内。</p>
-      ${description.usage ? `<p class="strategy-note">今日自动整理：${description.usage.today_requests} 次请求 · 已返回用量 ${description.usage.today_tokens} tokens（未返回用量的请求按预留预算计）。</p>` : ''}</section>`;
+      <details class="scenario-method"><summary>整理范围与用量</summary><p class="strategy-note">自动稿按已入库资料整理；原文引用已校验，内容含义仍可手工修订。${description.excluded_count ? `${description.excluded_count} 条其他语言、重复或非正文记录保留在依据中。` : ''}未登记和未索引的资料不在整理范围内。</p>
+      ${description.usage ? `<p class="strategy-note">今日自动整理：${description.usage.today_requests} 次请求 · 已返回用量 ${description.usage.today_tokens} tokens（未返回用量的请求按预留预算计）。</p>` : ''}</details></section>`;
   }
   return `<section class="scenario-answer"><h3>${heading} · ${escapeHtml(item.version)}</h3><p>${escapeHtml(detail.title || item.title)} · ${escapeHtml(verificationLabel(detail.verification || 'unverified'))} · ${escapeHtml(detail.scope || item.scope || '适用范围未登记')}</p><div class="scenario-content">${escapeHtml(section.content)}</div><p>以上为完整章节文本；图片和原始版式可在原文预览中查看。未索引或未登记的资料不在本次结论中。</p>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}${later}<details><summary>来源与适用范围</summary><p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · ${escapeHtml(item.title)}</p><p>资料型号取自登记信息或资料名称，未登记的适用范围需要核对；后续变化不会自动合并到正文。</p></details></section>`;
 }
@@ -3687,7 +3799,9 @@ async function runScenario() {
   container.innerHTML = loadingMarkup('正在查询资料…');
   syncLocation();
   try {
-    const result = task === 'feature'
+    const result = task === 'first'
+      ? await api(projectPath(`/api/v1/workbench/search?${new URLSearchParams({q: query, task: 'earliest', sources: 'release,controlled', scope: 'current', source_group: 'release_note'})}`))
+      : task === 'feature'
       ? await api(projectPath('/api/v1/workbench/scenario'), {method: 'POST', body: JSON.stringify(Object.fromEntries(params))})
       : await api(projectPath(`/api/v1/workbench/scenario?${params}`));
     if (requestId !== scenarioState.request || task !== scenarioState.task || project !== state.activeProjectId) return;
@@ -3700,8 +3814,9 @@ async function runScenario() {
       model.value = scenarioState.model;
       scenarioState.result = result;
       container.innerHTML = scenarioFeatureMarkup(result, query);
-    } else container.innerHTML = task === 'probe' ? scenarioProbeMarkup(result, query) : scenarioVersionMarkup(result);
+    } else container.innerHTML = task === 'probe' ? scenarioProbeMarkup(result, query) : task === 'first' ? scenarioFirstMarkup(result, query) : scenarioVersionMarkup(filterScenarioVersion(result, query));
     syncLocation();
+    container.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   } catch (error) {
     if (requestId === scenarioState.request) container.innerHTML = `<p class="empty-state compact" role="alert">查询失败：${escapeHtml(error.message)}。请重试。</p>`;
   }
@@ -3784,15 +3899,8 @@ document.addEventListener('click', event => {
     if (loader) Promise.resolve(loader()).then(() => focusExpandedList(key)).catch(error => showNotice(error.message));
   }
 });
-document.querySelectorAll('[data-scenario-task]').forEach(button => button.addEventListener('click', () => {
-  document.querySelector('#advanced-search-wrap').open = false;
-  scenarioState.request++; scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = '';
-  if (scenarioState.task !== button.dataset.scenarioTask) document.querySelector('#scenario-query').value = '';
-  document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>';
-  setScenarioTask(button.dataset.scenarioTask);
-  document.querySelector('#scenario-result').innerHTML = '';
-  syncLocation();
-}));
+document.querySelectorAll('[data-scenario-task]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioTask)));
+document.querySelectorAll('[data-scenario-domain]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioDomain === 'probe' ? 'probe' : scenarioState.featureTask)));
 document.querySelector('#scenario-query').addEventListener('input', () => { scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = ''; scenarioState.request++; document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>'; document.querySelector('#scenario-result').innerHTML = ''; });
 for (const id of ['#scenario-target', '#scenario-base']) document.querySelector(id).addEventListener('change', () => { scenarioState.request++; document.querySelector('#scenario-result').innerHTML = ''; });
 document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); runScenario(); });
@@ -4157,6 +4265,12 @@ document.querySelectorAll('input[name="search-source"]').forEach(control => cont
   else syncLocation();
 }));
 document.querySelector('#review-directory-settings')?.addEventListener('click', () => document.querySelector('#manage-projects')?.click());
+document.querySelector('[data-page="review"]').addEventListener('click', event => {
+  if (event.target.closest('[data-review-confirm]')) setReviewStage('confirm');
+  if (event.target.closest('[data-review-overview]')) setReviewStage('overview');
+  if (event.target.closest('[data-review-releases]')) switchView('releases');
+  if (event.target.closest('[data-review-query]')) switchView('search');
+});
 document.querySelector('#global-search-panel').addEventListener('change', event => {
   const selector = event.target.closest('[data-search-whitepaper-model]');
   if (!selector) return;
@@ -4424,6 +4538,8 @@ document.querySelector('#review-issue-list')?.addEventListener('click', event =>
   }
   const target = event.target.closest('[data-review-issue-target]');
   if (!target) return;
+  state.reviewStage = 'confirm';
+  document.querySelector('#review-filter-options').open = true;
   if (candidateVersions().includes(target.dataset.version)) state.activeCandidateVersion = target.dataset.version;
   state.activeCandidateCategory = target.dataset.category;
   state.selectedCandidateIds = new Set();
@@ -4698,6 +4814,7 @@ function defaultView() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+setScenarioTask(scenarioState.task);
 const initialLocation = parseLocation();
 const initialProblems = locationProblems(initialLocation);
 const initialView = labels[initialLocation.view] ? initialLocation.view : defaultView();
