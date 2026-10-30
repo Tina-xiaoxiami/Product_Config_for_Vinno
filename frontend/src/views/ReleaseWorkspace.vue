@@ -110,6 +110,10 @@ const workbenchLocations = reactive({})
 const standaloneUrl = tab => releaseWorkbenchStandaloneUrl(tab, workbenchLocations[tab], window.location.origin)
 
 async function beforeWorkspaceTabLeave(next, current) {
+  if (next !== current && isWorkbenchTab(current)) {
+    const canLeave = workbenchFrame.value?.contentWindow?.requestReleaseReviewLeave
+    if (typeof canLeave === 'function' && !canLeave()) return false
+  }
   if (current !== 'feature-versions' || next === current) return true
   return await nativeRelease.value?.requestWorkspaceLeave() ?? true
 }

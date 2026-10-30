@@ -78,7 +78,7 @@ test('component wires protection to close, tabs, routing and browser exit', () =
 
 test('outer tab and route guards call the same component guard without a second discard prompt', async () => {
   let dirty = true, prompts = 0
-  const context = { nativeRelease: { value: { requestWorkspaceLeave: async () => { if (dirty) { prompts++; dirty = false }; return true } } } }
+  const context = { isWorkbenchTab: tab => tab !== 'feature-versions', workbenchFrame: {value:null}, nativeRelease: { value: { requestWorkspaceLeave: async () => { if (dirty) { prompts++; dirty = false }; return true } } } }
   const block = workspace.slice(workspace.indexOf('async function beforeWorkspaceTabLeave'), workspace.indexOf('\nonBeforeRouteLeave'))
   const before = new Function(...Object.keys(context), `${block}; return beforeWorkspaceTabLeave`)(...Object.values(context))
   assert.equal(await before('search', 'feature-versions'), true)
@@ -129,7 +129,7 @@ test('same-route navigation invokes native protection before the selected tab ch
   const onBeforeRouteLeave = fn => { callbacks.leave = fn }
   const normalizeReleaseTab = value => value || 'search'
   const block = workspace.slice(workspace.indexOf('async function beforeWorkspaceTabLeave'), workspace.indexOf('\nconst workbenchFrameUrl'))
-  new Function('nativeRelease', 'activeTab', 'onBeforeRouteUpdate', 'onBeforeRouteLeave', 'normalizeReleaseTab', block)(nativeRelease, activeTab, onBeforeRouteUpdate, onBeforeRouteLeave, normalizeReleaseTab)
+  new Function('nativeRelease', 'activeTab', 'onBeforeRouteUpdate', 'onBeforeRouteLeave', 'normalizeReleaseTab', 'isWorkbenchTab', 'workbenchFrame', block)(nativeRelease, activeTab, onBeforeRouteUpdate, onBeforeRouteLeave, normalizeReleaseTab, tab => tab !== 'feature-versions', {value:null})
   assert.equal(await callbacks.update({ query: { tab: 'search' } }, { query: { tab: 'feature-versions' } }), false)
   assert.equal(activeTab.value, 'feature-versions')
   allowed = true
@@ -230,4 +230,12 @@ test('standalone workbench link keeps the independent whitepaper model selection
   const url = `${origin}/release-workbench/?embedded=1#search?q=子宫&source_group=whitepaper&whitepaper_model=model%3A6s`
   assert.equal(releaseWorkbenchStandaloneUrl('search', url, origin), '/release-workbench/#search?q=%E5%AD%90%E5%AE%AB&source_group=whitepaper&whitepaper_model=model%3A6s')
   assert.equal(releaseWorkbenchStandaloneUrl('search', 'https://evil.test/release-workbench/#search?whitepaper_model=model%3A6s', origin), '/release-workbench/#search')
+})
+
+test('离开iframe核对草稿时复用子页面guard，取消后保留当前模块',async()=>{
+ let allowed=false,calls=0
+ const block=workspace.slice(workspace.indexOf('async function beforeWorkspaceTabLeave'),workspace.indexOf('\nonBeforeRouteLeave'))
+ const before=new Function('isWorkbenchTab','workbenchFrame','nativeRelease',`${block};return beforeWorkspaceTabLeave`)(tab=>tab==='search',{value:{contentWindow:{requestReleaseReviewLeave(){calls++;return allowed}}}},{value:null})
+ assert.equal(await before('review','search'),false);assert.equal(calls,1)
+ allowed=true;assert.equal(await before('review','search'),true);assert.equal(calls,2)
 })

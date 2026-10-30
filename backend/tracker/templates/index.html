@@ -8,6 +8,7 @@
   {% if embedded %}<link rel="stylesheet" href="{{ url_for('static', filename='embedded.css') }}?v={{ static_version }}">{% endif %}
   <link rel="stylesheet" href="{{ url_for('static', filename='description.css') }}?v={{ static_version }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='release-design.css') }}?v={{ static_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='release-review.css') }}?v={{ static_version }}">
 </head>
 <body{% if embedded %} class="workbench-embedded"{% endif %}>
   <div class="app-shell">
@@ -576,6 +577,7 @@
   </dialog>
   <dialog id="document-editor-dialog"><form id="document-editor-form"><div class="dialog-heading"><h2 id="document-editor-title">登记资料</h2><button type="button" data-close-dialog aria-label="关闭">×</button></div><div id="document-editor-fields"></div><p id="document-editor-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close-dialog class="ghost-button">取消</button><button type="submit" class="primary-button">保存</button></div></form></dialog>
   <script>window.__WORKBENCH__ = {{ {"home": workbench_home, "embedded": embedded, "integrated": integrated_mode, "allowedViews": allowed_views, "basePath": base_path}|tojson }};</script>
+  <script src="{{ url_for('static', filename='release-review.js') }}?v={{ static_version }}" defer></script>
   <script src="{{ url_for('static', filename='app.js') }}?v={{ static_version }}" defer></script>
   <script src="{{ url_for('static', filename='workspace.js') }}?v={{ static_version }}" defer></script>
 </body>
