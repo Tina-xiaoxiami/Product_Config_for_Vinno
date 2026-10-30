@@ -30,9 +30,6 @@
               <el-icon><Setting /></el-icon>
               <span>基础数据管理</span>
             </template>
-            <el-menu-item index="/series">
-              <span>产品系列</span>
-            </el-menu-item>
             <el-menu-item index="/models">
               <span>产品型号</span>
             </el-menu-item>
@@ -75,7 +72,7 @@
           </el-sub-menu>
         </el-menu>
       </el-aside>
-      <el-main :class="{ 'template-workspace': $route.path === '/template-features' }">
+      <el-main :class="{ 'management-workspace': isProbeManagementPage }">
         <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />
@@ -168,7 +165,7 @@ const toggleSidebar = () => {
 .probe-management-tabs :deep(.el-tabs__item.is-active) { font-weight: 600; }
 .probe-management-tabs :deep(.el-tabs__content) { display: none; }
 
-.el-main.template-workspace { display: flex; flex-direction: column; }
+.el-main.management-workspace { display: flex; flex-direction: column; }
 
 .el-main {
   padding: 12px;

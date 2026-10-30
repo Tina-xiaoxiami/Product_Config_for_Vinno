@@ -5,6 +5,7 @@
         <div class="card-header">
           <span>产品型号管理</span>
           <div class="header-actions">
+            <el-button :icon="Plus" @click="openSeriesDialog">新增系列</el-button>
             <SubseriesEditor ref="subseriesEditorRef" button-label="管理子系列与组合" @saved="loadData" />
             <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="loading || !!loadError">新增型号</el-button>
           </div>
@@ -72,6 +73,12 @@
       </div>
     </el-card>
 
+    <el-dialog v-model="seriesDialogVisible" title="新增系列" width="min(400px, calc(100vw - 32px))" :before-close="closeSeriesDialog" @opened="seriesNameInput?.focus()">
+      <el-form label-width="80px" @submit.prevent="saveNewSeries">
+        <el-form-item label="系列名称"><el-input ref="seriesNameInput" v-model="seriesName" :disabled="savingSeries" maxlength="100" placeholder="请输入系列名称" @keyup.enter="saveNewSeries" /></el-form-item>
+      </el-form>
+      <template #footer><el-button :disabled="savingSeries" @click="closeSeriesDialog()">取消</el-button><el-button type="primary" :loading="savingSeries" @click="saveNewSeries">保存</el-button></template>
+    </el-dialog>
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑型号' : '新增型号'" width="500px">
       <el-form :model="form" label-width="100px">
@@ -109,7 +116,7 @@
 import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
-import { getSeriesList, getModels, getSubseries, saveSubseries, createModel, updateModel, deleteModel } from '../api/data'
+import { getSeriesList, createSeries, getModels, getSubseries, saveSubseries, createModel, updateModel, deleteModel } from '../api/data'
 import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
@@ -135,6 +142,31 @@ const resizeColumn = (width, _oldWidth, column) => {
 }
 
 const seriesList = ref([])
+const seriesDialogVisible = ref(false), seriesName = ref(''), savingSeries = ref(false), seriesNameInput = ref(null)
+const openSeriesDialog = () => { seriesName.value = ''; seriesDialogVisible.value = true }
+const closeSeriesDialog = async done => {
+  if (savingSeries.value) return
+  if (seriesName.value.trim()) {
+    try { await ElMessageBox.confirm('系列尚未保存，确定放弃修改？', '未保存的系列', {confirmButtonText:'放弃修改',cancelButtonText:'继续编辑',type:'warning'}) }
+    catch { return }
+  }
+  seriesDialogVisible.value = false
+  if (typeof done === 'function') done()
+}
+const saveNewSeries = async () => {
+  if (savingSeries.value) return
+  const name = seriesName.value.trim()
+  if (!name) { ElMessage.warning('请输入系列名称'); return }
+  if (seriesList.value.some(series => series.name.trim() === name)) { ElMessage.warning('此系列已存在'); return }
+  savingSeries.value = true
+  try {
+    const created = await createSeries({ name })
+    seriesList.value = [...seriesList.value.filter(series => series.id !== created.id), created]
+    seriesDialogVisible.value = false
+    ElMessage.success('系列已新增，可在新增型号时选择')
+  } catch (error) { ElMessage.error(error.response?.data?.detail || '新增系列失败，请重试') }
+  finally { savingSeries.value = false }
+}
 const catalog = ref([])
 const sharedGroups = ref({})
 const assigningSubseries = ref(null)

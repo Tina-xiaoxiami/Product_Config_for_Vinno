@@ -11,9 +11,7 @@ const routes = [
       },
       {
         path: 'series',
-        name: 'Series',
-        component: () => import('../views/Series.vue'),
-        meta: { title: '系列管理' }
+        redirect: '/models'
       },
       {
         path: 'models',
