@@ -3839,11 +3839,25 @@ function scenarioBaselineImagesMarkup(baseline, query, latest = false) {
   return `<section class="feature-image-section"><h4>${latest ? '最近版本图示' : '起始版本图示'} <span>${escapeHtml(baseline.version)}</span></h4><p>${latest ? `来源：${escapeHtml(baseline.title || '对应功能章节')}，图片版本与正文起点分别标注。` : '图片来自起始章节；后续版本中的效果变化请查看对应变更原文。'}</p><div class="feature-image-gallery">${images}</div>${section.images_complete === false || omitted || !images ? '<p role="alert">部分图片无法展示，请查看原文核对。</p>' : ''}${scenarioPreviewButton(baseline.source_id, baseline.locator, query, '查看图文原文')}</section>`;
 }
 
+function scenarioUnverifiedSourcesMarkup(sources, query) {
+  const unique = [...new Map((sources || []).map(item => [`${item.source_id}|${item.locator || ''}`, item])).values()];
+  if (!unique.length) return '';
+  if (unique.length === 1) {
+    const item = unique[0];
+    return scenarioPreviewButton(item.source_id, item.locator || '', query, `核对 ${item.version} 原文`);
+  }
+  return `<details class="feature-original-sources"><summary>核对原文（${unique.length} 份资料）</summary><div>${unique.map(item => {
+    const id = String(item.source_id || '').split(':').pop();
+    const label = `${item.version} · ${item.filename || item.source_label || '发布资料'} · #${id}`;
+    return scenarioPreviewButton(item.source_id, item.locator || '', query, label);
+  }).join('')}</div></details>`;
+}
+
 function scenarioIllustrationsMarkup(data, query) {
   if (!Array.isArray(data.illustrations)) return scenarioBaselineImagesMarkup(data.baseline, query);
   return data.illustrations.map(item => scenarioBaselineImagesMarkup(item, query, true)).join('')
     + (data.illustration_notice ? `<p class="strategy-note" role="status">${escapeHtml(data.illustration_notice)}</p>` : '')
-    + (data.illustrations_unverified_sources || []).map(item => scenarioPreviewButton(item.source_id, item.locator || '', query, `核对 ${item.version} 原文`)).join('');
+    + scenarioUnverifiedSourcesMarkup(data.illustrations_unverified_sources, query);
 }
 
 function scenarioWhitepaperMarkup(data, query) {

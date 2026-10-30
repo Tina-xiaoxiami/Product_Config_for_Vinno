@@ -5,7 +5,7 @@ const app=readFileSync(new URL('../../backend/tracker/static/app.js',import.meta
 const start=app.indexOf('function scenarioDocumentMarkup'),end=app.indexOf('function scenarioVersionMarkup',start)
 const escapeHtml=x=>String(x??'').replaceAll('<','&lt;').replaceAll('>','&gt;')
 const reviewSource=readFileSync(new URL('../../backend/tracker/static/release-review.js',import.meta.url),'utf8')
-const render=new Function('escapeHtml','escapeAttribute','scenarioPreviewButton','sourceImageMarkup',`${reviewSource}\n${app.slice(start,end)};return {scenarioWhitepaperMarkup,scenarioEvolutionMarkup,scenarioDocumentMarkup,scenarioBaselineImagesMarkup,scenarioIllustrationsMarkup}`)(escapeHtml,escapeHtml,()=>'<button>查看原文</button>', block => String(block.data_url || '').startsWith('data:image/png;base64,') ? '<figure><img></figure>' : '')
+const render=new Function('escapeHtml','escapeAttribute','scenarioPreviewButton','sourceImageMarkup',`${reviewSource}\n${app.slice(start,end)};return {scenarioWhitepaperMarkup,scenarioEvolutionMarkup,scenarioDocumentMarkup,scenarioBaselineImagesMarkup,scenarioIllustrationsMarkup,scenarioUnverifiedSourcesMarkup}`)(escapeHtml,escapeHtml,(id,locator,query,label)=>`<button data-source="${escapeHtml(id)}">${escapeHtml(label || '查看原文')}</button>`, block => String(block.data_url || '').startsWith('data:image/png;base64,') ? '<figure><img></figure>' : '')
 test('功能展示RN基线、确定性结果与未应用变更，不生成摘要',()=>{
  const html=render.scenarioEvolutionMarkup({baseline:{version:'1.51.20'},content:'原始完整章节\n新增支持',applied_changes:[{}],unresolved_changes:[{version:'1.51.90',text:'<更新内容>',reason:'范围不明确'}],timeline:[],coverage_notice:'仅已收录'},'VATT')
  assert.match(html,/Release Note 起点 1.51.20/);assert.match(html,/原始完整章节/);assert.match(html,/新增支持/);assert.match(html,/&lt;更新内容&gt;/);assert.match(html,/feature-review-sidebar/);assert.doesNotMatch(html,/大模型整理|整理后的功能说明|白皮书/)
@@ -54,4 +54,14 @@ test('同版本补充合并一块并保留各条原文顺序，不混入其他�
  assert.ok(version80.indexOf('第一项；')<version80.indexOf('第二项；'))
  assert.doesNotMatch(version80,/其他版本/)
  assert.match(html,/版本 1.51.90 补充/)
+})
+
+test('相同核对来源只有一个入口，不同文件折叠且名称可区分',()=>{
+ const one={source_id:'release:source:39',version:'1.51.90',record_count:4,filename:'Release Note.docx'}
+ const single=render.scenarioUnverifiedSourcesMarkup([one,one],'VATT')
+ assert.equal((single.match(/<button/g)||[]).length,1)
+ const distinct=render.scenarioUnverifiedSourcesMarkup([one,{...one,source_id:'release:source:40',filename:'另一份<script>.docx'}],'VATT')
+ assert.match(distinct,/<details class="feature-original-sources">/);assert.match(distinct,/核对原文（2 份资料）/)
+ assert.match(distinct,/#39/);assert.match(distinct,/#40/);assert.match(distinct,/另一份&lt;script&gt;.docx/)
+ assert.doesNotMatch(distinct,/<details[^>]*open/)
 })

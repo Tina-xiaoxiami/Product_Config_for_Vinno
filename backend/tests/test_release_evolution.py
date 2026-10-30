@@ -328,3 +328,88 @@ def test_same_source_same_chapter_duplicate_only_extracts_once(monkeypatch):
     answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(1, '1.0.0')]), 1, 'VATT')
     assert len(answer['illustrations']) == 1
     assert [call for call in calls if call[1]] == [(1, base['locator'])]
+
+
+def test_current_same_file_snapshot_supersedes_old_hashes_for_latest_images(monkeypatch):
+    baseline = {**section('VATT初始完整说明'), 'has_images': False, 'source_id': 'release:source:1'}
+    current = {**section('VATT最新图示'), 'has_images': True, 'source_id': 'release:source:40'}
+    old_ids = [23, 24, 36, 39]
+    metadata = {f'release:source:{sid}': {'canonical_path': '/private/release/new.docx', 'filename': 'new.docx',
+                'source_label': f'new.docx · 记录 #{sid}', 'version': '1.90.0', 'sha256': str(sid)} for sid in [*old_ids, 40]}
+    monkeypatch.setattr('tracker.services.release_evolution._source_document_metadata', lambda db, project: metadata)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+
+    def read(db, sid, *, image_locator=''):
+        if sid == 1:
+            return [baseline]
+        if sid == 40:
+            return [{**current, 'images_complete': True, 'blocks': []}] if image_locator else [current]
+        return []
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    hits = [hit(1, '1.0.0'), *[hit(sid, '1.90.0') for sid in old_ids], hit(40, '1.90.0')]
+    answer = release_evolution_answer(Data(hits), 1, 'VATT')
+    assert answer['illustrations_complete']
+    assert answer['illustrations'][0]['source_id'] == 'release:source:40'
+    assert answer['illustrations'][0]['filename'] == 'new.docx'
+    assert not answer.get('illustrations_unverified_sources')
+    audit = answer['illustrations_superseded_sources'][0]
+    assert audit['record_count'] == 4
+    assert audit['related_source_ids'] == [f'release:source:{sid}' for sid in old_ids]
+
+
+def test_all_unreadable_snapshots_of_same_file_have_one_auditable_entry(monkeypatch):
+    base = {**section('VATT原图'), 'has_images': True, 'source_id': 'release:source:1'}
+    ids = [23, 24, 36, 39]
+    monkeypatch.setattr('tracker.services.release_evolution._source_document_metadata', lambda db, project: {
+        f'release:source:{sid}': {'canonical_path': '/private/release/file.docx', 'filename': 'file.docx',
+          'source_label': f'file.docx · 记录 #{sid}', 'version': '1.90.0'} for sid in ids})
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', lambda db, sid, **kwargs: [base] if sid == 1 else [])
+    answer = release_evolution_answer(Data([hit(1, '1.0.0'), *[hit(sid, '1.90.0') for sid in ids]]), 1, 'VATT')
+    assert answer['illustrations'] == []
+    pending = answer['illustrations_unverified_sources']
+    assert len(pending) == 1
+    assert pending[0]['source_id'] == 'release:source:39'
+    assert pending[0]['record_count'] == 4
+    assert pending[0]['filename'] == 'file.docx'
+    assert pending[0]['related_source_ids'] == [f'release:source:{sid}' for sid in ids]
+    import json
+    assert '/private/release' not in json.dumps(answer)
+
+
+def test_different_file_same_name_is_not_superseded_and_target_is_respected(monkeypatch):
+    base = {**section('VATT初始'), 'has_images': False, 'source_id': 'release:source:1'}
+    current = {**section('VATT当前图'), 'has_images': True, 'source_id': 'release:source:40'}
+    metadata = {'release:source:23': {'canonical_path': '/release/a/same.docx', 'filename': 'same.docx', 'version': '1.80.0'},
+                'release:source:39': {'canonical_path': '/release/b/same.docx', 'filename': 'same.docx', 'version': '1.90.0'},
+                'release:source:40': {'canonical_path': '/release/a/same.docx', 'filename': 'same.docx', 'version': '1.90.0'}}
+    monkeypatch.setattr('tracker.services.release_evolution._source_document_metadata', lambda db, project: metadata)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', lambda db, sid, **kwargs: [base] if sid == 1 else [current] if sid == 40 else [])
+    hits = [hit(1, '1.0.0'), hit(23, '1.80.0'), hit(39, '1.90.0'), hit(40, '1.90.0')]
+    answer = release_evolution_answer(Data(hits), 1, 'VATT')
+    assert answer['illustrations'] == []
+    assert answer['illustrations_unverified_sources'][0]['source_id'] == 'release:source:39'
+    bounded = release_evolution_answer(Data(hits), 1, 'VATT', '1.80.0')
+    assert bounded['illustrations_unverified_sources'][0]['source_id'] == 'release:source:23'
+    assert bounded['illustrations_version'] == '1.80.0'
+
+
+def test_source_metadata_reads_only_current_project_and_canonicalizes_paths(tmp_path):
+    from tracker.database import Database
+    from tracker.services.release_evolution import _source_document_metadata
+    database = Database(tmp_path / 'source-identities.db')
+    database.initialize()
+    other = database.create_project('Other', 'OTHER')
+    with database.transaction() as connection:
+        for release_id, project in [(91, 1), (92, other['id'])]:
+            connection.execute('INSERT INTO releases(id,project_id,version) VALUES (?,?,?)', (release_id, project, '1.90.0'))
+        for sid, release_id, path in [(101, 91, tmp_path / 'folder' / '..' / 'same.docx'), (102, 92, tmp_path / 'same.docx')]:
+            connection.execute('INSERT INTO source_documents(id,release_id,path,filename,language,sha256) VALUES (?,?,?,?,?,?)',
+                               (sid, release_id, str(path), 'same.docx', 'cn', str(sid)))
+    metadata = _source_document_metadata(database, 1)
+    assert set(metadata) == {'release:source:101'}
+    assert metadata['release:source:101']['canonical_path'] == str(tmp_path / 'same.docx')
+    assert metadata['release:source:101']['filename'] == 'same.docx'
+    assert metadata['release:source:101']['sha256'] == '101'

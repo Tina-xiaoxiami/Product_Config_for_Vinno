@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from tracker.services.release_sections import source_sections
@@ -93,6 +94,45 @@ def _baseline_section(database: Any, baseline: dict[str, Any], *, include_images
     return fallback
 
 
+def _source_document_metadata(database: Any, project_id: int) -> dict[str, dict[str, Any]]:
+    """Read same-project file identity; never expose canonical paths in responses."""
+    if not hasattr(database, 'connect'):
+        return {}
+    with database.connect() as connection:
+        rows = connection.execute("""SELECT s.id,s.path,s.filename,s.sha256,r.version
+            FROM source_documents s JOIN releases r ON r.id=s.release_id
+            WHERE r.project_id=?""", (project_id,)).fetchall()
+    result = {}
+    for row in rows:
+        try:
+            canonical = str(Path(row['path']).expanduser().resolve()) if row['path'] else ''
+        except (OSError, RuntimeError, ValueError):
+            canonical = ''
+        filename = Path(row['filename']).name if row['filename'] else f"Release Note #{row['id']}"
+        result[f"release:source:{row['id']}"] = {'canonical_path': canonical, 'filename': filename,
+            'sha256': row['sha256'], 'version': row['version'],
+            'source_label': f"{filename} · 记录 #{row['id']}"}
+    return result
+
+
+def _group_unreadable_sources(unreadable, metadata, readable_files):
+    groups = {}
+    for item in unreadable:
+        path = metadata.get(item['source_id'], {}).get('canonical_path')
+        key = (_version(item['version']), path or item['source_id'])
+        groups.setdefault(key, []).append(item)
+    remaining, superseded = [], []
+    for key, items in groups.items():
+        ordered = sorted(items, key=lambda item: int(item['source_id'].rsplit(':', 1)[-1]))
+        representative = {**ordered[-1], 'related_source_ids': [item['source_id'] for item in ordered],
+                          'record_count': len(ordered)}
+        if key in readable_files:
+            superseded.append(representative)
+        else:
+            remaining.append(representative)
+    return remaining, superseded
+
+
 def release_evolution_answer(database: Any, project_id: int, query: str, target_version: str = '') -> dict[str, Any]:
     """Build the earliest full section plus traceable, deterministic later patches."""
     query = query.strip()
@@ -118,6 +158,8 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
     seen_sources: set[str] = set()
     image_candidates: dict[tuple[int, ...], list[dict[str, Any]]] = {}
     unreadable_sources: list[dict[str, Any]] = []
+    source_documents = _source_document_metadata(database, project_id)
+    readable_files: set[tuple[tuple[int, ...], str]] = set()
     for hit in history:
         source = str(hit.get('preview_id') or '')
         version = _version(hit.get('version'))
@@ -129,9 +171,17 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
         source_id = int(source.rsplit(':', 1)[-1])
         if _release_source_language(database, source_id, project_id) != 'cn':
             continue
+        file_metadata = source_documents.get(source, {})
+        if file_metadata.get('version') and _version(file_metadata['version']) != version:
+            continue
+        file_info = {key: file_metadata.get(key) or '' for key in ('filename', 'source_label')}
+        if not file_info['source_label']:
+            file_info['source_label'] = f'Release Note · 记录 #{source_id}'
         source_metadata = source_sections(database, source_id)
+        if source_metadata and file_metadata.get('canonical_path'):
+            readable_files.add((version, file_metadata['canonical_path']))
         if not source_metadata:
-            unreadable_sources.append({'version': hit['version'], 'source_id': source, 'locator': '', 'title': query})
+            unreadable_sources.append({'version': hit['version'], 'source_id': source, 'locator': '', 'title': query, **file_info})
         for section in source_metadata:
             title = str(section.get('title') or '')
             if (not section.get('complete') or not section.get('content') or not _matches(query, title)
@@ -140,12 +190,15 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
             item = {'version': hit['version'], 'content': str(section['content']).strip(),
                     'source_id': source, 'locator': section.get('locator') or '', 'title': title,
                     'text': _body(section), 'verification': 'unverified',
-                    'has_images': bool(section.get('has_images'))}
+                    'has_images': bool(section.get('has_images')), **file_info}
             if item['has_images']:
                 image_candidates.setdefault(version, []).append(item)
             bucket = sections.setdefault(version, [])
             if not any(_normal(old['text']) == _normal(item['text']) for old in bucket):
                 bucket.append(item)
+    unreadable_sources, superseded_sources = _group_unreadable_sources(unreadable_sources, source_documents, readable_files)
+    if superseded_sources:
+        result['illustrations_superseded_sources'] = superseded_sources
     latest_unreadable = max(unreadable_sources, key=lambda item: _version(item['version']) or ()) if unreadable_sources else None
     latest_images = max(image_candidates) if image_candidates else None
     blocked_images = bool(latest_unreadable and (latest_images is None or (_version(latest_unreadable['version']) or ()) >= latest_images))
@@ -166,7 +219,7 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
         result['illustrations_version'] = selected[0]['version']
         result['illustrations_truncated'] = len(selected) > 3
         for item in selected[:3]:
-            result['illustrations'].append({key: item[key] for key in ('version', 'source_id', 'locator', 'title')})
+            result['illustrations'].append({key: item[key] for key in ('version', 'source_id', 'locator', 'title', 'filename', 'source_label')})
             result['illustrations'][-1]['section'] = _baseline_section(database, item)
         result['illustrations_complete'] = (not result['illustrations_truncated']
             and all(item['section'].get('images_complete') is True for item in result['illustrations']))
