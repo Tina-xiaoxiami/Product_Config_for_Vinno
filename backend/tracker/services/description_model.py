@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import ssl
+
+import certifi
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 
 SYSTEM_PROMPT = '''你是产品功能说明编辑。只根据提供的资料整理当前功能说明。
@@ -62,7 +65,7 @@ class DescriptionModel:
             data=json.dumps(body, ensure_ascii=False).encode(), headers={
                 'Authorization': 'Bearer ' + profile['api_key'], 'Content-Type': 'application/json'})
         try:
-            with build_opener(NoRedirect).open(request, timeout=45) as response:
+            with build_opener(NoRedirect, HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where()))).open(request, timeout=45) as response:
                 raw = response.read(1_000_001)
             if len(raw) > 1_000_000:
                 raise ValueError('模型回复过大。')

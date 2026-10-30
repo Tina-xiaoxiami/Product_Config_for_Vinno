@@ -34,3 +34,6 @@ python-dateutil==2.8.2
 
 # Safe local service process ownership
 psutil==7.2.2
+
+# Trusted HTTPS roots for model APIs on macOS Python installations
+certifi>=2026.1.4
