@@ -1,7 +1,6 @@
 <template>
   <div class="page">
-    <Teleport v-if="toolbarReady && $route.path === '/template-features'" to="#probe-management-actions">
-      <div class="template-actions">
+    <ProbeManagementActions path="/template-features">
         <template v-if="editMode">
           <el-tag size="small" type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
           <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
@@ -12,8 +11,7 @@
           <el-button size="small" @click="refreshData">刷新</el-button>
           <el-button size="small" @click="openVersions">版本历史</el-button>
         </template>
-      </div>
-    </Teleport>
+    </ProbeManagementActions>
     <el-card shadow="never" class="template-card">
       <div v-if="draftTotal > 0 && !editMode" class="draft-bar">
         <span><strong>{{ draftTotal }}</strong> 条草稿待提交</span>
@@ -174,9 +172,9 @@ import { ref, reactive, computed, watch, onMounted, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
 import api from '../api/index'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
 const categories = ref([]); const features = ref([])
-const toolbarReady = ref(false)
 const tplMap = ref({}); const loading = ref(false)
 const editMode = ref(false); const pendingChanges = reactive({})
 const categoryAppsMap = ref({})
@@ -583,10 +581,7 @@ const rollback = async (row) => {
 }
 
 const refreshData = () => Promise.all([loadData(), loadDrafts()])
-onMounted(() => {
-  toolbarReady.value = true
-  return refreshData()
-})
+onMounted(refreshData)
 let templateHasActivated = false
 onActivated(() => {
   if (!templateHasActivated) {
@@ -599,8 +594,6 @@ onActivated(() => {
 
 <style scoped>
 .page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 360px; }
-.template-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.template-actions .el-button + .el-button { margin-left: 0; }
 .template-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .template-card :deep(.el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px; }
 .matrix-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
