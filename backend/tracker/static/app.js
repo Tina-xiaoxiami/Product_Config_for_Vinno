@@ -1,5 +1,5 @@
 const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
-const scenarioState = { task: 'feature', drafts: {feature: '', probe: ''}, featureTask: 'feature', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
+const scenarioState = { task: 'feature', drafts: {feature: '', probe: '', whitepaper: ''}, featureTask: 'feature', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -3658,36 +3658,36 @@ function renderScenarioVersionOptions(target = null, base = null) {
   target = target ?? targetNode.value;
   base = base ?? baseNode.value;
   const options = state.releases.map(item => `<option value="${escapeAttribute(item.version)}">${escapeHtml(item.version)}</option>`).join('');
-  targetNode.innerHTML = `<option value="">${scenarioState.task === 'feature' ? '最新资料版本' : '选择目标版本'}</option>${options}`;
+  targetNode.innerHTML = `<option value="">${['feature', 'whitepaper'].includes(scenarioState.task) ? '截至最新版本' : '选择目标版本'}</option>${options}`;
   baseNode.innerHTML = `<option value="">不对比</option>${options}`;
   targetNode.value = target || '';
   baseNode.value = base || '';
 }
 
 function setScenarioTask(task) {
-  if (!['first', 'probe', 'feature', 'version'].includes(task)) task = 'feature';
+  if (!['first', 'probe', 'feature', 'version', 'whitepaper'].includes(task)) task = 'feature';
   scenarioState.task = task;
-  if (task !== 'probe') scenarioState.featureTask = task;
+  if (!['probe', 'whitepaper'].includes(task)) scenarioState.featureTask = task;
   const probe = task === 'probe';
-  document.querySelectorAll('[data-scenario-domain]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioDomain === (probe ? 'probe' : 'feature'))));
+  document.querySelectorAll('[data-scenario-domain]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioDomain === (probe ? 'probe' : task === 'whitepaper' ? 'whitepaper' : 'feature'))));
   document.querySelectorAll('[data-scenario-task]').forEach(button => {
-    button.hidden = probe ? button.dataset.scenarioTask !== 'probe' : button.dataset.scenarioTask === 'probe';
+    button.hidden = task === 'whitepaper' || (probe ? button.dataset.scenarioTask !== 'probe' : button.dataset.scenarioTask === 'probe');
     button.setAttribute('aria-pressed', String(button.dataset.scenarioTask === task));
   });
   const queryLabel = document.querySelector('#scenario-query-label');
   queryLabel.hidden = false;
   queryLabel.firstChild.textContent = probe ? '探头名称' : '功能名称或关键词';
   document.querySelector('#scenario-query').placeholder = probe ? '例如 F4-9E' : '例如 VAid GYN、子宫畸形分类';
-  document.querySelector('#scenario-model-label').hidden = task !== 'feature';
-  document.querySelector('#scenario-target-label').hidden = probe || task === 'first';
+  document.querySelector('#scenario-model-label').hidden = task !== 'whitepaper';
+  document.querySelector('#scenario-target-label').hidden = probe || task === 'first' || task === 'whitepaper';
   document.querySelector('#scenario-base-label').hidden = task !== 'version';
   renderScenarioVersionOptions();
 }
 
 function changeScenarioTask(task) {
   const query = document.querySelector('#scenario-query');
-  const previousDomain = scenarioState.task === 'probe' ? 'probe' : 'feature';
-  const domain = task === 'probe' ? 'probe' : 'feature';
+  const previousDomain = ['probe', 'whitepaper'].includes(scenarioState.task) ? scenarioState.task : 'feature';
+  const domain = ['probe', 'whitepaper'].includes(task) ? task : 'feature';
   scenarioState.drafts[previousDomain] = query.value;
   if (previousDomain !== domain) query.value = scenarioState.drafts[domain] || '';
   if (domain === 'feature') scenarioState.featureTask = task;
@@ -3767,6 +3767,20 @@ function scenarioFeatureMarkup(data, query) {
   return `<section class="scenario-answer"><h3>${heading} · ${escapeHtml(item.version)}</h3><p>${escapeHtml(detail.title || item.title)} · ${escapeHtml(verificationLabel(detail.verification || 'unverified'))} · ${escapeHtml(detail.scope || item.scope || '适用范围未登记')}</p><div class="scenario-content">${escapeHtml(section.content)}</div><p>以上为完整章节文本；图片和原始版式可在原文预览中查看。未索引或未登记的资料不在本次结论中。</p>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}${later}<details><summary>来源与适用范围</summary><p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · ${escapeHtml(item.title)}</p><p>资料型号取自登记信息或资料名称，未登记的适用范围需要核对；后续变化不会自动合并到正文。</p></details></section>`;
 }
 
+function scenarioWhitepaperMarkup(data, query) {
+  const item = data.baseline, section = data.section;
+  if (!item || !section) return `<section class="scenario-answer"><h3>最新白皮书中未找到可核实的对应章节</h3><p>不会回退展示旧版白皮书，也不使用Release Note补充此处内容。</p>${(data.documents || []).map(doc => `<button type="button" class="ghost-button" data-scenario-document="${escapeAttribute(doc.value)}">${escapeHtml(doc.label)}</button>`).join('')}${(data.section_options || []).map(option => `<button type="button" class="ghost-button" data-scenario-section="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</button>`).join('')}</section>`;
+  return `<section class="scenario-answer"><h3>最新白皮书 · ${escapeHtml(item.version)}</h3><p>${escapeHtml(item.title || '')} · ${escapeHtml(item.scope || '范围待核对')}</p><div class="scenario-content">${escapeHtml(section.content)}</div>${scenarioPreviewButton(item.detail_evidence.source_id, section.locator, query, '查看白皮书原文')}</section>`;
+}
+
+function scenarioEvolutionMarkup(data, query) {
+  const baseline = data.baseline;
+  if (!baseline) return `<section class="scenario-answer"><h3>${data.status === 'baseline_conflict' ? '起始版本的完整章节存在冲突' : '缺少Release Note完整起始章节'}</h3><p>暂不生成完整描述；不会使用白皮书或模型摘要代替。</p><p>${escapeHtml(data.coverage_notice)}</p>${(data.section_options || []).map(row => `<article><p>${escapeHtml(row.version)} · ${escapeHtml(row.title)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</section>`;
+  const labels = {baseline:'起始完整章节',append:'补充',replace:'修改',delete:'删除',replace_full:'整体替换',pending:'待核对'};
+  const pending = data.unresolved_changes || [];
+  return `<section class="scenario-answer"><h3>${pending.length || data.baseline_gap ? '功能描述 · 尚有变更待核对' : '功能描述 · 已应用明确变更'}</h3><p>Release Note 起点 ${escapeHtml(baseline.version)} · 截至 ${escapeHtml(data.target_version || '最新已收录版本')} · 已应用 ${(data.applied_changes || []).length} 项变更</p><div class="scenario-content">${escapeHtml(data.content)}</div>${pending.length ? `<details open><summary>尚未合并的变更（${pending.length}）</summary>${pending.map(row => `<article><h4>${escapeHtml(row.version)}</h4><div class="scenario-content">${escapeHtml(row.text || row.content)}</div><p>${escapeHtml(row.reason)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details>` : ''}<details><summary>版本演进与原文依据</summary>${(data.timeline || []).map(row => `<article><h4>${escapeHtml(row.version)} · ${escapeHtml(labels[row.operation] || row.operation)}</h4><div class="scenario-content">${escapeHtml(row.content || row.text)}</div>${row.before ? `<p>原内容：${escapeHtml(row.before)}</p>` : ''}${row.after ? `<p>更新为：${escapeHtml(row.after)}</p>` : ''}${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details><p>${escapeHtml(data.coverage_notice)}</p></section>`;
+}
+
 function scenarioVersionMarkup(data) {
   if (!data.target) return '<p class="empty-state compact">请选择当前项目已登记的目标版本。</p>';
   const release = data.target;
@@ -3791,9 +3805,9 @@ async function runScenario() {
   }
   const params = new URLSearchParams({ task, q: query });
   if (task === 'probe' && scenarioState.code) { params.set('code', scenarioState.code); params.set('series', scenarioState.series); }
-  if (task === 'feature' && scenarioState.model) params.set('model', scenarioState.model);
-  if (task === 'feature' && scenarioState.document) params.set('document', scenarioState.document);
-  if (task === 'feature' && scenarioState.section) params.set('section', scenarioState.section);
+  if (task === 'whitepaper' && scenarioState.model) params.set('model', scenarioState.model);
+  if (task === 'whitepaper' && scenarioState.document) params.set('document', scenarioState.document);
+  if (task === 'whitepaper' && scenarioState.section) params.set('section', scenarioState.section);
   if (target && task !== 'probe') params.set('target', target);
   if (base && task === 'version') params.set('base', base);
   container.innerHTML = loadingMarkup('正在查询资料…');
@@ -3801,11 +3815,9 @@ async function runScenario() {
   try {
     const result = task === 'first'
       ? await api(projectPath(`/api/v1/workbench/search?${new URLSearchParams({q: query, task: 'earliest', sources: 'release,controlled', scope: 'current', source_group: 'release_note'})}`))
-      : task === 'feature'
-      ? await api(projectPath('/api/v1/workbench/scenario'), {method: 'POST', body: JSON.stringify(Object.fromEntries(params))})
       : await api(projectPath(`/api/v1/workbench/scenario?${params}`));
     if (requestId !== scenarioState.request || task !== scenarioState.task || project !== state.activeProjectId) return;
-    if (task === 'feature') {
+    if (task === 'whitepaper') {
       const model = document.querySelector('#scenario-model');
       const options = result.models?.options || [];
       model.innerHTML = options.map(option => `<option value="${escapeAttribute(option.value)}">${escapeHtml(option.label)}</option>`).join('') || '<option value="">暂无匹配型号</option>';
@@ -3813,8 +3825,8 @@ async function runScenario() {
       scenarioState.document = result.selected_document || '';
       model.value = scenarioState.model;
       scenarioState.result = result;
-      container.innerHTML = scenarioFeatureMarkup(result, query);
-    } else container.innerHTML = task === 'probe' ? scenarioProbeMarkup(result, query) : task === 'first' ? scenarioFirstMarkup(result, query) : scenarioVersionMarkup(filterScenarioVersion(result, query));
+      container.innerHTML = scenarioWhitepaperMarkup(result, query);
+    } else container.innerHTML = task === 'feature' ? scenarioEvolutionMarkup(result, query) : task === 'probe' ? scenarioProbeMarkup(result, query) : task === 'first' ? scenarioFirstMarkup(result, query) : scenarioVersionMarkup(filterScenarioVersion(result, query));
     syncLocation();
     container.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   } catch (error) {
@@ -3900,7 +3912,7 @@ document.addEventListener('click', event => {
   }
 });
 document.querySelectorAll('[data-scenario-task]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioTask)));
-document.querySelectorAll('[data-scenario-domain]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioDomain === 'probe' ? 'probe' : scenarioState.featureTask)));
+document.querySelectorAll('[data-scenario-domain]').forEach(button => button.addEventListener('click', () => changeScenarioTask(['probe', 'whitepaper'].includes(button.dataset.scenarioDomain) ? button.dataset.scenarioDomain : scenarioState.featureTask)));
 document.querySelector('#scenario-query').addEventListener('input', () => { scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = ''; scenarioState.request++; document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>'; document.querySelector('#scenario-result').innerHTML = ''; });
 for (const id of ['#scenario-target', '#scenario-base']) document.querySelector(id).addEventListener('change', () => { scenarioState.request++; document.querySelector('#scenario-result').innerHTML = ''; });
 document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); runScenario(); });

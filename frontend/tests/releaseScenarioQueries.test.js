@@ -144,10 +144,14 @@ test('手工保存只写修订，失败保留编辑内容且可重试', async ()
   assert.match(calls[0][0],/feature-description/)
 })
 
-test('自动整理使用受 JSON 写操作保护的 POST，缓存读取保持 GET', () => {
-  const run = block('async function runScenario','function switchView')
-  assert.match(run,/task === 'feature'[\s\S]*method: 'POST'/)
+test('功能和白皮书均只读查询，不再生成模型摘要', () => {
+  const run = block('async function runScenario', 'function switchView')
+  assert.doesNotMatch(run, /method: 'POST'/)
+  assert.match(run, /scenarioEvolutionMarkup/)
+  assert.match(run, /scenarioWhitepaperMarkup/)
+  assert.match(template, /data-scenario-domain="whitepaper"/)
 })
+
 
 test('放弃编辑会恢复已保存说明，重新打开不会复活弃稿', () => {
   const field={value:'未保存草稿'}, dialog={dataset:{original:'已保存说明'},querySelector:()=>field,close(){this.closed=true}}

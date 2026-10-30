@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from flask import Flask, g, jsonify, render_template, request, send_file
 from werkzeug.exceptions import NotFound
 import sqlite3
+import re
 
 from tracker.config import load_config
 from tracker.database import Database
@@ -46,8 +47,9 @@ from tracker.services.personal_workspace import PersonalWorkspace
 from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
 from tracker.services.search_prewarm import WhitepaperPrewarmer
+from tracker.services.search_intent import located_version
+from tracker.services.release_evolution import release_evolution_answer
 from tracker.services.scenario_queries import probe_answer, feature_answer, version_answer, release_feature_answer, release_fallback_allowed
-from tracker.services.scenario_descriptions import describe_feature, save_feature_description
 from tracker.services.description_settings import ModelSettings
 from tracker.services.description_model import DescriptionModel
 from tracker.services.release_evidence import release_evidence
@@ -496,8 +498,12 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     def feature_scenario(project, query, args, *, allow_generation=True):
         unavailable = sync_search_roots_and_metadata(database, search_index, **search_roots())
         document_versions = {}
+        latest_versions = {}
         for document in database.list_documents():
-            for version in database.list_document_versions(document['id']):
+            versions = database.list_document_versions(document['id'])
+            labels = [located_version(v.get('version_label') or '', document.get('title') or '') for v in versions]
+            latest_versions[document['id']] = max((tuple(map(int, label.split('.'))) for label in labels if label), default=None)
+            for version in versions:
                 document_versions[version['id']] = document
         def search_page(page, model):
             page_result = unified_search(database, search_index, product_strategy_reader, query=query,
@@ -510,6 +516,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 if document:
                     item['_scenario_document_id'] = str(document['id'])
                     item['_scenario_document_label'] = document['title']
+            page_result['results'] = [item for item in page_result['results'] if (doc := document_versions.get(item.get('document_version_id'))) and latest_versions.get(doc['id']) is not None and re.fullmatch(r'\d+(?:\.\d+)+', item.get('version') or '') and tuple(map(int, item['version'].split('.'))) == latest_versions[doc['id']]]
             return page_result
         def preview_section(source_id, locator, needle):
             candidate = resolve_source_candidate(database, source_id, **search_roots())
@@ -520,22 +527,10 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 return search_index.preview(source_id, locator=locator, query=needle, include_images=False)
             except OSError:
                 return None
-        if args.get('document') == f'release-project:{project}:cn':
-            result = release_feature_answer(database, project, query, args.get('model', ''),
-                args.get('target', ''), args['document'], args.get('section', ''))
-        else:
-            result = feature_answer(database, project, query, args.get("model", ""), search_page,
-                                    preview_section, args.get("target", ""),
-                                    args.get("document", ""), args.get("section", ""))
-        if release_fallback_allowed(result):
-            release_result = release_feature_answer(database, project, query, args.get('model', ''),
-                args.get('target', ''), (args.get('document') or '') if (args.get('document') or '').startswith('release-project:') else '', args.get('section', ''))
-            if release_result.get('baseline') or release_result.get('section_options'):
-                release_result['models'] = result.get('models', {})
-                result = release_result
-        result['description'] = describe_feature(database, result, project, query,
-            args.get('model', ''), args.get('target', ''), args.get('section', ''),
-            generator=description_model, allow_generation=allow_generation)
+        result = feature_answer(database, project, query, args.get("model", ""), search_page,
+                                preview_section, '', args.get("document", ""), args.get("section", ""))
+        result['later_changes'] = []
+        result['description'] = None
         return result
 
     @app.get("/api/v1/workbench/model-settings")
@@ -556,10 +551,8 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         query = (payload.get('q') or '').strip()
         if not query or len(query) > 200:
             raise ValueError('请输入不超过 200 字的功能名称。')
-        result = feature_scenario(requested_project_id(), query, payload, allow_generation=False)
-        description = save_feature_description(database, result.get('description'), payload.get('content'),
-            payload.get('revision'), payload.get('source_fingerprint'))
-        return success(description)
+        requested_project_id()
+        return failure('retired_workflow', '功能说明已改为Release Note版本演进，不再编辑模型摘要。', 410)
 
     @app.route("/api/v1/workbench/scenario", methods=["GET", "POST"])
     def workbench_scenario():
@@ -570,12 +563,14 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         project = requested_project_id()
         query = (args.get("q") or "").strip()
         try:
-            if task in {"probe", "feature"} and (not query or len(query) > 200):
+            if task in {"probe", "feature", "whitepaper"} and (not query or len(query) > 200):
                 raise ValueError("请输入不超过 200 字的探头或功能名称。")
             if task == "probe":
                 result = probe_answer(database, project, query, args.get("code", ""), args.get("series", ""))
             elif task == "feature":
-                result = feature_scenario(project, query, args, allow_generation=request.method == "POST")
+                result = release_evolution_answer(database, project, query, args.get("target", ""))
+            elif task == "whitepaper":
+                result = feature_scenario(project, query, args, allow_generation=False)
             elif task == "version":
                 def compare_releases(earlier, later):
                     comparison = compare_change_sets(database.list_changes(earlier['id']), database.list_changes(later['id']))
