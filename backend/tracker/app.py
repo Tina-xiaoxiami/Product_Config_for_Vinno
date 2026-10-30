@@ -520,9 +520,13 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 return search_index.preview(source_id, locator=locator, query=needle, include_images=False)
             except OSError:
                 return None
-        result = feature_answer(database, project, query, args.get("model", ""), search_page,
-                                preview_section, args.get("target", ""),
-                                args.get("document", ""), args.get("section", ""))
+        if args.get('document') == f'release-project:{project}:cn':
+            result = release_feature_answer(database, project, query, args.get('model', ''),
+                args.get('target', ''), args['document'], args.get('section', ''))
+        else:
+            result = feature_answer(database, project, query, args.get("model", ""), search_page,
+                                    preview_section, args.get("target", ""),
+                                    args.get("document", ""), args.get("section", ""))
         if release_fallback_allowed(result):
             release_result = release_feature_answer(database, project, query, args.get('model', ''),
                 args.get('target', ''), (args.get('document') or '') if (args.get('document') or '').startswith('release-project:') else '', args.get('section', ''))

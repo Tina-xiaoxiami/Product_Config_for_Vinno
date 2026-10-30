@@ -113,3 +113,21 @@ def test_read_only_get_cannot_trigger_paid_generation(client):
     assert connection.post(BASE + '/scenario', data={'task':'feature','q':'VAid Liver'}).status_code == 415
     query(connection)
     assert len(calls) == 1
+
+
+def test_release_baseline_survives_query_context_and_manual_save(client, monkeypatch):
+    connection, evidence, calls, workbench = client
+    whitepaper = {'baseline':None,'section':None,'documents':[{'value':'35'}], 'selected_document':'35','section_options':[],'models':{'selected':'model:6s','options':[]}}
+    def search_whitepaper(db,project,q,model,search,preview,target,document,section):
+        return {**whitepaper,'selected_document':'' if document.startswith('release-project:') else '35'}
+    release = {**deepcopy(evidence),'selected_document':'release-project:1:cn'}
+    monkeypatch.setattr('tracker.app.feature_answer', search_whitepaper)
+    monkeypatch.setattr('tracker.app.release_feature_answer', lambda *args: deepcopy(release))
+    first = query(connection)
+    assert first['context']['document'] == 'release-project:1:cn'
+    again = connection.post(BASE+'/scenario?project_id=1', json={'task':'feature',**first['context']})
+    assert again.json()['data']['description'] is not None
+    saved = connection.put(BASE+'/scenario/feature-description?project_id=1',json=body(first,'Release Note 手工修订'))
+    assert saved.status_code == 200
+    assert saved.json()['data']['content']=='Release Note 手工修订'
+    assert calls==[]
