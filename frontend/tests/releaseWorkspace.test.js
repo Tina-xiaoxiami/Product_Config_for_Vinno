@@ -50,7 +50,7 @@ test('release route opens the unified workspace while retaining the native recor
   assert.match(workspace, /label="发布对比"\s+name="compare"/)
   assert.match(workspace, /label="功能版本管理"\s+name="feature-versions"/)
   assert.match(workspace, /<FeatureRelease\s+ref="nativeRelease"\s+\/>/)
-  assert.match(workspace, /<h2>功能发布<\/h2>/)
+  assert.doesNotMatch(workspace, /<h2>功能发布<\/h2>/)
   assert.doesNotMatch(workspace, /同源工作台/)
 })
 

@@ -52,31 +52,34 @@ body .section-heading p { font-size: 13px; }
 
 /* A stable query composer: domain, intent, then one aligned input row. */
 body .scenario-search { margin: 0; }
+/* Keep the complete query context visible while only the answer scrolls past. */
+body .scenario-composer { position: sticky; top: 0; z-index: 20; padding-bottom: 4px; background: var(--bg); box-shadow: 0 3px 6px #20334e0a; }
+body.workbench-embedded.search-focused main { padding: 8px 12px 20px; }
 body .scenario-tasks[hidden], body .scenario-domains[hidden] { display: none; }
-body .scenario-header { padding:10px 16px; border:1px solid var(--line); border-bottom:0; border-radius:10px 10px 0 0; background:linear-gradient(115deg,#e6efff,#f5f8ff); }
+body .scenario-header { padding:6px 10px; border:1px solid var(--line); border-bottom:0; border-radius:10px 10px 0 0; background:linear-gradient(115deg,#e6efff,#f5f8ff); }
 body .scenario-domains { display:flex; align-items:center; gap:6px; margin:0; }
-body .scenario-domains button { min-width: 88px; border: 1px solid transparent; color: var(--ink-2); background: transparent; font-weight: 600; }
+body .scenario-domains button { min-width: 64px; min-height: 28px; padding: 3px 12px; border: 1px solid transparent; color: var(--ink-2); background: transparent; font-weight: 600; }
 body .scenario-domains button[aria-pressed="true"] { color: #fff; background: var(--primary); border-color: var(--primary); }
 body .scenario-tasks { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; padding: 14px 24px 0; border-inline: 1px solid var(--line); background: #fff; }
 body .scenario-tasks button { min-width: 108px; border: 1px solid transparent; color: var(--ink-2); background: var(--surface-2); font-size: 13px; }
 body .scenario-tasks button[aria-pressed="true"] { color: var(--primary-strong); border-color: var(--primary-line); background: var(--primary-weak); font-weight: 600; }
-body .scenario-controls.scenario-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0; padding:12px 16px; border:1px solid var(--line); border-top:0; border-radius:0 0 10px 10px; background:#fff; }
+body .scenario-controls.scenario-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0; padding:6px 10px; border:1px solid var(--line); border-top:0; border-radius:0 0 10px 10px; background:#fff; }
 body .scenario-toolbar .scenario-sources, body .scenario-toolbar .scenario-tasks { display:flex; align-items:center; flex:0 0 auto; flex-wrap:nowrap; gap:4px; margin:0; padding:0 10px 0 0; border:0; border-right:1px solid var(--line); background:transparent; }
 body .scenario-toolbar .scenario-sources { order:1; }
 body .scenario-toolbar .scenario-tasks { order:2; }
-body .scenario-toolbar .scenario-sources button, body .scenario-toolbar .scenario-tasks button { min-width:0; min-height:36px; padding:6px 8px; font-size:12px; line-height:20px; white-space:nowrap; }
+body .scenario-toolbar .scenario-sources button, body .scenario-toolbar .scenario-tasks button { min-width:0; min-height:32px; padding:4px 8px; font-size:12px; line-height:20px; white-space:nowrap; }
 body .scenario-toolbar .scenario-sources button { border-bottom:2px solid transparent; }
 body .scenario-toolbar .scenario-sources button[aria-selected="true"] { border-bottom-color:var(--primary); }
 body .scenario-controls.scenario-toolbar label { display:block; flex:0 0 145px; min-width:0; margin:0; font-size:0; }
 body .scenario-toolbar #scenario-query-label { order:4; flex:1 1 200px; min-width:180px; }
 body .scenario-toolbar #scenario-model-label, body .scenario-toolbar #scenario-target-label, body .scenario-toolbar #scenario-base-label { order:5; }
-body .scenario-controls.scenario-toolbar :is(input,select) { box-sizing:border-box; width:100%; max-width:none; height:38px; min-height:38px; padding:6px 10px; font-size:13px; }
+body .scenario-controls.scenario-toolbar :is(input,select) { box-sizing:border-box; width:100%; max-width:none; height:32px; min-height:32px; padding:4px 8px; font-size:13px; }
 body .scenario-controls.scenario-toolbar .project-context-actions { display:block; order:3; flex:0 0 145px; min-width:0; padding:0; }
 body .scenario-toolbar .project-context-actions::before, body .scenario-toolbar .project-context-label { display:none; }
-body.workbench-embedded.search-focused .scenario-controls.scenario-toolbar #project-switcher { width:100%; max-width:none; height:38px; margin:0; }
-body .scenario-controls.scenario-toolbar > button[type="submit"] { order:6; flex:0 0 72px; min-width:72px; min-height:38px; height:38px; padding:6px 12px; }
+body.workbench-embedded.search-focused .scenario-controls.scenario-toolbar #project-switcher { width:100%; max-width:none; height:32px; min-height:32px; margin:0; }
+body .scenario-controls.scenario-toolbar > button[type="submit"] { order:6; flex:0 0 72px; min-width:72px; min-height:32px; height:32px; padding:4px 12px; }
 @media(max-width:700px) {
- body .scenario-controls.scenario-toolbar { padding:10px 12px; }
+ body .scenario-controls.scenario-toolbar { padding:6px 8px; }
  body .scenario-controls.scenario-toolbar .project-context-actions, body .scenario-controls.scenario-toolbar label { flex:1 1 140px; }
  body .scenario-toolbar #scenario-query-label { flex:1 1 220px; }
  body .scenario-controls.scenario-toolbar > button[type="submit"] { flex:0 0 72px; }

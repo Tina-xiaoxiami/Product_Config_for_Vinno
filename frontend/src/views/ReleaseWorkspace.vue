@@ -1,16 +1,12 @@
 <template>
   <div class="release-workspace">
     <header class="workspace-header">
-      <div>
-        <h2>功能发布</h2>
-      </div>
+      <el-tabs v-model="workspaceMode" :before-leave="beforeWorkspaceModeLeave" class="workspace-tabs workspace-mode-tabs">
+        <el-tab-pane label="查询" name="query" />
+        <el-tab-pane label="资料管理" name="manage" />
+      </el-tabs>
       <a v-if="isWorkbenchTab(activeTab)" :href="standaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
-
-    <el-tabs v-model="workspaceMode" :before-leave="beforeWorkspaceModeLeave" class="workspace-tabs">
-      <el-tab-pane label="查询" name="query" />
-      <el-tab-pane label="资料管理" name="manage" />
-    </el-tabs>
     <details v-if="activeTab !== 'search'" class="workspace-management-tools" :open="activeTab !== 'review'">
       <summary>版本记录与维护工具</summary>
     <el-tabs v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs workspace-management-tabs">
@@ -225,17 +221,20 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
   background: #eef3f9;
 }
 .workspace-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 6px 14px;
+  padding: 0 4px;
+  margin-bottom: 6px;
 }
-.workspace-header h2 { margin: 0; font-size: 22px; font-weight: 650; color: #20334e; }
 .workspace-tabs { flex: 0 0 auto; }
+.workspace-mode-tabs { flex: 1 1 auto; min-width: 0; }
 .workspace-tabs :deep(.el-tabs__header) { margin: 0 0 12px; }
+.workspace-mode-tabs :deep(.el-tabs__header) { margin: 0; }
 .workspace-tabs :deep(.el-tabs__nav-wrap::after) { background-color: #dbe4ef; height: 1px; }
-.workspace-tabs :deep(.el-tabs__item) { height: 42px; color: #52657e; font-size: 14px; }
+.workspace-tabs :deep(.el-tabs__item) { height: 36px; color: #52657e; font-size: 14px; }
 .workspace-tabs :deep(.el-tabs__item.is-active) { color: #174ca2; font-weight: 600; }
 .workspace-tabs :deep(.el-tabs__active-bar) { height: 3px; background: #2563c9; border-radius: 3px; }
 .workspace-tabs :deep(.el-tabs__content) { display: none; }
@@ -275,7 +274,6 @@ onBeforeUnmount(() => window.removeEventListener('message', handleWorkbenchMessa
 .native-release-pane :deep(.el-table th.el-table__cell) { background: #edf3fb; color: #52657e; }
 @media (max-width: 900px) {
   .release-workspace { min-height: 420px; }
-  .workspace-header { flex-wrap: wrap; padding-inline: 2px; }
-  .workspace-header h2 { font-size: 20px; }
+  .workspace-header { padding-inline: 2px; }
 }
 </style>

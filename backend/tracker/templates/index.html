@@ -79,6 +79,7 @@
 
       <section class="view" data-page="search">
         <section class="scenario-search" aria-label="按任务查询">
+          <div class="scenario-composer">
           <header class="scenario-header">
             <div class="scenario-domains" role="group" aria-label="查询对象">
               <button type="button" data-scenario-domain="feature" aria-pressed="true">功能</button>
@@ -102,6 +103,7 @@
             <label id="scenario-base-label" hidden>对比基准（可选）<select id="scenario-base"></select></label>
             <button type="submit" class="primary-button">查询</button>
           </form>
+          </div>
           <div id="scenario-result" aria-live="polite"></div>
         </section>
         <details id="advanced-search-wrap" class="scenario-advanced"><summary>高级检索与原文依据</summary>
