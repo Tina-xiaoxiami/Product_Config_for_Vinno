@@ -75,11 +75,12 @@
           </el-sub-menu>
         </el-menu>
       </el-aside>
-      <el-main>
-        <nav v-if="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
+      <el-main :class="{ 'template-workspace': $route.path === '/template-features' }">
+        <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />
           </el-tabs>
+          <div id="probe-management-actions" class="probe-management-actions" />
         </nav>
         <router-view v-slot="{ Component }">
           <keep-alive>
@@ -157,12 +158,17 @@ const toggleSidebar = () => {
   border-right: none;
 }
 
-.probe-management-navigation { background: #fff; border: 1px solid #e4e7ed; border-radius: 4px; padding: 0 16px; margin-bottom: 10px; }
+.probe-management-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; flex-shrink: 0; background: #fff; border: 1px solid #e4e7ed; border-radius: 4px; padding: 0 12px; margin-bottom: 6px; }
+.probe-management-tabs { flex: 1 1 330px; min-width: 0; }
+.probe-management-actions { display: flex; margin-left: auto; padding: 4px 0; }
+.probe-management-actions:empty { display: none; }
 .probe-management-tabs :deep(.el-tabs__header) { margin: 0; }
 .probe-management-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
-.probe-management-tabs :deep(.el-tabs__item) { height: 40px; font-size: 13px; }
+.probe-management-tabs :deep(.el-tabs__item) { height: 36px; font-size: 13px; }
 .probe-management-tabs :deep(.el-tabs__item.is-active) { font-weight: 600; }
 .probe-management-tabs :deep(.el-tabs__content) { display: none; }
+
+.el-main.template-workspace { display: flex; flex-direction: column; }
 
 .el-main {
   padding: 12px;

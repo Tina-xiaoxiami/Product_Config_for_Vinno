@@ -1,29 +1,25 @@
 <template>
   <div class="page">
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>模板配置管理</span>
-          <div style="display:flex;gap:12px">
-            <template v-if="editMode">
-              <el-tag type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
-              <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
-              <el-button size="small" @click="cancelEdit">取消</el-button>
-            </template>
-            <template v-else>
-              <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
-              <el-button size="small" @click="refreshData">刷新</el-button>
-              <el-button size="small" @click="openVersions">版本历史</el-button>
-            </template>
-          </div>
-          <!-- Draft bar -->
-          <div v-if="draftTotal > 0 && !editMode" class="draft-bar" style="margin-top:12px">
-            <span><strong>{{ draftTotal }}</strong> 条草稿待提交</span>
-            <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
-            <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
-          </div>
-        </div>
-      </template>
+    <Teleport v-if="toolbarReady && $route.path === '/template-features'" to="#probe-management-actions">
+      <div class="template-actions">
+        <template v-if="editMode">
+          <el-tag size="small" type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
+          <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
+          <el-button size="small" @click="cancelEdit">取消</el-button>
+        </template>
+        <template v-else>
+          <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
+          <el-button size="small" @click="refreshData">刷新</el-button>
+          <el-button size="small" @click="openVersions">版本历史</el-button>
+        </template>
+      </div>
+    </Teleport>
+    <el-card shadow="never" class="template-card">
+      <div v-if="draftTotal > 0 && !editMode" class="draft-bar">
+        <span><strong>{{ draftTotal }}</strong> 条草稿待提交</span>
+        <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
+        <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
+      </div>
 
       <div class="matrix-container" v-loading="loading">
         <div class="toolbar-row">
@@ -54,7 +50,7 @@
         </div>
 
         <div class="table-wrap">
-          <el-table :data="categories" border stripe size="small" :max-height="600" style="width:100%" :header-cell-style="headerCellStyle">
+          <el-table :data="categories" border stripe size="small" height="100%" style="width:100%" :header-cell-style="headerCellStyle">
             <el-table-column label="探头类别" width="120" fixed>
               <template #default="{ row: cat }">
                 <div class="cat-name">{{ cat.name }}</div>
@@ -180,6 +176,7 @@ import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures 
 import api from '../api/index'
 
 const categories = ref([]); const features = ref([])
+const toolbarReady = ref(false)
 const tplMap = ref({}); const loading = ref(false)
 const editMode = ref(false); const pendingChanges = reactive({})
 const categoryAppsMap = ref({})
@@ -586,7 +583,10 @@ const rollback = async (row) => {
 }
 
 const refreshData = () => Promise.all([loadData(), loadDrafts()])
-onMounted(refreshData)
+onMounted(() => {
+  toolbarReady.value = true
+  return refreshData()
+})
 let templateHasActivated = false
 onActivated(() => {
   if (!templateHasActivated) {
@@ -598,21 +598,25 @@ onActivated(() => {
 </script>
 
 <style scoped>
-.page { padding: 0 } .card-header { display: flex; justify-content: space-between; align-items: center }
-.matrix-container { padding-top: 12px }
-.toolbar-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px }
-.legend { display: flex; gap: 16px; font-size: 13px }
+.page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 360px; }
+.template-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.template-actions .el-button + .el-button { margin-left: 0; }
+.template-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.template-card :deep(.el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px; }
+.matrix-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.toolbar-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; flex-shrink: 0; gap: 4px 8px; margin-bottom: 6px; }
+.legend { display: flex; gap: 12px; font-size: 12px; }
 .legend-item { display: flex; align-items: center; gap: 4px }
 .dot { display: inline-block; width: 14px; height: 14px; border-radius: 3px }
 .dot.supported { background: #dcfce7; border: 1px solid #22c55e }
 .dot.unsupported { background: #f1f5f9; border: 1px solid #cbd5e1 }
 .dot.pending { background: #fef3c7; border: 2px dashed #f59e0b }
-.toolbar-right { display:flex; align-items:center; gap:12px; flex-wrap:wrap }
-.filter-row { display:flex; align-items:center; gap:8px; padding:6px 0 10px; flex-wrap:wrap }
+.toolbar-right { display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+.filter-row { display:flex; align-items:center; gap:8px; padding:0 0 6px; flex-wrap:wrap; flex-shrink:0 }
 .group-filter-compact { display:inline-flex; flex-wrap:wrap; gap:2px }
 .group-filter-compact .el-checkbox { margin-right:0; white-space:nowrap }
 .view-toggle { flex-shrink: 0 }
-.table-wrap { overflow-x: auto }
+.table-wrap { flex: 1; min-height: 0; overflow: hidden; }
 .tpl-cell { width: 100%; text-align: center; transition: background .1s; min-height: 28px; display: flex; align-items: center; justify-content: center }
 .tpl-cell.supported { background: #dcfce7; color: #166534 }
 .tpl-cell.conditional { background: #fef3c7; color: #92400e }
@@ -620,7 +624,7 @@ onActivated(() => {
 .tpl-cell.is-dirty { outline: 2px dashed #f59e0b; outline-offset: -2px }
 .cell-apps { font-size: 11px; line-height: 1.3; padding: 2px 4px; word-break: break-all }
 .cell-apps.is-all { font-weight: 700; font-size: 13px }
-.draft-bar { display:flex; align-items:center; gap:12px; padding:8px 16px; background:#fef3c7; border-radius:6px }
+.draft-bar { display:flex; align-items:center; flex-wrap:wrap; flex-shrink:0; gap:6px; padding:6px 10px; margin-bottom:6px; background:#fef3c7; border-radius:4px; }
 .cat-cell { line-height:1.4 }
 .cat-name { font-weight:600; white-space:nowrap }
 .cat-apps { display:flex; flex-wrap:wrap; gap:2px; max-height:80px; overflow-y:auto }
