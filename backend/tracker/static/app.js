@@ -1,5 +1,5 @@
 const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
-const scenarioState = { task: 'feature', drafts: {feature: '', probe: '', whitepaper: ''}, featureTask: 'feature', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
+const scenarioState = { task: 'feature', domain: 'feature', drafts: {feature: '', probe: ''}, featureTask: 'feature', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -2408,7 +2408,7 @@ async function loadWorkbenchHome() {
 // `project` 是全局范围，所有视图都接受。
 const VIEW_PARAMS = {
   home: ['project'],
-  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category', 'whitepaper_model', 'whitepaper_model_mode', 'scenario', 'scenario_q', 'scenario_model', 'scenario_code', 'scenario_series', 'scenario_target', 'scenario_base', 'scenario_document', 'scenario_section'],
+  search: ['project', 'q', 'scope', 'sources', 'market', 'model', 'country', 'verification', 'current_only', 'page', 'task', 'expand_related', 'version_from', 'version_to', 'versions', 'preview', 'locator', 'preview_query', 'preview_input', 'source_group', 'release_category', 'whitepaper_model', 'whitepaper_model_mode', 'scenario', 'scenario_domain', 'scenario_q', 'scenario_model', 'scenario_code', 'scenario_series', 'scenario_target', 'scenario_base', 'scenario_document', 'scenario_section'],
   model: ['model', 'market', 'country', 'series'],
   releases: ['project', 'version'],
   compare: ['project', 'a', 'b'],
@@ -2460,6 +2460,7 @@ function currentViewParams() {
   if (view === 'search') {
     if (!document.querySelector('#advanced-search-wrap').open) {
       params.scenario = scenarioState.task;
+      params.scenario_domain = scenarioState.domain || 'feature';
       if (text('#scenario-query')) params.scenario_q = text('#scenario-query');
       if (scenarioState.model) params.scenario_model = scenarioState.model;
       if (scenarioState.document) params.scenario_document = scenarioState.document;
@@ -2642,6 +2643,7 @@ async function applyViewParams(view, params = {}, { skipProject = false } = {}) 
       scenarioState.request++;
       document.querySelector('#scenario-result').innerHTML = '';
       state.previewLocation = null;
+      scenarioState.domain = params.scenario_domain === 'probe' ? 'probe' : 'feature';
       setScenarioTask(params.scenario);
       document.querySelector('#scenario-query').value = params.scenario_q || '';
       scenarioState.code = params.scenario_code || '';
@@ -3668,12 +3670,15 @@ function setScenarioTask(task) {
   if (!['first', 'probe', 'feature', 'version', 'whitepaper'].includes(task)) task = 'feature';
   scenarioState.task = task;
   if (!['probe', 'whitepaper'].includes(task)) scenarioState.featureTask = task;
-  const probe = task === 'probe';
-  document.querySelectorAll('[data-scenario-domain]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioDomain === (probe ? 'probe' : task === 'whitepaper' ? 'whitepaper' : 'feature'))));
+  if (task !== 'whitepaper') scenarioState.domain = task === 'probe' ? 'probe' : 'feature';
+  const probe = scenarioState.domain === 'probe';
+  document.querySelectorAll('[data-scenario-domain]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenarioDomain === (probe ? 'probe' : 'feature'))));
   document.querySelectorAll('[data-scenario-task]').forEach(button => {
     button.hidden = task === 'whitepaper' || (probe ? button.dataset.scenarioTask !== 'probe' : button.dataset.scenarioTask === 'probe');
     button.setAttribute('aria-pressed', String(button.dataset.scenarioTask === task));
   });
+  document.querySelectorAll('[data-scenario-source]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.scenarioSource === (task === 'whitepaper' ? 'whitepaper' : 'release'))));
+  document.querySelector('.scenario-tasks').hidden = task === 'whitepaper';
   const queryLabel = document.querySelector('#scenario-query-label');
   queryLabel.hidden = false;
   queryLabel.firstChild.textContent = probe ? '探头名称' : '功能名称或关键词';
@@ -3686,11 +3691,17 @@ function setScenarioTask(task) {
 
 function changeScenarioTask(task) {
   const query = document.querySelector('#scenario-query');
-  const previousDomain = ['probe', 'whitepaper'].includes(scenarioState.task) ? scenarioState.task : 'feature';
-  const domain = ['probe', 'whitepaper'].includes(task) ? task : 'feature';
+  const previousDomain = scenarioState.domain || (scenarioState.task === 'probe' ? 'probe' : 'feature');
+  const domain = task === 'whitepaper' ? previousDomain : task === 'probe' ? 'probe' : 'feature';
   scenarioState.drafts[previousDomain] = query.value;
-  if (previousDomain !== domain) query.value = scenarioState.drafts[domain] || '';
-  if (domain === 'feature') scenarioState.featureTask = task;
+  if (previousDomain !== domain) {
+    query.value = scenarioState.drafts[domain] || '';
+    scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = '';
+    const model = document.querySelector('#scenario-model');
+    if (model) model.innerHTML = '<option value="">自动选择</option>';
+  }
+  if (domain === 'feature' && task !== 'whitepaper') scenarioState.featureTask = task;
+  scenarioState.domain = domain;
   scenarioState.request++;
   scenarioState.code = ''; scenarioState.series = ''; scenarioState.result = null;
   document.querySelector('#advanced-search-wrap').open = false;
@@ -3808,7 +3819,7 @@ async function runScenario() {
   if (task === 'whitepaper' && scenarioState.model) params.set('model', scenarioState.model);
   if (task === 'whitepaper' && scenarioState.document) params.set('document', scenarioState.document);
   if (task === 'whitepaper' && scenarioState.section) params.set('section', scenarioState.section);
-  if (target && task !== 'probe') params.set('target', target);
+  if (target && ['feature', 'version'].includes(task)) params.set('target', target);
   if (base && task === 'version') params.set('base', base);
   container.innerHTML = loadingMarkup('正在查询资料…');
   syncLocation();
@@ -3912,7 +3923,11 @@ document.addEventListener('click', event => {
   }
 });
 document.querySelectorAll('[data-scenario-task]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioTask)));
-document.querySelectorAll('[data-scenario-domain]').forEach(button => button.addEventListener('click', () => changeScenarioTask(['probe', 'whitepaper'].includes(button.dataset.scenarioDomain) ? button.dataset.scenarioDomain : scenarioState.featureTask)));
+document.querySelectorAll('[data-scenario-domain]').forEach(button => button.addEventListener('click', () => changeScenarioTask(button.dataset.scenarioDomain === 'probe' ? 'probe' : scenarioState.featureTask)));
+document.querySelectorAll('[data-scenario-source]').forEach(button => button.addEventListener('click', () => {
+  changeScenarioTask(button.dataset.scenarioSource === 'whitepaper' ? 'whitepaper' : scenarioState.domain === 'probe' ? 'probe' : scenarioState.featureTask);
+  if (document.querySelector('#scenario-query').value.trim()) runScenario();
+}));
 document.querySelector('#scenario-query').addEventListener('input', () => { scenarioState.code = ''; scenarioState.series = ''; scenarioState.model = ''; scenarioState.document = ''; scenarioState.section = ''; scenarioState.request++; document.querySelector('#scenario-model').innerHTML = '<option value="">自动选择</option>'; document.querySelector('#scenario-result').innerHTML = ''; });
 for (const id of ['#scenario-target', '#scenario-base']) document.querySelector(id).addEventListener('change', () => { scenarioState.request++; document.querySelector('#scenario-result').innerHTML = ''; });
 document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); runScenario(); });

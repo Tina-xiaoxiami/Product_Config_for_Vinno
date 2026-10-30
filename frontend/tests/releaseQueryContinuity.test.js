@@ -19,3 +19,15 @@ test('版本变化和对比统计按功能筛选且不修改原数据',()=>{
   const result=filter(data,'vaid gyn')
   assert.deepEqual(result.target.changes,[a]);assert.deepEqual(result.comparison.added.function,[a]);assert.deepEqual(result.comparison.removed.function,[]);assert.equal(data.target.changes.length,2)
 })
+test('功能和探头内部切换资料来源保留输入，跨对象恢复各自草稿',()=>{
+ const nodes={'#scenario-query':{value:'VATT'},'#advanced-search-wrap':{open:false},'#scenario-result':{innerHTML:''}}
+ const state={task:'feature',domain:'feature',featureTask:'feature',drafts:{feature:'',probe:''},request:0}
+ const change=new Function('scenarioState','document','setScenarioTask','syncLocation',`${block('function changeScenarioTask','function scenarioFirstMarkup')};return changeScenarioTask`)(state,{querySelector:k=>nodes[k]},task=>{state.task=task},()=>{})
+ change('whitepaper');assert.equal(nodes['#scenario-query'].value,'VATT');assert.equal(state.domain,'feature');assert.equal(state.featureTask,'feature')
+ change('feature');assert.equal(nodes['#scenario-query'].value,'VATT')
+ state.model='old-model';state.document='old-doc';state.section='old-section';
+ change('probe');assert.equal(state.model,'');assert.equal(state.document,'');assert.equal(state.section,'');nodes['#scenario-query'].value='F4-9E'
+ change('whitepaper');assert.equal(nodes['#scenario-query'].value,'F4-9E');assert.equal(state.domain,'probe')
+ change('probe');assert.equal(nodes['#scenario-query'].value,'F4-9E')
+ change('feature');assert.equal(nodes['#scenario-query'].value,'VATT');assert.equal(state.domain,'feature')
+})

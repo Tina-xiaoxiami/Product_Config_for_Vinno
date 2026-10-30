@@ -149,7 +149,7 @@ test('功能和白皮书均只读查询，不再生成模型摘要', () => {
   assert.doesNotMatch(run, /method: 'POST'/)
   assert.match(run, /scenarioEvolutionMarkup/)
   assert.match(run, /scenarioWhitepaperMarkup/)
-  assert.match(template, /data-scenario-domain="whitepaper"/)
+  assert.match(template, /data-scenario-source="whitepaper"/)
 })
 
 

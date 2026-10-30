@@ -187,3 +187,8 @@ body .empty-state { min-height: 100px; padding: 20px; color: var(--ink-2); backg
   body .search-preview-shell { padding: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { body .view.active { animation: none; } }
+
+/* Sources belong to the currently selected feature or probe. */
+body .scenario-sources { display:flex; gap:20px; padding:10px 24px 0; background:#fff; border-inline:1px solid var(--line); }
+body .scenario-sources [role="tab"] { border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--ink-2); padding:8px 4px; }
+body .scenario-sources [aria-selected="true"] { color:var(--primary-strong); border-bottom-color:var(--primary); font-weight:600; }
