@@ -42,7 +42,7 @@ body .release-review-change-actions button { min-height: 28px; padding: 3px 8px;
 .release-review-dialog [data-review-dialog-status] { color: #805d23; margin: 8px 0; font-size: 13px; }
 .release-review-dialog [data-review-dialog-status]:empty { display: none; }
 .release-review-patch-preview { border: 1px solid #dbe4ef; background: #f7f9fc; padding: 10px; border-radius: 5px; font-size: 13px; }
-.release-review-patch-preview [data-review-preview] { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+.release-review-patch-preview [data-review-preview] { display: block; margin-top: 8px; }
 .release-review-patch-preview p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
 [data-review-history-list] article { padding: 14px 0; border-bottom: 1px solid #dbe4ef; }
 [data-review-history-list] article header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -83,3 +83,64 @@ body .release-review-change-actions button { min-height: 28px; padding: 3px 8px;
 .release-review-draft-notice > span { color: #667a94; }
 .release-review-draft-notice > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; flex-basis: 100%; }
 body .release-review-draft-notice button { min-height: 26px; padding: 2px 6px; font-size: 12px; }
+
+
+/* Revision browser: compact navigation stays separate from the selected change. */
+.release-review-history-dialog[open] { display: flex; flex-direction: column; width: min(1120px, calc(100vw - 24px)); height: min(680px, calc(100dvh - 24px)); max-height: calc(100dvh - 24px); padding: 0; overflow: hidden; }
+.release-review-history-dialog > .dialog-heading { flex: 0 0 auto; margin: 0; padding: 10px 16px; background: #f0f5fc; }
+.release-review-history-dialog > .dialog-heading h2 { font-size: 17px; }
+.release-review-history-dialog > .release-history-boundary { flex: 0 0 auto; margin: 0; padding: 6px 16px; font-size: 12px; border-bottom: 1px solid #e0e7f1; }
+.release-review-history-dialog > [data-review-dialog-status] { flex: 0 0 auto; padding: 0 16px; }
+.release-review-history-dialog > [data-review-history-list] { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.release-review-history-dialog > .dialog-actions { flex: 0 0 auto; margin: 0; padding: 6px 12px; background: #f5f8fc; }
+body .release-review-history-dialog .dialog-actions button { min-height: 28px; padding: 3px 12px; }
+.release-history-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); height: 100%; }
+.release-history-nav { display: block; min-height: 0; overflow: auto; padding: 8px; background: #f3f6fb; border-right: 1px solid #dbe4ef; }
+body .release-history-nav button { display: block; width: 100%; padding: 8px 10px; margin: 0 0 6px; border: 1px solid transparent; background: transparent; text-align: left; color: #52657e; }
+body .release-history-nav button[aria-pressed="true"] { border-color: #b8cff5; background: #e8f0ff; color: #174ca2; }
+.release-history-nav button > span { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.release-history-nav time { display: block; margin-top: 3px; font-size: 11px; line-height: 1.5; color: #667a94; }
+.release-history-nav em, .release-history-current { padding: 1px 5px; font-size: 11px; font-weight: 500; font-style: normal; color: #174ca2; background: #dbe9ff; border-radius: 4px; white-space: nowrap; }
+.release-history-detail { min-width: 0; min-height: 0; overflow: auto; padding: 12px 16px; }
+.release-history-heading, .release-history-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.release-history-heading { justify-content: space-between; }
+.release-history-heading h3 { font-size: 16px; margin: 0; }
+body .release-history-heading button { min-height: 28px; padding: 3px 10px; font-size: 12px; }
+.release-history-operation { color: #667a94; font-size: 12px; }
+.release-history-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 5px 0 8px; font-size: 12px; color: #667a94; }
+.release-history-reason { margin: 8px 0; padding: 6px 9px; background: #f1f5fc; border-radius: 5px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.release-history-reason b { margin-right: 6px; }
+.release-history-provenance { margin: 6px 0; font-size: 12px; color: #667a94; }
+.release-history-provenance p { margin: 6px 0; }
+.release-history-full { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid #dbe4ef; font-size: 12px; }
+.release-history-full summary, .release-history-provenance summary { cursor: pointer; color: #52657e; }
+
+/* Exact additions/deletions share color and semantic marks in history and drafts. */
+.release-text-diff { min-width: 0; margin: 8px 0; font-size: 13px; }
+.release-text-diff > header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 7px; }
+.release-diff-legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+.release-diff-legend > span:first-child { color: #9c283b; }
+.release-diff-legend > span:last-child { color: #17633b; }
+.release-diff-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: 6px 0; border: 1px solid #dbe4ef; border-radius: 6px; overflow: hidden; }
+.release-diff-row > section { min-width: 0; padding: 7px 9px; }
+.release-diff-before { background: #fff6f5; border-right: 1px solid #dbe4ef; }
+.release-diff-after { background: #f1faf5; }
+.release-diff-line-label { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 600; color: #667a94; }
+.release-text-diff pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.75; }
+.release-text-diff del { background: #ffd6dc; color: #8e2032; text-decoration: line-through; text-decoration-thickness: 1px; border-radius: 2px; }
+.release-text-diff ins { background: #c5eed4; color: #145732; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; border-radius: 2px; }
+.release-diff-placeholder { font-style: italic; color: #7d8796; font-size: 12px; }
+.release-diff-unchanged { margin: 4px 0; border: 1px dashed #e0e7f1; border-radius: 4px; background: #fafbfd; }
+.release-diff-unchanged > summary { cursor: pointer; padding: 3px 8px; text-align: center; font-size: 11px; color: #667a94; }
+.release-diff-unchanged > pre { padding: 7px 10px; color: #667a94; border-top: 1px dashed #e0e7f1; }
+.release-diff-empty { color: #667a94; font-size: 12px; }
+@media (max-width: 700px) {
+  .release-history-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .release-history-nav { display: flex; gap: 6px; padding: 6px; overflow: auto; max-height: 94px; border-right: 0; border-bottom: 1px solid #dbe4ef; }
+  body .release-history-nav button { flex: 0 0 160px; margin: 0; }
+  .release-history-detail { padding: 10px; }
+}
+@media (max-width: 520px) {
+  .release-diff-row { grid-template-columns: minmax(0, 1fr); }
+  .release-diff-before { border-right: 0; border-bottom: 1px solid #dbe4ef; }
+}

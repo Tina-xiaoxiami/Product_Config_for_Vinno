@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 const source = readFileSync(new URL('../../backend/tracker/static/release-review.js', import.meta.url), 'utf8')
 const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
-const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload,releaseReviewDraftDifference,releaseReviewDraftNoticeMarkup}`)(esc, esc,
+const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload,releaseReviewDraftNoticeMarkup,releaseReviewDiffTokens,releaseReviewDiffMarkup,releaseReviewHistoryPair,releaseReviewBodyHistoryMarkup}`)(esc, esc,
   (text, additions, image) => `<section class="feature-document-section"><p>${esc(text)}</p>${image}</section>`,
   () => '<section class="feature-image-section"><p>图片</p></section>', () => '<button>原文</button>')
 
@@ -150,10 +150,53 @@ test('草稿提示明确未提交并保留查看修改和恢复入口，来源�
  assert.equal(helpers.releaseReviewDraftNoticeMarkup([],{}),'')
 })
 
-test('草稿对比仅保留差异行，不改变已保存内容，追加删除和重复行边界正确',()=>{
- assert.deepEqual(helpers.releaseReviewDraftDifference('首行\n旧内容\n尾行','首行\n新内容\n尾行'),{before:'旧内容',after:'新内容',changed:true})
- assert.deepEqual(helpers.releaseReviewDraftDifference('首行','首行\n补充'),{before:'',after:'补充',changed:true})
- assert.deepEqual(helpers.releaseReviewDraftDifference('首行\n删除','首行'),{before:'删除',after:'',changed:true})
- assert.deepEqual(helpers.releaseReviewDraftDifference('重复\n重复','重复\n修改\n重复'),{before:'',after:'修改',changed:true})
- assert.deepEqual(helpers.releaseReviewDraftDifference('相同','相同'),{before:'',after:'',changed:false})
+test('彩色对比精确标出同一行多处中文和参数变化，保留未改动文本',()=>{
+ const html=helpers.releaseReviewDiffMarkup('参数：长度3cm，深度2cm。\n','参数：长度4cm，深度5cm。\n')
+ assert.match(html,/<del>3<\/del>/);assert.match(html,/<ins>4<\/ins>/)
+ assert.match(html,/<del>2<\/del>/);assert.match(html,/<ins>5<\/ins>/)
+ assert.doesNotMatch(html,/<del>参数/);assert.match(html,/1 处变更/)
+})
+
+test('相隔的修改分别集中显示，相同段落默认折叠且可展开上下文',()=>{
+ const html=helpers.releaseReviewDiffMarkup('共同标题\n旧句A\n中间未修改\n旧句B\n共同结尾','共同标题\n新句A\n中间未修改\n新句B\n共同结尾')
+ assert.match(html,/2 处变更/);assert.equal((html.match(/class="release-diff-row"/g)||[]).length,2)
+ assert.equal((html.match(/class="release-diff-unchanged"/g)||[]).length,3)
+ assert.doesNotMatch(html,/<details[^>]*open/);assert.match(html,/中间未修改/)
+ assert.match(helpers.releaseReviewDiffMarkup('A','A'),/正文没有变化/)
+})
+
+test('对比新增删除与HTML转义、Emoji和换行均可完整还原，超预算安全退化',()=>{
+ for(const [before,after] of [['','追加'],['删除',''],['中文😀\r\n正文','中文😃\r\n新正文'],['<script>x</script>','<img src=x onerror=alert(1)>'],['重复重复','重复修改重复']]) {
+  for(const remaining of [0,300000]) {
+   const parts=helpers.releaseReviewDiffTokens(Array.from(before),Array.from(after),{remaining})
+   assert.equal(parts.filter(p=>p.type!=='add').map(p=>p.text).join(''),before)
+   assert.equal(parts.filter(p=>p.type!=='remove').map(p=>p.text).join(''),after)
+  }
+ }
+ const html=helpers.releaseReviewDiffMarkup('<script>x</script>','<img src=x onerror=alert(1)>')
+ assert.doesNotMatch(html,/<script>|<img /);assert.match(html,/&lt;/)
+ assert.match(helpers.releaseReviewDiffMarkup('','追加'),/<ins>追加<\/ins>/)
+ assert.match(helpers.releaseReviewDiffMarkup('删除',''),/<del>删除<\/del>/)
+})
+
+test('历史对比优先使用保存时的准确前后稿，旧修订仅同源时派生',()=>{
+ const items=[{content:'新稿',source_fingerprint:'a',body_change:{before:'保存时的原稿',after:'保存时的新稿'}},{content:'旧稿',source_fingerprint:'b'}]
+ assert.deepEqual(helpers.releaseReviewHistoryPair(items,0),{before:'保存时的原稿',after:'保存时的新稿'})
+ items[0].body_change={};assert.equal(helpers.releaseReviewHistoryPair(items,0),null)
+ items[1].source_fingerprint='a';assert.deepEqual(helpers.releaseReviewHistoryPair(items,0),{before:'旧稿',after:'新稿'})
+ assert.equal(helpers.releaseReviewHistoryPair(items,1),null)
+})
+
+test('正文历史紧凑分区选择修订，显示当前状态，恢复使用原全局修订而非正文号',()=>{
+ const items=[{revision:9,body_revision:2,content:'新稿',created_at:'2026-10-30',source_fingerprint:'same',restorable:true,body_change:{operation:'replace',reason:'替换测量<script>',source_version:'1.51.90',before:'旧稿',after:'新稿'}},{revision:4,body_revision:1,content:'旧稿',source_fingerprint:'same',restorable:true},{revision:0,body_revision:0,content:'起始稿',source_fingerprint:'same',restorable:true}]
+ const latest=helpers.releaseReviewBodyHistoryMarkup(items,2,9)
+ assert.match(latest,/release-history-nav/);assert.match(latest,/release-history-detail/)
+ assert.match(latest,/data-review-select="9" aria-pressed="true"/);assert.match(latest,/当前正文/)
+ assert.doesNotMatch(latest,/data-review-restore=/);assert.match(latest,/来源版本 1.51.90/)
+ assert.match(latest,/替换测量&lt;script&gt;/);assert.match(latest,/<del>旧<\/del>/);assert.match(latest,/<ins>新<\/ins>/)
+ const old=helpers.releaseReviewBodyHistoryMarkup(items,2,4)
+ assert.match(old,/data-review-restore="4"/);assert.doesNotMatch(old,/data-review-restore="1"/)
+ const initial=helpers.releaseReviewBodyHistoryMarkup(items,2,0)
+ assert.match(initial,/初始正文，无上一版可对比/);assert.match(initial,/data-review-restore="0"/)
+ items[1].restorable=false;assert.match(helpers.releaseReviewBodyHistoryMarkup(items,2,4),/data-review-restore="4" disabled/)
 })
