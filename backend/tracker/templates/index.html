@@ -80,13 +80,12 @@
       <section class="view" data-page="search">
         <section class="scenario-search" aria-label="按任务查询">
           <header class="scenario-header">
-            <h2>发布资料查询</h2>
-            <p>围绕同一个功能，查看最早记录、完整说明和版本变化。</p>
             <div class="scenario-domains" role="group" aria-label="查询对象">
               <button type="button" data-scenario-domain="feature" aria-pressed="true">功能</button>
               <button type="button" data-scenario-domain="probe" aria-pressed="false">探头</button>
             </div>
           </header>
+          <form id="scenario-form" class="scenario-controls scenario-toolbar">
           <div class="scenario-sources" role="tablist" aria-label="资料来源">
             <button type="button" role="tab" data-scenario-source="release" aria-selected="true">Release Note</button>
             <button type="button" role="tab" data-scenario-source="whitepaper" aria-selected="false">白皮书</button>
@@ -97,7 +96,6 @@
             <button type="button" data-scenario-task="version" aria-pressed="false">版本变化</button>
             <button type="button" data-scenario-task="probe" hidden aria-pressed="false">探头首次支持</button>
           </div>
-          <form id="scenario-form" class="scenario-controls">
             <label id="scenario-query-label">功能名称或关键词<input id="scenario-query" maxlength="200" placeholder="例如 VAid GYN、子宫畸形分类" autocomplete="off"></label>
             <label id="scenario-model-label" hidden>白皮书型号<select id="scenario-model"><option value="">自动选择</option></select></label>
             <label id="scenario-target-label">目标版本<select id="scenario-target"></select></label>

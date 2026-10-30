@@ -1080,7 +1080,11 @@ function positionSearchProject(view) {
   if (!workbenchConfig.embedded) return;
   const context = document.querySelector('#project-context-actions');
   const target = document.querySelector(view === 'search' ? '.scenario-controls' : '.topbar-actions');
-  if (context && target && context.parentElement !== target) target.prepend(context);
+  if (context && target && context.parentElement !== target) {
+    const queryLabel = view === 'search' ? target.querySelector?.('#scenario-query-label') : null;
+    if (queryLabel) target.insertBefore(context, queryLabel);
+    else target.prepend(context);
+  }
   document.body.classList.toggle('search-focused', view === 'search');
 }
 
