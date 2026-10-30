@@ -61,6 +61,7 @@ def test_transports_have_provider_specific_limits_and_json_output(tmp_path, monk
     else:
         assert body['store'] is False
         assert body['max_output_tokens'] == 2500
+        assert 'json' in body['input'].casefold(), 'Responses JSON mode requires json in input, not only instructions'
 
 
 def test_transport_supplies_trusted_ca_bundle_on_python_without_system_roots(tmp_path, monkeypatch):
