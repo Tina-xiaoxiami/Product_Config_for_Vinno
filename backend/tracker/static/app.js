@@ -3810,17 +3810,24 @@ function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
   }).join('')}${imageMarkup}</div>`;
 }
 
-function scenarioBaselineImagesMarkup(baseline, query) {
+function scenarioBaselineImagesMarkup(baseline, query, latest = false) {
   const section = baseline.section;
   if (!section?.has_images) return '';
   const blocks = (section.blocks || []).filter(block => block.type === 'image');
   let omitted = false;
   const images = blocks.map((block, index) => {
-    const markup = sourceImageMarkup(block, `${baseline.version} 起始版本图示 ${index + 1}`);
+    const markup = sourceImageMarkup(block, `${baseline.version} ${latest ? '最近版本' : '起始版本'}图示 ${index + 1}`);
     if (!markup) omitted = true;
     return markup ? `<div class="feature-image-item">${markup}<p>图 ${index + 1} · ${escapeHtml(baseline.version)} 原文</p></div>` : '';
   }).join('');
-  return `<section class="feature-image-section"><h4>起始版本图示 <span>${escapeHtml(baseline.version)}</span></h4><p>图片来自起始章节；后续版本中的效果变化请查看对应变更原文。</p><div class="feature-image-gallery">${images}</div>${section.images_complete === false || omitted || !images ? '<p role="alert">部分图片无法展示，请查看原文核对。</p>' : ''}${scenarioPreviewButton(baseline.source_id, baseline.locator, query, '查看图文原文')}</section>`;
+  return `<section class="feature-image-section"><h4>${latest ? '最近版本图示' : '起始版本图示'} <span>${escapeHtml(baseline.version)}</span></h4><p>${latest ? `来源：${escapeHtml(baseline.title || '对应功能章节')}，图片版本与正文起点分别标注。` : '图片来自起始章节；后续版本中的效果变化请查看对应变更原文。'}</p><div class="feature-image-gallery">${images}</div>${section.images_complete === false || omitted || !images ? '<p role="alert">部分图片无法展示，请查看原文核对。</p>' : ''}${scenarioPreviewButton(baseline.source_id, baseline.locator, query, '查看图文原文')}</section>`;
+}
+
+function scenarioIllustrationsMarkup(data, query) {
+  if (!Array.isArray(data.illustrations)) return scenarioBaselineImagesMarkup(data.baseline, query);
+  return data.illustrations.map(item => scenarioBaselineImagesMarkup(item, query, true)).join('')
+    + (data.illustration_notice ? `<p class="strategy-note" role="status">${escapeHtml(data.illustration_notice)}</p>` : '')
+    + (data.illustrations_unverified_sources || []).map(item => scenarioPreviewButton(item.source_id, item.locator || '', query, `核对 ${item.version} 原文`)).join('');
 }
 
 function scenarioWhitepaperMarkup(data, query) {
@@ -3834,7 +3841,7 @@ function scenarioEvolutionMarkup(data, query) {
   if (!baseline) return `<section class="scenario-answer"><h3>${data.status === 'baseline_conflict' ? '起始版本的完整章节存在冲突' : '缺少Release Note完整起始章节'}</h3><p>暂不生成完整描述；不会使用白皮书或模型摘要代替。</p><p>${escapeHtml(data.coverage_notice)}</p>${(data.section_options || []).map(row => `<article><p>${escapeHtml(row.version)} · ${escapeHtml(row.title)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</section>`;
   const labels = {baseline:'起始完整章节',append:'补充',replace:'修改',delete:'删除',replace_full:'整体替换',pending:'待核对'};
   const pending = data.unresolved_changes || [];
-  return `<section class="scenario-answer"><header class="feature-answer-heading"><h3>${pending.length || data.baseline_gap ? '功能描述 · 尚有变更待核对' : '功能描述 · 已应用明确变更'}</h3><span class="feature-review-badge">${pending.length ? `${pending.length} 项待核对` : '按原文逐版更新'}</span></header><p class="feature-version-summary">Release Note 起点 ${escapeHtml(baseline.version)} · 截至 ${escapeHtml(data.target_version || '最新已收录版本')} · 已应用 ${(data.applied_changes || []).length} 项变更</p>${scenarioDocumentMarkup(data.content, data.applied_changes || [], scenarioBaselineImagesMarkup(baseline, query))}${pending.length ? `<details open class="feature-pending"><summary>尚未合并的变更（${pending.length}）</summary>${pending.map(row => `<article><h4>${escapeHtml(row.version)}</h4><div class="scenario-content">${escapeHtml(row.text || row.content)}</div><p>${escapeHtml(row.reason)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details>` : ''}<details><summary>版本演进与原文依据</summary>${(data.timeline || []).map(row => `<article><h4>${escapeHtml(row.version)} · ${escapeHtml(labels[row.operation] || row.operation)}</h4><div class="scenario-content">${escapeHtml(row.content || row.text)}</div>${row.before ? `<p>原内容：${escapeHtml(row.before)}</p>` : ''}${row.after ? `<p>更新为：${escapeHtml(row.after)}</p>` : ''}${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details><p>${escapeHtml(data.coverage_notice)}</p></section>`;
+  return `<section class="scenario-answer"><header class="feature-answer-heading"><h3>${pending.length || data.baseline_gap ? '功能描述 · 尚有变更待核对' : '功能描述 · 已应用明确变更'}</h3><span class="feature-review-badge">${pending.length ? `${pending.length} 项待核对` : '按原文逐版更新'}</span></header><p class="feature-version-summary">Release Note 起点 ${escapeHtml(baseline.version)} · 截至 ${escapeHtml(data.target_version || '最新已收录版本')} · 已应用 ${(data.applied_changes || []).length} 项变更</p>${scenarioDocumentMarkup(data.content, data.applied_changes || [], scenarioIllustrationsMarkup(data, query))}${pending.length ? `<details open class="feature-pending"><summary>尚未合并的变更（${pending.length}）</summary>${pending.map(row => `<article><h4>${escapeHtml(row.version)}</h4><div class="scenario-content">${escapeHtml(row.text || row.content)}</div><p>${escapeHtml(row.reason)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details>` : ''}<details><summary>版本演进与原文依据</summary>${(data.timeline || []).map(row => `<article><h4>${escapeHtml(row.version)} · ${escapeHtml(labels[row.operation] || row.operation)}</h4><div class="scenario-content">${escapeHtml(row.content || row.text)}</div>${row.before ? `<p>原内容：${escapeHtml(row.before)}</p>` : ''}${row.after ? `<p>更新为：${escapeHtml(row.after)}</p>` : ''}${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details><p>${escapeHtml(data.coverage_notice)}</p></section>`;
 }
 
 function scenarioVersionMarkup(data) {

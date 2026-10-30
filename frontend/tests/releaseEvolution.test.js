@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs'
 const app=readFileSync(new URL('../../backend/tracker/static/app.js',import.meta.url),'utf8')
 const start=app.indexOf('function scenarioDocumentMarkup'),end=app.indexOf('function scenarioVersionMarkup',start)
 const escapeHtml=x=>String(x??'').replaceAll('<','&lt;').replaceAll('>','&gt;')
-const render=new Function('escapeHtml','escapeAttribute','scenarioPreviewButton','sourceImageMarkup',`${app.slice(start,end)};return {scenarioWhitepaperMarkup,scenarioEvolutionMarkup,scenarioDocumentMarkup,scenarioBaselineImagesMarkup}`)(escapeHtml,escapeHtml,()=>'<button>查看原文</button>', block => String(block.data_url || '').startsWith('data:image/png;base64,') ? '<figure><img></figure>' : '')
+const render=new Function('escapeHtml','escapeAttribute','scenarioPreviewButton','sourceImageMarkup',`${app.slice(start,end)};return {scenarioWhitepaperMarkup,scenarioEvolutionMarkup,scenarioDocumentMarkup,scenarioBaselineImagesMarkup,scenarioIllustrationsMarkup}`)(escapeHtml,escapeHtml,()=>'<button>查看原文</button>', block => String(block.data_url || '').startsWith('data:image/png;base64,') ? '<figure><img></figure>' : '')
 test('功能展示RN基线、确定性结果与未应用变更，不生成摘要',()=>{
  const html=render.scenarioEvolutionMarkup({baseline:{version:'1.51.20'},content:'原始完整章节\n新增支持',applied_changes:[{}],unresolved_changes:[{version:'1.51.90',text:'<更新内容>',reason:'范围不明确'}],timeline:[],coverage_notice:'仅已收录'},'VATT')
  assert.match(html,/Release Note 起点 1.51.20/);assert.match(html,/原始完整章节/);assert.match(html,/新增支持/);assert.match(html,/&lt;更新内容&gt;/);assert.match(html,/<details open(?:\s|>)/);assert.doesNotMatch(html,/大模型整理|整理后的功能说明|白皮书/)
@@ -30,4 +30,16 @@ test('图片放在效果图示分区内且先于后续补充，不重复展示',
  const html=render.scenarioDocumentMarkup('效果图示：\n新增支持A；',[{operation:'append',version:'1.51.80',after:'新增支持A；'}],'<figure>原图</figure>')
  assert.equal(html.split('<figure>').length-1,1)
  assert.ok(html.indexOf('<figure>')<html.indexOf('版本 1.51.80 补充'))
+})
+
+test('默认图示使用独立最新版本，起始正文不被图示替换',()=>{
+ const section={has_images:true,images_complete:true,blocks:[{type:'image',data_url:'data:image/png;base64,AA=='}]}
+ const data={baseline:{version:'1.51.30',section},illustrations:[{version:'1.51.90',title:'VATT图像优化',section}],content:'基线完整内容',timeline:[],applied_changes:[],unresolved_changes:[]}
+ const html=render.scenarioEvolutionMarkup(data,'VATT')
+ assert.match(html,/Release Note 起点 1.51.30/);assert.match(html,/基线完整内容/);assert.match(html,/最近版本图示/);assert.match(html,/1.51.90 原文/);assert.doesNotMatch(html,/起始版本图示/)
+ assert.equal((html.match(/<img>/g)||[]).length,1)
+})
+test('最新图不可用时保留版本和原文入口，不悄悄展示旧图',()=>{
+ const html=render.scenarioIllustrationsMarkup({baseline:{version:'1.0.0',section:{has_images:true,blocks:[{type:'image',data_url:'data:image/png;base64,AA=='}]}},illustrations:[{version:'1.1.0',section:{has_images:true,images_complete:false,blocks:[]}}]},'VATT')
+ assert.match(html,/1.1.0/);assert.match(html,/部分图片无法展示/);assert.doesNotMatch(html,/<img>/)
 })

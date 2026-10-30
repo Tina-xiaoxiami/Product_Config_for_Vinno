@@ -164,7 +164,7 @@ def test_addition_recognition_never_absorbs_replacement_deletion_or_bugfix(monke
     assert len(answer['unresolved_changes']) == len(texts)
 
 
-def test_baseline_images_are_loaded_once_for_exact_baseline_chapter(monkeypatch):
+def test_latest_images_are_loaded_once_for_exact_latest_chapter(monkeypatch):
     calls = []
     base = {**section('VATT基线完整内容'), 'has_images': True, 'source_id': 'release:source:1'}
     later = {**section('VATT后续变化'), 'has_images': True, 'source_id': 'release:source:2'}
@@ -173,18 +173,20 @@ def test_baseline_images_are_loaded_once_for_exact_baseline_chapter(monkeypatch)
     def read(db, sid, *, image_locator=''):
         calls.append((sid, image_locator))
         if image_locator:
-            assert sid == 1
-            assert image_locator == base['locator']
-            return [{**base, 'images_complete': True, 'blocks': [image]}]
+            assert sid == 2
+            assert image_locator == later['locator']
+            return [{**later, 'images_complete': True, 'blocks': [image]}]
         return [base if sid == 1 else later]
 
     monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
     monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
     answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(2, '1.1.0')]), 1, 'VATT')
-    assert answer['baseline']['section']['blocks'] == [image]
-    assert answer['baseline']['section']['images_complete']
+    assert answer['illustrations'][0]['section']['blocks'] == [image]
+    assert answer['illustrations'][0]['section']['images_complete']
     assert answer['content'] == base['content']
-    assert [call for call in calls if call[1]] == [(1, base['locator'])]
+    assert [call for call in calls if call[1]] == [(2, later['locator'])]
+    assert answer['illustrations'][0]['version'] == '1.1.0'
+    assert not any(block['type'] == 'image' for block in answer['baseline']['section']['blocks'])
 
 
 def test_unavailable_or_mismatched_image_source_does_not_change_text(monkeypatch):
@@ -197,9 +199,9 @@ def test_unavailable_or_mismatched_image_source_does_not_change_text(monkeypatch
         monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
         answer = release_evolution_answer(Data([hit(1, '1.0.0')]), 1, 'VATT')
         assert answer['content'] == base['content']
-        assert answer['baseline']['section']['has_images']
-        assert not answer['baseline']['section']['images_complete']
-        assert not any(block['type'] == 'image' for block in answer['baseline']['section']['blocks'])
+        assert answer['illustrations'][0]['section']['has_images']
+        assert not answer['illustrations'][0]['section']['images_complete']
+        assert not any(block['type'] == 'image' for block in answer['illustrations'][0]['section']['blocks'])
 
 
 def test_unsupported_baseline_images_keep_unavailable_marker(monkeypatch):
@@ -209,6 +211,120 @@ def test_unsupported_baseline_images_keep_unavailable_marker(monkeypatch):
                         lambda db, sid, *, image_locator='': [{**base, 'images_complete': False, 'blocks': [block]}] if image_locator else [base])
     monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
     answer = release_evolution_answer(Data([hit(1, '1.0.0')]), 1, 'VATT')
-    assert answer['baseline']['section']['blocks'] == [block]
-    assert not answer['baseline']['section']['images_complete']
+    assert answer['illustrations'][0]['section']['blocks'] == [block]
+    assert not answer['illustrations'][0]['section']['images_complete']
     assert answer['content'] == base['content']
+
+
+def test_latest_illustration_respects_target_without_loading_historical_images(monkeypatch):
+    metadata = {
+        1: {**section('初始说明及旧图'), 'has_images': True, 'source_id': 'release:source:1'},
+        2: {**section('无新图的更新'), 'has_images': False, 'source_id': 'release:source:2'},
+        3: {**section('最新图说明'), 'has_images': True, 'source_id': 'release:source:3'},
+        4: {**section('无新图的新版本'), 'has_images': False, 'source_id': 'release:source:4'},
+        5: {**section('最新图说明'), 'has_images': True, 'source_id': 'release:source:5'},
+    }
+    calls = []
+
+    def read(db, sid, *, image_locator=''):
+        calls.append((sid, image_locator))
+        base = metadata[sid]
+        return [{**base, 'images_complete': True, 'blocks': [{'type': 'image', 'data_url': f'data:image/png;base64,{sid}'}]}] if image_locator else [base]
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    hits = [hit(1, '1.0.0'), hit(2, '1.1.0'), hit(3, '1.2.0'), hit(4, '1.3.0'),
+            hit(5, '1.2.0'), hit(9, '1.9.0', project_id=2)]
+    db = Data(hits)
+    current = release_evolution_answer(db, 1, 'VATT')
+    assert current['illustrations_version'] == '1.2.0'
+    assert len(current['illustrations']) == 2
+    assert [call for call in calls if call[1]] == [(3, metadata[3]['locator']), (5, metadata[5]['locator'])]
+    assert current['illustrations'][0]['section']['blocks'] != current['illustrations'][1]['section']['blocks']
+    calls.clear()
+    bounded = release_evolution_answer(db, 1, 'VATT', '1.1.0')
+    assert bounded['illustrations_version'] == '1.0.0'
+    assert [call for call in calls if call[1]] == [(1, metadata[1]['locator'])]
+    assert current['baseline']['version'] == bounded['baseline']['version'] == '1.0.0'
+
+
+def test_unreadable_latest_illustration_never_falls_back_to_old_version(monkeypatch):
+    bases = {sid: {**section(f'VATT版本{sid}内容'), 'has_images': True, 'source_id': f'release:source:{sid}'} for sid in (1, 2)}
+    calls = []
+
+    def read(db, sid, *, image_locator=''):
+        calls.append((sid, image_locator))
+        return [] if image_locator else [bases[sid]]
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(2, '1.1.0')]), 1, 'VATT')
+    assert answer['illustrations_version'] == '1.1.0'
+    assert answer['illustrations'][0]['source_id'] == 'release:source:2'
+    assert not answer['illustrations_complete']
+    assert '未以旧版图片替代' in answer['illustration_notice']
+    assert [call for call in calls if call[1]] == [(2, bases[2]['locator'])]
+    assert answer['content'] == bases[1]['content']
+
+
+def test_latest_illustration_chapter_limit_is_explicit(monkeypatch):
+    base = {**section('VATT完整初始描述'), 'has_images': False, 'source_id': 'release:source:1'}
+    latest = [{**section(f'图示{index}', title=f'VATT操作{index}'), 'locator': f'原文行 {index + 20}',
+               'has_images': True, 'source_id': 'release:source:2'} for index in range(5)]
+    calls = []
+
+    def read(db, sid, *, image_locator=''):
+        if sid == 1:
+            return [base]
+        if image_locator:
+            calls.append(image_locator)
+            return [{**item, 'images_complete': True, 'blocks': [{'type': 'image', 'unavailable': True}]} for item in latest if item['locator'] == image_locator]
+        return latest
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(2, '1.1.0')]), 1, 'VATT')
+    assert len(answer['illustrations']) == len(calls) == 3
+    assert answer['illustrations_truncated']
+    assert not answer['illustrations_complete']
+    assert '仅展示前3个' in answer['illustration_notice']
+
+
+def test_first_scan_failure_in_newer_or_same_version_suppresses_old_images(monkeypatch):
+    base = {**section('VATT原有图示'), 'has_images': True, 'source_id': 'release:source:1'}
+    calls = []
+
+    def read(db, sid, *, image_locator=''):
+        calls.append((sid, image_locator))
+        return [base] if sid == 1 else []
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    for unreadable_version in ('1.0.0', '1.1.0'):
+        calls.clear()
+        answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(2, unreadable_version)]), 1, 'VATT')
+        assert answer['content'] == base['content']
+        assert answer['illustrations'] == []
+        assert answer['illustrations_version'] == unreadable_version
+        assert not answer['illustrations_complete']
+        assert '未展示旧图作为最新图示' in answer['illustration_notice']
+        assert answer['illustrations_unverified_sources'][0]['source_id'] == 'release:source:2'
+        assert not any(locator for _, locator in calls)
+    bounded = release_evolution_answer(Data([hit(1, '1.0.0'), hit(2, '1.1.0')]), 1, 'VATT', '1.0.0')
+    assert len(bounded['illustrations']) == 1
+    assert bounded['illustrations_version'] == '1.0.0'
+
+
+def test_same_source_same_chapter_duplicate_only_extracts_once(monkeypatch):
+    base = {**section('VATT图示'), 'has_images': True, 'source_id': 'release:source:1'}
+    calls = []
+
+    def read(db, sid, *, image_locator=''):
+        calls.append((sid, image_locator))
+        return [{**base, 'images_complete': True, 'blocks': []}] if image_locator else [base, dict(base)]
+
+    monkeypatch.setattr('tracker.services.release_evolution.source_sections', read)
+    monkeypatch.setattr('tracker.services.release_evolution._release_source_language', lambda *args: 'cn')
+    answer = release_evolution_answer(Data([hit(1, '1.0.0'), hit(1, '1.0.0')]), 1, 'VATT')
+    assert len(answer['illustrations']) == 1
+    assert [call for call in calls if call[1]] == [(1, base['locator'])]

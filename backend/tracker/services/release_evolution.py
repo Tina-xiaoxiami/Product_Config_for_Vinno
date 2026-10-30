@@ -66,14 +66,14 @@ def _apply(content: str, text: str, query: str = '') -> tuple[str, str, str, str
     return None
 
 
-def _baseline_section(database: Any, baseline: dict[str, Any]) -> dict[str, Any]:
-    """Read images once, for the verified baseline chapter only; keep text on failure."""
+def _baseline_section(database: Any, baseline: dict[str, Any], *, include_images: bool = True) -> dict[str, Any]:
+    """Read only the selected verified chapter images; keep text on failure."""
     fallback = {'source_id': baseline['source_id'], 'locator': baseline['locator'],
                 'title': baseline['title'], 'content': baseline['content'], 'complete': True,
                 'has_images': baseline['has_images'],
                 'images_complete': not baseline['has_images'],
                 'blocks': [{'type': 'text', 'locator': baseline['locator'], 'text': baseline['content']}]}
-    if not baseline['has_images']:
+    if not include_images or not baseline['has_images']:
         return fallback
     try:
         source_id = int(baseline['source_id'].rsplit(':', 1)[-1])
@@ -104,7 +104,9 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
     result: dict[str, Any] = {'baseline': None, 'content': '', 'applied_changes': [],
                             'unresolved_changes': [], 'timeline': [], 'section_options': [],
                             'coverage_notice': _NOTICE, 'status': 'missing_baseline',
-                            'target_version': target_version}
+                            'target_version': target_version, 'illustrations': [],
+                            'illustrations_version': '', 'illustrations_complete': True,
+                            'illustrations_truncated': False, 'illustration_notice': ''}
     history = database.search_release_history(query, project_id=project_id)['results']
     dated = [hit for hit in history if _version(hit.get('version')) is not None
              and (target is None or _version(hit['version']) <= target)
@@ -114,6 +116,8 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
     result['earliest_record_version'] = earliest['version'] if earliest else ''
     sections: dict[tuple[int, ...], list[dict[str, Any]]] = {}
     seen_sources: set[str] = set()
+    image_candidates: dict[tuple[int, ...], list[dict[str, Any]]] = {}
+    unreadable_sources: list[dict[str, Any]] = []
     for hit in history:
         source = str(hit.get('preview_id') or '')
         version = _version(hit.get('version'))
@@ -125,7 +129,10 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
         source_id = int(source.rsplit(':', 1)[-1])
         if _release_source_language(database, source_id, project_id) != 'cn':
             continue
-        for section in source_sections(database, source_id):
+        source_metadata = source_sections(database, source_id)
+        if not source_metadata:
+            unreadable_sources.append({'version': hit['version'], 'source_id': source, 'locator': '', 'title': query})
+        for section in source_metadata:
             title = str(section.get('title') or '')
             if (not section.get('complete') or not section.get('content') or not _matches(query, title)
                     or re.search(r'目录|配置表|配置变更|Contents', title, re.I)):
@@ -134,9 +141,41 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
                     'source_id': source, 'locator': section.get('locator') or '', 'title': title,
                     'text': _body(section), 'verification': 'unverified',
                     'has_images': bool(section.get('has_images'))}
+            if item['has_images']:
+                image_candidates.setdefault(version, []).append(item)
             bucket = sections.setdefault(version, [])
             if not any(_normal(old['text']) == _normal(item['text']) for old in bucket):
                 bucket.append(item)
+    latest_unreadable = max(unreadable_sources, key=lambda item: _version(item['version']) or ()) if unreadable_sources else None
+    latest_images = max(image_candidates) if image_candidates else None
+    blocked_images = bool(latest_unreadable and (latest_images is None or (_version(latest_unreadable['version']) or ()) >= latest_images))
+    if blocked_images and latest_unreadable is not None:
+        result['illustrations_version'] = latest_unreadable['version']
+        result['illustrations_complete'] = False
+        result['illustration_notice'] = (f"{latest_unreadable['version']}版本的相关中文Release Note无法读取，"
+            '较近版本图示未能核实；未展示旧图作为最新图示，请打开该版本原文核对。')
+        result['illustrations_unverified_sources'] = [item for item in unreadable_sources
+            if latest_images is None or (_version(item['version']) or ()) >= latest_images]
+    elif image_candidates:
+        latest = max(image_candidates)
+        candidates = sorted(image_candidates[latest], key=lambda item: (item['title'], item['locator'], item['source_id']))
+        unique: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in candidates:
+            unique.setdefault((item['source_id'], item['locator']), item)
+        selected = list(unique.values())
+        result['illustrations_version'] = selected[0]['version']
+        result['illustrations_truncated'] = len(selected) > 3
+        for item in selected[:3]:
+            result['illustrations'].append({key: item[key] for key in ('version', 'source_id', 'locator', 'title')})
+            result['illustrations'][-1]['section'] = _baseline_section(database, item)
+        result['illustrations_complete'] = (not result['illustrations_truncated']
+            and all(item['section'].get('images_complete') is True for item in result['illustrations']))
+        notices = []
+        if result['illustrations_truncated']:
+            notices.append('最新含图版本的相关章节超过3个，仅展示前3个，其余请查看该版本原文。')
+        if any(item['section'].get('images_complete') is not True for item in result['illustrations']):
+            notices.append('最新含图版本的部分图示无法读取，请查看该版本原文；未以旧版图片替代。')
+        result['illustration_notice'] = ' '.join(notices)
     if not sections:
         return result
     first = min(sections)
@@ -145,7 +184,7 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
         result['status'] = 'baseline_conflict'
         return result
     baseline = sections[first][0]
-    baseline['section'] = _baseline_section(database, baseline)
+    baseline['section'] = _baseline_section(database, baseline, include_images=False)
     result['baseline'] = baseline
     result['baseline_gap'] = bool(earliest and _version(earliest['version']) < first)
     if result['baseline_gap'] and earliest is not None:
