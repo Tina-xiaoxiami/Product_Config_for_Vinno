@@ -236,3 +236,9 @@ body .feature-original-sources { margin:8px 0; font-size:12px; color:var(--prima
 body .feature-original-sources summary { cursor:pointer; }
 body .feature-original-sources > div { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 body .feature-original-sources button { font-size:12px; max-width:100%; white-space:normal; text-align:left; }
+
+body .feature-image-comparison { margin:12px 0; padding:10px; border:1px solid var(--line); border-radius:6px; }
+body .feature-image-comparison summary { cursor:pointer; color:var(--primary-strong); font-size:13px; }
+body .feature-comparison-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:12px; }
+body .feature-comparison-grid .feature-image-item { min-width:0; }
+body [data-illustration-status]:empty { display:none; }

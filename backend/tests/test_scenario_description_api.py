@@ -23,7 +23,7 @@ def test_release_query_never_uses_whitepaper_or_model_and_forwards_target(client
     connection,wb=client
     def evolution(db,project,query,target):
         assert query=='VATT' and project==1 and target=='1.51.90'
-        return {'content':'起始完整内容\n新增支持连续测量','baseline':{'version':'1.51.20'},'applied_changes':[{'version':'1.51.90'}]}
+        return {'content':'起始完整内容\n新增支持连续测量','baseline':{'version':'1.51.20','content':'起始完整内容'},'applied_changes':[{'version':'1.51.90'}]}
     monkeypatch.setattr('tracker.app.release_evolution_answer',evolution)
     monkeypatch.setattr('tracker.app.feature_answer',lambda *a,**k:pytest.fail('whitepaper leaked'))
     for response in [connection.get(BASE+'/scenario?project_id=1&task=feature&q=VATT&target=1.51.90'),connection.post(BASE+'/scenario?project_id=1',json={'task':'feature','q':'VATT','target':'1.51.90'})]:

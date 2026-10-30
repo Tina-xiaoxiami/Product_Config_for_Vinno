@@ -59,3 +59,22 @@ body .release-review-change-actions button { min-height: 28px; padding: 3px 8px;
 }
 .release-review-draft-status { margin: 6px 0; padding: 6px 8px; border-radius: 4px; background: #f0f5ff; color: #52657e; font-size: 12px; }
 .release-review-draft-status:empty { display: none; }
+
+/* Body, accepted release records and their histories are separate documents. */
+.release-feature-body { margin-bottom: 18px; }
+.release-feature-log { margin: 18px 0 0; padding: 14px 0 0; border-top: 2px solid #ccd8e8; }
+.release-feature-log > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.release-feature-log > header h4 { margin: 0; font-size: 15px; color: #294b78; }
+.release-feature-log-version, .release-review-ignored { padding: 8px 10px; margin: 7px 0; border: 1px solid #dbe4ef; border-radius: 6px; background: #f7f9fc; }
+.release-feature-log-version > summary { color: #294b78; font-size: 13px; font-weight: 600; cursor: pointer; }
+.release-feature-log-version > summary span { margin-left: 6px; font-weight: 400; font-size: 12px; color: #667a94; }
+.release-feature-log-version > article, .release-review-ignored > article { padding: 8px 0; border-top: 1px solid #e2e8f1; font-size: 13px; }
+.release-feature-log-version > article:first-of-type, .release-review-ignored > article:first-of-type { margin-top: 8px; }
+.release-feature-log-version p, .release-review-ignored p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; line-height: 1.65; }
+.release-feature-log-meta { display: flex; gap: 8px; font-size: 12px; color: #667a94; }
+.release-review-migration, .release-review-sidebar-help { font-size: 12px; color: #667a94; margin: 5px 0 10px; line-height: 1.5; }
+.release-review-stale-decisions { font-size: 12px; padding: 8px 10px; background: #fff8e9; border: 1px solid #e9d2a4; border-radius: 5px; }
+.release-review-history-meta { font-size: 12px; color: #52657e; }
+.release-review-history-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+.release-review-history-diff p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+@media (max-width: 600px) { .release-review-history-diff { grid-template-columns: 1fr; } }

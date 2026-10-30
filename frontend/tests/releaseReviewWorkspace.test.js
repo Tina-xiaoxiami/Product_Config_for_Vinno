@@ -3,18 +3,18 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 const source = readFileSync(new URL('../../backend/tracker/static/release-review.js', import.meta.url), 'utf8')
 const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
-const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft}`)(esc, esc,
+const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload}`)(esc, esc,
   (text, additions, image) => `<section class="feature-document-section"><p>${esc(text)}</p>${image}</section>`,
   () => '<section class="feature-image-section"><p>图片</p></section>', () => '<button>原文</button>')
 
 test('工作区突出正文与按版本分组的待核原文，图片不成为可选正文', () => {
-  const markup = helpers.releaseReviewWorkspaceMarkup({content:'正文<script>',review:{revision:3,source_fingerprint:'hash',stale:true},
+  const markup = helpers.releaseReviewWorkspaceMarkup({content:'正文<script>',review:{revision:3,body_revision:1,source_fingerprint:'hash',stale:true},
     unresolved_changes:[{id:'one',version:'1.0',text:'第一个',reason:'原因<script>'},{id:'two',version:'1.0',text:'第二个'}],
-    resolved_changes:[{version:'0.9',text:'旧项',review_action:'ignore'}]}, 'VATT')
+    change_log:[{id:'ignored',version:'0.9',text:'旧项',log_status:'ignored',review_action:'ignore'}]}, 'VATT')
   assert.match(markup,/feature-review-main/); assert.match(markup,/feature-review-sidebar/)
   assert.equal((markup.match(/<h5>1.0<\/h5>/g)||[]).length,1)
   assert.match(markup,/data-release-review-include="one"/); assert.match(markup,/data-release-review-ignore="two"/)
-  assert.match(markup,/<details><summary>待核对原因/); assert.match(markup,/来源已变化/); assert.match(markup,/已忽略/)
+  assert.match(markup,/<details><summary>待核对原因/); assert.match(markup,/来源有更新/); assert.match(markup,/已忽略/)
   assert.match(markup,/正文&lt;script&gt;/); assert.match(markup,/原因&lt;script&gt;/)
   assert.match(markup,/<p tabindex="0" data-release-review-paragraph>/)
   assert.match(markup,/<section class="feature-image-section"><p>图片<\/p>/)
@@ -90,4 +90,41 @@ test('刷新后恢复文本，来源变化清除旧段落锚点，正文变化�
   ctx.result.content='原段'
   assert.equal(helpers.releaseReviewRecoverDraft(draft,ctx).selected,'原段')
   assert.match(helpers.releaseReviewRecoverDraft(draft,ctx).warning,/新修订/)
+})
+
+test('正文与版本更新记录分区，采纳按钮默认不要求更新正文，修订号独立',()=>{
+ const calls=[]
+ const separate=new Function('escapeHtml','escapeAttribute','scenarioDocumentMarkup','scenarioIllustrationsMarkup','scenarioPreviewButton',`${source};return releaseReviewWorkspaceMarkup`)(esc,esc,(content,additions,image)=>{calls.push(additions);return `<p>${esc(content)}</p>${image}`},()=>'',()=>'<button>原文</button>')
+ const markup=separate({content:'主要正文',review:{revision:9,body_revision:2,source_fingerprint:'x'},applied_changes:[{after:'不得自动放正文'}],unresolved_changes:[{id:'pending',version:'1.51.90',text:'新记录'}],change_log:[{id:'log',version:'1.51.80',text:'只属于更新记录',log_status:'recognized'}]},'VATT')
+ assert.deepEqual(calls,[[]]);assert.match(markup,/正文修订 2/);assert.doesNotMatch(markup,/正文修订 9/)
+ const body=markup.slice(markup.indexOf('class="release-feature-body"'),markup.indexOf('class="release-feature-log"'))
+ assert.match(body,/主要正文/);assert.doesNotMatch(body,/只属于更新记录/)
+ assert.match(markup,/data-release-review-adopt="pending"/);assert.match(markup,/>采纳记录<\/button>/)
+ assert.match(markup,/data-release-review-history="body"/);assert.match(markup,/data-release-review-history="log"/)
+})
+test('采纳和撤销记录保持原正文与其他结论，来源变化也不丢未变化决定',async()=>{
+ const state=session();state.context.review.stale=true;state.context.review.decisions=[{id:'kept',action:'ignore'}]
+ const before='功能主要正文'
+ const adopted=helpers.releaseReviewDecisions(state.context,{id:'new'},'adopt')
+ assert.deepEqual(adopted,[{id:'kept',action:'ignore'},{id:'new',action:'adopt'}])
+ let sent
+ await helpers.releaseReviewCommit(state,before,adopted,{isCurrent:()=>true,path:p=>p,api:async(p,o)=>{sent=JSON.parse(o.body);return {}},accept(){}})
+ assert.equal(sent.content,before);assert.equal(sent.body_change,undefined)
+ assert.deepEqual(helpers.releaseReviewDecisions({...state.context,review:{...state.context.review,decisions:adopted}},{id:'new'},null),[{id:'kept',action:'ignore'}])
+})
+test('更新正文发送独立正文修订元信息，历史恢复显式指定body或log',async()=>{
+ const state=session();let sent
+ const metadata={event_id:'event190',operation:'replace',reason:'更新测量方式'}
+ await helpers.releaseReviewCommit(state,'修订后正文',[{id:'event190',action:'include'}],{isCurrent:()=>true,path:p=>p,api:async(p,o)=>{sent=JSON.parse(o.body);return {}},accept(){}},metadata)
+ assert.deepEqual(sent.body_change,metadata);assert.equal(sent.decisions[0].action,'include')
+ const body=helpers.releaseReviewRestorePayload(state.context,'body',0),log=helpers.releaseReviewRestorePayload(state.context,'log',1)
+ assert.equal(body.kind,'body');assert.equal(body.restore_revision,0);assert.equal(log.kind,'log');assert.equal(log.restore_revision,1)
+ assert.equal(body.revision,2);assert.equal(log.revision,2)
+ assert.throws(()=>helpers.releaseReviewRestorePayload(state.context,'invalid',0),/类型无效/)
+})
+
+test('更新正文无实际变化时不发送保存，提示只采纳记录',async()=>{
+ const state=session();state.context.result={content:'原正文'};let called=0
+ const result=await helpers.releaseReviewCommit(state,'原正文',[{id:'x',action:'include'}],{isCurrent:()=>true,path:p=>p,api:async()=>{called++;return {}},accept(){}},{event_id:'x',operation:'replace',reason:''})
+ assert.equal(result,null);assert.equal(called,0);assert.match(state.error,/采纳记录/)
 })

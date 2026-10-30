@@ -199,6 +199,49 @@ def _effective_heading_level(paragraph):
     return None
 
 
+def _image_caption_role(text: str) -> str | None:
+    """Only caption-like labels establish a role, never incidental prose."""
+    value = str(text or '').strip()
+    match = re.fullmatch(r'(?:图\s*\d+\s*[:：.、-]?\s*)?(?:(?:优化|修改|更新|调整|变更|改动)(前|后)|(before|after))(?:\s*(?:图|效果图|效果|image))?\s*[:：]?', value, re.I)
+    if not match:
+        return None
+    return 'before' if match.group(1) == '前' or (match.group(2) or '').lower() == 'before' else 'after'
+
+
+def _comparison_context(text: str) -> bool:
+    return bool(re.search(r'(?:优化|修改|更新|调整|变更)?前后(?:效果)?(?:对比|比较)|before\s*(?:and|/|&|versus|vs\.?)\s*after', str(text or ''), re.I))
+
+
+def _annotate_paragraph_images(blocks: list[dict], previous_text: str = '') -> None:
+    images = [block for block in blocks if block['type'] == 'image']
+    if not images:
+        return
+    inherited = _image_caption_role(previous_text)
+    comparison = _comparison_context(previous_text) or any(_comparison_context(block.get('text', '')) for block in blocks if block['type'] == 'text')
+    segment = ''
+    explicit = False
+    for block in blocks:
+        if block['type'] == 'text':
+            segment += block.get('text', '')
+        elif block['type'] == 'image':
+            role = _image_caption_role(segment) or inherited
+            block['comparison_role'] = role or ('unknown' if comparison else 'neutral')
+            block['role_basis'] = 'explicit_caption' if role else ('unresolved_comparison' if comparison else 'ordinary_illustration')
+            explicit = explicit or bool(role)
+            segment = ''
+    # This ordered-pair format is explicit in the Release Note and confirmed by
+    # the user for VATT. An arbitrary pair of images is never classified by index.
+    if explicit:
+        for block in images:
+            if block['comparison_role'] == 'neutral':
+                block['comparison_role'] = 'unknown'
+                block['role_basis'] = 'unresolved_comparison'
+    if comparison and len(images) == 2 and not explicit:
+        for block, role in zip(images, ('before', 'after')):
+            block['comparison_role'] = role
+            block['role_basis'] = 'explicit_ordered_before_after'
+
+
 def _word_sections(document, source_id: str, snapshot_content: str | None, image_locator: str) -> list[dict]:
     locator_prefix = '原文行' if snapshot_content is not None else '段落'
     # Import snapshot stores nonempty top-level paragraphs first, then table cells.
@@ -212,8 +255,10 @@ def _word_sections(document, source_id: str, snapshot_content: str | None, image
     if snapshot_content is not None and snapshot_content.splitlines()[:len(paragraph_lines)] != paragraph_lines:
         return []
     sections, active, scopes, counters = [], [], {}, {}
+    previous_text, previous_index = '', -2
     for node in _document_nodes(document):
         if node['kind'] == 'table':
+            previous_text, previous_index = '', -2
             table = node['payload']
             if table:
                 values = [table['headers'], *table['rows']]
@@ -233,6 +278,7 @@ def _word_sections(document, source_id: str, snapshot_content: str | None, image
             continue
         level = _effective_heading_level(paragraph)
         if level and text:
+            previous_text, previous_index = '', -2
             automatic_number = _numbering(document, paragraph, level, counters)
             explicit = re.match(r"^\s*(\d+(?:\.\d+)+)\s+(.+)$", text)
             explicit_number = explicit.group(1) if explicit else ""
@@ -271,6 +317,9 @@ def _word_sections(document, source_id: str, snapshot_content: str | None, image
                             blocks.append({'type': 'image', 'locator': locator, '_embed_id': embed})
         elif text:
             blocks.append({'type': 'text', 'locator': locator, 'text': text})
+        if has_image:
+            _annotate_paragraph_images(blocks, previous_text if previous_index == index - 1 else '')
+        previous_text, previous_index = text, index
         for section in active:
             if text:
                 section['_texts'].append(text)
@@ -306,6 +355,7 @@ def _word_sections(document, source_id: str, snapshot_content: str | None, image
                                or mime == 'image/webp' and blob.startswith(b'RIFF') and blob[8:12] == b'WEBP')
                 if mime not in allowed or not valid_magic or len(blob) > 2 * 1024 * 1024 or size_total > 4 * 1024 * 1024 or count > 8:
                     raise ValueError('unsupported or oversized image')
+                block['image_hash'] = sha256(blob).hexdigest()
                 block['mime_type'] = mime
                 block['data_url'] = f"data:{mime};base64,{base64.b64encode(blob).decode('ascii')}"
             except (KeyError, ValueError, AttributeError):

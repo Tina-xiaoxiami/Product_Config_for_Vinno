@@ -24,11 +24,11 @@ def test_read_save_refresh_history_restore_and_conflict(review_client):
     history=data(client.get(BASE+'/scenario/review-history?project_id=1&q=VATT'))['history']
     assert [row['revision'] for row in history]==[1,0]
     restored=data(client.post(BASE+'/scenario/review/restore?project_id=1',json={**body,'revision':1,'restore_revision':0}))
-    assert restored['content']==raw['content'] and len(restored['unresolved_changes'])==1
+    assert restored['content']==raw['baseline']['content'] and len(restored['unresolved_changes'])==0
     assert restored['review']['revision']==2
     raw['content']='来源已更新'
     stale=data(client.get(BASE+'/scenario?project_id=1&task=feature&q=VATT'))
-    assert stale['review']['stale'] and stale['content']=='来源已更新'
+    assert stale['review']['stale'] and stale['content']==raw['baseline']['content']
     assert client.put(BASE+'/scenario/review?project_id=1',json={**body,'revision':2}).status_code==409
 
 def test_json_validation_and_scope(review_client):
@@ -37,3 +37,16 @@ def test_json_validation_and_scope(review_client):
     assert client.put(BASE+'/scenario/review?project_id=1',json={'q':{}}).status_code==400
     assert client.get(BASE+'/scenario/review-history?project_id=9999&q=VATT').status_code==404
     assert client.post(BASE+'/scenario/review/restore?project_id=1',json={'q':'VATT','target':{},'revision':0}).status_code==400
+
+def test_adopt_only_changes_log_and_body_restore_preserves_it(review_client):
+    client,raw=review_client
+    first=data(client.get(BASE+'/scenario?project_id=1&task=feature&q=VATT'))
+    body={'q':'VATT','target':'','revision':0,'source_fingerprint':first['review']['source_fingerprint'],
+          'content':first['content'],'decisions':[{'id':first['unresolved_changes'][0]['id'],'action':'adopt'}]}
+    adopted=data(client.put(BASE+'/scenario/review?project_id=1',json=body))
+    assert adopted['content']==raw['baseline']['content']
+    assert adopted['review']['body_revision']==0 and adopted['review']['log_revision']==1
+    assert [row['revision'] for row in data(client.get(BASE+'/scenario/review-history?project_id=1&q=VATT'))['history']]==[0]
+    restored=data(client.post(BASE+'/scenario/review/restore?project_id=1',json={**body,'revision':1,'restore_revision':0,'kind':'body'}))
+    assert restored['review']['decisions']==adopted['review']['decisions']
+    assert restored['review']['body_revision']==0

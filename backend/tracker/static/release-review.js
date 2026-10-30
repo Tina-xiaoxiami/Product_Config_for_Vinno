@@ -13,35 +13,54 @@ function releaseReviewPatch(content, operation, selected, replacement = '') {
   return { content: content.replace(selected, () => after), before: selected, after };
 }
 
+function releaseReviewDecisions(context, row, action) {
+  const previous = context.review.decisions || [];
+  const remaining = previous.filter(item => item.id !== row.id);
+  return action ? [...remaining, {id: row.id, action}] : remaining;
+}
+
+function releaseReviewLogMarkup(data, query) {
+  const rows = data.change_log || [];
+  const recorded = rows.filter(row => ['recognized', 'adopted'].includes(row.log_status));
+  const ignored = rows.filter(row => row.log_status === 'ignored');
+  const grouped = new Map();
+  recorded.forEach(row => { const version = row.version || '未标注版本'; if (!grouped.has(version)) grouped.set(version, []); grouped.get(version).push(row); });
+  const labels = {recognized: '系统识别', adopted: '已采纳', ignored: '已忽略'};
+  return `<section class="release-feature-log" aria-label="版本更新记录"><header><h4>版本更新记录</h4><button type="button" class="text-button" data-release-review-history="log">记录处理历史</button></header><p class="release-review-hint">采纳记录不修改功能正文；撤销记录处理也不会回滚正文。</p>${recorded.length ? [...grouped].map(([version, entries]) => `<details class="release-feature-log-version"><summary>${escapeHtml(version)} <span>${entries.length} 条</span></summary>${entries.map(row => `<article><div class="release-feature-log-meta"><span>${escapeHtml(labels[row.log_status] || row.log_status)}</span>${row.review_action === 'include' ? '<span>曾关联正文修改</span>' : ''}</div><p>${escapeHtml(row.text || row.content || '')}</p><div class="release-review-change-actions">${row.log_status !== 'ignored' && row.id ? `<button type="button" class="text-button" data-release-review-include="${escapeAttribute(row.id)}">更新正文</button>` : ''}${row.review_action && row.id ? `<button type="button" class="text-button" data-release-review-undo="${escapeAttribute(row.id)}">撤销${row.log_status === 'ignored' ? '忽略' : '采纳'}</button>` : ''}${scenarioPreviewButton(row.source_id || row.preview_id, row.locator, query, '原文')}</div></article>`).join('')}</details>`).join('') : '<p class="release-review-empty">还没有已记录的版本更新。</p>'}${ignored.length ? `<details class="release-review-ignored"><summary>已忽略（${ignored.length}）</summary>${ignored.map(row => `<article><strong>${escapeHtml(row.version)}</strong><p>${escapeHtml(row.text || row.content || '')}</p><button type="button" class="text-button" data-release-review-undo="${escapeAttribute(row.id || '')}">撤销忽略</button>${scenarioPreviewButton(row.source_id || row.preview_id,row.locator,query,'原文')}</article>`).join('')}</details>` : ''}</section>`;
+}
+
 function releaseReviewWorkspaceMarkup(data, query) {
   const review = data.review || {};
   const pending = data.unresolved_changes || [];
   const groups = new Map();
   pending.forEach(row => { const version = row.version || '未标注版本'; if (!groups.has(version)) groups.set(version, []); groups.get(version).push(row); });
   const imageSlot = '<!-- release-review-illustrations -->';
-  const documentMarkup = scenarioDocumentMarkup(data.content, data.applied_changes || [], imageSlot)
+  const documentMarkup = scenarioDocumentMarkup(data.content, [], imageSlot)
     .replace(/<(p|li)(?=[\s>])/g, '<$1 tabindex="0" data-release-review-paragraph')
-    .replace(imageSlot, scenarioIllustrationsMarkup(data, query));
+    .replace(imageSlot, () => scenarioIllustrationsMarkup(data, query));
   return `<div class="feature-review-workspace">
-    <div class="feature-review-main"><div class="release-review-toolbar"><div><strong>功能正文</strong><span>修订 ${Number(review.revision) || 0}</span></div><div><button type="button" class="ghost-button compact-button" data-release-review-edit${review.source_fingerprint ? '' : ' disabled'}>编辑正文</button><button type="button" class="text-button" data-release-review-history>修订历史</button></div></div>
-      ${review.stale ? '<div class="release-review-warning" role="alert">来源已变化，旧修订暂未应用。<button type="button" class="text-button" data-release-review-history>查看旧稿</button></div>' : ''}
-      <p class="release-review-selection-help" data-release-review-selection>点选正文段落后，可将右侧变更替换或补入正文。</p><p class="release-review-status" data-release-review-status role="status"></p>
-      ${documentMarkup}</div>
-    <aside class="feature-review-sidebar" aria-label="待人工核对的版本变更"><header><h4>待核对变更</h4><span>${pending.length} 条</span></header>
-      ${pending.length ? [...groups].map(([version, rows]) => `<section class="release-review-version"><h5>${escapeHtml(version)}</h5>${rows.map(row => `<article class="release-review-change"><div class="release-review-source-text">${escapeHtml(row.text || row.content || '')}</div><div class="release-review-change-actions"><button type="button" class="ghost-button compact-button" data-release-review-include="${escapeAttribute(row.id || '')}"${row.id ? '' : ' disabled'}>纳入正文</button><button type="button" class="text-button" data-release-review-ignore="${escapeAttribute(row.id || '')}"${row.id ? '' : ' disabled'}>忽略</button>${scenarioPreviewButton(row.source_id || row.preview_id, row.locator, query, '原文')}</div>${row.reason ? `<details><summary>待核对原因</summary><p>${escapeHtml(row.reason)}</p></details>` : ''}</article>`).join('')}</section>`).join('') : '<p class="release-review-empty">当前没有待核对变更。</p>'}
-      ${(data.resolved_changes || []).length ? `<details class="release-review-resolved"><summary>已处理（${data.resolved_changes.length}）</summary>${data.resolved_changes.map(row => `<article><strong>${escapeHtml(row.version)} · ${row.review_action === 'include' ? '已纳入' : '已忽略'}</strong><p>${escapeHtml(row.text || row.content || '')}</p>${scenarioPreviewButton(row.source_id || row.preview_id, row.locator, query, '原文')}</article>`).join('')}</details>` : ''}
+    <div class="feature-review-main"><div class="release-review-toolbar"><div><strong>功能正文</strong><span>正文修订 ${Number(review.body_revision) || 0}</span></div><div><button type="button" class="ghost-button compact-button" data-release-review-edit${review.source_fingerprint ? '' : ' disabled'}>编辑正文</button><button type="button" class="text-button" data-release-review-history="body">正文修订历史</button></div></div>
+      ${review.stale ? '<div class="release-review-warning" role="status">来源有更新；已保存正文与未变化记录的结论继续保留，变化条目需要重新核对。</div>' : ''}
+      ${review.migration_notice ? `<p class="release-review-migration">${escapeHtml(review.migration_notice)}</p>` : ''}
+      ${(review.stale_decisions || []).length ? `<details class="release-review-stale-decisions"><summary>来源变化待复核（${review.stale_decisions.length}）</summary><p>旧结论仍保留在处理历史中，未自动套用到变化后的记录。</p><button type="button" class="text-button" data-release-review-history="log">查看记录处理历史</button></details>` : ''}
+      <p class="release-review-selection-help" data-release-review-selection>采纳右侧记录不会改正文；需要更新正文时，可先点选要替换的段落。</p><p class="release-review-status" data-release-review-status role="status"></p>
+      <section class="release-feature-body" aria-label="功能正文内容">${documentMarkup}</section>${releaseReviewLogMarkup(data, query)}</div>
+    <aside class="feature-review-sidebar" aria-label="待人工核对的版本变更"><header><h4>待核对变更</h4><span>${pending.length} 条</span></header><p class="release-review-sidebar-help">先采纳记录，按需更新正文。</p>
+      ${pending.length ? [...groups].map(([version, rows]) => `<section class="release-review-version"><h5>${escapeHtml(version)}</h5>${rows.map(row => `<article class="release-review-change"><div class="release-review-source-text">${escapeHtml(row.text || row.content || '')}</div><div class="release-review-change-actions"><button type="button" class="primary-button compact-button" data-release-review-adopt="${escapeAttribute(row.id || '')}"${row.id ? '' : ' disabled'}>采纳记录</button><button type="button" class="text-button" data-release-review-include="${escapeAttribute(row.id || '')}"${row.id ? '' : ' disabled'}>更新正文</button><button type="button" class="text-button" data-release-review-ignore="${escapeAttribute(row.id || '')}"${row.id ? '' : ' disabled'}>忽略</button>${scenarioPreviewButton(row.source_id || row.preview_id, row.locator, query, '原文')}</div>${row.reason ? `<details><summary>待核对原因</summary><p>${escapeHtml(row.reason)}</p></details>` : ''}</article>`).join('')}</section>`).join('') : '<p class="release-review-empty">当前没有待核对变更。</p>'}
     </aside></div>`;
 }
 
-async function releaseReviewCommit(session, content, decisions, dependencies) {
+async function releaseReviewCommit(session, content, decisions, dependencies, bodyChange = null) {
   if (session.busy) return null;
   if (!dependencies.isCurrent()) { session.error = '查询范围已变化，请重新查询后操作。'; return null; }
+  if (bodyChange && session.context.result?.content === content) { session.error = '正文没有变化，请使用“采纳记录”记录这条更新。'; return null; }
   session.busy = true; session.error = '';
   try {
     const context = session.context;
     const result = await dependencies.api(dependencies.path('/api/v1/workbench/scenario/review'), {method: 'PUT', body: JSON.stringify({
       q: context.query, target: context.target, revision: context.review.revision,
       source_fingerprint: context.review.source_fingerprint, content, decisions,
+      ...(bodyChange ? {body_change: bodyChange} : {}),
     })});
     if (!dependencies.isCurrent()) { session.error = '查询范围已变化，未将旧查询结果覆盖当前页面。'; return null; }
     dependencies.accept(result);
@@ -50,6 +69,12 @@ async function releaseReviewCommit(session, content, decisions, dependencies) {
     session.error = error.status === 409 ? '修订或来源已更新，请保留当前草稿并重新查询，未覆盖已有内容。' : `保存失败：${error.message}。草稿已保留，可重试。`;
     return null;
   } finally { session.busy = false; }
+}
+
+function releaseReviewRestorePayload(context, kind, revision) {
+  if (!['body', 'log'].includes(kind)) throw Error('修订类型无效。');
+  return {q: context.query, target: context.target, kind, revision: context.review.revision,
+    source_fingerprint: context.review.source_fingerprint, restore_revision: Number(revision)};
 }
 
 function releaseReviewDraftKey(context, kind, eventId = '') {
@@ -65,7 +90,8 @@ function releaseReviewDraftStore(storage) {
         if (!raw) return {draft: null, error: ''};
         const draft = JSON.parse(raw);
         if (!draft || typeof draft.text !== 'string' || draft.text.length > 100000 || typeof draft.selected !== 'string'
-            || !['append', 'replace', 'delete'].includes(draft.operation) || typeof draft.source_fingerprint !== 'string') throw Error('invalid draft');
+            || !['append', 'replace', 'delete'].includes(draft.operation) || typeof draft.source_fingerprint !== 'string'
+            || (draft.reason !== undefined && (typeof draft.reason !== 'string' || draft.reason.length > 2000))) throw Error('invalid draft');
         return {draft, error: ''};
       } catch { return {draft: null, error}; }
     },
@@ -136,8 +162,7 @@ if (typeof document !== 'undefined') {
   }
   function message(text) { const node = document.querySelector('[data-release-review-status]'); if (node) node.textContent = text; }
   function decisions(ctx, row, action) {
-    const previous = ctx.review.stale ? [] : ctx.review.decisions;
-    return [...previous.filter(item => item.id !== row.id), {id: row.id, action}];
+    return releaseReviewDecisions(ctx, row, action);
   }
   function dependencies(ctx) { return {api, path: projectPath, isCurrent: () => current(ctx), accept: result => accept(result, ctx)}; }
   function selectedText(ctx) { return reviewUI.selected && reviewUI.selected.request === ctx.request && reviewUI.selected.project === ctx.project && reviewUI.selected.result === ctx.result ? reviewUI.selected.text : ''; }
@@ -175,11 +200,14 @@ if (typeof document !== 'undefined') {
       else { control.disabled = control.dataset.reviewWasDisabled === 'true'; delete control.dataset.reviewWasDisabled; }
     });
   }
-  async function ignore(ctx, row) {
+  async function recordDecision(ctx, row, action) {
     if (reviewUI.busy) return;
     reviewUI.busy = true;
     const session = {context: ctx, busy: false, error: ''};
-    try { await releaseReviewCommit(session, ctx.result.content, decisions(ctx, row, 'ignore'), dependencies(ctx)); message(session.error); }
+    try {
+      const result = await releaseReviewCommit(session, ctx.result.content, decisions(ctx, row, action), dependencies(ctx));
+      message(session.error || (result ? action === 'adopt' ? '已采纳至版本更新记录，功能正文未改动。' : action === 'ignore' ? '已忽略该记录，功能正文未改动。' : '已撤销记录处理，功能正文保持不变。' : ''));
+    }
     finally { reviewUI.busy = false; }
   }
   function edit(ctx, row = null) {
@@ -188,9 +216,10 @@ if (typeof document !== 'undefined') {
     const eventId = row?.id || '';
     const restored = draftStore.read(ctx, kind, eventId);
     const initial = row ? String(row.text || row.content || '') : ctx.result.content;
-    const dialog = newDialog(row ? '将变更纳入正文' : '编辑功能正文', `<form data-review-form>
+    const dialog = newDialog(row ? '采纳记录并更新正文' : '编辑功能正文', `<form data-review-form>
       ${row ? `<label>处理方式<select data-review-operation><option value="append">追加到正文</option><option value="replace">替换选中段落</option><option value="delete">删除选中段落</option></select></label><p class="release-review-hint">替换或删除前，请先点选左侧正文段落。当前未选中时仍可追加。</p><label>选中段落<textarea rows="3" readonly data-review-before>${escapeHtml(selected)}</textarea></label>` : ''}
-      <label>${row ? '纳入的内容' : '完整正文'}<textarea data-review-draft rows="12" maxlength="100000" required>${escapeHtml(initial)}</textarea></label>
+      <p class="release-review-hint">${row ? '本次保存会同时采纳这条更新记录，并新增一条正文修订。' : '这里只修改正文，不改变版本更新记录的采纳或忽略结论。'}</p><label>${row ? '更新后的内容' : '完整正文'}<textarea data-review-draft rows="12" maxlength="100000" required>${escapeHtml(initial)}</textarea></label>
+      <label>修改原因（可选）<input data-review-reason maxlength="2000" placeholder="例如：更新测量方式说明"></label>
       ${row ? '<details open class="release-review-patch-preview"><summary>变更预览</summary><div data-review-preview></div></details>' : ''}
       <p data-review-dialog-status role="status"></p><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>放弃草稿</button><button type="button" class="ghost-button" data-review-keep-close>暂存并关闭</button><button type="submit" class="primary-button">确认并保存</button></div></form>`);
     if (!dialog) return;
@@ -198,13 +227,14 @@ if (typeof document !== 'undefined') {
     const draft = dialog.querySelector('[data-review-draft]');
     const operation = dialog.querySelector('[data-review-operation]');
     const status = dialog.querySelector('[data-review-dialog-status]');
+    const reason = dialog.querySelector('[data-review-reason]');
     const storageStatus = document.createElement('p');
     storageStatus.className = 'release-review-draft-status'; storageStatus.setAttribute('role', 'status');
     draft.parentElement.after(storageStatus);
     let restoredDirty = false;
     if (restored.error) storageStatus.textContent = restored.error;
     if (restored.draft) {
-      draft.value = restored.draft.text; restoredDirty = true;
+      draft.value = restored.draft.text; reason.value = restored.draft.reason || ''; restoredDirty = true;
       if (operation) operation.value = restored.draft.operation;
       const recovered = releaseReviewRecoverDraft(restored.draft, ctx, selected);
       selected = recovered.selected;
@@ -213,7 +243,7 @@ if (typeof document !== 'undefined') {
     }
     const persist = () => {
       const saved = draftStore.write(ctx, kind, eventId, {text: draft.value, operation: operation?.value || 'append', selected,
-        source_fingerprint: ctx.review.source_fingerprint, revision: ctx.review.revision});
+        source_fingerprint: ctx.review.source_fingerprint, revision: ctx.review.revision, reason: reason.value});
       storageStatus.textContent = saved.ok ? '草稿已暂存在本机；尚未提交修订。' : saved.error;
       return saved.ok;
     };
@@ -230,8 +260,9 @@ if (typeof document !== 'undefined') {
       } catch (error) { dialog.querySelector('[data-review-preview]').textContent = error.message; }
     };
     draft.addEventListener('input', () => { persist(); preview(); });
+    reason.addEventListener('input', persist);
     operation?.addEventListener('change', () => { persist(); preview(); }); preview();
-    const dismiss = bindDialog(dialog, session, () => restoredDirty || draft.value !== initial || Boolean(operation && operation.value !== 'append'), {persist, discard});
+    const dismiss = bindDialog(dialog, session, () => restoredDirty || draft.value !== initial || Boolean(reason.value) || Boolean(operation && operation.value !== 'append'), {persist, discard});
     dialog.querySelector('form').addEventListener('submit', async event => {
       event.preventDefault(); if (session.busy || reviewUI.busy) return;
       let content;
@@ -241,29 +272,41 @@ if (typeof document !== 'undefined') {
       persist();
       reviewUI.busy = true; busy(dialog, true); status.textContent = '正在保存…';
       try {
-        const result = await releaseReviewCommit(session, content, row ? decisions(ctx, row, 'include') : (ctx.review.stale ? [] : ctx.review.decisions), dependencies(ctx));
+        const bodyChange = {operation: row ? operation.value : 'edit', reason: reason.value, ...(row ? {event_id: row.id} : {})};
+        const result = await releaseReviewCommit(session, content, row ? decisions(ctx, row, 'include') : ctx.review.decisions, dependencies(ctx), bodyChange);
         if (result) { discard(); dismiss(); } else status.textContent = session.error;
       } finally { reviewUI.busy = false; if (dialog.isConnected) busy(dialog, false); }
     });
   }
-  async function history(ctx) {
-    const dialog = newDialog('人工修订历史', '<p data-review-dialog-status role="status">正在读取修订历史…</p><div data-review-history-list></div><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>关闭</button></div>');
+  async function history(ctx, kind = 'body') {
+    const bodyHistory = kind === 'body';
+    const dialog = newDialog(bodyHistory ? '正文修订历史' : '版本记录处理历史', `<p class="release-review-hint">${bodyHistory ? '仅记录正文的实际修改；恢复正文不会撤销采纳或忽略结论。' : '仅记录采纳、忽略及撤销；恢复这些结论不会修改功能正文。'}</p><p data-review-dialog-status role="status">正在读取历史…</p><div data-review-history-list></div><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>关闭</button></div>`);
     if (!dialog) return;
     const session = {context: ctx, busy: false, error: ''};
     const dismiss = bindDialog(dialog, session, () => false);
     const status = dialog.querySelector('[data-review-dialog-status]');
     try {
-      const data = await api(projectPath(`/api/v1/workbench/scenario/review-history?${new URLSearchParams({q: ctx.query, target: ctx.target})}`));
+      const data = await api(projectPath(`/api/v1/workbench/scenario/review-history?${new URLSearchParams({q: ctx.query, target: ctx.target, kind})}`));
       if (!dialog.isConnected) return;
       if (!current(ctx)) { status.textContent = '查询范围已变化，请关闭后重新查询。'; return; }
       status.textContent = '';
-      dialog.querySelector('[data-review-history-list]').innerHTML = (data.history || []).map(item => `<article><header><strong>${Number(item.revision) === 0 ? '自动演进原稿' : `修订 ${Number(item.revision)}`}</strong><span>${escapeHtml(item.created_at || '')}</span><button type="button" class="ghost-button compact-button" data-review-restore="${Number(item.revision)}"${item.restorable && Number(item.revision) !== Number(ctx.review.revision) ? '' : ' disabled'}>恢复为新修订</button></header>${item.restorable ? '' : '<p class="release-review-warning">来源已变化，该旧稿仅供参考。</p>'}<div class="release-review-history-content">${escapeHtml(item.content)}</div></article>`).join('') || '<p>还没有人工修订。</p>';
+      const activeRevision = Number(ctx.review[bodyHistory ? 'body_revision' : 'log_revision']) || 0;
+      const historyEvents = new Map((ctx.result.change_log || []).map(row => [row.id, row]));
+      const actionLabels = {adopt:'采纳记录',include:'采纳并更新正文',ignore:'忽略'};
+      dialog.querySelector('[data-review-history-list]').innerHTML = (data.history || []).map(item => {
+        const revision = Number(item[bodyHistory ? 'body_revision' : 'log_revision']) || 0;
+        const title = Number(item.revision) === 0 ? bodyHistory ? '初始功能正文' : '初始记录处理状态' : `${bodyHistory ? '正文修订' : '记录处理'} ${revision}`;
+        const change = item.body_change || {};
+        const content = bodyHistory ? `${change.source_version ? `<p class="release-review-history-meta">关联版本 ${escapeHtml(change.source_version)}</p>` : ''}${change.reason ? `<p>${escapeHtml(change.reason)}</p>` : ''}${change.before !== undefined && change.after !== undefined ? `<details><summary>查看修改前后</summary><div class="release-review-history-diff"><section><strong>修改前</strong><p>${escapeHtml(change.before)}</p></section><section><strong>修改后</strong><p>${escapeHtml(change.after)}</p></section></div></details>` : ''}<details><summary>查看完整正文</summary><div class="release-review-history-content">${escapeHtml(item.content)}</div></details>`
+          : (item.decisions || []).map(decision => { const row=historyEvents.get(decision.id); return `<p>${escapeHtml(actionLabels[decision.action] || decision.action)} · ${escapeHtml(row?.version || '')} ${escapeHtml(row?.text || row?.content || '原来源记录')}</p>`; }).join('') || '<p>没有已采纳或忽略的记录。</p>';
+        return `<article><header><strong>${escapeHtml(title)}</strong><span>${escapeHtml(item.created_at || '')}</span><button type="button" class="ghost-button compact-button" data-review-restore="${Number(item.revision)}"${item.restorable && revision !== activeRevision ? '' : ' disabled'}>${bodyHistory ? '恢复正文' : '恢复处理结论'}</button></header>${item.restorable ? '' : '<p class="release-review-warning">相关来源已变化，此记录仅供参考。</p>'}${content}</article>`;
+      }).join('') || '<p>还没有修订。</p>';
       dialog.querySelectorAll('[data-review-restore]').forEach(button => button.addEventListener('click', async () => {
         if (session.busy || reviewUI.busy) return;
         if (!current(ctx)) { status.textContent = '查询范围已变化，请重新查询。'; return; }
         session.busy = true; reviewUI.busy = true; busy(dialog, true); status.textContent = '正在恢复…';
         try {
-          const result = await api(projectPath('/api/v1/workbench/scenario/review/restore'), {method: 'POST', body: JSON.stringify({q: ctx.query, target: ctx.target, revision: ctx.review.revision, source_fingerprint: ctx.review.source_fingerprint, restore_revision: Number(button.dataset.reviewRestore)})});
+          const result = await api(projectPath('/api/v1/workbench/scenario/review/restore'), {method: 'POST', body: JSON.stringify(releaseReviewRestorePayload(ctx, kind, button.dataset.reviewRestore))});
           if (!current(ctx)) { status.textContent = '查询范围已变化，未覆盖当前页面。'; return; }
           accept(result, ctx); dismiss();
         } catch (error) { status.textContent = error.status === 409 ? '修订或来源已更新，请关闭历史并重新查询。' : `恢复失败：${error.message}`; }
@@ -279,7 +322,7 @@ if (typeof document !== 'undefined') {
     node.classList.add('release-review-selected'); node.setAttribute('aria-current', 'true');
     reviewUI.selected = {request: ctx.request, project: ctx.project, result: ctx.result, text};
     const help = document.querySelector('[data-release-review-selection]');
-    if (help) help.textContent = `已选中：${text.slice(0, 80)}${text.length > 80 ? '…' : ''}；可从右侧纳入变更并替换此段。`;
+    if (help) help.textContent = `已选中：${text.slice(0, 80)}${text.length > 80 ? '…' : ''}；可从右侧选择“更新正文”并替换此段。`;
   }
   document.addEventListener('keydown', event => {
     const paragraph = event.target.closest?.('[data-release-review-paragraph]');
@@ -288,16 +331,19 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', event => {
     const paragraph = event.target.closest?.('[data-release-review-paragraph]');
     if (paragraph && !event.target.closest('button,a,input,textarea,select')) selectParagraph(paragraph);
-    const button = event.target.closest?.('[data-release-review-edit],[data-release-review-include],[data-release-review-ignore],[data-release-review-history]');
+    const button = event.target.closest?.('[data-release-review-edit],[data-release-review-adopt],[data-release-review-include],[data-release-review-ignore],[data-release-review-undo],[data-release-review-history]');
     if (!button || reviewUI.busy) return;
     try {
       const ctx = context();
-      if (button.hasAttribute('data-release-review-history')) { history(ctx); return; }
+      if (button.hasAttribute('data-release-review-history')) { history(ctx, button.dataset.releaseReviewHistory === 'log' ? 'log' : 'body'); return; }
       if (button.hasAttribute('data-release-review-edit')) { edit(ctx); return; }
-      const id = button.dataset.releaseReviewInclude || button.dataset.releaseReviewIgnore;
-      const row = (ctx.result.unresolved_changes || []).find(item => item.id === id);
+      const id = button.dataset.releaseReviewAdopt || button.dataset.releaseReviewInclude || button.dataset.releaseReviewIgnore || button.dataset.releaseReviewUndo;
+      const row = [...(ctx.result.unresolved_changes || []), ...(ctx.result.change_log || []), ...(ctx.result.resolved_changes || [])].find(item => item.id === id);
       if (!row) throw Error('待核记录已变化，请重新查询。');
-      if (button.hasAttribute('data-release-review-ignore')) ignore(ctx, row); else edit(ctx, row);
+      if (button.hasAttribute('data-release-review-adopt')) recordDecision(ctx, row, 'adopt');
+      else if (button.hasAttribute('data-release-review-ignore')) recordDecision(ctx, row, 'ignore');
+      else if (button.hasAttribute('data-release-review-undo')) recordDecision(ctx, row, null);
+      else edit(ctx, row);
     } catch (error) { message(error.message); }
   });
 }

@@ -3790,25 +3790,10 @@ function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
   const headings = /^(临床意义|功能描述|功能说明|参数|测量结果|操作步骤|效果图示|适用范围)[：:]?$/;
   const lines = String(text || '').split(/\r?\n/);
   const groups = [{title: '', lines: []}];
-  const updatesByVersion = new Map();
-  let currentGroup = groups[0];
   for (const line of lines) {
-    const trimmed = line.trim();
-    const heading = trimmed.match(headings);
-    const addition = additions.find(row => row.operation === 'append' && String(row.after || '').trim() === trimmed);
-    if (heading) {
-      currentGroup = {title: heading[1], lines: []};
-      groups.push(currentGroup);
-    } else if (addition) {
-      const version = String(addition.version || '未标注');
-      if (!updatesByVersion.has(version)) {
-        const group = {title: `版本 ${version} 补充`, lines: [], updated: true};
-        updatesByVersion.set(version, group);
-        groups.push(group);
-      }
-      currentGroup = updatesByVersion.get(version);
-      currentGroup.lines.push(line);
-    } else currentGroup.lines.push(line);
+    const heading = line.trim().match(headings);
+    if (heading) groups.push({title: heading[1], lines: []});
+    else groups[groups.length - 1].lines.push(line);
   }
   return `<div class="feature-document">${groups.filter(group => group.title || group.lines.some(line => line.trim())).map(group => {
     const content = group.lines.filter(line => line.trim());
@@ -3821,7 +3806,7 @@ function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
       if (!group.title && index === 0 && line.length < 120) return `<h4 class="feature-document-title">${escapeHtml(line)}</h4>`;
       return `<p>${escapeHtml(line)}</p>`;
     }).join('');
-    if (group.title === '效果图示' && imageMarkup) { body += imageMarkup; imageMarkup = ''; }
+    if (group.title === '效果图示' && imageMarkup) { body = imageMarkup + body; imageMarkup = ''; }
     return `<section class="feature-document-section${group.updated ? ' is-update' : ''}">${group.title ? `<h4>${escapeHtml(group.title)}</h4>` : ''}${body}</section>`;
   }).join('')}${imageMarkup}</div>`;
 }
@@ -3830,13 +3815,23 @@ function scenarioBaselineImagesMarkup(baseline, query, latest = false) {
   const section = baseline.section;
   if (!section?.has_images) return '';
   const blocks = (section.blocks || []).filter(block => block.type === 'image');
+  const role = block => block.display_role || block.comparison_role || 'neutral';
+  const after = blocks.filter(block => role(block) === 'after');
+  const shown = after.length ? after : blocks.filter(block => role(block) === 'neutral');
+  const comparison = blocks.some(block => ['before', 'unknown', 'comparison'].includes(role(block)));
+  const caption = block => ({before:'修改前',after:'修改后',unknown:'角色待确认',comparison:'其他原图',neutral:'原文图示'})[role(block)] || '原文图示';
   let omitted = false;
-  const images = blocks.map((block, index) => {
-    const markup = sourceImageMarkup(block, `${baseline.version} ${latest ? '最近版本' : '起始版本'}图示 ${index + 1}`);
-    if (!markup) omitted = true;
-    return markup ? `<div class="feature-image-item">${markup}<p>图 ${index + 1} · ${escapeHtml(baseline.version)} 原文</p></div>` : '';
-  }).join('');
-  return `<section class="feature-image-section"><h4>${latest ? '最近版本图示' : '起始版本图示'} <span>${escapeHtml(baseline.version)}</span></h4><p>${latest ? `来源：${escapeHtml(baseline.title || '对应功能章节')}，图片版本与正文起点分别标注。` : '图片来自起始章节；后续版本中的效果变化请查看对应变更原文。'}</p><div class="feature-image-gallery">${images}</div>${section.images_complete === false || omitted || !images ? '<p role="alert">部分图片无法展示，请查看原文核对。</p>' : ''}${scenarioPreviewButton(baseline.source_id, baseline.locator, query, '查看图文原文')}</section>`;
+  const figure = (block, index, selectable = false) => {
+    const label = `${caption(block)} · ${baseline.version}`;
+    const image = sourceImageMarkup(block, label);
+    if (!image) omitted = true;
+    const choose = selectable && block.comparison_role === 'unknown' && block.image_hash && image ? `<button type="button" class="ghost-button compact-button" data-illustration-select="${escapeAttribute(block.image_hash)}" data-illustration-source="${escapeAttribute(baseline.source_id)}" data-illustration-locator="${escapeAttribute(baseline.locator)}"${baseline.selection?.image_hash === block.image_hash ? ' disabled' : ''}>${baseline.selection?.image_hash === block.image_hash ? '当前修改后图示' : '设为修改后图示'}</button>` : '';
+    return image ? `<div class="feature-image-item">${image}<p>${escapeHtml(label)} · 图 ${index + 1}</p>${choose}</div>` : '';
+  };
+  const images = shown.map(block => figure(block, blocks.indexOf(block))).join('');
+  const uncertain = !after.length && blocks.some(block => ['unknown', 'comparison'].includes(role(block)));
+  const compare = comparison ? `<details class="feature-image-comparison"${uncertain ? ' open' : ''}><summary>${uncertain ? '选择修改后图示' : '查看修改前后对照'}</summary><div class="feature-comparison-grid">${blocks.map((block, index) => figure(block, index, uncertain || Boolean(baseline.selection?.image_hash))).join('')}</div></details>` : '';
+  return `<section class="feature-image-section"><h4>${latest ? '最近版本图示' : '起始版本图示'} <span>${escapeHtml(baseline.version)}</span></h4><p>${after.length ? '默认展示修改后图示。' : uncertain ? '原文包含对比图片，尚不能明确区分修改前后；请核对后选择。' : '展示该功能对应的原文图示。'} ${latest ? `来源：${escapeHtml(baseline.title || '对应功能章节')}。` : ''}</p><div class="feature-image-gallery">${images}</div>${compare}${section.images_complete === false || omitted || (!images && !uncertain) ? '<p role="alert">部分图片无法展示，请查看原文核对。</p>' : ''}<p data-illustration-status role="status"></p>${scenarioPreviewButton(baseline.source_id, baseline.locator, query, '查看图文原文')}</section>`;
 }
 
 function scenarioUnverifiedSourcesMarkup(sources, query) {
@@ -3871,7 +3866,7 @@ function scenarioEvolutionMarkup(data, query) {
   if (!baseline) return `<section class="scenario-answer"><h3>${data.status === 'baseline_conflict' ? '起始版本的完整章节存在冲突' : '缺少Release Note完整起始章节'}</h3><p>暂不生成完整描述；不会使用白皮书或模型摘要代替。</p><p>${escapeHtml(data.coverage_notice)}</p>${(data.section_options || []).map(row => `<article><p>${escapeHtml(row.version)} · ${escapeHtml(row.title)}</p>${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</section>`;
   const labels = {baseline:'起始完整章节',append:'补充',replace:'修改',delete:'删除',replace_full:'整体替换',pending:'待核对'};
   const pending = data.unresolved_changes || [];
-  return `<section class="scenario-answer"><header class="feature-answer-heading"><h3>${pending.length || data.baseline_gap ? '功能描述 · 尚有变更待核对' : '功能描述 · 已应用明确变更'}</h3><span class="feature-review-badge">${pending.length ? `${pending.length} 项待核对` : '按原文逐版更新'}</span></header><p class="feature-version-summary">Release Note 起点 ${escapeHtml(baseline.version)} · 截至 ${escapeHtml(data.target_version || '最新已收录版本')} · 已应用 ${(data.applied_changes || []).length} 项变更</p>${releaseReviewWorkspaceMarkup(data, query)}<details><summary>版本演进与原文依据</summary>${(data.timeline || []).map(row => `<article><h4>${escapeHtml(row.version)} · ${escapeHtml(labels[row.operation] || row.operation)}</h4><div class="scenario-content">${escapeHtml(row.content || row.text)}</div>${row.before ? `<p>原内容：${escapeHtml(row.before)}</p>` : ''}${row.after ? `<p>更新为：${escapeHtml(row.after)}</p>` : ''}${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details><p>${escapeHtml(data.coverage_notice)}</p></section>`;
+  return `<section class="scenario-answer"><header class="feature-answer-heading"><h3>${data.baseline_gap ? '功能说明 · 起始资料待核实' : '功能说明'}</h3><span class="feature-review-badge">${pending.length ? `${pending.length} 条更新待核对` : '更新记录已核对'}</span></header><p class="feature-version-summary">正文起点 ${escapeHtml(baseline.version)} · 查询截至 ${escapeHtml(data.target_version || '最新已收录版本')} · ${(data.change_log || []).length} 条版本记录</p>${releaseReviewWorkspaceMarkup(data, query)}<details><summary>原始版本记录与依据</summary>${(data.timeline || []).map(row => `<article><h4>${escapeHtml(row.version)} · ${escapeHtml(labels[row.operation] || row.operation)}</h4><div class="scenario-content">${escapeHtml(row.content || row.text)}</div>${row.before ? `<p>原内容：${escapeHtml(row.before)}</p>` : ''}${row.after ? `<p>更新为：${escapeHtml(row.after)}</p>` : ''}${scenarioPreviewButton(row.source_id, row.locator, query)}</article>`).join('')}</details><p>${escapeHtml(data.coverage_notice)}</p></section>`;
 }
 
 function scenarioVersionMarkup(data) {
@@ -4942,4 +4937,23 @@ loadProjects()
   })
   .catch(error => showNotice(error.message));
 
+});
+
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-illustration-select]');
+  if (!button || button.disabled) return;
+  const result = scenarioState.result, request = scenarioState.request, project = state.activeProjectId;
+  if (scenarioState.task !== 'feature' || !result) return;
+  const item = (result.illustrations || []).find(item => item.source_id === button.dataset.illustrationSource && item.locator === button.dataset.illustrationLocator);
+  if (!item?.selection) return;
+  const status = button.closest('.feature-image-section').querySelector('[data-illustration-status]');
+  const query = document.querySelector('#scenario-query').value.trim();
+  button.disabled = true; status.textContent = '正在保存图示选择…';
+  try {
+    const answer = await api(projectPath('/api/v1/workbench/scenario/illustrations/select'), {method:'PUT',body:JSON.stringify({q:query,target:document.querySelector('#scenario-target').value,source_id:item.source_id,locator:item.locator,image_hash:button.dataset.illustrationSelect,selection_revision:item.selection.revision,selection_fingerprint:item.selection.source_fingerprint})});
+    if (request !== scenarioState.request || project !== state.activeProjectId || result !== scenarioState.result) return;
+    scenarioState.result = answer;
+    document.querySelector('#scenario-result').innerHTML = scenarioEvolutionMarkup(answer, query);
+  } catch(error) { if (request === scenarioState.request && project === state.activeProjectId) status.textContent = `未保存图示选择：${error.message}`; }
+  finally { if (button.isConnected) button.disabled = false; }
 });

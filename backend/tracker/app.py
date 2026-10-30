@@ -49,6 +49,7 @@ from tracker.services.search_maintenance import SearchMaintenance
 from tracker.services.search_prewarm import WhitepaperPrewarmer
 from tracker.services.search_intent import located_version
 from tracker.services.release_evolution import release_evolution_answer
+from tracker.services.illustration_choices import decorate_illustration_choices, save_illustration_choice
 from tracker.services.release_review import (ReviewConflict, decorate_release_review, save_release_review,
     list_release_review_history, restore_release_review)
 from tracker.services.scenario_queries import probe_answer, feature_answer, version_answer, release_feature_answer, release_fallback_allowed
@@ -570,7 +571,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             if task == "probe":
                 result = probe_answer(database, project, query, args.get("code", ""), args.get("series", ""))
             elif task == "feature":
-                result = decorate_release_review(database, release_evolution_answer(database, project, query, args.get("target", "")), project, query, args.get("target", ""))
+                result = decorate_illustration_choices(database, decorate_release_review(database, release_evolution_answer(database, project, query, args.get("target", "")), project, query, args.get("target", "")), project)
             elif task == "whitepaper":
                 result = feature_scenario(project, query, args, allow_generation=False)
             elif task == "version":
@@ -598,7 +599,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         payload = json_object()
         try:
             project, query, target, answer = release_review_context(payload)
-            return success(save_release_review(database, answer, project, query, target, payload))
+            return success(decorate_illustration_choices(database, save_release_review(database, answer, project, query, target, payload), project))
         except ReviewConflict as error:
             return failure('review_conflict', str(error), 409)
         except (ValueError, TypeError) as error:
@@ -608,7 +609,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     def workbench_release_review_history():
         try:
             project, query, target, answer = release_review_context(request.args)
-            return success(list_release_review_history(database, answer, project, query, target))
+            return success(list_release_review_history(database, answer, project, query, target, kind=request.args.get('kind', 'body')))
         except (ValueError, TypeError) as error:
             return failure('validation_error', str(error))
 
@@ -617,7 +618,19 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         payload = json_object()
         try:
             project, query, target, answer = release_review_context(payload)
-            return success(restore_release_review(database, answer, project, query, target, payload))
+            return success(decorate_illustration_choices(database, restore_release_review(database, answer, project, query, target, payload), project))
+        except ReviewConflict as error:
+            return failure('review_conflict', str(error), 409)
+        except (ValueError, TypeError) as error:
+            return failure('validation_error', str(error))
+
+    @app.put('/api/v1/workbench/scenario/illustrations/select')
+    def workbench_select_current_illustration():
+        payload = json_object()
+        try:
+            project, query, target, answer = release_review_context(payload)
+            answer = decorate_release_review(database, answer, project, query, target)
+            return success(save_illustration_choice(database, answer, project, payload))
         except ReviewConflict as error:
             return failure('review_conflict', str(error), 409)
         except (ValueError, TypeError) as error:
