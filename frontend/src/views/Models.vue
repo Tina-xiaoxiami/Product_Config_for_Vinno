@@ -35,7 +35,9 @@
         <el-table-column v-for="column in displayedColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="column.key === 'series_id'">{{ seriesList.find(series => series.id === row.series_id)?.name || row.series_id }}</span>
-            <div v-else-if="column.key === 'sub_series'" class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><span v-if="!row.sub_series?.length" class="unmapped-registration">未分组</span></div>
+            <div v-else-if="column.key === 'sub_series'" class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><el-select v-if="!row.sub_series?.length" :model-value="null" filterable allow-create default-first-option :disabled="assigningSubseries !== null || loading" :loading="assigningSubseries === row.id" placeholder="选择或输入新子系列" :aria-label="'为 ' + row.name + ' 添加子系列'" style="width: 100%; min-width: 140px" @change="name => assignSubseries(row, name)">
+              <el-option v-for="group in sharedGroups.groups || []" :key="group.name" :value="group.name" :label="group.name" :disabled="!modelFitsSubseries(group, seriesList.find(series => series.id === row.series_id)?.name)" />
+            </el-select></div>
             <template v-else-if="column.key === 'registration_packages'">
               <div v-if="row.registration_packages?.length" class="registration-mappings">
                 <el-tag v-for="mapping in row.registration_packages" :key="mapping.registration_package_id" :type="mapping.is_enabled ? 'success' : 'info'" effect="plain">{{ mapping.registration_number }} · {{ mapping.registration_model_name }} · {{ mapping.is_enabled ? '已启用' : '未启用' }}</el-tag>
@@ -107,7 +109,7 @@
 import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
-import { getSeriesList, getModels, getSubseries, createModel, updateModel, deleteModel } from '../api/data'
+import { getSeriesList, getModels, getSubseries, saveSubseries, createModel, updateModel, deleteModel } from '../api/data'
 import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
@@ -115,6 +117,7 @@ import ModelGroupDisplaySettings from '../components/ModelGroupDisplaySettings.v
 import { orderModelCatalog, moveModelToTarget, visibleManagementGroups, loadPersonalList, savePersonalList } from '../utils/modelPersonalLayout'
 import { MODEL_TABLE_COLUMNS, loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog, createGroupEditorRequest } from '../utils/modelManagementGroups'
+import { assignModelSubseriesPayload, modelFitsSubseries } from '../utils/assignModelSubseries'
 import { formatTime } from '../utils/modelHelpers'
 
 const columnStorageKey = 'models-table-column-layout-v1'
@@ -134,6 +137,19 @@ const resizeColumn = (width, _oldWidth, column) => {
 const seriesList = ref([])
 const catalog = ref([])
 const sharedGroups = ref({})
+const assigningSubseries = ref(null)
+const assignSubseries = async (row, name) => {
+  if (assigningSubseries.value !== null || !name) return
+  assigningSubseries.value = row.id
+  try {
+    const latest = await getSubseries()
+    await saveSubseries(assignModelSubseriesPayload(latest, row.id, name))
+    ElMessage.success('已添加子系列，分组关系已同步')
+    await loadData()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || '添加失败，请重试')
+  } finally { assigningSubseries.value = null }
+}
 const selectedGroup = ref('all')
 const search = ref('')
 const loadError = ref('')
