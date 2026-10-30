@@ -55,7 +55,7 @@ class DescriptionModel:
             path = '/chat/completions'
         else:
             body = {'model': profile['model'], 'instructions': SYSTEM_PROMPT,
-                    'input': messages[1]['content'], 'text': {'format': {'type': 'json_object'}},
+                    'input': '请按 JSON 格式整理以下资料：\n' + messages[1]['content'], 'text': {'format': {'type': 'json_object'}},
                     'max_output_tokens': self.max_output_tokens, 'store': False}
             efforts = {'gpt-6.1-terra': 'none', 'gpt-6-luna': 'none', 'gpt-6.1-sol': 'low', 'gpt-6-astra': 'low'}
             if profile['model'] in efforts:
