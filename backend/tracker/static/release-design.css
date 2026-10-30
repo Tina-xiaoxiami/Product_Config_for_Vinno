@@ -74,7 +74,7 @@ body .scenario-controls :is(input, select) { width: 100%; max-width: none; heigh
 body .scenario-controls .project-context-actions { display: grid; grid-template-columns: minmax(0, 1fr); grid-column: 1; grid-row: 1; align-items: end; gap: 6px; padding-bottom: 0; min-width: 0; }
 body .scenario-controls .project-context-actions::before { content: "产品系列"; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
 body .scenario-controls .project-context-label { display: none; }
-body .scenario-controls #project-switcher, body.workbench-embedded .scenario-controls #project-switcher { width: 100%; max-width: none; height: 40px; margin: 0; }
+body .scenario-controls #project-switcher, body.workbench-embedded .scenario-controls #project-switcher, body.workbench-embedded.search-focused .scenario-controls #project-switcher { width: 100%; max-width: none; height: 40px; margin: 0; }
 body .scenario-controls > button[type="submit"] { grid-column: 5; grid-row: 1; min-width: 92px; height: 40px; }
 body .scenario-examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 body .scenario-examples button { color: var(--ink-2); border: 1px solid var(--line); background: #fff; font-size: 13px; }
