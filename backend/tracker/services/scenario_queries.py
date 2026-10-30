@@ -5,6 +5,8 @@ import re
 from typing import Any, Callable
 
 from tracker.domain import version_key
+from tracker.services.release_evidence import release_evidence
+from tracker.services.release_sections import source_sections
 
 _VERSION = re.compile(r'^\d+(?:\.\d+)+$')
 
@@ -175,3 +177,53 @@ def version_answer(database: Any, project_id: int, target: str, base: str,
             raise ValueError('对比基准版本不存在。')
         response['comparison'] = compare(by_version[base], release)
     return response
+
+
+def _release_source_language(database, source_id, project_id):
+    with database.connect() as connection:
+        row = connection.execute("""SELECT s.language FROM source_documents s
+            JOIN releases r ON r.id=s.release_id WHERE s.id=? AND s.is_final=1 AND r.project_id=?""",
+            (source_id, project_id)).fetchone()
+    return row['language'] if row else ''
+
+
+def release_feature_answer(database, project_id, query, model, target_version='', document='', section_choice=''):
+    """Fallback only to verified, matching, same-project Chinese release sections.
+
+    The release project does not prove applicability to the selected device model.
+    Keep that limitation visible instead of inheriting a whitepaper's model scope.
+    """
+    chain = f'release-project:{project_id}:cn'
+    items = []
+    seen = set()
+    for hit in database.search_release_history(query, project_id=project_id)['results']:
+        source = str(hit.get('preview_id') or '')
+        if not re.fullmatch(r'release:source:\d+', source) or source in seen:
+            continue
+        seen.add(source)
+        source_id = int(source.rsplit(':', 1)[-1])
+        if _release_source_language(database, source_id, project_id) != 'cn':
+            continue
+        for section in source_sections(database, source_id):
+            title = str(section.get('title') or '')
+            if not section.get('complete') or not section.get('content') or query.casefold() not in title.casefold():
+                continue
+            scope = f"{hit.get('project_name') or '当前项目'} · 国内 · 机型范围待核对"
+            items.append({'_scenario_document_id': chain, '_scenario_document_label': 'Release Note 完整功能章节',
+                'version': hit['version'], 'title': title, 'scope': scope,
+                'detail_evidence': {'source_id': source, 'locator': section['locator'],
+                    'title': title, 'scope': scope, 'verification': 'unverified'}})
+    def search(page, selected_model):
+        return {'results': items, 'total': len(items), 'source_errors': {},
+                'whitepaper_models': {'selected': model, 'options': []}}
+    def preview(source, locator, needle):
+        return release_evidence(database, source, locator, query=needle)
+    result = feature_answer(database, project_id, query, model, search, preview,
+                            target_version, document or chain, section_choice)
+    result['latest_certified'] = False
+    return result
+
+
+def release_fallback_allowed(answer):
+    pending_document_choice = bool(answer.get('documents') and not answer.get('selected_document'))
+    return not answer.get('baseline') and not pending_document_choice and not answer.get('section_options')

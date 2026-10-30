@@ -46,7 +46,7 @@ from tracker.services.personal_workspace import PersonalWorkspace
 from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
 from tracker.services.search_prewarm import WhitepaperPrewarmer
-from tracker.services.scenario_queries import probe_answer, feature_answer, version_answer
+from tracker.services.scenario_queries import probe_answer, feature_answer, version_answer, release_feature_answer, release_fallback_allowed
 from tracker.services.scenario_descriptions import describe_feature, save_feature_description
 from tracker.services.description_settings import ModelSettings
 from tracker.services.description_model import DescriptionModel
@@ -523,6 +523,12 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         result = feature_answer(database, project, query, args.get("model", ""), search_page,
                                 preview_section, args.get("target", ""),
                                 args.get("document", ""), args.get("section", ""))
+        if release_fallback_allowed(result):
+            release_result = release_feature_answer(database, project, query, args.get('model', ''),
+                args.get('target', ''), (args.get('document') or '') if (args.get('document') or '').startswith('release-project:') else '', args.get('section', ''))
+            if release_result.get('baseline') or release_result.get('section_options'):
+                release_result['models'] = result.get('models', {})
+                result = release_result
         result['description'] = describe_feature(database, result, project, query,
             args.get('model', ''), args.get('target', ''), args.get('section', ''),
             generator=description_model, allow_generation=allow_generation)

@@ -10,7 +10,7 @@ def test_release_baseline_requires_full_matching_heading_and_retains_language(mo
     monkeypatch.setattr('tracker.services.scenario_queries.source_sections',lambda db,sid:sections[sid])
     monkeypatch.setattr('tracker.services.scenario_queries.release_evidence',lambda db,sid,locator,**kwargs: {'section':next(s for s in sections[int(sid.split(':')[-1])] if s['locator']==locator),'locator_status':'exact'})
     db=Data()
-    db.release_source_metadata=lambda sid: {'language':'cn' if sid==34 else 'en'}
+    monkeypatch.setattr('tracker.services.scenario_queries._release_source_language',lambda db,sid,project:'cn' if sid==34 else 'en')
     result=release_feature_answer(db,2,'Auto DE','model:vinno 10')
     assert result['baseline']['version']=='1.14.80'
     assert result['section']['content']=='Auto DE完整说明及限制'
@@ -19,5 +19,18 @@ def test_release_baseline_requires_full_matching_heading_and_retains_language(mo
 
 def test_release_mentions_without_complete_matching_section_cannot_be_baseline(monkeypatch):
     monkeypatch.setattr('tracker.services.scenario_queries.source_sections',lambda *args:[{'complete':True,'title':'配置支持列表','content':'Auto DE'}])
-    db=Data();db.release_source_metadata=lambda sid:{'language':'cn'}
+    db=Data();monkeypatch.setattr('tracker.services.scenario_queries._release_source_language',lambda *args:'cn')
     assert release_feature_answer(db,2,'Auto DE','model:vinno 10')['baseline'] is None
+
+def test_future_release_baseline_not_used_for_earlier_target(monkeypatch):
+    monkeypatch.setattr('tracker.services.scenario_queries.source_sections',lambda *args:[{'complete':True,'title':'Auto DE','content':'完整说明','locator':'原文行 1'}])
+    monkeypatch.setattr('tracker.services.scenario_queries._release_source_language',lambda *args:'cn')
+    assert release_feature_answer(Data(),2,'Auto DE','',target_version='1.14.70')['baseline'] is None
+
+def test_release_fallback_distinguishes_missing_content_from_pending_choices():
+    from tracker.services.scenario_queries import release_fallback_allowed
+    selected = {'baseline':None,'documents':[{'value':'35'}],'selected_document':'35','section_options':[]}
+    assert release_fallback_allowed(selected)
+    assert not release_fallback_allowed({**selected,'selected_document':''})
+    assert not release_fallback_allowed({**selected,'section_options':[{'value':'choice'}]})
+    assert not release_fallback_allowed({**selected,'baseline':{'version':'1.51.80'}})
