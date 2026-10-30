@@ -3,15 +3,14 @@
   <el-dialog v-model="visible" title="管理子系列与组合" width="min(760px, calc(100vw - 32px))" :before-close="requestClose" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
     <el-alert type="info" :closable="false" title="配置库包含全部机型，白皮书使用其中已有文档的机型。此处保存的子系列由两个系统共用。" />
     <el-alert v-if="error" type="error" :closable="false" :title="error" style="margin-top: 10px" />
-    <div v-loading="loading" style="min-height: 90px; max-height: 55vh; overflow-y: auto; padding: 4px">
+    <div ref="editorContent" v-loading="loading" style="min-height: 90px; max-height: 55vh; overflow-y: auto; padding: 4px">
       <el-empty v-if="!loading && !groups.length && loaded" description="还没有子系列，点击新增创建" :image-size="44" />
-      <section v-for="(group, index) in groups" :key="group.editorKey" class="subseries-card">
+      <section v-for="(group, index) in groups" :key="group.editorKey" class="subseries-card" :data-editor-key="group.editorKey" :class="{ 'is-new': highlightedKey === group.editorKey }">
         <div class="subseries-heading">
           <el-input v-model="group.name" :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个子系列名称'" placeholder="子系列名称" maxlength="200" />
-          <el-select v-model="group.series" :disabled="saving" placeholder="所属系列" :aria-label="'第 ' + (index + 1) + ' 个子系列所属系列'">
-            <el-option label="不限系列" value="" />
+          <el-select v-model="group.series_names" multiple clearable :disabled="saving" placeholder="所属系列（可多选，不选为全部）" :aria-label="'第 ' + (index + 1) + ' 个子系列所属系列'">
             <el-option v-for="series in seriesList" :key="series.id" :label="series.name" :value="series.name" />
-            <el-option v-if="group.series && !seriesList.some(series => series.name === group.series)" :label="group.series + '（系列已不存在）'" :value="group.series" />
+            <el-option v-for="name in group.series_names.filter(name => !seriesList.some(series => series.name === name))" :key="name" :label="name + '（系列已不存在）'" :value="name" />
           </el-select>
           <el-button type="danger" text :disabled="saving" :aria-label="'删除子系列 ' + (group.name || index + 1)" @click="removeGroup(group)">删除</el-button>
         </div>
@@ -22,13 +21,13 @@
       </section>
       <h4 style="margin:16px 0 4px">子系列组合</h4>
       <p class="subseries-note">组合引用子系列，成员调整后自动更新；重叠机型会自动去重。</p>
-      <section v-for="(combination, index) in combinations" :key="combination.editorKey" class="subseries-card">
+      <section v-for="(combination, index) in combinations" :key="combination.editorKey" class="subseries-card" :data-editor-key="combination.editorKey" :class="{ 'is-new': highlightedKey === combination.editorKey }">
         <div class="subseries-heading">
           <el-input v-model="combination.name" :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个组合名称'" placeholder="例如：科研机型组合" maxlength="200" />
           <el-button text type="danger" :disabled="saving" :aria-label="'删除组合 ' + (combination.name || index + 1)" @click="combinations.splice(index, 1)">删除组合</el-button>
         </div>
         <el-select v-model="combination.groupKeys" class="subseries-members" multiple filterable :disabled="saving" :aria-label="'第 ' + (index + 1) + ' 个组合包含的子系列'" placeholder="选择一个或多个子系列" style="width:100%">
-          <el-option v-for="group in groups" :key="group.editorKey" :value="group.editorKey" :label="(group.name || '未命名子系列') + '（' + (group.series || '不限系列') + '）'" />
+          <el-option v-for="group in groups" :key="group.editorKey" :value="group.editorKey" :label="(group.name || '未命名子系列') + '（' + (group.series_names?.join('、') || '不限系列') + '）'" />
         </el-select>
       </section>
     </div>
@@ -44,7 +43,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSubseries, saveSubseries } from '../api/data'
 import { cloneSubseriesGroups, cloneSubseriesCombinations, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../utils/subseriesEditor'
@@ -84,8 +83,26 @@ const reload = async () => {
   await load()
 }
 const open = () => { visible.value = true; groups.value = []; combinations.value = []; baseline.value = subseriesSnapshot([], []); load() }
-const add = () => groups.value.push({ name: '', series: '', models: [], options: [], editorKey: ++nextKey })
-const addCombination = () => combinations.value.push({ name: '', groupKeys: [], editorKey: ++nextKey })
+const highlightedKey = ref(null)
+const revealNew = async key => {
+  highlightedKey.value = key
+  await nextTick()
+  if (!visible.value) return
+  const card = editorContent.value?.querySelector(`[data-editor-key="${key}"]`)
+  card?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  card?.querySelector('input')?.focus({ preventScroll: true })
+}
+const editorContent = ref(null)
+const add = () => {
+  const key = ++nextKey
+  groups.value.push({ name: '', series_names: [], models: [], options: [], editorKey: key })
+  revealNew(key)
+}
+const addCombination = () => {
+  const key = ++nextKey
+  combinations.value.push({ name: '', groupKeys: [], editorKey: key })
+  revealNew(key)
+}
 const removeGroup = group => {
   if (combinations.value.some(combination => combination.groupKeys.includes(group.editorKey))) {
     ElMessage.warning('该子系列正在被组合使用，请先从组合中移除后再删除'); return
@@ -129,6 +146,7 @@ const save = async () => {
 
 <style scoped>
 .subseries-card { margin: 12px 0; padding: 12px; border: 1px solid var(--el-border-color); border-radius: 5px; }
+.subseries-card.is-new { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); box-shadow: 0 0 0 1px var(--el-color-primary-light-7); }
 .subseries-heading { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .subseries-heading .el-input { flex: 1; min-width: 100px; }
 .subseries-heading .el-select { width: 230px; }
