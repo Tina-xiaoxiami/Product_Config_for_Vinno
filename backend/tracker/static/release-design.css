@@ -210,8 +210,10 @@ body .feature-parameters li { padding:8px 12px; background:var(--surface-2); bor
 body .feature-steps { padding-left:30px; margin:0; }
 body .feature-steps li { padding:6px 0 6px 8px; white-space:pre-wrap; }
 body .feature-steps li::marker { color:var(--primary); font-weight:650; }
-body .feature-document-section.is-update { padding:16px; border:1px solid #b8d6c7; border-radius:8px; background:#f0f8f4; }
-body .feature-document-section.is-update h4 { border-color:#347352; }
+body .feature-document-section.is-update { padding:10px 12px; margin-bottom:12px; border:1px solid #b8d6c7; border-radius:8px; background:#f0f8f4; }
+body .feature-document-section.is-update h4 { border-color:#347352; font-size:14px; margin-bottom:6px; }
+body .feature-document-section.is-update p { margin:0 0 6px; }
+body .feature-document-section.is-update p:last-child { margin-bottom:0; }
 body .feature-pending { border-color:#e8d3a5; background:#fffbf2; }
 body .feature-image-section { max-width:1080px; padding:18px; margin:20px 0; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
 body .feature-image-section h4 span, body .feature-image-item > p { color:var(--ink-2); font-size:12px; font-weight:400; }

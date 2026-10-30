@@ -43,3 +43,14 @@ test('最新图不可用时保留版本和原文入口，不悄悄展示旧图',
  const html=render.scenarioIllustrationsMarkup({baseline:{version:'1.0.0',section:{has_images:true,blocks:[{type:'image',data_url:'data:image/png;base64,AA=='}]}},illustrations:[{version:'1.1.0',section:{has_images:true,images_complete:false,blocks:[]}}]},'VATT')
  assert.match(html,/1.1.0/);assert.match(html,/部分图片无法展示/);assert.doesNotMatch(html,/<img>/)
 })
+
+test('同版本补充合并一块并保留各条原文顺序，不混入其他版本',()=>{
+ const additions=[{operation:'append',version:'1.51.80',after:'第一项；'},{operation:'append',version:'1.51.90',after:'其他版本；'},{operation:'append',version:'1.51.80',after:'第二项；'}]
+ const html=render.scenarioDocumentMarkup('原始描述\n第一项；\n\n其他版本；\n第二项；',additions)
+ assert.equal((html.match(/版本 1.51.80 补充/g)||[]).length,1)
+ assert.equal((html.match(/class="feature-document-section is-update"/g)||[]).length,2)
+ const version80=html.slice(html.indexOf('版本 1.51.80 补充'),html.indexOf('</section>',html.indexOf('版本 1.51.80 补充')))
+ assert.ok(version80.indexOf('第一项；')<version80.indexOf('第二项；'))
+ assert.doesNotMatch(version80,/其他版本/)
+ assert.match(html,/版本 1.51.90 补充/)
+})

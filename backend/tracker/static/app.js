@@ -3786,13 +3786,25 @@ function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
   const headings = /^(临床意义|功能描述|功能说明|参数|测量结果|操作步骤|效果图示|适用范围)[：:]?$/;
   const lines = String(text || '').split(/\r?\n/);
   const groups = [{title: '', lines: []}];
+  const updatesByVersion = new Map();
+  let currentGroup = groups[0];
   for (const line of lines) {
     const trimmed = line.trim();
     const heading = trimmed.match(headings);
     const addition = additions.find(row => row.operation === 'append' && String(row.after || '').trim() === trimmed);
-    if (heading) groups.push({title: heading[1], lines: []});
-    else if (addition) groups.push({title: `版本 ${addition.version} 补充`, lines: [line], updated: true});
-    else groups[groups.length - 1].lines.push(line);
+    if (heading) {
+      currentGroup = {title: heading[1], lines: []};
+      groups.push(currentGroup);
+    } else if (addition) {
+      const version = String(addition.version || '未标注');
+      if (!updatesByVersion.has(version)) {
+        const group = {title: `版本 ${version} 补充`, lines: [], updated: true};
+        updatesByVersion.set(version, group);
+        groups.push(group);
+      }
+      currentGroup = updatesByVersion.get(version);
+      currentGroup.lines.push(line);
+    } else currentGroup.lines.push(line);
   }
   return `<div class="feature-document">${groups.filter(group => group.title || group.lines.some(line => line.trim())).map(group => {
     const content = group.lines.filter(line => line.trim());
