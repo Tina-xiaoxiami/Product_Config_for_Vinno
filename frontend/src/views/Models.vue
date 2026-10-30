@@ -26,8 +26,9 @@
           </el-tree>
         </aside>
         <section class="model-results">
-          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><div class="model-toolbar-actions"><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div></div>
-      <el-table :key="columnStructureKey" @dragover.prevent="rowDragOver" @drop.prevent="dropModelRow" :row-class-name="({ row }) => String(row.id) === dragOverId ? 'model-drop-target' : ''" @header-dragend="resizeColumn" ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
+          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" class="model-search" clearable placeholder="搜索型号 / 描述" aria-label="搜索型号" /><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div>
+      <div class="model-table-area">
+      <el-table :key="columnStructureKey" @dragover.prevent="rowDragOver" @drop.prevent="dropModelRow" :row-class-name="({ row }) => String(row.id) === dragOverId ? 'model-drop-target' : ''" @header-dragend="resizeColumn" ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" height="100%" size="small">
         <el-table-column width="36" fixed="left" class-name="model-drag-column">
           <template #default="{ row }"><span class="model-row-drag" tabindex="0" :data-model-id="row.id" :draggable="!loading" :aria-label="'拖动排序型号 ' + row.name" title="拖动调整个人显示顺序，自动保存；也可按 Alt + ↑ / ↓" @keydown.alt.up.prevent="moveModelByKeyboard(row.id, -1)" @keydown.alt.down.prevent="moveModelByKeyboard(row.id, 1)" @dragstart="startModelDrag($event, row.id)" @dragend="clearModelDrag">⠿</span></template>
         </el-table-column>
@@ -53,6 +54,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
 
       <div class="pagination-wrapper" v-if="total > 0">
         <el-pagination
@@ -343,12 +345,13 @@ onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invali
 
 <style scoped>
 .models-card > :deep(.el-card__header) { padding: 12px 16px; }
-.models-card > :deep(.el-card__body) { padding: 16px; }
-.model-workspace { display: flex; gap: 16px; min-width: 0; align-items: flex-start; }
-.group-navigation { width: 256px; flex-shrink: 0; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; }
+.models-card { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
+.models-card > :deep(.el-card__body) { padding: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.model-workspace { display: flex; gap: 16px; min-width: 0; min-height: 0; flex: 1; align-items: stretch; }
+.group-navigation { width: 256px; flex-shrink: 0; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; }
 .group-navigation-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--el-fill-color-light); border-bottom: 1px solid var(--el-border-color-lighter); font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
 .group-info { color: var(--el-text-color-placeholder); font-size: 14px; }
-.group-navigation :deep(.el-tree) { padding: 6px; max-height: 590px; overflow: auto; font-size: 13px; }
+.group-navigation :deep(.el-tree) { padding: 6px; flex: 1; min-height: 0; overflow: auto; font-size: 13px; }
 .group-node { display: flex; gap: 7px; align-items: center; width: 100%; min-width: 0; padding: 3px 8px 3px 0; }
 .group-node-label { white-space: normal; overflow-wrap: anywhere; line-height: 20px; flex: 1; }
 .group-node-icon { color: var(--el-text-color-placeholder); flex-shrink: 0; font-size: 14px; }
@@ -359,15 +362,19 @@ onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invali
 .group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-node-icon,
 .group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { color: var(--el-color-primary); }
 .group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { background: var(--el-color-primary-light-8); }
-.model-results { min-width: 0; flex: 1; }
-.model-toolbar { display: flex; justify-content: space-between; gap: 12px; min-height: 32px; margin-bottom: 12px; align-items: center; font-size: 13px; }
-.model-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.model-results { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.model-table-area { flex: 1; min-height: 180px; }
+.model-toolbar { display: flex; gap: 16px; min-height: 32px; flex-shrink: 0; margin-bottom: 12px; align-items: center; font-size: 13px; }
+.model-search { width: 360px; max-width: 45%; }
+.model-toolbar > .el-button { margin-left: auto; }
 .model-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--el-text-color-primary); font-weight: 500; }
 .model-result-count { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
-@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: 100%; } .group-navigation :deep(.el-tree) { max-height: 200px; } .card-header { flex-wrap: wrap; gap: 12px; } .header-actions { flex-wrap: wrap; } .model-results { width: 100%; } }
+@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: 100%; max-height: 220px; flex-shrink: 0; } .group-navigation :deep(.el-tree) { max-height: 160px; } .model-toolbar { flex-wrap: wrap; } .model-search { flex: 1; min-width: 150px; max-width: 100%; } .card-header { flex-wrap: wrap; gap: 12px; } .header-actions { flex-wrap: wrap; } .model-results { width: 100%; } }
 .model-row-drag { display: inline-block; cursor: grab; color: var(--el-text-color-placeholder); padding: 2px 4px; }
 .model-results :deep(.model-drop-target td) { box-shadow: inset 0 2px 0 var(--el-color-primary); }
 .models-page {
+  height: 100%;
+  min-height: 400px;
   padding: 0;
 }
 
@@ -388,6 +395,7 @@ onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invali
 .unmapped-registration { color: #94a3b8; font-size: 12px; }
 
 .pagination-wrapper {
+  flex-shrink: 0;
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
