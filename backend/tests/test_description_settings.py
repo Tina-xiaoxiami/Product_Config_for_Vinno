@@ -61,3 +61,27 @@ def test_transports_have_provider_specific_limits_and_json_output(tmp_path, monk
     else:
         assert body['store'] is False
         assert body['max_output_tokens'] == 2500
+
+
+def test_transport_supplies_trusted_ca_bundle_on_python_without_system_roots(tmp_path, monkeypatch):
+    import ssl
+    from urllib.request import HTTPSHandler
+    settings = ModelSettings(tmp_path / 'model.json')
+    settings.save('gpt-6.1-terra', 'synthetic-test', provider='openai')
+    captured = []
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, size): return json.dumps({'status':'completed','output':[{'type':'message','content':[{'type':'output_text','text':'{}'}]}]}).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    def opener(*handlers):
+        captured.extend(handlers)
+        return Opener()
+    monkeypatch.setattr('tracker.services.description_model.build_opener', opener)
+    DescriptionModel(settings).generate({})
+    handler = next((item for item in captured if isinstance(item, HTTPSHandler)), None)
+    assert handler is not None, 'No explicit TLS context: macOS Python may have no system CA bundle'
+    assert handler._context.verify_mode == ssl.CERT_REQUIRED
+    assert handler._context.check_hostname
+    assert handler._context.get_ca_certs()
