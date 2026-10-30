@@ -5,11 +5,8 @@
         <div class="card-header">
           <span>产品型号管理</span>
           <div class="header-actions">
-            <el-select v-model="selectedSeries" :disabled="reordering" placeholder="选择产品系列" @change="changeSeries" style="width: 200px">
-              <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
-            </el-select>
             <SubseriesEditor ref="subseriesEditorRef" button-label="管理子系列与组合" @saved="loadData" />
-            <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="!selectedSeries">新增型号</el-button>
+            <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="loading || !!loadError">新增型号</el-button>
           </div>
         </div>
       </template>
@@ -33,6 +30,7 @@
       <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="型号名称" min-width="200" fixed="left" show-overflow-tooltip />
+        <el-table-column label="所属系列" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ seriesList.find(series => series.id === row.series_id)?.name || row.series_id }}</template></el-table-column>
         <el-table-column label="所属子系列" min-width="180">
           <template #default="{ row }"><div class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><span v-if="!row.sub_series?.length" class="unmapped-registration">未分组</span></div></template>
         </el-table-column>
@@ -66,8 +64,8 @@
         </el-table-column>
         <el-table-column label="操作" width="210" fixed="right" class-name="model-actions">
           <template #default="{ row }">
-            <el-button size="small" @click="moveRow(row, -1)" :disabled="!canReorder || catalog.findIndex(item => item.id === row.id) === 0" aria-label="上移型号" :icon="ArrowUp" />
-            <el-button size="small" @click="moveRow(row, 1)" :disabled="!canReorder || catalog.findIndex(item => item.id === row.id) === catalog.length - 1" aria-label="下移型号" :icon="ArrowDown" />
+            <el-button size="small" @click="moveRow(row, -1)" :disabled="!canReorder || catalog.filter(item => item.series_id === row.series_id).findIndex(item => item.id === row.id) === 0" aria-label="上移型号" :icon="ArrowUp" />
+            <el-button size="small" @click="moveRow(row, 1)" :disabled="!canReorder || catalog.filter(item => item.series_id === row.series_id).findIndex(item => item.id === row.id) === catalog.filter(item => item.series_id === row.series_id).length - 1" aria-label="下移型号" :icon="ArrowDown" />
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -91,6 +89,11 @@
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑型号' : '新增型号'" width="500px">
       <el-form :model="form" label-width="100px">
+        <el-form-item label="所属系列">
+          <el-select v-model="form.series_id" :disabled="!!editingId" placeholder="请选择所属系列">
+            <el-option v-for="series in seriesList" :key="series.id" :label="series.name" :value="series.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="型号名称">
           <el-input v-model="form.name" placeholder="请输入型号名称" />
         </el-form-item>
@@ -127,7 +130,6 @@ import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog
 import { formatTime } from '../utils/modelHelpers'
 
 const seriesList = ref([])
-const selectedSeries = ref(null)
 const catalog = ref([])
 const sharedGroups = ref({})
 const selectedGroup = ref('all')
@@ -160,7 +162,6 @@ const openRequestedEditor = () => editorRequest.run()
 watch(() => route.query.editSubseries, openRequestedEditor)
 watch([search, selectedGroup], () => { currentPage.value = 1 })
 const selectGroup = node => { selectedGroup.value = node.key }
-const changeSeries = () => { selectedGroup.value = 'all'; currentPage.value = 1; loadData() }
 const loading = ref(false)
 const total = computed(() => filteredModels.value.length)
 const currentPage = ref(1)
@@ -170,7 +171,7 @@ const tableRef = ref(null)
 // 排序移动
 const moveRow = async (row, direction) => {
   if (!canReorder.value) return
-  const ordered = [...catalog.value]
+  const ordered = catalog.value.filter(model => model.series_id === row.series_id)
   const idx = ordered.findIndex(m => m.id === row.id), next = idx + direction
   if (next < 0 || next >= ordered.length) return
   ;[ordered[idx], ordered[next]] = [ordered[next], ordered[idx]]
@@ -186,6 +187,7 @@ const dialogVisible = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
 const form = reactive({
+  series_id: null,
   name: '',
   description: '',
   status: '生产中',
@@ -196,10 +198,7 @@ const loadSeries = async () => {
   try {
     const res = await getSeriesList()
     seriesList.value = res.items || []
-    if (seriesList.value.length > 0) {
-      selectedSeries.value = seriesList.value[0].id
-      await loadData()
-    }
+    await loadData()
   } catch (error) {
     console.error('加载系列失败:', error)
   }
@@ -207,13 +206,12 @@ const loadSeries = async () => {
 
 let loadRequest = 0
 const loadData = async () => {
-  if (!selectedSeries.value) return
-  const request = ++loadRequest, seriesId = selectedSeries.value
-  const isCurrent = () => request === loadRequest && seriesId === selectedSeries.value
+  const request = ++loadRequest
+  const isCurrent = () => request === loadRequest
   loading.value = true; loadError.value = ''; catalog.value = []; sharedGroups.value = {}
   try {
     const [models, groups] = await Promise.all([
-      loadCompleteModelCatalog(params => getModels(seriesId, params), isCurrent), getSubseries()
+      loadCompleteModelCatalog(params => getModels(null, params), isCurrent), getSubseries()
     ])
     if (!isCurrent() || !models) return
     sharedGroups.value = groups
@@ -236,6 +234,7 @@ const getStatusType = (status) => {
 
 const handleCreate = () => {
   editingId.value = null
+  form.series_id = null
   form.name = ''
   form.description = ''
   form.status = '生产中'
@@ -245,6 +244,7 @@ const handleCreate = () => {
 
 const handleEdit = (row) => {
   editingId.value = row.id
+  form.series_id = row.series_id
   form.name = row.name
   form.description = row.description || ''
   form.status = row.status || '生产中'
@@ -253,6 +253,7 @@ const handleEdit = (row) => {
 }
 
 const handleSave = async () => {
+  if (!editingId.value && !form.series_id) { ElMessage.warning('请选择所属系列'); return }
   if (!form.name) {
     ElMessage.warning('请输入型号名称')
     return
@@ -270,7 +271,7 @@ const handleSave = async () => {
       ElMessage.success('更新成功')
     } else {
       await createModel({
-        series_id: selectedSeries.value,
+        series_id: form.series_id,
         name: form.name,
         description: form.description,
         status: form.status,
@@ -291,7 +292,7 @@ const handleSave = async () => {
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确认删除型号 "${row.name}"？该操作将同时删除该型号的所有配置数据。`,
+      `确认删除型号 "${row.name}"（${seriesList.value.find(series => series.id === row.series_id)?.name || row.series_id}）？该操作将同时删除该型号的所有配置数据。`,
       '确认删除',
       {
         confirmButtonText: '确定',

@@ -67,3 +67,15 @@ test('editor query is consumed once and cannot open after leaving cached Models'
   const second = request.run(); finish(); await second
   assert.equal(opened, 1)
 })
+
+test('model management loads every market and shows all children of cross-market combinations', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../src/views/Models.vue', import.meta.url), 'utf8')
+  assert.match(source, /getModels\(null, params\)/)
+  assert.doesNotMatch(source, /v-model="selectedSeries"/)
+  assert.match(source, /series_id: form.series_id/)
+  const models = [{id:1,name:'VINNO 5',series_id:1},{id:2,name:'VINNO 5',series_id:2}]
+  const nodes = buildManagementGroups(models, {groups:[{name:'国内',model_ids:[1]},{name:'海外',model_ids:[2]}],combinations:[{name:'国内海外',sub_series:['国内','海外']}]})
+  assert.deepEqual(nodes[1].children.map(group => group.label), ['国内','海外'])
+  assert.deepEqual(nodes[1].ids,['1','2'])
+})
