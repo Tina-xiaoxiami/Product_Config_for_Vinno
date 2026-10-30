@@ -106,3 +106,19 @@ test('重叠版本对比只保留最新组合且恢复按钮', async () => {
   assert.match(nodes['#compare-result'].textContent,/比较失败/)
   assert.equal(nodes['#compare-button'].disabled,false)
 })
+
+test('自动整理默认展示、手工修订提示和原文依据可以追溯', () => {
+  const data = {baseline:{version:'1.51.80', detail_evidence:{source_id:'controlled:1:docx'}},
+    section:{content:'原始章节'}, later_changes:[], description:{content:'整理后的内容 <script>',
+    automatic_content:'最新自动稿', edited:true, sources_changed:true, revision:1, excluded_count:0}}
+  const html = render.scenarioFeatureMarkup(data,'VAid Liver')
+  assert.match(html,/整理后的功能说明/)
+  assert.match(html,/整理后的内容 &lt;script&gt;/)
+  assert.match(html,/手工修订/)
+  assert.match(html,/资料已更新/)
+  assert.match(html,/data-description-edit/)
+  assert.match(html,/data-description-save/)
+  assert.match(html,/textarea/)
+  assert.match(html,/原文章节/)
+  assert.doesNotMatch(html,/后续变更待整合/)
+})
