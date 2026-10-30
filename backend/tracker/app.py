@@ -47,6 +47,9 @@ from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
 from tracker.services.search_prewarm import WhitepaperPrewarmer
 from tracker.services.scenario_queries import probe_answer, feature_answer, version_answer
+from tracker.services.scenario_descriptions import describe_feature, save_feature_description
+from tracker.services.description_settings import ModelSettings
+from tracker.services.description_model import DescriptionModel
 from tracker.services.release_evidence import release_evidence
 from tracker.services.model_workspace import build_model_workspace
 from tracker.services.document_scope_suggestions import suggest_document_scope
@@ -147,7 +150,7 @@ def static_asset_version(static_folder: str | None) -> str:
     把 mtime 带进 URL 后，文件一改链接就变，页面刷新即拿到新版。
     """
     newest = 0
-    for name in ("styles.css", "embedded.css", "app.js", "workspace.js"):
+    for name in ("styles.css", "embedded.css", "app.js", "workspace.js", "description-settings.js", "description.css"):
         if not static_folder:
             break
         try:
@@ -181,6 +184,13 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     app.extensions["tracker_database"] = database
     personal_workspace = PersonalWorkspace(database.path)
     app.extensions["personal_workspace"] = personal_workspace
+    model_settings_path = app.config.get("DESCRIPTION_MODEL_SETTINGS_PATH")
+    if model_settings_path is None and app.config.get("TESTING"):
+        model_settings_path = database.path.with_suffix(".model.json")
+    model_settings = ModelSettings(Path(model_settings_path) if model_settings_path else None)
+    description_model = DescriptionModel(model_settings)
+    app.extensions["description_model_settings"] = model_settings
+    app.extensions["description_model"] = description_model
     search_index_path = app.config.get("SEARCH_INDEX_PATH") or database.path.with_name(
         f"{database.path.stem}.search-index.db"
     )
@@ -483,52 +493,85 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 prewarmer.finish(prewarm_ticket)
         return success(result)
 
-    @app.get("/api/v1/workbench/scenario")
+    def feature_scenario(project, query, args, *, allow_generation=True):
+        unavailable = sync_search_roots_and_metadata(database, search_index, **search_roots())
+        document_versions = {}
+        for document in database.list_documents():
+            for version in database.list_document_versions(document['id']):
+                document_versions[version['id']] = document
+        def search_page(page, model):
+            page_result = unified_search(database, search_index, product_strategy_reader, query=query,
+                sources={"release", "controlled"}, project_id=project, scope="current",
+                source_group="whitepaper", whitepaper_model=model, page=page, page_size=100,
+                unavailable_sources=unavailable,
+                chapter_candidate=lambda source_id: resolve_source_candidate(database, source_id, **search_roots()))
+            for item in page_result['results']:
+                document = document_versions.get(item.get('document_version_id'))
+                if document:
+                    item['_scenario_document_id'] = str(document['id'])
+                    item['_scenario_document_label'] = document['title']
+            return page_result
+        def preview_section(source_id, locator, needle):
+            candidate = resolve_source_candidate(database, source_id, **search_roots())
+            indexed_path = search_index.source_path(source_id)
+            if not candidate or not indexed_path or candidate["path"].resolve() != indexed_path.resolve():
+                return None
+            try:
+                return search_index.preview(source_id, locator=locator, query=needle, include_images=False)
+            except OSError:
+                return None
+        result = feature_answer(database, project, query, args.get("model", ""), search_page,
+                                preview_section, args.get("target", ""),
+                                args.get("document", ""), args.get("section", ""))
+        result['description'] = describe_feature(database, result, project, query,
+            args.get('model', ''), args.get('target', ''), args.get('section', ''),
+            generator=description_model, allow_generation=allow_generation)
+        return result
+
+    @app.get("/api/v1/workbench/model-settings")
+    def workbench_model_settings():
+        return success(model_settings.public())
+
+    @app.put("/api/v1/workbench/model-settings")
+    def update_workbench_model_settings():
+        payload = json_object()
+        text_fields(payload, ('provider', 'model', 'api_key'))
+        return success(model_settings.save(provider=payload.get('provider'), model=payload.get('model'),
+            api_key=payload.get('api_key', ''), daily_tokens=payload.get('daily_tokens')))
+
+    @app.put("/api/v1/workbench/scenario/feature-description")
+    def update_scenario_feature_description():
+        payload = json_object()
+        text_fields(payload, ('q', 'model', 'document', 'section', 'target', 'content', 'source_fingerprint'))
+        query = (payload.get('q') or '').strip()
+        if not query or len(query) > 200:
+            raise ValueError('请输入不超过 200 字的功能名称。')
+        result = feature_scenario(requested_project_id(), query, payload, allow_generation=False)
+        description = save_feature_description(database, result.get('description'), payload.get('content'),
+            payload.get('revision'), payload.get('source_fingerprint'))
+        return success(description)
+
+    @app.route("/api/v1/workbench/scenario", methods=["GET", "POST"])
     def workbench_scenario():
-        task = request.args.get("task", "")
+        args = json_object() if request.method == "POST" else request.args
+        if request.method == "POST":
+            text_fields(args, ("task", "q", "code", "series", "model", "target", "base", "document", "section"))
+        task = args.get("task", "")
         project = requested_project_id()
-        query = request.args.get("q", "").strip()
+        query = (args.get("q") or "").strip()
         try:
             if task in {"probe", "feature"} and (not query or len(query) > 200):
                 raise ValueError("请输入不超过 200 字的探头或功能名称。")
             if task == "probe":
-                result = probe_answer(database, project, query, request.args.get("code", ""), request.args.get("series", ""))
+                result = probe_answer(database, project, query, args.get("code", ""), args.get("series", ""))
             elif task == "feature":
-                unavailable = sync_search_roots_and_metadata(database, search_index, **search_roots())
-                document_versions = {}
-                for document in database.list_documents():
-                    for version in database.list_document_versions(document['id']):
-                        document_versions[version['id']] = document
-                def search_page(page, model):
-                    page_result = unified_search(database, search_index, product_strategy_reader, query=query,
-                        sources={"release", "controlled"}, project_id=project, scope="current",
-                        source_group="whitepaper", whitepaper_model=model, page=page, page_size=100,
-                        unavailable_sources=unavailable,
-                        chapter_candidate=lambda source_id: resolve_source_candidate(database, source_id, **search_roots()))
-                    for item in page_result['results']:
-                        document = document_versions.get(item.get('document_version_id'))
-                        if document:
-                            item['_scenario_document_id'] = str(document['id'])
-                            item['_scenario_document_label'] = document['title']
-                    return page_result
-                def preview_section(source_id, locator, needle):
-                    candidate = resolve_source_candidate(database, source_id, **search_roots())
-                    indexed_path = search_index.source_path(source_id)
-                    if not candidate or not indexed_path or candidate["path"].resolve() != indexed_path.resolve():
-                        return None
-                    try:
-                        return search_index.preview(source_id, locator=locator, query=needle, include_images=False)
-                    except OSError:
-                        return None
-                result = feature_answer(database, project, query, request.args.get("model", ""), search_page,
-                                        preview_section, request.args.get("target", ""),
-                                        request.args.get("document", ""), request.args.get("section", ""))
+                result = feature_scenario(project, query, args, allow_generation=request.method == "POST")
             elif task == "version":
                 def compare_releases(earlier, later):
                     comparison = compare_change_sets(database.list_changes(earlier['id']), database.list_changes(later['id']))
                     comparison['structured'] = database.compare_release_structured(earlier['id'], later['id'])
                     return comparison
-                result = version_answer(database, project, request.args.get("target", ""), request.args.get("base", ""), compare_releases)
+                result = version_answer(database, project, args.get("target", ""), args.get("base", ""), compare_releases)
             else:
                 raise ValueError("不支持的查询任务。")
             return success(result)

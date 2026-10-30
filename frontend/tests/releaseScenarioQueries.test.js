@@ -122,3 +122,40 @@ test('自动整理默认展示、手工修订提示和原文依据可以追溯',
   assert.match(html,/原文章节/)
   assert.doesNotMatch(html,/后续变更待整合/)
 })
+
+test('手工保存只写修订，失败保留编辑内容且可重试', async () => {
+  const description = {context:{q:'VAid Liver',model:'model:6s'},revision:0,source_fingerprint:'f',content:'原稿'}
+  const result = {description}, scenarioState={result,request:2}, state={activeProjectId:1}
+  const status={textContent:''}, button={disabled:false}, field={value:'手工稿'}
+  const dialog={dataset:{},closed:false,querySelector:key=>({'[data-description-content]':field,'[data-description-status]':status,'[data-description-save]':button})[key],close(){this.closed=true}}
+  const event={target:{matches:()=>true,closest:()=>dialog},preventDefault(){}}
+  const container={innerHTML:''}, calls=[]
+  let fail=true
+  const ctx={scenarioState,state,document:{querySelector:()=>container},projectPath:path=>path+'?project_id=1',
+    api:async(path, options)=>{calls.push([path,JSON.parse(options.body)]);if(fail)throw Error('磁盘不可写');return {...description,content:'手工稿',edited:true,revision:1}},
+    scenarioFeatureMarkup:value=>value.description.content,showNotice(){}}
+  const run=new Function(...Object.keys(ctx),`${block('async function saveScenarioDescription','document.querySelector(\'#scenario-result\').addEventListener(\'submit\'')};return saveScenarioDescription`)(...Object.values(ctx))
+  await run(event)
+  assert.equal(field.value,'手工稿');assert.equal(dialog.closed,false)
+  assert.match(status.textContent,/保存失败.*磁盘不可写/);assert.equal(button.disabled,false)
+  fail=false;await run(event)
+  assert.equal(dialog.closed,true);assert.equal(container.innerHTML,'手工稿')
+  assert.equal(calls.length,2);assert.equal(calls[0][1].content,'手工稿')
+  assert.match(calls[0][0],/feature-description/)
+})
+
+test('自动整理使用受 JSON 写操作保护的 POST，缓存读取保持 GET', () => {
+  const run = block('async function runScenario','function switchView')
+  assert.match(run,/task === 'feature'[\s\S]*method: 'POST'/)
+})
+
+test('放弃编辑会恢复已保存说明，重新打开不会复活弃稿', () => {
+  const field={value:'未保存草稿'}, dialog={dataset:{original:'已保存说明'},querySelector:()=>field,close(){this.closed=true}}
+  const close = new Function('window',`${block('function closeDescriptionEditor','async function saveScenarioDescription')};return closeDescriptionEditor`)({confirm:()=>true})
+  assert.equal(close(dialog),true)
+  assert.equal(field.value,'已保存说明')
+  assert.equal(dialog.closed,true)
+  field.value='第二次草稿'; dialog.closed=false
+  const refuse = new Function('window',`${block('function closeDescriptionEditor','async function saveScenarioDescription')};return closeDescriptionEditor`)({confirm:()=>false})
+  assert.equal(refuse(dialog),false);assert.equal(field.value,'第二次草稿');assert.equal(dialog.closed,false)
+})

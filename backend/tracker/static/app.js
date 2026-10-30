@@ -1,5 +1,5 @@
 const state = { activeView: null, strategyProblem: null, registrationProblem: null, projects: [], activeProjectId: null, releases: [], activeReleaseVersion: null, activeCandidateVersion: null, activeCandidateCategory: 'all', terms: [], candidates: [], rejectedCandidates: [], features: [], categories: [], editingFeature: null, reviewIssues: [], suspectedPairs: [], selectedCandidateIds: new Set(), configurationTables: [], releaseArchive: null, effectiveConfiguration: null, archiveType: 'all', archiveMarket: 'domestic', comparisonKey: null, projectHealth: null, importBatches: [], candidateRecommendations: {}, candidateOverrides: {}, recommendationKey: '', searchPage: 1, searchSourceGroup: 'release_note', searchReleaseCategory: 'all', searchWhitepaperModel: '', searchWhitepaperSelectionMode: 'auto', searchRequest: 0, searchPreviewRequest: 0, searchTimer: 0 };
-const scenarioState = { task: 'probe', code: '', series: '', model: '', document: '', section: '', request: 0 };
+const scenarioState = { task: 'probe', code: '', series: '', model: '', document: '', section: '', request: 0, result: null };
 const workbenchConfig = window.__WORKBENCH__ || {};
 function workbenchUrl(path) {
   if (!path || /^(?:[a-z]+:)?\/\//i.test(path)) return path;
@@ -3614,6 +3614,24 @@ function scenarioProbeMarkup(data, query) {
   return `<section class="scenario-answer">${conclusion}${data.identities.length > 1 ? '<button type="button" class="text-button" data-scenario-reselect>重新选择身份</button>' : ''}<details><summary>依据与覆盖范围</summary><p>仅限当前项目和所选系列。已登记资料可能不完整，最早可证实记录不等于已确认的绝对首次；未找到记录不代表不支持。</p></details></section>`;
 }
 
+function scenarioDescriptionMarkup(description) {
+  const status = description.edited ? '手工修订' : description.status === 'ready' ? '大模型整理 · 未复核' : '原说明 · 待自动整理';
+  return `<div class="scenario-description-heading"><h3>整理后的功能说明</h3><span>${escapeHtml(status)}</span><button type="button" class="ghost-button compact-button" data-description-edit>编辑</button></div>
+    ${description.error ? `<p role="status">${escapeHtml(description.error)}</p>` : ''}
+    ${description.sources_changed ? '<p role="status">资料已更新，已保留手工修订。可参考最新自动稿继续编辑。</p>' : ''}
+    <div class="scenario-content">${escapeHtml(description.content)}</div>
+    ${description.edited ? `<details><summary>查看最新自动整理稿</summary><div class="scenario-content">${escapeHtml(description.automatic_content)}</div></details>` : ''}
+    ${description.unresolved?.length ? `<details><summary>整理中需核对的内容（${description.unresolved.length}）</summary>${description.unresolved.map(value => `<p>${escapeHtml(value)}</p>`).join('')}</details>` : ''}
+    <dialog data-description-editor class="scenario-description-editor"><form data-description-form>
+      <div class="dialog-heading"><h2>编辑功能说明</h2><button type="button" data-description-cancel aria-label="关闭">×</button></div>
+      <label>功能说明<textarea rows="16" data-description-content maxlength="100000" required>${escapeHtml(description.content)}</textarea></label>
+      <p data-description-status role="alert"></p><div class="dialog-actions">
+        <button type="button" class="ghost-button" data-description-automatic>使用自动稿</button>
+        <button type="button" class="ghost-button" data-description-cancel>取消</button>
+        <button type="submit" class="primary-button" data-description-save>保存修订</button>
+      </div></form></dialog>`;
+}
+
 function scenarioFeatureMarkup(data, query) {
   const item = data.baseline, section = data.section;
   if (!item || !section) {
@@ -3624,7 +3642,16 @@ function scenarioFeatureMarkup(data, query) {
   const detail = item.detail_evidence;
   const heading = data.latest_certified ? '所选资料链中已检索的最新完整描述' : '完整描述候选（较新资料或范围待核对）';
   const changes = data.later_changes || [];
-  const later = changes.length ? `<details><summary>后续变更待整合（${changes.length}）</summary>${changes.map(change => `<article><p><strong>${escapeHtml(change.version)} · ${escapeHtml(categoryLabels[change.category] || change.category || '变更')}</strong> · ${escapeHtml(change.evidence_type === 'clue' ? (change.status || '原文线索，未确认') : (change.review_status || '状态未登记'))}</p><p>${escapeHtml(change.description_cn || change.description_en || change.matched_text || change.title_cn || change.title_en || '')}</p>${scenarioPreviewButton(change.preview_id, change.locator || (change.description_cn || change.title_cn ? '中文记录' : 'English record'), query, '查看变更原文')}</article>`).join('')}</details>` : '<p>未找到后续相关变更；资料覆盖仍需核对。</p>';
+  const later = changes.length ? `<details><summary>${data.description ? '整理依据' : '后续变更待整合'}（${changes.length}）</summary>${changes.map(change => `<article><p><strong>${escapeHtml(change.version)} · ${escapeHtml(categoryLabels[change.category] || change.category || '变更')}</strong> · ${escapeHtml(change.evidence_type === 'clue' ? (change.status || '原文线索，未确认') : (change.review_status || '状态未登记'))}</p><p>${escapeHtml(change.description_cn || change.description_en || change.matched_text || change.title_cn || change.title_en || '')}</p>${scenarioPreviewButton(change.preview_id, change.locator || (change.description_cn || change.title_cn ? '中文记录' : 'English record'), query, '查看变更原文')}</article>`).join('')}</details>` : '<p>未找到后续相关变更；资料覆盖仍需核对。</p>';
+  if (data.description) {
+    const description = data.description;
+    const sources = (description.evidence || []).map(source => `<article><p><strong>${escapeHtml(source.versions.join('、'))}</strong> · ${escapeHtml(source.state)}</p><p>${escapeHtml(source.text)}</p>${scenarioPreviewButton(source.preview_id, source.locator, query, '查看引用原文')}</article>`).join('');
+    return `<section class="scenario-answer">${scenarioDescriptionMarkup(description)}<p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · 基线 ${escapeHtml(item.version)}</p>
+      <details><summary>原文章节</summary><div class="scenario-content">${escapeHtml(section.content)}</div>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}</details>
+      <details><summary>整理引用与版本</summary>${sources}</details>${later}
+      <p class="strategy-note">自动稿按已入库资料整理；原文引用已校验，内容含义仍可手工修订。${description.excluded_count ? `${description.excluded_count} 条其他语言、重复或非正文记录保留在依据中。` : ''}未登记和未索引的资料不在整理范围内。</p>
+      ${description.usage ? `<p class="strategy-note">今日自动整理：${description.usage.today_requests} 次请求 · 已返回用量 ${description.usage.today_tokens} tokens（未返回用量的请求按预留预算计）。</p>` : ''}</section>`;
+  }
   return `<section class="scenario-answer"><h3>${heading} · ${escapeHtml(item.version)}</h3><p>${escapeHtml(detail.title || item.title)} · ${escapeHtml(verificationLabel(detail.verification || 'unverified'))} · ${escapeHtml(detail.scope || item.scope || '适用范围未登记')}</p><div class="scenario-content">${escapeHtml(section.content)}</div><p>以上为完整章节文本；图片和原始版式可在原文预览中查看。未索引或未登记的资料不在本次结论中。</p>${scenarioPreviewButton(detail.source_id, section.locator || detail.locator, query, '查看完整原文')}${later}<details><summary>来源与适用范围</summary><p>${escapeHtml(detail.scope || item.scope || '适用范围未登记')} · ${escapeHtml(item.title)}</p><p>资料型号取自登记信息或资料名称，未登记的适用范围需要核对；后续变化不会自动合并到正文。</p></details></section>`;
 }
 
@@ -3660,7 +3687,9 @@ async function runScenario() {
   container.innerHTML = loadingMarkup('正在查询资料…');
   syncLocation();
   try {
-    const result = await api(projectPath(`/api/v1/workbench/scenario?${params}`));
+    const result = task === 'feature'
+      ? await api(projectPath('/api/v1/workbench/scenario'), {method: 'POST', body: JSON.stringify(Object.fromEntries(params))})
+      : await api(projectPath(`/api/v1/workbench/scenario?${params}`));
     if (requestId !== scenarioState.request || task !== scenarioState.task || project !== state.activeProjectId) return;
     if (task === 'feature') {
       const model = document.querySelector('#scenario-model');
@@ -3669,6 +3698,7 @@ async function runScenario() {
       scenarioState.model = result.models?.selected || '';
       scenarioState.document = result.selected_document || '';
       model.value = scenarioState.model;
+      scenarioState.result = result;
       container.innerHTML = scenarioFeatureMarkup(result, query);
     } else container.innerHTML = task === 'probe' ? scenarioProbeMarkup(result, query) : scenarioVersionMarkup(result);
     syncLocation();
@@ -3767,7 +3797,58 @@ document.querySelector('#scenario-query').addEventListener('input', () => { scen
 for (const id of ['#scenario-target', '#scenario-base']) document.querySelector(id).addEventListener('change', () => { scenarioState.request++; document.querySelector('#scenario-result').innerHTML = ''; });
 document.querySelector('#scenario-form').addEventListener('submit', event => { event.preventDefault(); runScenario(); });
 document.querySelector('#scenario-model').addEventListener('change', event => { scenarioState.model = event.target.value; scenarioState.document = ''; scenarioState.section = ''; runScenario(); });
+function closeDescriptionEditor(dialog) {
+  if (dialog.dataset.saving === 'true') return false;
+  if (dialog.querySelector('[data-description-content]').value !== dialog.dataset.original && !window.confirm('修订尚未保存，放弃本次编辑吗？')) return false;
+  dialog.querySelector('[data-description-content]').value = dialog.dataset.original;
+  dialog.close(); return true;
+}
+
+async function saveScenarioDescription(event) {
+  if (!event.target.matches('[data-description-form]')) return;
+  event.preventDefault();
+  const dialog = event.target.closest('dialog');
+  if (dialog.dataset.saving === 'true') return;
+  const result = scenarioState.result, description = result?.description;
+  if (!description) return;
+  const request = scenarioState.request, project = state.activeProjectId;
+  const status = dialog.querySelector('[data-description-status]');
+  const button = dialog.querySelector('[data-description-save]');
+  dialog.dataset.saving = 'true'; button.disabled = true; status.textContent = '正在保存…';
+  try {
+    const saved = await api(projectPath('/api/v1/workbench/scenario/feature-description'), {method: 'PUT', body: JSON.stringify({
+      ...description.context, content: dialog.querySelector('[data-description-content]').value,
+      revision: description.revision, source_fingerprint: description.source_fingerprint,
+    })});
+    if (request !== scenarioState.request || project !== state.activeProjectId) return;
+    result.description = saved;
+    dialog.close();
+    document.querySelector('#scenario-result').innerHTML = scenarioFeatureMarkup(result, description.context.q);
+    showNotice('手工修订已保存。');
+  } catch (error) { status.textContent = `保存失败：${error.message}`; }
+  finally { dialog.dataset.saving = 'false'; button.disabled = false; }
+}
+
+document.querySelector('#scenario-result').addEventListener('submit', saveScenarioDescription);
+window.addEventListener('beforeunload', event => {
+  const editor = document.querySelector('[data-description-editor][open]');
+  if (editor && editor.querySelector('[data-description-content]').value !== editor.dataset.original) { event.preventDefault(); event.returnValue = ''; }
+});
 document.querySelector('#scenario-result').addEventListener('click', event => {
+  const dialog = document.querySelector('[data-description-editor]');
+  if (event.target.closest('[data-description-edit]') && dialog) {
+    const field = dialog.querySelector('[data-description-content]');
+    dialog.dataset.original = field.value;
+    if (!dialog.dataset.guarded) {
+      dialog.addEventListener('cancel', event => { if (!closeDescriptionEditor(dialog)) event.preventDefault(); });
+      dialog.dataset.guarded = 'true';
+    }
+    dialog.showModal(); return;
+  }
+  if (event.target.closest('[data-description-cancel]') && dialog) { closeDescriptionEditor(dialog); return; }
+  if (event.target.closest('[data-description-automatic]') && dialog) {
+    dialog.querySelector('[data-description-content]').value = scenarioState.result.description.automatic_content; return;
+  }
   if (event.target.closest('[data-scenario-reselect]')) { scenarioState.code = ''; scenarioState.series = ''; runScenario(); return; }
   const doc = event.target.closest('[data-scenario-document]');
   if (doc) { scenarioState.document = doc.dataset.scenarioDocument; scenarioState.section = ''; runScenario(); return; }

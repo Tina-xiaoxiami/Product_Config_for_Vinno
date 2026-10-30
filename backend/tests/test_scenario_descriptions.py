@@ -18,9 +18,28 @@ def answer(changes=None):
             'later_changes': changes or []}
 
 
+class FakeModel:
+    configured = True
+    identity = 'test/model'
+    daily_budget = 100000
+    max_input_chars = 16000
+    max_output_tokens = 2500
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, payload):
+        self.calls.append(payload)
+        old = payload.get('current_description') or {'paragraphs': []}
+        paragraphs = list(old['paragraphs'])
+        paragraphs.extend({'text': row['text'] + ('（原文提及）' if '原文提及' in row['state'] else ''),
+            'citations': [{'id': row['id'], 'quote': row['text'][:120]}]} for row in payload['evidence'] if row.get('complete', True))
+        return {'paragraphs': paragraphs, 'unresolved': []}, {'total_tokens': 120}
+
+
 def describe(db, data=None, **kwargs):
     from tracker.services.scenario_descriptions import describe_feature
-    return describe_feature(db, data or answer(), 1, 'VAid Liver', **kwargs)
+    return describe_feature(db, data or answer(), 1, 'VAid Liver', generator=kwargs.pop('generator', FakeModel()), **kwargs)
 
 
 def save(db, description, content='手工补充后的说明'):
@@ -35,7 +54,7 @@ def test_default_automatically_combines_baseline_and_deduplicated_later_changes(
     description = describe(database, answer([second, change]))
     assert '实时检测病灶' in description['content']
     assert description['content'].count('VAid Liver 支持腹部精细应用') == 1
-    assert '1.51.81' in description['content'] and '1.51.82' in description['content']
+    assert description['evidence'][1]['versions'] == ['1.51.81', '1.51.82']
     assert description['content'] == description['automatic_content']
     assert description['edited'] is False
 
@@ -62,7 +81,7 @@ def test_revision_scope_isolated_by_document_model_target_and_query(database):
     assert not describe(database, target_version='1.51.81')['edited']
     from tracker.services.scenario_descriptions import describe_feature
     assert not describe_feature(database, answer(), 1, 'VAid Kidney')['edited']
-    assert describe_feature(database, answer(), 1, '  vaid   liver  ')['edited']
+    assert describe_feature(database, answer(), 1, '  vaid   liver  ', generator=FakeModel())['edited']
 
 
 def test_saves_detect_stale_revision_and_source_changes(database):
@@ -105,9 +124,9 @@ def test_snapshot_reads_complete_record_instead_of_truncated_search_excerpt(data
     change = {'version': '1.51.81', 'category': 'source', 'evidence_type': 'clue',
               'preview_id': f'release:source:{sid}', 'locator': '原文行 2', 'matched_text': '...VAid Liver 支持腹部常规...'}
     result = describe(database, answer([change]))
-    assert '不支持测试探头' in result['automatic_content']
-    assert 'VAid HRI' not in result['automatic_content']
-    assert '原文提及' in result['automatic_content']
+    assert '不支持测试探头' in result['evidence'][1]['text']
+    assert result['evidence'][1]['complete'] is False
+    assert '原文提及' in result['evidence'][1]['state']
 
 
 def test_no_verified_baseline_has_no_generated_description(database):
@@ -122,3 +141,70 @@ def test_source_order_does_not_make_revision_appear_outdated(database):
     first = describe(database, answer(changes))
     save(database, first)
     assert not describe(database, answer(list(reversed(changes))))['sources_changed']
+
+
+def test_model_cache_and_incremental_prompt_avoid_repeated_tokens(database):
+    generator = FakeModel()
+    first = describe(database, generator=generator)
+    assert first['status'] == 'ready'
+    describe(database, generator=generator)
+    assert len(generator.calls) == 1
+    changes = [{'version': '1.51.81', 'description_cn': 'VAid Liver 新增腹部精细应用', 'category': 'function'}]
+    describe(database, answer(changes), generator=generator)
+    assert len(generator.calls) == 2
+    payload = generator.calls[1]
+    assert payload['current_description']
+    assert [row['text'] for row in payload['evidence']] == ['VAid Liver 新增腹部精细应用']
+    describe(database, answer(changes + [{**changes[0], 'version': '1.51.82'}]), generator=generator)
+    assert len(generator.calls) == 2
+
+
+def test_invalid_model_citations_preserve_last_good_description_and_cool_down(database):
+    generator = FakeModel()
+    good = describe(database, generator=generator)
+    def bad(payload):
+        generator.calls.append(payload)
+        return {'paragraphs': [{'text': '未证实的支持结论', 'citations': [{'id': 'unknown', 'quote': '捏造引用'}]}]}, {'total_tokens': 30}
+    generator.generate = bad
+    changed = answer([{'version': '1.51.81', 'category': 'function', 'description_cn': 'VAid Liver 新增应用'}])
+    result = describe(database, changed, generator=generator)
+    assert result['status'] == 'failed'
+    assert result['content'] == good['content']
+    assert '逐字原文校验' in result['error']
+    describe(database, changed, generator=generator)
+    assert len(generator.calls) == 2
+
+
+def test_budget_and_unconfigured_provider_do_not_call_model(database):
+    generator = FakeModel()
+    generator.daily_budget = 0
+    assert describe(database, generator=generator)['status'] == 'budget_limit'
+    assert generator.calls == []
+    generator.configured = False
+    assert describe(database, generator=generator)['status'] == 'unconfigured'
+
+
+def test_changed_or_removed_evidence_forces_complete_regeneration(database):
+    generator = FakeModel()
+    changes = [{'version': '1.51.81', 'category': 'function', 'description_cn': 'VAid Liver 新增应用'}]
+    describe(database, answer(changes), generator=generator)
+    changes[0]['description_cn'] = 'VAid Liver 修改支持范围'
+    describe(database, answer(changes), generator=generator)
+    assert generator.calls[-1]['current_description'] is None
+    assert generator.calls[-1]['evidence'][0]['id'] == 'baseline'
+
+
+def test_incomplete_snapshot_keeps_multiline_scope_but_cannot_be_promoted_to_fact(database):
+    rid = database.upsert_release('1.51.81')
+    database.stage_release_pair(rid, [{'path':'/readonly/multiline.docx','language':'cn','sha256':'multiline',
+        'content':'仅支持MLP平台，不适用于6S。\nVAid Liver 新增腹部精细应用。\n仅支持BP4-9，不支持X4-12L。'}], [], [])
+    with database.connect() as sql:
+        sid = sql.execute('SELECT id FROM source_documents WHERE release_id=?',(rid,)).fetchone()[0]
+    data = answer([{'version':'1.51.81','category':'source','preview_id':f'release:source:{sid}', 'locator':'原文行 2'}])
+    result = describe(database, data)
+    context = result['evidence'][1]
+    assert '不适用于6S' in context['text'] and '不支持X4-12L' in context['text']
+    assert context['complete'] is False
+    from tracker.services.scenario_descriptions import _validate
+    with pytest.raises(ValueError, match='原文校验'):
+        _validate({'paragraphs':[{'text':'6S支持腹部精细应用','citations':[{'id':context['id'],'quote':'VAid Liver 新增腹部精细应用。'}]}]}, result['evidence'])

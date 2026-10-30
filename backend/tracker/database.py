@@ -825,6 +825,7 @@ class Database:
             (12, "qa-loop", self._add_qa_loop),
             (13, "qa-uncovered-questions", self._add_qa_uncovered_questions),
             (14, "qa-structured-signature", self._add_qa_structured_signature),
+            (15, "scenario-feature-descriptions", self._add_scenario_feature_descriptions),
         )
 
     def _apply_migrations(self) -> None:
@@ -859,6 +860,12 @@ class Database:
                 except Exception:
                     connection.rollback()
                     raise
+
+    @staticmethod
+    def _add_scenario_feature_descriptions(connection: sqlite3.Connection) -> None:
+        from tracker.services.scenario_descriptions import DESCRIPTION_TABLES
+        for statement in DESCRIPTION_TABLES:
+            connection.execute(statement)
 
     @staticmethod
     def _widen_change_event_categories(connection: sqlite3.Connection) -> None:
