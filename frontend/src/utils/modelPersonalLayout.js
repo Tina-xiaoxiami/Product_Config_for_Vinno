@@ -35,3 +35,15 @@ export function savePersonalList(storage, key, values, warn) {
   try { storage.setItem(key, JSON.stringify(values)); return true }
   catch { warn?.('个人布局未能保存，刷新后可能恢复原设置'); return false }
 }
+
+export function orderManagementGroups(nodes, saved = []) {
+  const ranks = new Map(saved.map((key, index) => [key, index]))
+  return nodes.map(node => ({ ...node, ...(node.children ? { children: orderManagementGroups(node.children, saved) } : {}) }))
+    .sort((a, b) => a.key === 'all' ? -1 : b.key === 'all' ? 1 : (ranks.get(a.key) ?? Infinity) - (ranks.get(b.key) ?? Infinity))
+}
+export function rememberGroupSiblingOrder(nodes, siblingKeys) {
+  const keys = nodes.flatMap(node => [node.key, ...(node.children || []).map(child => child.key)])
+  const changed = new Set(siblingKeys)
+  let index = 0
+  return keys.map(key => changed.has(key) ? siblingKeys[index++] : key)
+}

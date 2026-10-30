@@ -58,3 +58,22 @@ test('model dragging changes personal catalog only, with no shared sort-order wr
  assert.doesNotMatch(source,/moveRow\(row|上移型号|下移型号/)
  assert.match(source,/@header-dragend="resizeColumn"/)
 })
+
+test('group drag order persists within siblings without changing membership or losing hidden nodes', async () => {
+ const {orderManagementGroups,rememberGroupSiblingOrder}=await import('../src/utils/modelPersonalLayout.js')
+ const nodes=[{key:'all'},{key:'A',children:[{key:'A/one',ids:[1]},{key:'A/hidden',ids:[3]},{key:'A/two',ids:[2]}]},{key:'B',children:[{key:'B/one',ids:[1]}]}]
+ const saved=rememberGroupSiblingOrder(nodes,['A/two','A/one'])
+ const sorted=orderManagementGroups(nodes,saved)
+ assert.deepEqual(sorted[1].children.map(n=>n.key),['A/two','A/hidden','A/one'])
+ assert.deepEqual(sorted[2].children,[{key:'B/one',ids:[1]}])
+ const reordered=orderManagementGroups(nodes,rememberGroupSiblingOrder(sorted,['B','A']))
+ assert.deepEqual(reordered.map(n=>n.key),['all','B','A'])
+ assert.deepEqual(nodes[1].children.map(n=>n.key),['A/one','A/hidden','A/two'])
+})
+
+test('tree drop reads surviving target parent after Element Plus removes the source node', () => {
+ const source=readFileSync(new URL('../src/views/Models.vue',import.meta.url),'utf8')
+ const handler=source.slice(source.indexOf('const rememberGroupDrop ='),source.indexOf('const groupNodes ='))
+ assert.match(handler,/target.parent.childNodes/)
+ assert.doesNotMatch(handler,/source.parent/)
+})

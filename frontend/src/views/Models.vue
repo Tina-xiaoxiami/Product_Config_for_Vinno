@@ -15,7 +15,7 @@
       <div class="model-workspace">
         <aside class="group-navigation" aria-label="型号分组">
           <div class="group-navigation-header"><span>型号分组</span><ModelGroupDisplaySettings :nodes="allGroupNodes" :model-value="hiddenGroupKeys" @update:model-value="applyGroupDisplay" /><el-tooltip content="在此统一维护分组，配置管理和白皮书共用"><el-icon class="group-info" tabindex="0" aria-label="分组说明"><InfoFilled /></el-icon></el-tooltip></div>
-          <el-tree :indent="14" :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
+          <el-tree draggable :allow-drag="node => node.key !== 'all'" :allow-drop="allowGroupDrop" @node-drop="rememberGroupDrop" :indent="14" :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
             <template #default="{ data }">
               <span class="group-node" :class="{ 'group-combination': data.children }">
                 <el-icon class="group-node-icon"><component :is="data.children ? Collection : data.key === 'all' ? Grid : Folder" /></el-icon>
@@ -114,7 +114,7 @@ import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
 import ModelGroupDisplaySettings from '../components/ModelGroupDisplaySettings.vue'
-import { orderModelCatalog, moveModelToTarget, visibleManagementGroups, loadPersonalList, savePersonalList } from '../utils/modelPersonalLayout'
+import { orderManagementGroups, rememberGroupSiblingOrder, orderModelCatalog, moveModelToTarget, visibleManagementGroups, loadPersonalList, savePersonalList } from '../utils/modelPersonalLayout'
 import { MODEL_TABLE_COLUMNS, loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog, createGroupEditorRequest } from '../utils/modelManagementGroups'
 import { assignModelSubseriesPayload, modelFitsSubseries } from '../utils/assignModelSubseries'
@@ -157,7 +157,15 @@ const rowOrderKey = 'models-personal-row-order-v1'
 const groupDisplayKey = 'models-personal-group-display-v1'
 const savedRowOrder = ref(loadPersonalList(columnStorage, rowOrderKey, message => ElMessage.warning(message)))
 const hiddenGroupKeys = ref(loadPersonalList(columnStorage, groupDisplayKey, message => ElMessage.warning(message)))
-const allGroupNodes = computed(() => buildManagementGroups(catalog.value, sharedGroups.value))
+const groupOrderKey = 'models-personal-group-order-v1'
+const savedGroupOrder = ref(loadPersonalList(columnStorage, groupOrderKey, message => ElMessage.warning(message)))
+const allGroupNodes = computed(() => orderManagementGroups(buildManagementGroups(catalog.value, sharedGroups.value), savedGroupOrder.value))
+const allowGroupDrop = (source, target, type) => type !== 'inner' && target.key !== 'all' && source.parent === target.parent
+const rememberGroupDrop = (_source, target) => {
+  const siblings = target.parent.childNodes.map(node => node.key)
+  savedGroupOrder.value = rememberGroupSiblingOrder(allGroupNodes.value, siblings)
+  savePersonalList(columnStorage, groupOrderKey, savedGroupOrder.value, message => ElMessage.warning(message))
+}
 const groupNodes = computed(() => visibleManagementGroups(allGroupNodes.value, hiddenGroupKeys.value))
 const applyGroupDisplay = hidden => {
   hiddenGroupKeys.value = hidden
