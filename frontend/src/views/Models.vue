@@ -14,7 +14,7 @@
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false"><el-button link @click="loadData">重新加载</el-button></el-alert>
       <div class="model-workspace">
         <aside class="group-navigation" aria-label="型号分组">
-          <div class="group-navigation-header"><span>型号分组</span><el-tooltip content="在此统一维护分组，配置管理和白皮书共用"><el-icon class="group-info" tabindex="0" aria-label="分组说明"><InfoFilled /></el-icon></el-tooltip></div>
+          <div class="group-navigation-header"><span>型号分组</span><ModelGroupDisplaySettings :nodes="allGroupNodes" :model-value="hiddenGroupKeys" @update:model-value="applyGroupDisplay" /><el-tooltip content="在此统一维护分组，配置管理和白皮书共用"><el-icon class="group-info" tabindex="0" aria-label="分组说明"><InfoFilled /></el-icon></el-tooltip></div>
           <el-tree :indent="14" :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
             <template #default="{ data }">
               <span class="group-node" :class="{ 'group-combination': data.children }">
@@ -26,46 +26,28 @@
           </el-tree>
         </aside>
         <section class="model-results">
-          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /></div>
-      <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="型号名称" min-width="200" fixed="left" show-overflow-tooltip />
-        <el-table-column label="所属系列" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ seriesList.find(series => series.id === row.series_id)?.name || row.series_id }}</template></el-table-column>
-        <el-table-column label="所属子系列" min-width="180">
-          <template #default="{ row }"><div class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><span v-if="!row.sub_series?.length" class="unmapped-registration">未分组</span></div></template>
+          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><div class="model-toolbar-actions"><el-input v-model="search" clearable placeholder="搜索型号 / 描述" style="width: 240px" aria-label="搜索型号" /><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div></div>
+      <el-table :key="columnStructureKey" @dragover.prevent="rowDragOver" @drop.prevent="dropModelRow" :row-class-name="({ row }) => String(row.id) === dragOverId ? 'model-drop-target' : ''" @header-dragend="resizeColumn" ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" max-height="600" size="small">
+        <el-table-column width="36" fixed="left" class-name="model-drag-column">
+          <template #default="{ row }"><span class="model-row-drag" tabindex="0" :data-model-id="row.id" :draggable="!loading" :aria-label="'拖动排序型号 ' + row.name" title="拖动调整个人显示顺序，自动保存；也可按 Alt + ↑ / ↓" @keydown.alt.up.prevent="moveModelByKeyboard(row.id, -1)" @keydown.alt.down.prevent="moveModelByKeyboard(row.id, 1)" @dragstart="startModelDrag($event, row.id)" @dragend="clearModelDrag">⠿</span></template>
         </el-table-column>
-        <el-table-column label="对应注册证" min-width="280">
+        <el-table-column v-for="column in displayedColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false" show-overflow-tooltip>
           <template #default="{ row }">
-            <div v-if="row.registration_packages?.length" class="registration-mappings">
-              <el-tag
-                v-for="mapping in row.registration_packages"
-                :key="mapping.registration_package_id"
-                :type="mapping.is_enabled ? 'success' : 'info'"
-                effect="plain"
-              >
-                {{ mapping.registration_number }} · {{ mapping.registration_model_name }} ·
-                {{ mapping.is_enabled ? '已启用' : '未启用' }}
-              </el-tag>
-            </div>
-            <span v-else class="unmapped-registration">未映射注册证</span>
+            <span v-if="column.key === 'series_id'">{{ seriesList.find(series => series.id === row.series_id)?.name || row.series_id }}</span>
+            <div v-else-if="column.key === 'sub_series'" class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><span v-if="!row.sub_series?.length" class="unmapped-registration">未分组</span></div>
+            <template v-else-if="column.key === 'registration_packages'">
+              <div v-if="row.registration_packages?.length" class="registration-mappings">
+                <el-tag v-for="mapping in row.registration_packages" :key="mapping.registration_package_id" :type="mapping.is_enabled ? 'success' : 'info'" effect="plain">{{ mapping.registration_number }} · {{ mapping.registration_model_name }} · {{ mapping.is_enabled ? '已启用' : '未启用' }}</el-tag>
+              </div>
+              <span v-else class="unmapped-registration">未映射注册证</span>
+            </template>
+            <el-tag v-else-if="column.key === 'status'" :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag>
+            <span v-else-if="column.key === 'created_at'">{{ formatTime(row.created_at) }}</span>
+            <span v-else>{{ row[column.key] }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="描述" width="200" show-overflow-tooltip />
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column label="操作" width="120" fixed="right" class-name="model-actions">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="sort_order" label="排序" width="80" />
-        <el-table-column prop="created_at" label="创建时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.created_at) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right" class-name="model-actions">
-          <template #default="{ row }">
-            <el-button size="small" @click="moveRow(row, -1)" :disabled="!canReorder || catalog.filter(item => item.series_id === row.series_id).findIndex(item => item.id === row.id) === 0" aria-label="上移型号" :icon="ArrowUp" />
-            <el-button size="small" @click="moveRow(row, 1)" :disabled="!canReorder || catalog.filter(item => item.series_id === row.series_id).findIndex(item => item.id === row.id) === catalog.filter(item => item.series_id === row.series_id).length - 1" aria-label="下移型号" :icon="ArrowDown" />
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -122,12 +104,30 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, ArrowUp, ArrowDown, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
+import { Plus, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
 import { getSeriesList, getModels, getSubseries, createModel, updateModel, deleteModel } from '../api/data'
 import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
+import TableColumnSettings from '../components/TableColumnSettings.vue'
+import ModelGroupDisplaySettings from '../components/ModelGroupDisplaySettings.vue'
+import { orderModelCatalog, moveModelToTarget, visibleManagementGroups, loadPersonalList, savePersonalList } from '../utils/modelPersonalLayout'
+import { MODEL_TABLE_COLUMNS, loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog, createGroupEditorRequest } from '../utils/modelManagementGroups'
 import { formatTime } from '../utils/modelHelpers'
+
+const columnStorageKey = 'models-table-column-layout-v1'
+const columnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const columnLayout = ref(loadColumnLayout(columnStorage, columnStorageKey, MODEL_TABLE_COLUMNS, message => ElMessage.warning(message)))
+const displayedColumns = computed(() => columnLayout.value.filter(column => column.visible))
+const columnStructureKey = computed(() => displayedColumns.value.map(column => `${column.key}:${column.fixed}`).join('|'))
+const applyColumnLayout = columns => {
+  columnLayout.value = normalizeColumnLayout(MODEL_TABLE_COLUMNS, columns)
+  saveColumnLayout(columnStorage, columnStorageKey, columnLayout.value, message => ElMessage.warning(message))
+}
+const resizeColumn = (width, _oldWidth, column) => {
+  if (!columnLayout.value.some(item => item.key === column.property)) return
+  applyColumnLayout(columnLayout.value.map(item => item.key === column.property ? { ...item, width: Math.max(30, width) } : item))
+}
 
 const seriesList = ref([])
 const catalog = ref([])
@@ -135,7 +135,17 @@ const sharedGroups = ref({})
 const selectedGroup = ref('all')
 const search = ref('')
 const loadError = ref('')
-const groupNodes = computed(() => buildManagementGroups(catalog.value, sharedGroups.value))
+const rowOrderKey = 'models-personal-row-order-v1'
+const groupDisplayKey = 'models-personal-group-display-v1'
+const savedRowOrder = ref(loadPersonalList(columnStorage, rowOrderKey, message => ElMessage.warning(message)))
+const hiddenGroupKeys = ref(loadPersonalList(columnStorage, groupDisplayKey, message => ElMessage.warning(message)))
+const allGroupNodes = computed(() => buildManagementGroups(catalog.value, sharedGroups.value))
+const groupNodes = computed(() => visibleManagementGroups(allGroupNodes.value, hiddenGroupKeys.value))
+const applyGroupDisplay = hidden => {
+  hiddenGroupKeys.value = hidden
+  savePersonalList(columnStorage, groupDisplayKey, hidden, message => ElMessage.warning(message))
+  if (!currentGroup.value) selectedGroup.value = 'all'
+}
 const currentGroup = computed(() => groupNodes.value.flatMap(node => [node, ...(node.children || [])]).find(node => node.key === selectedGroup.value))
 const filteredModels = computed(() => {
   const ids = new Set(currentGroup.value?.ids || [])
@@ -143,8 +153,6 @@ const filteredModels = computed(() => {
   return catalog.value.filter(model => ids.has(String(model.id)) && (!query || [model.name, model.description, ...(model.sub_series || [])].some(value => String(value || '').toLocaleLowerCase().includes(query))))
 })
 const tableData = computed(() => filteredModels.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
-const reordering = ref(false)
-const canReorder = computed(() => selectedGroup.value === 'all' && !search.value.trim() && !loading.value && !reordering.value && !loadError.value)
 const subseriesEditorRef = ref(null)
 const route = useRoute(), router = useRouter()
 let pageActive = true
@@ -168,19 +176,33 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const tableRef = ref(null)
 
-// 排序移动
-const moveRow = async (row, direction) => {
-  if (!canReorder.value) return
-  const ordered = catalog.value.filter(model => model.series_id === row.series_id)
-  const idx = ordered.findIndex(m => m.id === row.id), next = idx + direction
-  if (next < 0 || next >= ordered.length) return
-  ;[ordered[idx], ordered[next]] = [ordered[next], ordered[idx]]
-  reordering.value = true
-  try {
-    // Use the complete series order; never renumber only a filtered page.
-    for (const [index, model] of ordered.entries()) if (model.sort_order !== index) await updateModel(model.id, { sort_order: index })
-  } catch { ElMessage.error('排序保存失败，已重新加载实际顺序') }
-  finally { reordering.value = false; await loadData() }
+// Personal ordering never rewrites the shared catalog's business sort_order.
+const draggedModelId = ref(null), dragOverId = ref(null)
+const modelIdAtEvent = event => event.target.closest('tr')?.querySelector('[data-model-id]')?.dataset.modelId
+const startModelDrag = (event, id) => {
+  draggedModelId.value = String(id)
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', String(id))
+}
+const clearModelDrag = () => { draggedModelId.value = null; dragOverId.value = null }
+const rowDragOver = event => { if (draggedModelId.value) dragOverId.value = modelIdAtEvent(event) || null }
+const moveModelByKeyboard = (id, direction) => {
+  if (loading.value) return
+  const index = filteredModels.value.findIndex(model => model.id === id)
+  const target = filteredModels.value[index + direction]
+  if (!target) return
+  catalog.value = moveModelToTarget(catalog.value, id, target.id)
+  savedRowOrder.value = catalog.value.map(model => String(model.id))
+  savePersonalList(columnStorage, rowOrderKey, savedRowOrder.value, message => ElMessage.warning(message))
+}
+const dropModelRow = event => {
+  const target = modelIdAtEvent(event)
+  if (draggedModelId.value && target && !loading.value) {
+    catalog.value = moveModelToTarget(catalog.value, draggedModelId.value, target)
+    savedRowOrder.value = catalog.value.map(model => String(model.id))
+    savePersonalList(columnStorage, rowOrderKey, savedRowOrder.value, message => ElMessage.warning(message))
+  }
+  clearModelDrag()
 }
 
 const dialogVisible = ref(false)
@@ -208,6 +230,7 @@ let loadRequest = 0
 const loadData = async () => {
   const request = ++loadRequest
   const isCurrent = () => request === loadRequest
+  clearModelDrag()
   loading.value = true; loadError.value = ''; catalog.value = []; sharedGroups.value = {}
   try {
     const [models, groups] = await Promise.all([
@@ -215,7 +238,7 @@ const loadData = async () => {
     ])
     if (!isCurrent() || !models) return
     sharedGroups.value = groups
-    catalog.value = [...applySharedMemberships(new Map(models.map(model => [model.id, model])), groups.groups).values()]
+    catalog.value = orderModelCatalog([...applySharedMemberships(new Map(models.map(model => [model.id, model])), groups.groups).values()], savedRowOrder.value)
     if (!currentGroup.value) selectedGroup.value = 'all'
     currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil(total.value / pageSize.value)))
   } catch (error) {
@@ -315,7 +338,7 @@ const handleDelete = async (row) => {
 let initialized = false
 onMounted(async () => { await loadSeries(); initialized = true; openRequestedEditor() })
 onActivated(() => { pageActive = true; if (initialized) { loadData(); openRequestedEditor() } })
-onDeactivated(() => { pageActive = false; editorRequest.invalidate(); ++loadRequest; loading.value = false })
+onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invalidate(); ++loadRequest; loading.value = false })
 </script>
 
 <style scoped>
@@ -338,9 +361,12 @@ onDeactivated(() => { pageActive = false; editorRequest.invalidate(); ++loadRequ
 .group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { background: var(--el-color-primary-light-8); }
 .model-results { min-width: 0; flex: 1; }
 .model-toolbar { display: flex; justify-content: space-between; gap: 12px; min-height: 32px; margin-bottom: 12px; align-items: center; font-size: 13px; }
+.model-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .model-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--el-text-color-primary); font-weight: 500; }
 .model-result-count { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
 @media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: 100%; } .group-navigation :deep(.el-tree) { max-height: 200px; } .card-header { flex-wrap: wrap; gap: 12px; } .header-actions { flex-wrap: wrap; } .model-results { width: 100%; } }
+.model-row-drag { display: inline-block; cursor: grab; color: var(--el-text-color-placeholder); padding: 2px 4px; }
+.model-results :deep(.model-drop-target td) { box-shadow: inset 0 2px 0 var(--el-color-primary); }
 .models-page {
   padding: 0;
 }
