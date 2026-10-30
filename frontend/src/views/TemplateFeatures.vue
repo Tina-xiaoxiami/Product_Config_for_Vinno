@@ -174,7 +174,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onActivated } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
 import api from '../api/index'
@@ -305,7 +305,9 @@ function getSupportedList(catId, featId) {
 }
 
 // ---- cell display ----
+let templateLoadRequest = 0
 const loadData = async () => {
+  const request = ++templateLoadRequest
   loading.value = true
   try {
     const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500 }), getFeatureGroups()])
@@ -321,11 +323,16 @@ const loadData = async () => {
       for (const t of detail.templates) allTpl[`${detail.categoryId}_${t.feature_id}`] = t
       allCatApps[detail.categoryId] = detail.apps
     }
+    if (request !== templateLoadRequest) return
     categories.value = nextCategories
     features.value = featRes.items || []
     featureGroups.value = grpRes.items || []
     tplMap.value = allTpl; categoryAppsMap.value = allCatApps
-  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+  } catch {
+    if (request === templateLoadRequest) ElMessage.error('加载失败')
+  } finally {
+    if (request === templateLoadRequest) loading.value = false
+  }
 }
 
 const getCellClass = (catId, featId) => {
@@ -578,7 +585,16 @@ const rollback = async (row) => {
   try { await api.post(`/template-features/rollback/${row.id}`); ElMessage.success('回滚成功'); await loadData(); await loadVersions() } catch { ElMessage.error('回滚失败') }
 }
 
-onMounted(() => Promise.all([loadData(), loadDrafts()]))
+const refreshData = () => Promise.all([loadData(), loadDrafts()])
+onMounted(refreshData)
+let templateHasActivated = false
+onActivated(() => {
+  if (!templateHasActivated) {
+    templateHasActivated = true
+    return
+  }
+  if (!editMode.value) return refreshData()
+})
 </script>
 
 <style scoped>

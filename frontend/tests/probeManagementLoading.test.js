@@ -31,18 +31,19 @@ test('late probe refresh cannot replace a newer successful refresh', async () =>
   assert.equal(app.modelMap.value[2][0].id, 2)
   assert.equal(app.modelMap.value[1], undefined)
 })
-test('template and supporting catalogs belong under basic data management in template-first order', () => {
+test('probe management has one basic-data sidebar entry without an expanded child menu', () => {
   const ast = parse(read('Layout').split('<script setup>')[0])
-  const menus = []
+  const entries = []
   function visit(node, parents = []) {
     const index = node.props?.find(p => p.name === 'index')?.value?.content
-    if (node.tag === 'el-sub-menu') menus.push({ index, parents, node })
+    if (index) entries.push({ tag: node.tag, index, parents })
     for (const child of node.children || []) visit(child, node.tag === 'el-sub-menu' ? [...parents, index] : parents)
   }
   visit(ast)
-  const group = menus.find(m => m.index === '/probe-app-management')
-  assert.deepEqual(group.parents, ['/manage'])
-  assert.deepEqual(group.node.children.filter(n => n.tag === 'el-menu-item').map(n => n.props.find(p => p.name === 'index').value.content), ['/template-features', '/probe-models', '/applications', '/feature-manage'])
+  const entry = entries.find(m => m.index === '/template-features')
+  assert.equal(entry.tag, 'el-menu-item')
+  assert.deepEqual(entry.parents, ['/manage'])
+  assert.equal(entries.some(m => ['/probe-app-management', '/probe-models', '/applications', '/feature-manage'].includes(m.index)), false)
 })
 test('switching probe categories uses loaded details without fetching again', async () => {
   let requests = 0
@@ -62,7 +63,7 @@ test('template categories start independent detail requests together and preserv
     getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getFeatures: async () => ({ items: [] }), getFeatureGroups: async () => ({ items: [] }),
     getTemplateFeatures: id => { calls.push(`template-${id}`); return pending.promise }, api: { get: url => { calls.push(url); return Promise.resolve({ regular: [], poc: [] }) } }, ElMessage: { error: message => errors.push(message) }
   }
-  const source = read('TemplateFeatures'), code = source.slice(source.indexOf('const loadData ='), source.indexOf('const getCellClass ='))
+  const source = read('TemplateFeatures'), code = source.slice(source.indexOf('let templateLoadRequest ='), source.indexOf('const getCellClass ='))
   const loadData = new Function(...Object.keys(context), code + '\nreturn loadData')(...Object.values(context))
   const work = loadData(); await new Promise(resolve => setImmediate(resolve))
   assert.equal(calls.length, 4)

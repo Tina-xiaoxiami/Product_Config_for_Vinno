@@ -9,7 +9,7 @@
           </el-button>
         </div>
         <el-menu
-          :default-active="$route.path"
+          :default-active="probeManagementMenuPath($route.path)"
           :collapse="sidebarCollapsed"
           :collapse-transition="false"
           router
@@ -36,23 +36,9 @@
             <el-menu-item index="/models">
               <span>产品型号</span>
             </el-menu-item>
-            <el-sub-menu index="/probe-app-management" class="probe-app-menu">
-              <template #title>
-                <span>探头&amp;应用管理</span>
-              </template>
-              <el-menu-item index="/template-features">
-                <span>模板管理</span>
-              </el-menu-item>
-              <el-menu-item index="/probe-models">
-                <span>探头管理</span>
-              </el-menu-item>
-              <el-menu-item index="/applications">
-                <span>应用管理</span>
-              </el-menu-item>
-              <el-menu-item index="/feature-manage">
-                <span>功能管理</span>
-              </el-menu-item>
-            </el-sub-menu>
+            <el-menu-item index="/template-features">
+              <span>探头&amp;应用管理</span>
+            </el-menu-item>
             <el-menu-item index="/registration-manage">
               <span>注册管理</span>
             </el-menu-item>
@@ -90,6 +76,11 @@
         </el-menu>
       </el-aside>
       <el-main>
+        <nav v-if="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
+          <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
+            <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />
+          </el-tabs>
+        </nav>
         <router-view v-slot="{ Component }">
           <keep-alive>
             <component :is="Component" />
@@ -101,9 +92,25 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { PROBE_MANAGEMENT_TABS, probeManagementMenuPath } from '../utils/probeManagementNavigation'
 import { ElMessage } from 'element-plus'
 import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand } from '@element-plus/icons-vue'
+
+const route = useRoute()
+const router = useRouter()
+const isProbeManagementPage = computed(() => PROBE_MANAGEMENT_TABS.some(tab => tab.path === route.path))
+const switchProbeManagementTab = async (path) => {
+  if (path === route.path) return true
+  try {
+    const failure = await router.push(path)
+    return !failure
+  } catch {
+    ElMessage.error('切换页面失败，请重试')
+    return false
+  }
+}
 
 const sidebarCollapsed = ref(false)
 try { sidebarCollapsed.value = localStorage.getItem('config_sidebar_collapsed') === 'true' } catch (error) { console.warn('读取导航设置失败', error) }
@@ -144,12 +151,18 @@ const toggleSidebar = () => {
 .collapsed .logo { justify-content: center; padding: 0; }
 .sidebar-toggle { color: #dce5ef; padding: 8px; }
 .sidebar-toggle:hover { color: #fff; background-color: #40546c; }
-.probe-app-menu :deep(.el-sub-menu__title) { padding-right: 28px; font-size: 12px; }
 .el-menu { --el-menu-item-height: 44px; --el-menu-sub-item-height: 38px; }
 
 .el-menu {
   border-right: none;
 }
+
+.probe-management-navigation { background: #fff; border: 1px solid #e4e7ed; border-radius: 4px; padding: 0 16px; margin-bottom: 10px; }
+.probe-management-tabs :deep(.el-tabs__header) { margin: 0; }
+.probe-management-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
+.probe-management-tabs :deep(.el-tabs__item) { height: 40px; font-size: 13px; }
+.probe-management-tabs :deep(.el-tabs__item.is-active) { font-weight: 600; }
+.probe-management-tabs :deep(.el-tabs__content) { display: none; }
 
 .el-main {
   padding: 12px;

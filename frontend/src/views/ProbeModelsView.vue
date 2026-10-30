@@ -299,7 +299,7 @@ const openAppDialog = async (m) => {
   try {
     const [apps, catalog] = await Promise.all([
       getProbeModelApps(m.id),
-      allApps.value.length ? Promise.resolve({ items: allApps.value }) : getApplications({ limit: 500 })
+      getApplications({ limit: 500 })
     ])
     appTarget.value = m
     allApps.value = catalog.items || []
