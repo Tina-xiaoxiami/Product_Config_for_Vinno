@@ -66,6 +66,33 @@ def _apply(content: str, text: str, query: str = '') -> tuple[str, str, str, str
     return None
 
 
+def _baseline_section(database: Any, baseline: dict[str, Any]) -> dict[str, Any]:
+    """Read images once, for the verified baseline chapter only; keep text on failure."""
+    fallback = {'source_id': baseline['source_id'], 'locator': baseline['locator'],
+                'title': baseline['title'], 'content': baseline['content'], 'complete': True,
+                'has_images': baseline['has_images'],
+                'images_complete': not baseline['has_images'],
+                'blocks': [{'type': 'text', 'locator': baseline['locator'], 'text': baseline['content']}]}
+    if not baseline['has_images']:
+        return fallback
+    try:
+        source_id = int(baseline['source_id'].rsplit(':', 1)[-1])
+        # source_sections verifies the registered file path, current hash and
+        # imported snapshot, and enforces image type/count/size limits.
+        sections = source_sections(database, source_id, image_locator=baseline['locator'])
+        exact = [section for section in sections
+                 if section.get('locator') == baseline['locator']
+                 and section.get('source_id') == baseline['source_id']
+                 and section.get('title') == baseline['title']
+                 and section.get('content') == baseline['content']
+                 and section.get('complete')]
+        if len(exact) == 1:
+            return exact[0]
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return fallback
+
+
 def release_evolution_answer(database: Any, project_id: int, query: str, target_version: str = '') -> dict[str, Any]:
     """Build the earliest full section plus traceable, deterministic later patches."""
     query = query.strip()
@@ -105,7 +132,8 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
                 continue
             item = {'version': hit['version'], 'content': str(section['content']).strip(),
                     'source_id': source, 'locator': section.get('locator') or '', 'title': title,
-                    'text': _body(section), 'verification': 'unverified'}
+                    'text': _body(section), 'verification': 'unverified',
+                    'has_images': bool(section.get('has_images'))}
             bucket = sections.setdefault(version, [])
             if not any(_normal(old['text']) == _normal(item['text']) for old in bucket):
                 bucket.append(item)
@@ -117,12 +145,13 @@ def release_evolution_answer(database: Any, project_id: int, query: str, target_
         result['status'] = 'baseline_conflict'
         return result
     baseline = sections[first][0]
+    baseline['section'] = _baseline_section(database, baseline)
     result['baseline'] = baseline
     result['baseline_gap'] = bool(earliest and _version(earliest['version']) < first)
     if result['baseline_gap'] and earliest is not None:
         result['coverage_notice'] += f" 已有更早的{earliest['version']}记录，但缺少可读取的完整章节，当前正文不能视为完整演进结果。"
     result['content'] = baseline['content']
-    result['timeline'].append({**baseline, 'operation': 'baseline'})
+    result['timeline'].append({**{key: value for key, value in baseline.items() if key != 'section'}, 'operation': 'baseline'})
     events: list[dict[str, Any]] = []
     for key, rows in sections.items():
         if key <= first:

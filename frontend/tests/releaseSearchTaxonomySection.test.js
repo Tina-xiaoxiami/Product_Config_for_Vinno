@@ -56,7 +56,7 @@ test('complete section renders continuous ordered content and copy uses its repl
   const entries = ['4.4.4 新增子宫畸形分类','适用于3D模式，子宫应用；','支持ESHRE和ARSM两种分类系统。','手动选择对应的分型后，报告的超声描述中会自动添加对应的常规说明。']
   const section = {complete:true,content:entries.join('\n'),locator:'原文行 123',source_id:'release:source:16'}
   const preview = {section, chunks:[{locator:'原文行 125',text:'支持ESHRE'}],title:'Release Note',scope:'ULTIMUS G2 · 1.51.80',verification:'unverified'}
-  const helpers = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,highlightSearchText:escape, verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink: selection => `${selection.preview_id}#${selection.locator}`})
+  const helpers = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,highlightSearchText:escape, verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink: selection => `${selection.preview_id}#${selection.locator}`})
   const html = helpers.searchPreviewSectionMarkup(preview,'子宫')
   for (const text of entries) assert.ok(html.includes(text))
   assert.ok(html.indexOf(entries[0]) < html.indexOf(entries[1])); assert.ok(html.indexOf(entries[1]) < html.indexOf(entries[2]))
@@ -77,7 +77,7 @@ test('preview and URL wiring preserve source/category and use real PDF section p
 })
 
 test('section renders safe images in their original block sequence and warns on unavailable images', () => {
-  const {searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
+  const {searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
   const section = {complete:true,locator:'原文行 123',content:'标题\n正文',section_number:'4.4.4',images_complete:false,blocks:[
     {type:'text',text:'标题'}, {type:'image',data_url:'data:image/png;base64,aGVsbG8='}, {type:'text',text:'正文'},
     {type:'image',data_url:'data:image/svg+xml;base64,PHN2Zz4='}
@@ -99,7 +99,7 @@ test('a complete illustrated chapter does not claim images were compared as equa
 })
 
 test('adjacent Word runs within one paragraph remain continuous around images', () => {
-  const {mergeSectionTextBlocks,searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
+  const {mergeSectionTextBlocks,searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
   const blocks = [{type:'text',locator:'段落 1',text:'支持'},{type:'text',locator:'段落 1',text:'ESHRE'}, {type:'image',locator:'段落 1',data_url:'data:image/png;base64,aGVsbG8='}, {type:'text',locator:'段落 1',text:'分类'},{type:'text',locator:'段落 2',text:'下一段'}]
   const merged = mergeSectionTextBlocks(blocks)
   assert.equal(merged.length,4); assert.equal(merged[0].text,'支持ESHRE'); assert.equal(merged[1].type,'image')
@@ -116,7 +116,7 @@ test('comparison of a preferred snapshot retains its own evidence kind and sourc
 })
 
 test('actual Word automatic numbering is shown even when not embedded in paragraph text', () => {
-  const {searchPreviewSectionMarkup,formatEvidenceCitation} = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink:()=>''})
+  const {searchPreviewSectionMarkup,formatEvidenceCitation} = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink:()=>''})
   const preview = {title:'Release Note',scope:'ULTIMUS',verification:'unverified',chunks:[],section:{complete:true,section_number:'4.4.4',locator:'原文行 123',content:'新增子宫畸形分类\n正文',blocks:[{type:'text',locator:'原文行 123',text:'新增子宫畸形分类'},{type:'text',locator:'原文行 124',text:'正文'}]}}
   assert.match(searchPreviewSectionMarkup(preview,''),/完整章节 4\.4\.4/)
   assert.match(formatEvidenceCitation(preview,{locator:'原文行 123'},''),/完整章节 4\.4\.4/)
@@ -139,7 +139,7 @@ test('auto-number differences are preserved in chapter comparisons', () => {
 })
 
 test('image warning distinguishes image-free sections from missing images', () => {
-  const {searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
+  const {searchPreviewSectionMarkup} = funcs(['mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape})
   const section = {complete:true,locator:'第 13 页',content:'正文',has_images:false,images_complete:false}
   assert.doesNotMatch(searchPreviewSectionMarkup({section},''),/图片无法显示/)
   assert.match(searchPreviewSectionMarkup({section:{...section,has_images:true}},''),/图片无法显示/)
@@ -177,7 +177,7 @@ test('actual comparison dialog preserves notices and explicitly scopes image com
 })
 
 test('invalid locator cannot be promoted to a complete section or copied as selected evidence', () => {
-  const {readableSearchEvidence,searchPreviewSectionMarkup,formatEvidenceCitation} = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink:()=>''})
+  const {readableSearchEvidence,searchPreviewSectionMarkup,formatEvidenceCitation} = funcs(['readableSearchEvidence','formatEvidenceCitation','mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup'], {escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,verificationLabel:()=> '未复核',searchEvidenceLabel:()=>'',evidenceLink:()=>''})
   const preview = {locator_status:'unresolved',title:'文件',scope:'范围',verification:'unverified',chunks:[],section:{complete:true,locator:'第 13 页',content:'不相关的另一章节'}}
   assert.equal(readableSearchEvidence(preview,'第 99 页'),null)
   assert.equal(searchPreviewSectionMarkup(preview,''),'')
@@ -191,7 +191,7 @@ test('unresolved empty preview retains location failure and source notices', asy
   const preview={title:'资料',scope:'范围',verification:'unverified',file_format:'docx',notice:'索引过期，请核对原件。',chunks:[],matches:[],locator_status:'unresolved'}
   const state={searchPreviewRequest:0,activeView:'other'}
   const context={document,state,api:async()=>preview,escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,searchQueryOrigin:()=>'',fileFormatLabel:()=> 'Word',verificationLabel:()=> '未复核',updatePreviewTools(){},syncLocation(){},workbenchUrl:value=>value}
-  const {openSearchPreview} = funcs(['mergeSectionTextBlocks','searchPreviewSectionMarkup','previewSelectedLocator','previewMatchNavigation','openSearchPreview'],context)
+  const {openSearchPreview} = funcs(['mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup','previewSelectedLocator','previewMatchNavigation','openSearchPreview'],context)
   await openSearchPreview('controlled:1:docx','段落 999','子宫')
   assert.match(content.innerHTML,/原文位置不可用/); assert.match(content.innerHTML,/索引过期/)
 })
@@ -217,7 +217,7 @@ test('complete chapter is displayed before collapsed navigation, retaining sourc
   const preview={title:'Release Note',scope:'项目',verification:'unverified',file_format:'docx',notice:'导入时原文快照；请核对适用范围。 本章节包含图片，请在完整预览中查看。',chunks:[{locator:'原文行 123',text:'标题'}],matches:[{locator:'原文行 123'},{locator:'原文行 124'}],match_count:2,locator_status:'exact',section:{complete:true,section_number:'4.4.4',locator:'原文行 123',content:'章节标题\n正文内容',has_images:true,images_complete:true,blocks:[{type:'text',locator:'原文行 123',text:'章节标题'},{type:'image',data_url:'data:image/png;base64,aGVsbG8='},{type:'text',locator:'原文行 124',text:'正文内容'}]}}
   const state={searchPreviewRequest:0,activeView:'other'}
   const context={document,state,api:async()=>preview,escapeHtml:escape,escapeAttribute:escape,highlightSearchText:escape,searchQueryOrigin:()=>'<p>输入词提示</p>',fileFormatLabel:()=> 'Word',verificationLabel:()=> '未复核',updatePreviewTools(){},syncLocation(){},workbenchUrl:value=>value}
-  const {openSearchPreview} = funcs(['mergeSectionTextBlocks','searchPreviewSectionMarkup','previewSelectedLocator','previewMatchNavigation','openSearchPreview'],context)
+  const {openSearchPreview} = funcs(['mergeSectionTextBlocks','sourceImageMarkup','searchPreviewSectionMarkup','previewSelectedLocator','previewMatchNavigation','openSearchPreview'],context)
   await openSearchPreview('release:source:16','原文行 123','子宫')
   assert.match(content.innerHTML,/导入时原文快照/)
   assert.doesNotMatch(content.innerHTML,/本章节包含图片，请在完整预览中查看/)
