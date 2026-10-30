@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 const source = readFileSync(new URL('../../backend/tracker/static/release-review.js', import.meta.url), 'utf8')
 const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
-const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload}`)(esc, esc,
+const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload,releaseReviewDraftDifference,releaseReviewDraftNoticeMarkup}`)(esc, esc,
   (text, additions, image) => `<section class="feature-document-section"><p>${esc(text)}</p>${image}</section>`,
   () => '<section class="feature-image-section"><p>图片</p></section>', () => '<button>原文</button>')
 
@@ -127,4 +127,33 @@ test('更新正文无实际变化时不发送保存，提示只采纳记录',asy
  const state=session();state.context.result={content:'原正文'};let called=0
  const result=await helpers.releaseReviewCommit(state,'原正文',[{id:'x',action:'include'}],{isCurrent:()=>true,path:p=>p,api:async()=>{called++;return {}},accept(){}},{event_id:'x',operation:'replace',reason:''})
  assert.equal(result,null);assert.equal(called,0);assert.match(state.error,/采纳记录/)
+})
+
+
+test('草稿列表按当前范围恢复且不混入其他标签页数据或不相关键', () => {
+ const values=new Map(), storage={get length(){return values.size},key:i=>[...values.keys()][i],getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}
+ const store=helpers.releaseReviewDraftStore(storage), ctx={project:1,query:'VATT',target:''}
+ const draft={text:'草稿修改',selected:'',operation:'append',source_fingerprint:'h',revision:1}
+ store.write(ctx,'edit','',draft);store.write(ctx,'include','one',draft)
+ store.write({...ctx,project:2},'edit','',draft);store.write({...ctx,target:'1.51.80'},'edit','',draft)
+ values.set('unrelated','secret');values.set('release-review-draft-v1:malformed','invalid')
+ assert.deepEqual(store.list(ctx).entries.map(e=>[e.kind,e.id]),[['edit',''],['include','one']])
+ store.clear(ctx,'edit');assert.deepEqual(store.list(ctx).entries.map(e=>e.id),['one'])
+ assert.match(helpers.releaseReviewDraftStore(null).list(ctx).error,/暂存不可用/)
+})
+
+test('草稿提示明确未提交并保留查看修改和恢复入口，来源消失不误用条目',()=>{
+ const html=helpers.releaseReviewDraftNoticeMarkup([{kind:'edit',id:'',draft:{}},{kind:'include',id:'one',draft:{}},{kind:'include',id:'old',draft:{}}],{change_log:[{id:'one',version:'1.51.90<script>'}]})
+ assert.match(html,/有 3 份未提交草稿/);assert.match(html,/左侧仍为已保存正文/);assert.match(html,/当前标签页/)
+ assert.match(html,/data-review-draft-preview/);assert.match(html,/data-review-draft-resume/)
+ assert.match(html,/1.51.90&lt;script&gt;/);assert.match(html,/data-draft-id="old" disabled/)
+ assert.equal(helpers.releaseReviewDraftNoticeMarkup([],{}),'')
+})
+
+test('草稿对比仅保留差异行，不改变已保存内容，追加删除和重复行边界正确',()=>{
+ assert.deepEqual(helpers.releaseReviewDraftDifference('首行\n旧内容\n尾行','首行\n新内容\n尾行'),{before:'旧内容',after:'新内容',changed:true})
+ assert.deepEqual(helpers.releaseReviewDraftDifference('首行','首行\n补充'),{before:'',after:'补充',changed:true})
+ assert.deepEqual(helpers.releaseReviewDraftDifference('首行\n删除','首行'),{before:'删除',after:'',changed:true})
+ assert.deepEqual(helpers.releaseReviewDraftDifference('重复\n重复','重复\n修改\n重复'),{before:'',after:'修改',changed:true})
+ assert.deepEqual(helpers.releaseReviewDraftDifference('相同','相同'),{before:'',after:'',changed:false})
 })

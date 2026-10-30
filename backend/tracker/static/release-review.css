@@ -78,3 +78,8 @@ body .release-review-change-actions button { min-height: 28px; padding: 3px 8px;
 .release-review-history-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
 .release-review-history-diff p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
 @media (max-width: 600px) { .release-review-history-diff { grid-template-columns: 1fr; } }
+
+.release-review-draft-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 6px 0 10px; padding: 8px 10px; border: 1px solid #e6d6ac; border-radius: 6px; background: #fff8e9; color: #76551d; font-size: 12px; }
+.release-review-draft-notice > span { color: #667a94; }
+.release-review-draft-notice > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; flex-basis: 100%; }
+body .release-review-draft-notice button { min-height: 26px; padding: 2px 6px; font-size: 12px; }

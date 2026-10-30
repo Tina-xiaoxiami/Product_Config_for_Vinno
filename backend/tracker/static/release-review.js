@@ -39,7 +39,8 @@ function releaseReviewWorkspaceMarkup(data, query) {
     .replace(/<(p|li)(?=[\s>])/g, '<$1 tabindex="0" data-release-review-paragraph')
     .replace(imageSlot, () => scenarioIllustrationsMarkup(data, query));
   return `<div class="feature-review-workspace">
-    <div class="feature-review-main"><div class="release-review-toolbar"><div><strong>功能正文</strong><span>正文修订 ${Number(review.body_revision) || 0}</span></div><div><button type="button" class="ghost-button compact-button" data-release-review-edit${review.source_fingerprint ? '' : ' disabled'}>编辑正文</button><button type="button" class="text-button" data-release-review-history="body">正文修订历史</button></div></div>
+    <div class="feature-review-main"><div class="release-review-toolbar"><div><strong>已保存正文</strong><span>正文修订 ${Number(review.body_revision) || 0}</span></div><div><button type="button" class="ghost-button compact-button" data-release-review-edit${review.source_fingerprint ? '' : ' disabled'}>编辑正文</button><button type="button" class="text-button" data-release-review-history="body">正文修订历史</button></div></div>
+      <div data-release-review-drafts aria-live="polite" hidden></div>
       ${review.stale ? '<div class="release-review-warning" role="status">来源有更新；已保存正文与未变化记录的结论继续保留，变化条目需要重新核对。</div>' : ''}
       ${review.migration_notice ? `<p class="release-review-migration">${escapeHtml(review.migration_notice)}</p>` : ''}
       ${(review.stale_decisions || []).length ? `<details class="release-review-stale-decisions"><summary>来源变化待复核（${review.stale_decisions.length}）</summary><p>旧结论仍保留在处理历史中，未自动套用到变化后的记录。</p><button type="button" class="text-button" data-release-review-history="log">查看记录处理历史</button></details>` : ''}
@@ -84,6 +85,24 @@ function releaseReviewDraftKey(context, kind, eventId = '') {
 function releaseReviewDraftStore(storage) {
   const error = '本机草稿暂存不可用，请保留当前窗口或将正文复制备份。';
   return {
+    list(context) {
+      try {
+        const scope = JSON.parse(releaseReviewDraftKey(context, 'edit').slice('release-review-draft-v1:'.length)).slice(0, 3);
+        const entries = [];
+        for (let index = 0; index < storage.length; index++) {
+          const key = storage.key(index);
+          if (!key?.startsWith('release-review-draft-v1:')) continue;
+          let parts;
+          try { parts = JSON.parse(key.slice('release-review-draft-v1:'.length)); } catch { continue; }
+          if (!Array.isArray(parts) || parts.length !== 5 || !scope.every((value, i) => parts[i] === value)
+              || !['edit', 'include'].includes(parts[3]) || typeof parts[4] !== 'string') continue;
+          const result = this.read(context, parts[3], parts[4]);
+          if (result.error) return {entries, error: result.error};
+          if (result.draft) entries.push({kind: parts[3], id: parts[4], draft: result.draft});
+        }
+        return {entries, error: ''};
+      } catch { return {entries: [], error}; }
+    },
     read(context, kind, id = '') {
       try {
         const raw = storage.getItem(releaseReviewDraftKey(context, kind, id));
@@ -104,6 +123,25 @@ function releaseReviewDraftStore(storage) {
       catch { return {ok: false, error}; }
     },
   };
+}
+
+function releaseReviewDraftDifference(before, after) {
+  const oldLines = before.split('\n'), newLines = after.split('\n');
+  let start = 0, end = 0;
+  while (start < oldLines.length && start < newLines.length && oldLines[start] === newLines[start]) start++;
+  while (end < oldLines.length - start && end < newLines.length - start && oldLines[oldLines.length - 1 - end] === newLines[newLines.length - 1 - end]) end++;
+  return {before: oldLines.slice(start, oldLines.length - end).join('\n'), after: newLines.slice(start, newLines.length - end).join('\n'), changed: before !== after};
+}
+
+function releaseReviewDraftNoticeMarkup(entries, result) {
+  if (!entries.length) return '';
+  const events = new Map((result.change_log || []).map(row => [row.id, row]));
+  return `<section class="release-review-draft-notice"><strong>有 ${entries.length} 份未提交草稿</strong><span>左侧仍为已保存正文；草稿仅保留在当前标签页，刷新可恢复。</span>${entries.map(entry => {
+    const row = events.get(entry.id);
+    const label = entry.kind === 'edit' ? '正文编辑草稿' : `${row?.version || '原记录已变化'} · 更新正文草稿`;
+    const attrs = `data-draft-kind="${escapeAttribute(entry.kind)}" data-draft-id="${escapeAttribute(entry.id)}"`;
+    return `<div><span>${escapeHtml(label)}</span><button type="button" class="text-button" data-review-draft-preview ${attrs}>查看修改</button><button type="button" class="text-button" data-review-draft-resume ${attrs}${entry.kind === 'include' && !row ? ' disabled' : ''}>继续编辑</button></div>`;
+  }).join('')}</section>`;
 }
 
 function releaseReviewRecoverDraft(draft, context, selected = '') {
@@ -160,6 +198,19 @@ if (typeof document !== 'undefined') {
     reviewUI.selected = null;
     document.querySelector('#scenario-result').innerHTML = scenarioEvolutionMarkup(result, ctx.query);
   }
+  function refreshDraftNotice() {
+    const node = document.querySelector('[data-release-review-drafts]');
+    if (!node) return;
+    try {
+      const ctx = context();
+      const result = draftStore.list(ctx);
+      node.innerHTML = result.error ? `<p class="release-review-warning">${escapeHtml(result.error)}</p>` : releaseReviewDraftNoticeMarkup(result.entries, ctx.result);
+      node.hidden = !node.innerHTML;
+    } catch { node.hidden = true; }
+  }
+  // Observe result replacements only; updating the nested notice cannot retrigger it.
+  const resultNode = document.querySelector('#scenario-result');
+  if (resultNode) new MutationObserver(refreshDraftNotice).observe(resultNode, {childList: true});
   function message(text) { const node = document.querySelector('[data-release-review-status]'); if (node) node.textContent = text; }
   function decisions(ctx, row, action) {
     return releaseReviewDecisions(ctx, row, action);
@@ -178,6 +229,7 @@ if (typeof document !== 'undefined') {
     function dismiss() {
       dialog.close(); dialog.remove(); reviewUI.dialog = null;
       if (reviewUI.active?.dialog === dialog) reviewUI.active = null;
+      refreshDraftNotice();
     }
     function close() {
       if (session.busy || reviewUI.busy) return false;
@@ -189,7 +241,7 @@ if (typeof document !== 'undefined') {
     dialog.querySelectorAll('[data-review-close]').forEach(button => button.addEventListener('click', close));
     dialog.querySelector('[data-review-keep-close]')?.addEventListener('click', () => {
       if (session.busy || reviewUI.busy) return;
-      if (hooks.persist?.()) dismiss();
+      if (hooks.persist?.()) { dismiss(); message('草稿已暂存，左侧仍为已保存正文。可从草稿提示中查看修改或继续编辑。'); }
     });
     dialog.showModal();
     return dismiss;
@@ -220,8 +272,9 @@ if (typeof document !== 'undefined') {
       ${row ? `<label>处理方式<select data-review-operation><option value="append">追加到正文</option><option value="replace">替换选中段落</option><option value="delete">删除选中段落</option></select></label><p class="release-review-hint">替换或删除前，请先点选左侧正文段落。当前未选中时仍可追加。</p><label>选中段落<textarea rows="3" readonly data-review-before>${escapeHtml(selected)}</textarea></label>` : ''}
       <p class="release-review-hint">${row ? '本次保存会同时采纳这条更新记录，并新增一条正文修订。' : '这里只修改正文，不改变版本更新记录的采纳或忽略结论。'}</p><label>${row ? '更新后的内容' : '完整正文'}<textarea data-review-draft rows="12" maxlength="100000" required>${escapeHtml(initial)}</textarea></label>
       <label>修改原因（可选）<input data-review-reason maxlength="2000" placeholder="例如：更新测量方式说明"></label>
-      ${row ? '<details open class="release-review-patch-preview"><summary>变更预览</summary><div data-review-preview></div></details>' : ''}
-      <p data-review-dialog-status role="status"></p><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>放弃草稿</button><button type="button" class="ghost-button" data-review-keep-close>暂存并关闭</button><button type="submit" class="primary-button">确认并保存</button></div></form>`);
+      <details ${row ? 'open ' : ''}class="release-review-patch-preview"><summary>查看与已保存正文的区别</summary><div data-review-preview></div></details>
+      <p class="release-review-hint">暂存仅保留当前标签页草稿；保存才更新左侧正文和修订历史。</p>
+      <p data-review-dialog-status role="status"></p><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>放弃草稿</button><button type="button" class="ghost-button" data-review-keep-close>暂存草稿并关闭</button><button type="submit" class="primary-button">${row ? '保存正文并采纳记录' : '保存正文'}</button></div></form>`);
     if (!dialog) return;
     const session = {context: ctx, busy: false, error: ''};
     const draft = dialog.querySelector('[data-review-draft]');
@@ -250,13 +303,14 @@ if (typeof document !== 'undefined') {
     const discard = () => {
       const cleared = draftStore.clear(ctx, kind, eventId);
       if (!cleared.ok) message('本机草稿未能清除；再次打开时请核对，避免误用旧稿。');
+      return cleared.ok;
     };
     const preview = () => {
-      if (!row) return;
-      draft.required = operation.value !== 'delete';
+      draft.required = operation?.value !== 'delete';
       try {
-        const patch = releaseReviewPatch(ctx.result.content, operation.value, selected, draft.value);
-        dialog.querySelector('[data-review-preview]').innerHTML = `<div><strong>原内容</strong><p>${escapeHtml(patch.before || '（追加，不替换原文）')}</p></div><div><strong>更新为</strong><p>${escapeHtml(patch.after || '（删除该段落）')}</p></div>`;
+        const updated = row ? releaseReviewPatch(ctx.result.content, operation.value, selected, draft.value).content : draft.value;
+        const patch = releaseReviewDraftDifference(ctx.result.content, updated);
+        dialog.querySelector('[data-review-preview]').innerHTML = draftDifferenceMarkup(patch);
       } catch (error) { dialog.querySelector('[data-review-preview]').textContent = error.message; }
     };
     draft.addEventListener('input', () => { persist(); preview(); });
@@ -274,9 +328,26 @@ if (typeof document !== 'undefined') {
       try {
         const bodyChange = {operation: row ? operation.value : 'edit', reason: reason.value, ...(row ? {event_id: row.id} : {})};
         const result = await releaseReviewCommit(session, content, row ? decisions(ctx, row, 'include') : ctx.review.decisions, dependencies(ctx), bodyChange);
-        if (result) { discard(); dismiss(); } else status.textContent = session.error;
+        if (result) {
+          const cleared = discard(); dismiss();
+          message(`正文已保存，当前为正文修订 ${Number(result.review?.body_revision) || 0}；${cleared ? '本次草稿已清除。' : '本机草稿未能清除，再次打开时请核对，避免误用旧稿。'}`);
+        } else status.textContent = session.error;
       } finally { reviewUI.busy = false; if (dialog.isConnected) busy(dialog, false); }
     });
+  }
+  function draftDifferenceMarkup(patch) {
+    return patch.changed ? `<div><strong>已保存正文 · 修改前</strong><p>${escapeHtml(patch.before || '（此处原无内容）')}</p></div><div><strong>草稿 · 未提交</strong><p>${escapeHtml(patch.after || '（删除这些内容）')}</p></div>` : '<p>正文没有变化。</p>';
+  }
+  function previewDraft(ctx, entry) {
+    const recovered = releaseReviewRecoverDraft(entry.draft, ctx);
+    let html;
+    try {
+      if (entry.kind === 'include' && !(ctx.result.change_log || []).some(row => row.id === entry.id)) throw Error('原记录已变化，以下保留草稿原文，不能直接应用到当前正文。');
+      const updated = entry.kind === 'edit' ? entry.draft.text : releaseReviewPatch(ctx.result.content, entry.draft.operation, recovered.selected, entry.draft.text).content;
+      html = `<div class="release-review-patch-preview"><div data-review-preview>${draftDifferenceMarkup(releaseReviewDraftDifference(ctx.result.content, updated))}</div></div>`;
+    } catch (error) { html = `<p class="release-review-warning">${escapeHtml(error.message)}</p><div class="release-review-history-content">${escapeHtml(entry.draft.text)}</div>`; }
+    const dialog = newDialog('草稿修改 · 尚未保存正文', `<p class="release-review-hint">${escapeHtml(recovered.warning)} 左侧已保存正文未改变。</p>${html}${entry.draft.reason ? `<p>修改原因：${escapeHtml(entry.draft.reason)}</p>` : ''}<div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>关闭预览</button></div>`);
+    if (dialog) bindDialog(dialog, {busy: false}, () => false);
   }
   async function history(ctx, kind = 'body') {
     const bodyHistory = kind === 'body';
@@ -329,6 +400,21 @@ if (typeof document !== 'undefined') {
     if (paragraph && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectParagraph(paragraph); }
   });
   document.addEventListener('click', event => {
+    const draftButton = event.target.closest?.('[data-review-draft-preview],[data-review-draft-resume]');
+    if (draftButton && !reviewUI.busy) {
+      try {
+        const ctx = context();
+        const entry = draftStore.list(ctx).entries.find(item => item.kind === draftButton.dataset.draftKind && item.id === draftButton.dataset.draftId);
+        if (!entry) { refreshDraftNotice(); throw Error('草稿已变化，请重新打开。'); }
+        if (draftButton.hasAttribute('data-review-draft-preview')) previewDraft(ctx, entry);
+        else {
+          const row = (ctx.result.change_log || []).find(item => item.id === entry.id);
+          if (entry.kind === 'include' && !row) throw Error('原记录已变化，请先查看草稿修改。');
+          edit(ctx, entry.kind === 'edit' ? null : row);
+        }
+      } catch (error) { message(error.message); }
+      return;
+    }
     const paragraph = event.target.closest?.('[data-release-review-paragraph]');
     if (paragraph && !event.target.closest('button,a,input,textarea,select')) selectParagraph(paragraph);
     const button = event.target.closest?.('[data-release-review-edit],[data-release-review-adopt],[data-release-review-include],[data-release-review-ignore],[data-release-review-undo],[data-release-review-history]');
