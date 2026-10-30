@@ -309,15 +309,21 @@ const loadData = async () => {
   loading.value = true
   try {
     const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500 }), getFeatureGroups()])
-    categories.value = catRes.items || []; features.value = featRes.items || []
-    featureGroups.value = grpRes.items || []
+    const nextCategories = catRes.items || []
+    const details = await Promise.all(nextCategories.map(async cat => {
+      const [templates, apps] = await Promise.all([
+        getTemplateFeatures(cat.id), api.get(`/probe-categories/${cat.id}/apps`)
+      ])
+      return { categoryId: cat.id, templates: templates || [], apps }
+    }))
     const allTpl = {}; const allCatApps = {}
-    for (const cat of categories.value) {
-      try {
-        for (const t of (await getTemplateFeatures(cat.id)) || []) { allTpl[`${cat.id}_${t.feature_id}`] = t }
-        allCatApps[cat.id] = await api.get(`/probe-categories/${cat.id}/apps`)
-      } catch {}
+    for (const detail of details) {
+      for (const t of detail.templates) allTpl[`${detail.categoryId}_${t.feature_id}`] = t
+      allCatApps[detail.categoryId] = detail.apps
     }
+    categories.value = nextCategories
+    features.value = featRes.items || []
+    featureGroups.value = grpRes.items || []
     tplMap.value = allTpl; categoryAppsMap.value = allCatApps
   } catch { ElMessage.error('加载失败') } finally { loading.value = false }
 }
@@ -572,7 +578,7 @@ const rollback = async (row) => {
   try { await api.post(`/template-features/rollback/${row.id}`); ElMessage.success('回滚成功'); await loadData(); await loadVersions() } catch { ElMessage.error('回滚失败') }
 }
 
-onMounted(async () => { await loadData(); await loadDrafts() })
+onMounted(() => Promise.all([loadData(), loadDrafts()]))
 </script>
 
 <style scoped>

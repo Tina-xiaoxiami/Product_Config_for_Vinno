@@ -12,6 +12,7 @@ from app.models.config import ConfigItem
 from app.schemas.probe import (
     ProbeModelCreate, ProbeModelUpdate,
     ProbeModelResponse, ProbeModelListResponse,
+    ProbeModelVariantResponse,
 )
 
 router = APIRouter()
@@ -21,6 +22,7 @@ router = APIRouter()
 async def list_models(
     category_id: int = None,
     skip: int = 0, limit: int = 200,
+    include_details: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     q = select(ProbeModel)
@@ -32,7 +34,30 @@ async def list_models(
     total = count_r.scalar()
     result = await db.execute(q.order_by(ProbeModel.sort_order).offset(skip).limit(limit))
     items = result.scalars().all()
-    return ProbeModelListResponse(items=items, total=total)
+    response = ProbeModelListResponse(items=items, total=total)
+    if include_details and items:
+        model_ids = [item.id for item in items]
+        counts = await db.execute(
+            select(ProbeModelApp.probe_model_id, func.count(ProbeModelApp.id))
+            .join(Application, ProbeModelApp.application_id == Application.id)
+            .where(ProbeModelApp.probe_model_id.in_(model_ids))
+            .group_by(ProbeModelApp.probe_model_id)
+        )
+        count_map = dict(counts.all())
+        variants = await db.execute(
+            select(ProbeModelVariant)
+            .where(ProbeModelVariant.probe_model_id.in_(model_ids))
+            .order_by(ProbeModelVariant.sort_order, ProbeModelVariant.id)
+        )
+        variant_map: dict[int, list[ProbeModelVariantResponse]] = {}
+        for variant in variants.scalars().all():
+            variant_map.setdefault(variant.probe_model_id, []).append(
+                ProbeModelVariantResponse.model_validate(variant)
+            )
+        for item in response.items:
+            item.application_count = count_map.get(item.id, 0)
+            item.variant_items = variant_map.get(item.id, [])
+    return response
 
 
 @router.post("", response_model=ProbeModelResponse)
@@ -78,7 +103,7 @@ async def get_model_apps(model_id: int, db: AsyncSession = Depends(get_db)):
         .where(ProbeModelApp.probe_model_id == model_id)
         .order_by(Application.sort_order)
     )
-    return [{"id": a.Application.id, "name": a.Application.name} for _, a in result.all()]
+    return [{"id": app.id, "name": app.name} for _, app in result.all()]
 
 
 @router.post("/{model_id}/apps")

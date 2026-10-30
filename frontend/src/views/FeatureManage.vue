@@ -527,8 +527,9 @@ const totalFeatures = computed(() => {
 const loadData = async () => {
   loading.value = true
   try {
-    const groups = (await getFeatureGroups()).items || []
-    const features = (await getFeatures({ limit: 500 })).items || []
+    const [groupRes, featureRes] = await Promise.all([getFeatureGroups(), getFeatures({ limit: 500 })])
+    const groups = groupRes.items || []
+    const features = featureRes.items || []
     const featMap = {}
     features.forEach(f => {
       const gid = f.group_id

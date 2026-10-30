@@ -207,38 +207,31 @@ const modelDialogVisible = ref(false); const editingModelId = ref(null); const s
 const catForm = reactive({ name: '', sort_order: 0 })
 const modelForm = reactive({ category_id: null, model_number: '', sort_order: 0 })
 
+let dataLoadRequest = 0
 const loadData = async () => {
+  const request = ++dataLoadRequest
   loading.value = true
   try {
     const [catRes, modelRes] = await Promise.all([
       getProbeCategories({ limit: 200 }),
-      getProbeModels({ limit: 2000 })
+      getProbeModels({ limit: 2000, include_details: true })
     ])
-    categories.value = catRes.items || []
-    const models = modelRes.items || []
-
-    const mm = {}; models.forEach(m => { if (!mm[m.category_id]) mm[m.category_id] = []; mm[m.category_id].push(m) })
-    modelMap.value = mm
-
-    // Load app counts and variants for current category's models
-    const curModels = selectedCategory.value ? (mm[selectedCategory.value.id] || []) : []
-    const appCounts = {};
-    const varMap = {};
-    await Promise.all(curModels.map(async m => {
-      try { appCounts[m.id] = (await getProbeModelApps(m.id)).length } catch { appCounts[m.id] = 0 }
-      try { varMap[m.id] = await api.get(`/probe-models/${m.id}/variants`) } catch { varMap[m.id] = [] }
-    }))
-    // Rebuild modelMap with enriched data
-    const enriched = {}
-    for (const cid of Object.keys(mm)) {
-      enriched[cid] = mm[cid].map(m => ({
-        ...m,
-        _appCount: appCounts[m.id] || 0,
-        _variants: varMap[m.id] || []
-      }))
+    if (request !== dataLoadRequest) return
+    const nextCategories = catRes.items || []
+    const nextMap = {}
+    for (const model of modelRes.items || []) {
+      const row = { ...model, _appCount: model.application_count || 0, _variants: model.variant_items || [] }
+      if (!nextMap[model.category_id]) nextMap[model.category_id] = []
+      nextMap[model.category_id].push(row)
     }
-    modelMap.value = enriched
-  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+    categories.value = nextCategories
+    modelMap.value = nextMap
+    selectedCategory.value = nextCategories.find(cat => cat.id === selectedCategory.value?.id) || nextCategories[0] || null
+  } catch {
+    if (request === dataLoadRequest) ElMessage.error('加载失败')
+  } finally {
+    if (request === dataLoadRequest) loading.value = false
+  }
 }
 
 const currentModels = computed(() => {
@@ -248,7 +241,6 @@ const currentModels = computed(() => {
 
 const selectCategory = (cat) => {
   selectedCategory.value = cat
-  loadData()
 }
 
 // Category CRUD
@@ -304,9 +296,16 @@ const allApps = ref([]); const appDialogVisible = ref(false); const appTarget = 
 const selectedAppIds = ref([]); const appSaving = ref(false)
 
 const openAppDialog = async (m) => {
-  appTarget.value = m; selectedAppIds.value = []
-  try { selectedAppIds.value = ((await getProbeModelApps(m.id)) || []).map(a => a.id) } catch { selectedAppIds.value = [] }
-  appDialogVisible.value = true
+  try {
+    const [apps, catalog] = await Promise.all([
+      getProbeModelApps(m.id),
+      allApps.value.length ? Promise.resolve({ items: allApps.value }) : getApplications({ limit: 500 })
+    ])
+    appTarget.value = m
+    allApps.value = catalog.items || []
+    selectedAppIds.value = (apps || []).map(a => a.id)
+    appDialogVisible.value = true
+  } catch { ElMessage.error('加载探头应用失败') }
 }
 const saveApps = async () => {
   appSaving.value = true
@@ -394,11 +393,7 @@ const importAllVariants = async (file) => {
   } catch { ElMessage.error('导入失败') }
 }
 
-onMounted(async () => {
-  allApps.value = ((await getApplications({ limit: 500 })).items || [])
-  await loadData()
-  if (categories.value.length) selectedCategory.value = categories.value[0]
-})
+onMounted(loadData)
 </script>
 
 <style scoped>

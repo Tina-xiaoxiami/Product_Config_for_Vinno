@@ -36,26 +36,25 @@
             <el-menu-item index="/models">
               <span>产品型号</span>
             </el-menu-item>
-            <el-menu-item index="/feature-manage">
-              <span>功能管理</span>
-            </el-menu-item>
+            <el-sub-menu index="/probe-app-management" class="probe-app-menu">
+              <template #title>
+                <span>探头&amp;应用管理</span>
+              </template>
+              <el-menu-item index="/template-features">
+                <span>模板管理</span>
+              </el-menu-item>
+              <el-menu-item index="/probe-models">
+                <span>探头管理</span>
+              </el-menu-item>
+              <el-menu-item index="/applications">
+                <span>应用管理</span>
+              </el-menu-item>
+              <el-menu-item index="/feature-manage">
+                <span>功能管理</span>
+              </el-menu-item>
+            </el-sub-menu>
             <el-menu-item index="/registration-manage">
               <span>注册管理</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-sub-menu index="/probe-app-management">
-            <template #title>
-              <el-icon><Connection /></el-icon>
-              <span>探头&amp;应用管理</span>
-            </template>
-            <el-menu-item index="/probe-models">
-              <span>探头管理</span>
-            </el-menu-item>
-            <el-menu-item index="/applications">
-              <span>应用管理</span>
-            </el-menu-item>
-            <el-menu-item index="/template-features">
-              <span>模板管理</span>
             </el-menu-item>
           </el-sub-menu>
           <el-sub-menu index="/product-config">
@@ -104,7 +103,7 @@
 <script setup>
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand, Connection } from '@element-plus/icons-vue'
+import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand } from '@element-plus/icons-vue'
 
 const sidebarCollapsed = ref(false)
 try { sidebarCollapsed.value = localStorage.getItem('config_sidebar_collapsed') === 'true' } catch (error) { console.warn('读取导航设置失败', error) }
@@ -145,6 +144,7 @@ const toggleSidebar = () => {
 .collapsed .logo { justify-content: center; padding: 0; }
 .sidebar-toggle { color: #dce5ef; padding: 8px; }
 .sidebar-toggle:hover { color: #fff; background-color: #40546c; }
+.probe-app-menu :deep(.el-sub-menu__title) { padding-right: 28px; font-size: 12px; }
 .el-menu { --el-menu-item-height: 44px; --el-menu-sub-item-height: 38px; }
 
 .el-menu {
