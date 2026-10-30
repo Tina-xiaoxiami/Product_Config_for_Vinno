@@ -37,7 +37,7 @@
     <template #footer>
       <el-button :disabled="saving" @click="requestClose()">关闭</el-button>
       <el-button v-if="error" :disabled="saving || loading" @click="reload">重新加载</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!loaded || loading || saving || !dirty" @click="save">保存子系列</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!loaded || loading || saving || !dirty" @click="save">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -136,7 +136,7 @@ const save = async () => {
   saving.value = true; error.value = ''
   try {
     install(await saveSubseries(subseriesPayload(revision.value, groups.value, combinations.value)))
-    ElMessage.success('子系列已保存，白皮书与配置管理共用此关系')
+    ElMessage.success('子系列与组合已保存，白皮书与配置管理共用此关系')
     emit('saved')
   } catch (cause) {
     error.value = cause.response?.data?.detail || '子系列保存失败，修改已保留，请重试'
