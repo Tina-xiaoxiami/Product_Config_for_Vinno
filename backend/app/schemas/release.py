@@ -110,6 +110,7 @@ class ReleaseVersionItem(BaseModel):
     source: str
     review_status: str
     change_note: str | None = None
+    evidence_review_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
     introduction_id: int | None = None

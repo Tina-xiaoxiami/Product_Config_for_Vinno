@@ -4,13 +4,16 @@ import test from 'node:test'
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 
-test('feature release page is reachable from the menu and the router', () => {
+test('feature release records are reachable inside the unified release workspace', () => {
   const router = read('../src/router/index.js')
   const layout = read('../src/views/Layout.vue')
+  const workspace = read('../src/views/ReleaseWorkspace.vue')
 
   assert.match(router, /path:\s*'release'/)
-  assert.match(router, /name:\s*'FeatureRelease'/)
-  assert.match(router, /views\/FeatureRelease\.vue/)
+  assert.match(router, /name:\s*'ReleaseWorkspace'/)
+  assert.match(router, /views\/ReleaseWorkspace\.vue/)
+  assert.match(workspace, /import FeatureRelease from '\.\/FeatureRelease\.vue'/)
+  assert.match(workspace, /<FeatureRelease\s+ref="nativeRelease"\s+\/>/)
   assert.match(layout, /index="\/release"/)
   assert.match(layout, />\s*功能发布\s*</)
   assert.match(layout, /Promotion/)

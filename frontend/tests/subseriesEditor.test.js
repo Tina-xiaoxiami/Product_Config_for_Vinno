@@ -2,27 +2,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { cloneSubseriesGroups, cloneSubseriesCombinations, subseriesGroupOptions, subseriesPayload, subseriesSnapshot } from '../src/utils/subseriesEditor.js'
 
-test('editing preserves existing short names and unmatched members without mutating source',()=>{
- const raw=[{name:'URM',series:'Tulip-China',models:['9E科研版（URM）','旧机型'],options:[{id:40,value:'9E科研版（URM）',label:'ULTIMUS 9E科研版(URM)',series:'Tulip-China'}]}]
- const groups=cloneSubseriesGroups(raw)
- const options=subseriesGroupOptions(groups[0],[{id:40,name:'ULTIMUS 9E科研版(URM)',series:'Tulip-China'},{id:41,name:'ULTIMUS 9L',series:'Tulip-China'},{id:42,name:'ULTIMUS 9L',series:'Tulip-Oversea'}])
- assert.deepEqual(options.map(o=>o.value),['9E科研版（URM）','ULTIMUS 9L','旧机型'])
- groups[0].models.push('ULTIMUS 9L');assert.equal(raw[0].models.length,2)
- assert.deepEqual(subseriesPayload('revision',groups),{revision:'revision',groups:[{name:'URM',series:'Tulip-China',models:['9E科研版（URM）','旧机型','ULTIMUS 9L']}]})
-})
-test('new group can include configuration-only models and parent changes keep selections for explicit validation',()=>{
- const g={name:'新子系列',series:'China',models:['海外型号']}
- const options=subseriesGroupOptions(g,[{id:1,name:'只有配置的机型',series:'China'},{id:2,name:'海外型号',series:'Oversea'}])
- assert.deepEqual(options.map(o=>o.value),['只有配置的机型','海外型号'])
- assert.deepEqual(g.models,['海外型号'])
- assert.notEqual(subseriesSnapshot([g]),subseriesSnapshot([{...g,name:'改名'}]))
+test('same-name markets stay independently selectable with multiple parent series', () => {
+ const catalog=[{id:1,name:'VINNO 5',series:'China'},{id:2,name:'VINNO 5',series:'Oversea'}]
+ const group=cloneSubseriesGroups([{name:'跨系列',series_names:['China','Oversea'],models:['VINNO 5'],model_ids:[1],missing_models:[]}])[0]
+ assert.deepEqual(group.models,['id:1'])
+ assert.deepEqual(subseriesGroupOptions(group,catalog).map(o=>o.value),['id:1','id:2'])
+ assert.deepEqual(subseriesPayload('r',[group]).groups[0],{name:'跨系列',series_names:['China','Oversea'],model_ids:[1],models:[]})
+ group.series_names=['Oversea']
+ assert.match(subseriesGroupOptions(group,catalog).find(o=>o.value==='id:1').label,/不属于当前系列/)
 })
 
 import { readFileSync } from 'node:fs'
 const component=readFileSync(new URL('../src/components/SubseriesEditor.vue',import.meta.url),'utf8')
 function editor(overrides={}) {
  const ref=value=>({value}),computed=fn=>({get value(){return fn()}}),messages=[],events=[]
- const ctx={ref,computed,defineExpose(){},cloneSubseriesGroups,cloneSubseriesCombinations,subseriesGroupOptions,subseriesPayload,subseriesSnapshot,
+ const ctx={ref,computed,nextTick:async()=>{},defineExpose(){},cloneSubseriesGroups,cloneSubseriesCombinations,subseriesGroupOptions,subseriesPayload,subseriesSnapshot,
   getSubseries:async()=>({revision:'r1',groups:[{name:'原组',series:'China',models:['M']}],catalog:[],series:[]}),
   saveSubseries:async()=>{throw {response:{data:{detail:'其他系统已修改，请重新加载'}}}},
   ElMessage:{success:m=>messages.push(m),warning:m=>messages.push(m)},ElMessageBox:{confirm:async()=>{}},emit:e=>events.push(e),...overrides}
@@ -47,12 +41,19 @@ test('save blocks duplicate clicks and close until the current write settles',as
  assert.equal(a.dirty.value,false);assert.deepEqual(a.events,['saved'])
 })
 
-test('unrestricted member labels show every owning series without changing saved identities',()=>{
- const catalog=[{id:1,name:'VINNO 10',series:'China'},{id:2,name:'VINNO 10',series:'Oversea'},{id:3,name:'ULTIMUS 6S',series:'Tulip-China'}]
- const group={name:'跨系列',series:'',models:['VINNO 10'],options:[]}
- const options=subseriesGroupOptions(group,catalog)
- assert.deepEqual(options.map(o=>o.label),['VINNO 10（China、Oversea）','ULTIMUS 6S（Tulip-China）'])
- assert.deepEqual(options.map(o=>o.value),['VINNO 10','ULTIMUS 6S'])
- assert.deepEqual(subseriesPayload('revision',[group]).groups[0].models,['VINNO 10'])
- assert.equal(subseriesGroupOptions({...group,series:'China'},catalog)[0].label,'VINNO 10')
+test('legacy unresolved members and market scope survive editing alongside exact IDs', () => {
+ const raw={name:'旧组',series:'China',models:['5','旧机型'],model_ids:[1],missing_models:['旧机型']}
+ const group=cloneSubseriesGroups([raw])[0]
+ group.models.push('id:2')
+ assert.deepEqual(raw.models,['5','旧机型'])
+ assert.deepEqual(subseriesPayload('r',[group]).groups[0],{name:'旧组',series_names:['China'],model_ids:[1,2],models:['旧机型']})
+ assert.match(subseriesGroupOptions(group,[{id:1,name:'VINNO 5',series:'China'}]).find(o=>o.value==='旧机型').label,/未匹配/)
+})
+
+test('missing market identity survives rename and can be explicitly removed', () => {
+ const group=cloneSubseriesGroups([{name:'旧组',series_names:[],models:['VINNO 5'],model_ids:[1],missing_models:['VINNO 5'],unresolved_refs:[{name:'VINNO 5',series:'Oversea'}]}])[0]
+ group.name='新组'
+ assert.deepEqual(subseriesPayload('r',[group]).groups[0].unresolved_refs,[{name:'VINNO 5',series:'Oversea'}])
+ group.models=['id:1']
+ assert.deepEqual(subseriesPayload('r',[group]).groups[0].unresolved_refs,[])
 })

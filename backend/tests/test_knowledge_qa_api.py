@@ -485,3 +485,52 @@ async def test_observed_similar_wording_can_be_promoted_to_confirmed_alias(tmp_p
     assert similar.json()["match_type"] == "similar"
     assert promoted.status_code == 200
     assert promoted.json()["alias_questions"] == [wording]
+
+
+@pytest.mark.asyncio
+async def test_merge_rejects_pending_source_with_answer_and_preserves_history(tmp_path):
+    database = tmp_path / 'qa.db'
+    _create_qa_database(database)
+    client, engine = await _client_for(database)
+    async with client:
+        source = (await client.post('/api/knowledge/questions/ask', json={'question': '原有问题'})).json()['question_id']
+        target = (await client.post('/api/knowledge/questions/ask', json={'question': '其他问题'})).json()['question_id']
+        payload = {'answer_text': '保留原答案', 'citations': [{'document_id': 1, 'source_ref': '第1页', 'excerpt': '保留引文'}], 'change_note': '原审核'}
+        await client.put(f'/api/knowledge/questions/{source}/answer', json=payload)
+        await client.put(f'/api/knowledge/questions/{target}/answer', json={'answer_text': '目标答案'})
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE knowledge_answers SET review_status = 'source_changed' WHERE question_id = ?", (source,))
+            connection.execute("UPDATE knowledge_questions SET status = 'pending' WHERE id = ?", (source,))
+        rejected = await client.post(f'/api/knowledge/questions/{source}/merge/{target}')
+        detail = await client.get(f'/api/knowledge/questions/{source}')
+        history = await client.get(f'/api/knowledge/questions/{source}/history')
+    await engine.dispose()
+    assert rejected.status_code == 422
+    assert detail.json()['answer']['answer_text'] == '保留原答案'
+    assert detail.json()['answer']['citations'][0]['excerpt'] == '保留引文'
+    assert history.json()['items'][0]['answer_text'] == '保留原答案'
+
+
+@pytest.mark.asyncio
+async def test_ask_does_not_return_answer_changed_during_lookup(tmp_path, monkeypatch):
+    from sqlalchemy import text
+    from app.services import knowledge_qa
+
+    database = tmp_path / 'qa.db'
+    _create_qa_database(database)
+    client, engine = await _client_for(database)
+    async with client:
+        question_id = (await client.post('/api/knowledge/questions/ask', json={'question': '测试问题'})).json()['question_id']
+        await client.put(f'/api/knowledge/questions/{question_id}/answer', json={'answer_text': '旧答案'})
+        original = knowledge_qa._published_candidates
+        async def changed_during_lookup(session):
+            candidates = await original(session)
+            await session.execute(text("UPDATE knowledge_answers SET review_status = 'source_changed' WHERE question_id = :id"), {'id': question_id})
+            await session.execute(text("UPDATE knowledge_questions SET status = 'pending' WHERE id = :id"), {'id': question_id})
+            await session.commit()
+            return candidates
+        monkeypatch.setattr(knowledge_qa, '_published_candidates', changed_during_lookup)
+        response = await client.post('/api/knowledge/questions/ask', json={'question': '测试问题'})
+    await engine.dispose()
+    assert response.json()['status'] == 'pending'
+    assert response.json()['answer'] is None

@@ -4,14 +4,12 @@ import { readFileSync } from 'node:fs'
 import { ref, watch, effectScope } from 'vue'
 
 const compareSource = readFileSync(new URL('../src/views/Compare.vue', import.meta.url), 'utf8')
-const versionSource = readFileSync(new URL('../src/views/Versions.vue', import.meta.url), 'utf8')
 const deferred = () => {
   let resolve, reject
   const promise = new Promise((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
 const result = (id, models = [11, 12]) => ({ total: 1, diff_count: 1, items: [{ item_id: id, field_name: 'final_config', values: Object.fromEntries(models.map(model => [model, `item-${id}`])) }] })
-const versionResult = id => ({ summary: { added: 0, modified: 1, deleted: 0 }, added: [], modified: [{ id }], deleted: [] })
 
 function comparisonController({ compareConfigs = async () => result(1), getDraftList = async () => ({ items: [] }) } = {}) {
   const ticks = [], messages = [], payloads = []
@@ -34,24 +32,6 @@ function comparisonController({ compareConfigs = async () => result(1), getDraft
   const scope = effectScope()
   const functions = scope.run(() => new Function(...Object.keys(context), `${pipeline}\n${lifecycle}\nreturn {handleCompare, autoCompare}`)(...Object.values(context)))
   return { ...context, ...functions, payloads, messages, flushTicks: () => { const queued = ticks.splice(0); queued.forEach(fn => fn()) }, stop: () => scope.stop() }
-}
-
-function versionController(compareVersions = async () => versionResult('one')) {
-  const context = {
-    watch, compareRequest: 0, selectedSeries: ref(1), compareDialogVisible: ref(true), compareVersion1: ref(1), compareVersion2: ref(2),
-    selectedModels: ref([]), compareResult: ref(null), compareLoading: ref(false), activeTab: ref('modified'), compareVersions,
-    versions: ref([{ id: 1 }, { id: 2 }, { id: 3 }]), versionOptions: ref([]),
-    loadAllVersionOptions: async () => [{ id: 1 }, { id: 2 }, { id: 3 }],
-    ElMessage: { warning() {}, error() {} }, console: { error() {} }
-  }
-  const start = versionSource.indexOf('const executeCompare =')
-  const openStart = versionSource.indexOf('const openCompareDialog =')
-  const pipeline = versionSource.slice(openStart, versionSource.indexOf('// 回滚版本', start))
-  const lifecycleStart = versionSource.indexOf('// 版本对比条件生命周期')
-  const lifecycle = lifecycleStart < 0 ? '' : versionSource.slice(lifecycleStart, versionSource.indexOf('// 版本对比条件生命周期结束', lifecycleStart))
-  const scope = effectScope()
-  const functions = scope.run(() => new Function(...Object.keys(context), `${pipeline}\n${lifecycle}\nreturn { executeCompare, openCompareDialog }`)(...Object.values(context)))
-  return { ...context, ...functions, stop: () => scope.stop() }
 }
 
 test('manual and automatic comparison share latest-request protection', async () => {
@@ -111,42 +91,5 @@ test('changing a completed comparison condition clears its result immediately', 
   const app = comparisonController(); await app.autoCompare()
   app.compareFields.value = ['current_config']
   assert.equal(app.compareResult.value, null)
-  app.stop()
-})
-
-for (const condition of ['version', 'models']) {
-  test(`version comparison clears completed results when ${condition} selection changes`, async () => {
-    const app = versionController(); await app.executeCompare()
-    if (condition === 'version') app.compareVersion2.value = 3
-    else app.selectedModels.value.push(8)
-    assert.equal(app.compareResult.value, null)
-    app.stop()
-  })
-}
-
-test('a failed latest version comparison cannot show the previous version pair', async () => {
-  let calls = 0
-  const app = versionController(async () => { if (++calls === 1) return versionResult('old'); throw new Error('offline') })
-  await app.executeCompare(); await app.executeCompare()
-  assert.equal(app.compareResult.value, null); assert.equal(app.compareLoading.value, false)
-  app.stop()
-})
-
-test('changing version conditions away and back still invalidates its pending response', async () => {
-  const pending = deferred(), app = versionController(() => pending.promise)
-  const old = app.executeCompare(); app.compareVersion2.value = 3; app.compareVersion2.value = 2
-  pending.resolve(versionResult('stale')); await old
-  assert.equal(app.compareResult.value, null); assert.equal(app.compareLoading.value, false)
-  app.stop()
-})
-
-// Real synchronous watchers must not invalidate the dialog's own initialization.
-test('opening version comparison still selects its preceding version with lifecycle watchers active', async () => {
-  const app = versionController()
-  await app.openCompareDialog({ id: 2 })
-  assert.equal(app.compareVersion1.value, 2)
-  assert.equal(app.compareVersion2.value, 3)
-  await app.executeCompare()
-  assert.equal(app.compareResult.value.modified[0].id, 'one')
   app.stop()
 })

@@ -86,8 +86,8 @@
           <span v-if="tempSelectedModels.length === allModelsMap.size && allModelsMap.size > 0" class="select-all-label">ALL</span>
           </div>
 
-          <SubseriesEditor ref="subseriesEditorRef" :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @saved="loadModels" />
-          <SubseriesCombinations :selection-key="JSON.stringify([selectedSeries, selectedModels])" :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @apply="applyModelGroup" @edit="subseriesEditorRef?.open()" />
+          <el-button :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @click="manageSharedGroups">管理子系列与组合</el-button>
+          <SubseriesCombinations :selection-key="JSON.stringify([selectedSeries, selectedModels])" :disabled="!configReady || loading || applyingModelGroup || reviewInteractionLocked" @apply="applyModelGroup" @edit="manageSharedGroups" />
           <el-popover ref="modelGroupsPopover" placement="bottom-start" :width="420" trigger="click">
             <template #reference><el-button :loading="applyingModelGroup">机型分组</el-button></template>
             <div class="model-groups-panel">
@@ -1116,11 +1116,12 @@
 </template>
 
 <script setup>
-import SubseriesEditor from '../components/SubseriesEditor.vue'
+import { useRouter } from 'vue-router'
+import { applySharedMemberships } from '../utils/modelManagementGroups'
 import { buildModelSelectionTree, filterModelSelectionTree, primaryModelOccurrences } from '../utils/modelSelectionTree'
 import SubseriesCombinations from '../components/SubseriesCombinations.vue'
 import { draftBaseline, draftWorkingValue, updateDraftStats } from '../utils/configDraftHelpers'
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onActivated, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, Download, DocumentChecked, EditPen, Setting, CopyDocument, Delete, DocumentCopy, InfoFilled, View, ArrowDown, Filter } from '@element-plus/icons-vue'
 import { getModelShortName as _getModelShortName, groupModelsBySeries, findSeriesIdByModelId as _findSeriesIdByModelId, isValueChanged as _isValueChanged, isEmptyValue as _isEmptyValue, normalizeValue } from '../utils/modelHelpers'
@@ -1136,7 +1137,8 @@ import {
   batchDiscardDrafts, batchSubmitDrafts, checkSubmissionVersion
 } from '../api/data'
 
-const subseriesEditorRef = ref(null)
+const router = useRouter()
+const manageSharedGroups = () => router.push({ path: '/models', query: { editSubseries: '1' } })
 const tableRef = ref(null)
 const configPageRef = ref(null)
 let configResizeObserver
@@ -1236,7 +1238,11 @@ const loadModelCombinations = async () => {
   const request = ++modelTreeRequest
   try {
     const data = await getSubseries()
-    if (request === modelTreeRequest) modelSubseriesCombinations.value = data.combinations || []
+    if (request === modelTreeRequest) {
+      modelSubseriesCombinations.value = data.combinations || []
+      // Group application uses map identity for rollback; refresh on the next open if it is busy.
+      if (!applyingModelGroup.value) allModelsMap.value = applySharedMemberships(allModelsMap.value, data.groups)
+    }
   } catch {
     if (request === modelTreeRequest) {
       modelSubseriesCombinations.value = []
@@ -1244,6 +1250,7 @@ const loadModelCombinations = async () => {
     }
   }
 }
+
 
 // 根据 modelId 查找对应的 seriesId（使用共享方法）
 const findSeriesIdByModelId = (modelId) => _findSeriesIdByModelId(allModelsMap.value, modelId)
@@ -4862,6 +4869,7 @@ const pasteToSelectedCells = async () => {
   else if (result.success) ElMessage.success(`已粘贴到 ${result.success} 个单元格`)
 }
 
+
 onMounted(() => {
   loadColumnSettings()
   loadSeries()
@@ -4961,6 +4969,7 @@ onMounted(() => {
   updateAllSelectDisplay()
 })
 
+onActivated(() => { if (allModelsMap.value.size) loadModelCombinations() })
 </script>
 
 <style scoped>

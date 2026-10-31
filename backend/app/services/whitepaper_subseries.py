@@ -38,6 +38,18 @@ def read_subseries(models, series_names):
     entries = raw if isinstance(raw, list) else raw.get('sub_series') if isinstance(raw, dict) else None
     if not isinstance(entries, list):
         return memberships, ['白皮书子系列定义必须包含 sub_series 数组']
+    if any(isinstance(entry, dict) and 'model_refs' in entry for entry in entries):
+        try:
+            document, _ = _source_document(path)
+            view = _editor_view(document, '', models, series_names)
+        except (ValueError, TypeError, KeyError):
+            return memberships, ['白皮书子系列定义无效，请检查共享定义文件']
+        for group in view['groups']:
+            for model_id in group['model_ids']:
+                memberships[model_id].append(group['name'])
+            if group['missing_models']:
+                problems.append(f"子系列「{group['name']}」有未匹配或不唯一机型，请核对")
+        return memberships, problems
     seen = set()
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict) or not isinstance(entry.get('name'), str) or not entry['name'].strip() or not isinstance(entry.get('models'), list) or not entry['models'] or not all(isinstance(m, str) and m.strip() for m in entry['models']) or not isinstance(entry.get('series', ''), str):
@@ -170,6 +182,10 @@ def _source_document(path):
         for entry in entries:
             if not isinstance(entry, dict) or not isinstance(entry.get('name'), str) or not entry['name'].strip() or not isinstance(entry.get('series', ''), str) or not isinstance(entry.get('models'), list) or not entry['models'] or any(not isinstance(name, str) or not name.strip() for name in entry['models']):
                 raise ValueError('invalid group')
+            if 'series_names' in entry and (not isinstance(entry['series_names'], list) or any(not isinstance(value, str) or not value.strip() for value in entry['series_names'])):
+                raise ValueError('invalid series_names')
+            if 'model_refs' in entry and (not isinstance(entry['model_refs'], list) or any(not isinstance(ref, dict) or not isinstance(ref.get('series'), str) or not isinstance(ref.get('name'), str) or not ref['name'].strip() for ref in entry['model_refs'])):
+                raise ValueError('invalid model_refs')
             if entry['name'].strip() in seen:
                 raise ValueError('duplicate group')
             seen.add(entry['name'].strip())
@@ -192,51 +208,79 @@ def _unambiguous_per_series(matches):
     return len({model.series_id for model in matches}) == len(matches)
 
 
+def _entry_series(source):
+    return source.get('series_names', [source['series']] if source.get('series') else [])
+
+
+def _entry_matches(source, models, parents):
+    refs = source.get('model_refs')
+    if refs is not None:
+        return [(ref['name'], (_group_matches(ref['name'], ref['series'], models, parents) if ref['series'] else [])) for ref in refs]
+    series = _entry_series(source)
+    pool = [model for model in models if not series or parents.get(model.series_id) in series]
+    return [(member, _group_matches(member, '', pool, parents)) for member in source['models']]
+
+
 def _editor_view(document, revision, models, parents):
     groups = []
     for source in document['sub_series']:
-        name = source['name'].strip()
-        parent = source.get('series', '').strip()
-        members = list(dict.fromkeys(member.strip() for member in source['models']))
-        original_by_id = {}
-        unresolved = []
-        for member in members:
-            matches = _group_matches(member, parent, models, parents)
+        if 'model_refs' not in source:
+            name = source['name'].strip()
+            parent = source.get('series', '').strip()
+            members = list(dict.fromkeys(member.strip() for member in source['models']))
+            original_by_id = {}
+            unresolved = []
+            for member in members:
+                matches = _group_matches(member, parent, models, parents)
+                if matches and _unambiguous_per_series(matches):
+                    for model in matches:
+                        original_by_id.setdefault(model.id, member)
+                else:
+                    unresolved.append(member)
+            options = [
+                {'id': model.id, 'value': original_by_id.get(model.id, model.name),
+                 'label': model.name, 'series': parents.get(model.series_id, '')}
+                for model in models if not parent or parents.get(model.series_id) == parent
+            ]
+            for member in unresolved:
+                options = [option for option in options if option['value'] != member]
+                options.append({'value': member, 'label': member + '（未匹配，保留）'})
+            # Preserve every original spelling if two stored aliases share one ID.
+            values = {option['value'] for option in options}
+            options.extend({'value': member, 'label': member + '（原成员）'}
+                           for member in members if member not in values)
+            # One spelling may legitimately cover the same product in both markets.
+            # Keep one select value and show all owning series in its label.
+            unique_options = {}
+            for option in options:
+                value = option['value']
+                if value not in unique_options:
+                    unique_options[value] = dict(option)
+                else:
+                    previous = unique_options[value]
+                    if previous.get('id') != option.get('id'):
+                        labels = [previous['label'], option['label']]
+                        series = [previous.get('series'), option.get('series')]
+                        previous['label'] = ' / '.join(dict.fromkeys(labels)) + '（' + '、'.join(dict.fromkeys(filter(None, series))) + '）'
+                        previous.pop('id', None)
+                        previous.pop('series', None)
+            groups.append({'name': name, 'series': parent, 'models': members,
+                           'model_ids': list(original_by_id), 'missing_models': unresolved,
+                           'options': list(unique_options.values())})
+            continue
+        original_by_id, unresolved = {}, []
+        for member, matches in _entry_matches(source, models, parents):
             if matches and _unambiguous_per_series(matches):
                 for model in matches:
                     original_by_id.setdefault(model.id, member)
             else:
                 unresolved.append(member)
-        options = [
-            {'id': model.id, 'value': original_by_id.get(model.id, model.name),
-             'label': model.name, 'series': parents.get(model.series_id, '')}
-            for model in models if not parent or parents.get(model.series_id) == parent
-        ]
-        for member in unresolved:
-            options = [option for option in options if option['value'] != member]
-            options.append({'value': member, 'label': member + '（未匹配，保留）'})
-        # Preserve every original spelling if two stored aliases share one ID.
-        values = {option['value'] for option in options}
-        options.extend({'value': member, 'label': member + '（原成员）'}
-                       for member in members if member not in values)
-        # One spelling may legitimately cover the same product in both markets.
-        # Keep one select value and show all owning series in its label.
-        unique_options = {}
-        for option in options:
-            value = option['value']
-            if value not in unique_options:
-                unique_options[value] = dict(option)
-            else:
-                previous = unique_options[value]
-                if previous.get('id') != option.get('id'):
-                    labels = [previous['label'], option['label']]
-                    series = [previous.get('series'), option.get('series')]
-                    previous['label'] = ' / '.join(dict.fromkeys(labels)) + '（' + '、'.join(dict.fromkeys(filter(None, series))) + '）'
-                    previous.pop('id', None)
-                    previous.pop('series', None)
-        groups.append({'name': name, 'series': parent, 'models': members,
+        groups.append({'name': source['name'].strip(), 'series': source.get('series', ''),
+                       'series_names': _entry_series(source),
+                       'models': list(dict.fromkeys(source['models'])),
                        'model_ids': list(original_by_id), 'missing_models': unresolved,
-                       'options': list(unique_options.values())})
+                       'unresolved_refs': [ref for ref in source.get('model_refs', []) if not ref['series'] or not _group_matches(ref['name'], ref['series'], models, parents) or not _unambiguous_per_series(_group_matches(ref['name'], ref['series'], models, parents))],
+                       'options': []})
     by_name = {group['name']: group for group in groups}
     combinations = []
     for source in _clean_combinations(document.get('sub_series_combinations', []), by_name):
@@ -279,8 +323,32 @@ def save_subseries_editor(groups, revision, models, parents, combinations=_OMITT
                 if not isinstance(group, dict):
                     raise ValueError(f'第 {index + 1} 个子系列无效')
                 name = group.get('name')
+                previous = next((entry for entry in document['sub_series'] if entry['name'] == name), {})
+                if 'model_refs' in previous and ('series_names' not in group or 'model_ids' not in group):
+                    raise ValueError('此分组使用精确机型，请重新加载后在产品型号页维护')
                 parent = group.get('series', '')
-                members = group.get('models')
+                members = group.get('models', [])
+                if 'series_names' in group and not isinstance(group.get('model_ids'), list):
+                    raise ValueError('成员机型必须按精确身份选择，请重新加载')
+                selected_ids = group.get('model_ids') if 'series_names' in group else None
+                selected_series = group.get('series_names', [parent] if parent else [])
+                if not isinstance(selected_series, list) or any(not isinstance(value, str) or value not in parents.values() for value in selected_series):
+                    raise ValueError('所属系列无效')
+                refs = None
+                if selected_ids is not None:
+                    if not isinstance(selected_ids, list) or any(type(value) is not int for value in selected_ids):
+                        raise ValueError('成员机型无效')
+                    by_id = {model.id: model for model in models}
+                    refs = []
+                    for model_id in dict.fromkeys(selected_ids):
+                        model = by_id.get(model_id)
+                        if not model or (selected_series and parents.get(model.series_id) not in selected_series):
+                            raise ValueError('成员机型不属于所选系列，请核对')
+                        if not _unambiguous_per_series(_group_matches(model.name, parents[model.series_id], models, parents)):
+                            raise ValueError('成员机型在所属系列中不唯一，请核对配置库')
+                        refs.append({'series': parents[model.series_id], 'name': model.name})
+                    if not refs and not members:
+                        raise ValueError('子系列至少选择一个机型')
                 if not isinstance(name, str) or not name.strip():
                     raise ValueError(f'第 {index + 1} 个子系列名称不能为空')
                 name = name.strip()
@@ -290,18 +358,31 @@ def save_subseries_editor(groups, revision, models, parents, combinations=_OMITT
                 if not isinstance(parent, str):
                     raise ValueError('所属系列无效')
                 parent = parent.strip()
+                if not parent and len(selected_series) == 1:
+                    parent = selected_series[0]
                 if parent and parent not in parents.values():
                     raise ValueError(f'所属系列不存在：{parent}')
-                if not isinstance(members, list) or not members or any(not isinstance(member, str) or not member.strip() for member in members):
+                if not isinstance(members, list) or (not members and not refs) or any(not isinstance(member, str) or not member.strip() for member in members):
                     raise ValueError(f'子系列「{name}」至少选择一个机型')
                 members = list(dict.fromkeys(member.strip() for member in members))
+                if refs is not None:
+                    members = [member for member in members if not any(_model_key(member) == _model_key(ref['name']) for ref in refs)]
                 for member in members:
                     matches = _group_matches(member, parent, models, parents)
                     if not _unambiguous_per_series(matches):
                         raise ValueError(f'机型「{member}」对应不唯一，请明确所属系列或核对配置机型')
-                    if not matches and (parent, member) not in preserved:
+                    if not matches and (parent, member) not in preserved and (previous.get('series', ''), member) not in preserved:
                         raise ValueError(f'机型「{member}」不在所选系列的配置机型中')
-                cleaned.append({'name': name, 'series': parent, 'models': members})
+                unresolved_refs = group.get('unresolved_refs', [])
+                preserved_refs = [ref for entry in document['sub_series'] for ref in entry.get('model_refs', [])]
+                if not isinstance(unresolved_refs, list) or any(ref not in preserved_refs for ref in unresolved_refs):
+                    raise ValueError('未匹配机型引用无效，请重新加载')
+                entry = {'name': name, 'series': parent, 'models': members}
+                if refs is not None:
+                    entry.update(series_names=list(dict.fromkeys(selected_series)),
+                                 model_refs=refs + unresolved_refs + [next((ref for ref in previous.get('model_refs', []) if ref['name'] == member), {'series': parent or previous.get('series', ''), 'name': member}) for member in members if not any(ref['name'] == member for ref in unresolved_refs)],
+                                 models=list(dict.fromkeys([ref['name'] for ref in refs + unresolved_refs] + members)))
+                cleaned.append(entry)
             updated = {**document, 'sub_series': cleaned}
             # Old clients retain references, but cannot delete/rename a referenced
             # group without explicitly updating its combinations in the same save.

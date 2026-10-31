@@ -1,58 +1,63 @@
 <template>
   <div class="models-page">
-    <el-card shadow="never">
+    <el-card shadow="never" class="models-card">
       <template #header>
         <div class="card-header">
           <span>产品型号管理</span>
           <div class="header-actions">
-            <el-select v-model="selectedSeries" placeholder="选择产品系列" @change="loadData" style="width: 200px">
-              <el-option v-for="s in seriesList" :key="s.id" :label="s.name" :value="s.id" />
-            </el-select>
-            <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="!selectedSeries">新增型号</el-button>
+            <el-button :icon="Plus" @click="openSeriesDialog">新增系列</el-button>
+            <SubseriesEditor ref="subseriesEditorRef" button-label="管理子系列与组合" @saved="loadData" />
+            <el-button type="primary" :icon="Plus" @click="handleCreate" :disabled="loading || !!loadError">新增型号</el-button>
           </div>
         </div>
       </template>
 
-      <el-table ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id">
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="型号名称" min-width="200" />
-        <el-table-column label="对应注册证" min-width="280">
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false"><el-button link @click="loadData">重新加载</el-button></el-alert>
+      <div class="model-workspace">
+        <aside class="group-navigation" aria-label="型号分组">
+          <div class="group-navigation-header"><span>型号分组</span><ModelGroupDisplaySettings :nodes="allGroupNodes" :model-value="hiddenGroupKeys" @update:model-value="applyGroupDisplay" /><el-tooltip content="在此统一维护分组，配置管理和白皮书共用"><el-icon class="group-info" tabindex="0" aria-label="分组说明"><InfoFilled /></el-icon></el-tooltip></div>
+          <el-tree draggable :allow-drag="node => node.key !== 'all'" :allow-drop="allowGroupDrop" @node-drop="rememberGroupDrop" :indent="14" :data="groupNodes" node-key="key" default-expand-all highlight-current :current-node-key="selectedGroup" :expand-on-click-node="false" @node-click="selectGroup">
+            <template #default="{ data }">
+              <span class="group-node" :class="{ 'group-combination': data.children }">
+                <el-icon class="group-node-icon"><component :is="data.children ? Collection : data.key === 'all' ? Grid : Folder" /></el-icon>
+                <span class="group-node-label">{{ data.label }}</span>
+                <small class="group-count">{{ data.ids.length }}</small>
+              </span>
+            </template>
+          </el-tree>
+        </aside>
+        <section class="model-results">
+          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" class="model-search" clearable placeholder="搜索型号 / 描述" aria-label="搜索型号" /><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div>
+      <div class="model-table-area">
+      <el-table :key="columnStructureKey" @dragover.prevent="rowDragOver" @drop.prevent="dropModelRow" :row-class-name="({ row }) => String(row.id) === dragOverId ? 'model-drop-target' : ''" @header-dragend="resizeColumn" ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" height="100%" size="small">
+        <el-table-column width="36" fixed="left" class-name="model-drag-column">
+          <template #default="{ row }"><span class="model-row-drag" tabindex="0" :data-model-id="row.id" :draggable="!loading" :aria-label="'拖动排序型号 ' + row.name" title="拖动调整个人显示顺序，自动保存；也可按 Alt + ↑ / ↓" @keydown.alt.up.prevent="moveModelByKeyboard(row.id, -1)" @keydown.alt.down.prevent="moveModelByKeyboard(row.id, 1)" @dragstart="startModelDrag($event, row.id)" @dragend="clearModelDrag">⠿</span></template>
+        </el-table-column>
+        <el-table-column v-for="column in displayedColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false" show-overflow-tooltip>
           <template #default="{ row }">
-            <div v-if="row.registration_packages?.length" class="registration-mappings">
-              <el-tag
-                v-for="mapping in row.registration_packages"
-                :key="mapping.registration_package_id"
-                :type="mapping.is_enabled ? 'success' : 'info'"
-                effect="plain"
-              >
-                {{ mapping.registration_number }} · {{ mapping.registration_model_name }} ·
-                {{ mapping.is_enabled ? '已启用' : '未启用' }}
-              </el-tag>
-            </div>
-            <span v-else class="unmapped-registration">未映射注册证</span>
+            <span v-if="column.key === 'series_id'">{{ seriesList.find(series => series.id === row.series_id)?.name || row.series_id }}</span>
+            <div v-else-if="column.key === 'sub_series'" class="registration-mappings"><el-tag v-for="name in row.sub_series" :key="name" size="small" effect="plain">{{ name }}</el-tag><el-select v-if="!row.sub_series?.length" :model-value="null" filterable allow-create default-first-option :disabled="assigningSubseries !== null || loading" :loading="assigningSubseries === row.id" placeholder="选择或输入新子系列" :aria-label="'为 ' + row.name + ' 添加子系列'" style="width: 100%; min-width: 140px" @change="name => assignSubseries(row, name)">
+              <el-option v-for="group in sharedGroups.groups || []" :key="group.name" :value="group.name" :label="group.name" :disabled="!modelFitsSubseries(group, seriesList.find(series => series.id === row.series_id)?.name)" />
+            </el-select></div>
+            <template v-else-if="column.key === 'registration_packages'">
+              <div v-if="row.registration_packages?.length" class="registration-mappings">
+                <el-tag v-for="mapping in row.registration_packages" :key="mapping.registration_package_id" :type="mapping.is_enabled ? 'success' : 'info'" effect="plain">{{ mapping.registration_number }} · {{ mapping.registration_model_name }} · {{ mapping.is_enabled ? '已启用' : '未启用' }}</el-tag>
+              </div>
+              <span v-else class="unmapped-registration">未映射注册证</span>
+            </template>
+            <el-tag v-else-if="column.key === 'status'" :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag>
+            <span v-else-if="column.key === 'created_at'">{{ formatTime(row.created_at) }}</span>
+            <span v-else>{{ row[column.key] }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="描述" width="200" show-overflow-tooltip />
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column label="操作" width="120" fixed="right" class-name="model-actions">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="sort_order" label="排序" width="80" />
-        <el-table-column prop="created_at" label="创建时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.created_at) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="moveRow(row, -1)" :disabled="tableData.indexOf(row) === 0" :icon="ArrowUp" />
-            <el-button size="small" @click="moveRow(row, 1)" :disabled="tableData.indexOf(row) === tableData.length - 1" :icon="ArrowDown" />
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+      </div>
 
       <div class="pagination-wrapper" v-if="total > 0">
         <el-pagination
@@ -61,15 +66,27 @@
           :total="total"
           :page-sizes="[10, 20, 50, 100]"
           layout="total, sizes, prev, pager, next"
-          @size-change="loadData"
-          @current-change="loadData"
+          @size-change="currentPage = 1"
         />
+      </div>
+        </section>
       </div>
     </el-card>
 
+    <el-dialog v-model="seriesDialogVisible" title="新增系列" width="min(400px, calc(100vw - 32px))" :before-close="closeSeriesDialog" @opened="seriesNameInput?.focus()">
+      <el-form label-width="80px" @submit.prevent="saveNewSeries">
+        <el-form-item label="系列名称"><el-input ref="seriesNameInput" v-model="seriesName" :disabled="savingSeries" maxlength="100" placeholder="请输入系列名称" @keyup.enter="saveNewSeries" /></el-form-item>
+      </el-form>
+      <template #footer><el-button :disabled="savingSeries" @click="closeSeriesDialog()">取消</el-button><el-button type="primary" :loading="savingSeries" @click="saveNewSeries">保存</el-button></template>
+    </el-dialog>
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑型号' : '新增型号'" width="500px">
       <el-form :model="form" label-width="100px">
+        <el-form-item label="所属系列">
+          <el-select v-model="form.series_id" :disabled="!!editingId" placeholder="请选择所属系列">
+            <el-option v-for="series in seriesList" :key="series.id" :label="series.name" :value="series.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="型号名称">
           <el-input v-model="form.name" placeholder="请输入型号名称" />
         </el-form-item>
@@ -96,36 +113,161 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
-import { getSeriesList, getModels, createModel, updateModel, deleteModel } from '../api/data'
+import { Plus, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
+import { getSeriesList, createSeries, getModels, getSubseries, saveSubseries, createModel, updateModel, deleteModel } from '../api/data'
+import { useRoute, useRouter } from 'vue-router'
+import SubseriesEditor from '../components/SubseriesEditor.vue'
+import TableColumnSettings from '../components/TableColumnSettings.vue'
+import ModelGroupDisplaySettings from '../components/ModelGroupDisplaySettings.vue'
+import { orderManagementGroups, rememberGroupSiblingOrder, orderModelCatalog, moveModelToTarget, visibleManagementGroups, loadPersonalList, savePersonalList } from '../utils/modelPersonalLayout'
+import { MODEL_TABLE_COLUMNS, loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
+import { applySharedMemberships, buildManagementGroups, loadCompleteModelCatalog, createGroupEditorRequest } from '../utils/modelManagementGroups'
+import { assignModelSubseriesPayload, modelFitsSubseries } from '../utils/assignModelSubseries'
 import { formatTime } from '../utils/modelHelpers'
 
+const columnStorageKey = 'models-table-column-layout-v1'
+const columnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const columnLayout = ref(loadColumnLayout(columnStorage, columnStorageKey, MODEL_TABLE_COLUMNS, message => ElMessage.warning(message)))
+const displayedColumns = computed(() => columnLayout.value.filter(column => column.visible))
+const columnStructureKey = computed(() => displayedColumns.value.map(column => `${column.key}:${column.fixed}`).join('|'))
+const applyColumnLayout = columns => {
+  columnLayout.value = normalizeColumnLayout(MODEL_TABLE_COLUMNS, columns)
+  saveColumnLayout(columnStorage, columnStorageKey, columnLayout.value, message => ElMessage.warning(message))
+}
+const resizeColumn = (width, _oldWidth, column) => {
+  if (!columnLayout.value.some(item => item.key === column.property)) return
+  applyColumnLayout(columnLayout.value.map(item => item.key === column.property ? { ...item, width: Math.max(30, width) } : item))
+}
+
 const seriesList = ref([])
-const selectedSeries = ref(null)
-const tableData = ref([])
+const seriesDialogVisible = ref(false), seriesName = ref(''), savingSeries = ref(false), seriesNameInput = ref(null)
+const openSeriesDialog = () => { seriesName.value = ''; seriesDialogVisible.value = true }
+const closeSeriesDialog = async done => {
+  if (savingSeries.value) return
+  if (seriesName.value.trim()) {
+    try { await ElMessageBox.confirm('系列尚未保存，确定放弃修改？', '未保存的系列', {confirmButtonText:'放弃修改',cancelButtonText:'继续编辑',type:'warning'}) }
+    catch { return }
+  }
+  seriesDialogVisible.value = false
+  if (typeof done === 'function') done()
+}
+const saveNewSeries = async () => {
+  if (savingSeries.value) return
+  const name = seriesName.value.trim()
+  if (!name) { ElMessage.warning('请输入系列名称'); return }
+  if (seriesList.value.some(series => series.name.trim() === name)) { ElMessage.warning('此系列已存在'); return }
+  savingSeries.value = true
+  try {
+    const created = await createSeries({ name })
+    seriesList.value = [...seriesList.value.filter(series => series.id !== created.id), created]
+    seriesDialogVisible.value = false
+    ElMessage.success('系列已新增，可在新增型号时选择')
+  } catch (error) { ElMessage.error(error.response?.data?.detail || '新增系列失败，请重试') }
+  finally { savingSeries.value = false }
+}
+const catalog = ref([])
+const sharedGroups = ref({})
+const assigningSubseries = ref(null)
+const assignSubseries = async (row, name) => {
+  if (assigningSubseries.value !== null || !name) return
+  assigningSubseries.value = row.id
+  try {
+    const latest = await getSubseries()
+    await saveSubseries(assignModelSubseriesPayload(latest, row.id, name))
+    ElMessage.success('已添加子系列，分组关系已同步')
+    await loadData()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || '添加失败，请重试')
+  } finally { assigningSubseries.value = null }
+}
+const selectedGroup = ref('all')
+const search = ref('')
+const loadError = ref('')
+const rowOrderKey = 'models-personal-row-order-v1'
+const groupDisplayKey = 'models-personal-group-display-v1'
+const savedRowOrder = ref(loadPersonalList(columnStorage, rowOrderKey, message => ElMessage.warning(message)))
+const hiddenGroupKeys = ref(loadPersonalList(columnStorage, groupDisplayKey, message => ElMessage.warning(message)))
+const groupOrderKey = 'models-personal-group-order-v1'
+const savedGroupOrder = ref(loadPersonalList(columnStorage, groupOrderKey, message => ElMessage.warning(message)))
+const allGroupNodes = computed(() => orderManagementGroups(buildManagementGroups(catalog.value, sharedGroups.value), savedGroupOrder.value))
+const allowGroupDrop = (source, target, type) => type !== 'inner' && target.key !== 'all' && source.parent === target.parent
+const rememberGroupDrop = (_source, target) => {
+  const siblings = target.parent.childNodes.map(node => node.key)
+  savedGroupOrder.value = rememberGroupSiblingOrder(allGroupNodes.value, siblings)
+  savePersonalList(columnStorage, groupOrderKey, savedGroupOrder.value, message => ElMessage.warning(message))
+}
+const groupNodes = computed(() => visibleManagementGroups(allGroupNodes.value, hiddenGroupKeys.value))
+const applyGroupDisplay = hidden => {
+  hiddenGroupKeys.value = hidden
+  savePersonalList(columnStorage, groupDisplayKey, hidden, message => ElMessage.warning(message))
+  if (!currentGroup.value) selectedGroup.value = 'all'
+}
+const currentGroup = computed(() => groupNodes.value.flatMap(node => [node, ...(node.children || [])]).find(node => node.key === selectedGroup.value))
+const filteredModels = computed(() => {
+  const ids = new Set(currentGroup.value?.ids || [])
+  const query = search.value.trim().toLocaleLowerCase()
+  return catalog.value.filter(model => ids.has(String(model.id)) && (!query || [model.name, model.description, ...(model.sub_series || [])].some(value => String(value || '').toLocaleLowerCase().includes(query))))
+})
+const tableData = computed(() => filteredModels.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
+const subseriesEditorRef = ref(null)
+const route = useRoute(), router = useRouter()
+let pageActive = true
+const editorRequest = createGroupEditorRequest({
+  isRequested: () => route.query.editSubseries === '1',
+  isActive: () => pageActive && route.path === '/models',
+  consume: () => {
+    const query = { ...route.query }; delete query.editSubseries
+    return router.replace({ path: route.path, query })
+  },
+  nextTick,
+  open: () => subseriesEditorRef.value?.open()
+})
+const openRequestedEditor = () => editorRequest.run()
+watch(() => route.query.editSubseries, openRequestedEditor)
+watch([search, selectedGroup], () => { currentPage.value = 1 })
+const selectGroup = node => { selectedGroup.value = node.key }
 const loading = ref(false)
-const total = ref(0)
+const total = computed(() => filteredModels.value.length)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const tableRef = ref(null)
 
-// 排序移动
-const moveRow = async (row, direction) => {
-  const idx = tableData.value.findIndex(m => m.id === row.id)
-  const newIdx = idx + direction
-  if (newIdx < 0 || newIdx >= tableData.value.length) return
-  const moved = tableData.value.splice(idx, 1)[0]
-  tableData.value.splice(newIdx, 0, moved)
-  const updates = tableData.value.map((m, i) => ({ id: m.id, sort_order: i }))
-  await Promise.all(updates.map(u => updateModel(u.id, { sort_order: u.sort_order })))
+// Personal ordering never rewrites the shared catalog's business sort_order.
+const draggedModelId = ref(null), dragOverId = ref(null)
+const modelIdAtEvent = event => event.target.closest('tr')?.querySelector('[data-model-id]')?.dataset.modelId
+const startModelDrag = (event, id) => {
+  draggedModelId.value = String(id)
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', String(id))
+}
+const clearModelDrag = () => { draggedModelId.value = null; dragOverId.value = null }
+const rowDragOver = event => { if (draggedModelId.value) dragOverId.value = modelIdAtEvent(event) || null }
+const moveModelByKeyboard = (id, direction) => {
+  if (loading.value) return
+  const index = filteredModels.value.findIndex(model => model.id === id)
+  const target = filteredModels.value[index + direction]
+  if (!target) return
+  catalog.value = moveModelToTarget(catalog.value, id, target.id)
+  savedRowOrder.value = catalog.value.map(model => String(model.id))
+  savePersonalList(columnStorage, rowOrderKey, savedRowOrder.value, message => ElMessage.warning(message))
+}
+const dropModelRow = event => {
+  const target = modelIdAtEvent(event)
+  if (draggedModelId.value && target && !loading.value) {
+    catalog.value = moveModelToTarget(catalog.value, draggedModelId.value, target)
+    savedRowOrder.value = catalog.value.map(model => String(model.id))
+    savePersonalList(columnStorage, rowOrderKey, savedRowOrder.value, message => ElMessage.warning(message))
+  }
+  clearModelDrag()
 }
 
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
 const form = reactive({
+  series_id: null,
   name: '',
   description: '',
   status: '生产中',
@@ -136,32 +278,30 @@ const loadSeries = async () => {
   try {
     const res = await getSeriesList()
     seriesList.value = res.items || []
-    if (seriesList.value.length > 0) {
-      selectedSeries.value = seriesList.value[0].id
-      await loadData()
-    }
+    await loadData()
   } catch (error) {
     console.error('加载系列失败:', error)
   }
 }
 
+let loadRequest = 0
 const loadData = async () => {
-  if (!selectedSeries.value) return
-
-  loading.value = true
+  const request = ++loadRequest
+  const isCurrent = () => request === loadRequest
+  clearModelDrag()
+  loading.value = true; loadError.value = ''; catalog.value = []; sharedGroups.value = {}
   try {
-    const res = await getModels(selectedSeries.value, {
-      skip: (currentPage.value - 1) * pageSize.value,
-      limit: pageSize.value
-    })
-    tableData.value = res.items || []
-    total.value = res.total || 0
+    const [models, groups] = await Promise.all([
+      loadCompleteModelCatalog(params => getModels(null, params), isCurrent), getSubseries()
+    ])
+    if (!isCurrent() || !models) return
+    sharedGroups.value = groups
+    catalog.value = orderModelCatalog([...applySharedMemberships(new Map(models.map(model => [model.id, model])), groups.groups).values()], savedRowOrder.value)
+    if (!currentGroup.value) selectedGroup.value = 'all'
+    currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil(total.value / pageSize.value)))
   } catch (error) {
-    console.error('加载失败:', error)
-    ElMessage.error('加载失败')
-  } finally {
-    loading.value = false
-  }
+    if (isCurrent()) loadError.value = error.response?.data?.detail || error.message || '加载失败，请重试'
+  } finally { if (isCurrent()) loading.value = false }
 }
 
 const getStatusType = (status) => {
@@ -175,6 +315,7 @@ const getStatusType = (status) => {
 
 const handleCreate = () => {
   editingId.value = null
+  form.series_id = null
   form.name = ''
   form.description = ''
   form.status = '生产中'
@@ -184,6 +325,7 @@ const handleCreate = () => {
 
 const handleEdit = (row) => {
   editingId.value = row.id
+  form.series_id = row.series_id
   form.name = row.name
   form.description = row.description || ''
   form.status = row.status || '生产中'
@@ -192,6 +334,7 @@ const handleEdit = (row) => {
 }
 
 const handleSave = async () => {
+  if (!editingId.value && !form.series_id) { ElMessage.warning('请选择所属系列'); return }
   if (!form.name) {
     ElMessage.warning('请输入型号名称')
     return
@@ -209,7 +352,7 @@ const handleSave = async () => {
       ElMessage.success('更新成功')
     } else {
       await createModel({
-        series_id: selectedSeries.value,
+        series_id: form.series_id,
         name: form.name,
         description: form.description,
         status: form.status,
@@ -230,7 +373,7 @@ const handleSave = async () => {
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确认删除型号 "${row.name}"？该操作将同时删除该型号的所有配置数据。`,
+      `确认删除型号 "${row.name}"（${seriesList.value.find(series => series.id === row.series_id)?.name || row.series_id}）？该操作将同时删除该型号的所有配置数据。`,
       '确认删除',
       {
         confirmButtonText: '确定',
@@ -250,13 +393,44 @@ const handleDelete = async (row) => {
   }
 }
 
-onMounted(() => {
-  loadSeries()
-})
+let initialized = false
+onMounted(async () => { await loadSeries(); initialized = true; openRequestedEditor() })
+onActivated(() => { pageActive = true; if (initialized) { loadData(); openRequestedEditor() } })
+onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invalidate(); ++loadRequest; loading.value = false })
 </script>
 
 <style scoped>
+.models-card > :deep(.el-card__header) { padding: 12px 16px; }
+.models-card { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; }
+.models-card > :deep(.el-card__body) { padding: 16px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.model-workspace { display: flex; gap: 16px; min-width: 0; min-height: 0; flex: 1; align-items: stretch; }
+.group-navigation { width: 256px; flex-shrink: 0; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; }
+.group-navigation-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--el-fill-color-light); border-bottom: 1px solid var(--el-border-color-lighter); font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
+.group-info { color: var(--el-text-color-placeholder); font-size: 14px; }
+.group-navigation :deep(.el-tree) { padding: 6px; flex: 1; min-height: 0; overflow: auto; font-size: 13px; }
+.group-node { display: flex; gap: 7px; align-items: center; width: 100%; min-width: 0; padding: 3px 8px 3px 0; }
+.group-node-label { white-space: normal; overflow-wrap: anywhere; line-height: 20px; flex: 1; }
+.group-node-icon { color: var(--el-text-color-placeholder); flex-shrink: 0; font-size: 14px; }
+.group-combination .group-node-label { font-weight: 500; }
+.group-count { flex-shrink: 0; min-width: 22px; padding: 0 5px; border-radius: 3px; text-align: center; font-size: 11px; line-height: 18px; color: var(--el-text-color-secondary); background: var(--el-fill-color-light); font-variant-numeric: tabular-nums; }
+.group-navigation :deep(.el-tree-node__content) { height: auto; min-height: 34px; margin: 2px 0; border-radius: 3px; border-left: 2px solid transparent; }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) { background: var(--el-color-primary-light-9); border-left-color: var(--el-color-primary); color: var(--el-color-primary); }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-node-icon,
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { color: var(--el-color-primary); }
+.group-navigation :deep(.el-tree-node.is-current > .el-tree-node__content) .group-count { background: var(--el-color-primary-light-8); }
+.model-results { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.model-table-area { flex: 1; min-height: 180px; }
+.model-toolbar { display: flex; gap: 16px; min-height: 32px; flex-shrink: 0; margin-bottom: 12px; align-items: center; font-size: 13px; }
+.model-search { width: 360px; max-width: 45%; }
+.model-toolbar > .el-button { margin-left: auto; }
+.model-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--el-text-color-primary); font-weight: 500; }
+.model-result-count { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }
+@media (max-width: 900px) { .model-workspace { flex-direction: column; } .group-navigation { width: 100%; max-height: 220px; flex-shrink: 0; } .group-navigation :deep(.el-tree) { max-height: 160px; } .model-toolbar { flex-wrap: wrap; } .model-search { flex: 1; min-width: 150px; max-width: 100%; } .card-header { flex-wrap: wrap; gap: 12px; } .header-actions { flex-wrap: wrap; } .model-results { width: 100%; } }
+.model-row-drag { display: inline-block; cursor: grab; color: var(--el-text-color-placeholder); padding: 2px 4px; }
+.model-results :deep(.model-drop-target td) { box-shadow: inset 0 2px 0 var(--el-color-primary); }
 .models-page {
+  height: 100%;
+  min-height: 400px;
   padding: 0;
 }
 
@@ -271,10 +445,13 @@ onMounted(() => {
   gap: 12px;
 }
 
+.model-results :deep(.model-actions .cell) { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; }
+.model-results :deep(.model-actions .el-button + .el-button) { margin-left: 0; }
 .registration-mappings { display: flex; flex-wrap: wrap; gap: 6px; }
 .unmapped-registration { color: #94a3b8; font-size: 12px; }
 
 .pagination-wrapper {
+  flex-shrink: 0;
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;

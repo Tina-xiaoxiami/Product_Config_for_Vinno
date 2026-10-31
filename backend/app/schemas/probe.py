@@ -51,6 +51,8 @@ class ProbeModelUpdate(BaseModel):
 
 class ProbeModelResponse(ProbeModelBase):
     id: int
+    application_count: int = 0
+    variant_items: List[ProbeModelVariantResponse] = Field(default_factory=list)
     model_config = {"from_attributes": True}
 
 class ProbeModelListResponse(BaseModel):

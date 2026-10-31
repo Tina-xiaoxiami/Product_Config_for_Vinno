@@ -170,3 +170,51 @@ def test_unrestricted_subseries_supports_same_product_in_multiple_markets(tmp_pa
     assert len([o for o in current['groups'][0]['options'] if o['value']=='VINNO 5'])==1
     saved=save_subseries_editor(current['groups'],current['revision'],catalog,{1:'China',2:'Oversea'})
     assert saved['groups'][0]['models']==['VINNO 5']
+
+
+def test_precise_members_survive_multiseries_roundtrip(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    from app.services.whitepaper_subseries import get_subseries_editor, save_subseries_editor, read_subseries
+    source = tmp_path / 'shared.json'
+    monkeypatch.setenv('WHITEPAPER_SUBSERIES_FILE', str(source))
+    catalog = [ProductModel(id=1, series_id=1, name='VINNO 5'), ProductModel(id=2, series_id=2, name='VINNO 5')]
+    parents = {1: 'China', 2: 'Oversea'}
+    before = get_subseries_editor(catalog, parents)
+    saved = save_subseries_editor([{'name': 'One market', 'series_names': ['China', 'Oversea'], 'model_ids': [1], 'models': []}], before['revision'], catalog, parents)
+    assert saved['groups'][0]['model_ids'] == [1]
+    assert saved['groups'][0]['series_names'] == ['China', 'Oversea']
+    assert read_subseries(catalog, parents)[0] == {1: ['One market'], 2: []}
+    saved = save_subseries_editor(saved['groups'], saved['revision'], catalog, parents)
+    assert saved['groups'][0]['model_ids'] == [1]
+    assert saved['groups'][0]['missing_models'] == []
+    assert json.loads(source.read_text())['sub_series'][0]['model_refs'] == [{'series': 'China', 'name': 'VINNO 5'}]
+    with pytest.raises(ValueError, match='不属于'):
+        save_subseries_editor([{'name': 'One market', 'series_names': ['Oversea'], 'model_ids': [1], 'models': []}], saved['revision'], catalog, parents)
+
+
+def test_new_editor_preserves_legacy_unmatched_member(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    from app.services.whitepaper_subseries import get_subseries_editor, save_subseries_editor
+    source = tmp_path / 'shared.json'
+    monkeypatch.setenv('WHITEPAPER_SUBSERIES_FILE', str(source))
+    source.write_text(json.dumps({'sub_series': [{'name': 'G', 'series': 'China', 'models': ['old']}]}))
+    catalog = [ProductModel(id=1, series_id=1, name='VINNO 5')]
+    before = get_subseries_editor(catalog, {1: 'China'})
+    saved = save_subseries_editor([{'name': 'G', 'series_names': ['China'], 'model_ids': [1], 'models': ['old']}], before['revision'], catalog, {1: 'China'})
+    assert saved['groups'][0]['missing_models'] == ['old']
+    assert saved['groups'][0]['model_ids'] == [1]
+
+
+def test_precise_missing_same_name_keeps_market_on_rename(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    from app.services.whitepaper_subseries import get_subseries_editor, save_subseries_editor
+    source = tmp_path / 'shared.json'
+    monkeypatch.setenv('WHITEPAPER_SUBSERIES_FILE', str(source))
+    refs = [{'series': 'China', 'name': 'VINNO 5'}, {'series': 'Oversea', 'name': 'VINNO 5'}]
+    source.write_text(json.dumps({'sub_series': [{'name': 'G', 'series': '', 'series_names': ['China', 'Oversea'], 'models': ['VINNO 5'], 'model_refs': refs}]}))
+    catalog = [ProductModel(id=1, series_id=1, name='VINNO 5')]
+    before = get_subseries_editor(catalog, {1: 'China', 2: 'Oversea'})
+    before['groups'][0]['name'] = 'Renamed'
+    saved = save_subseries_editor(before['groups'], before['revision'], catalog, {1: 'China', 2: 'Oversea'})
+    assert saved['groups'][0]['unresolved_refs'] == [refs[1]]
+    assert json.loads(source.read_text())['sub_series'][0]['model_refs'] == refs

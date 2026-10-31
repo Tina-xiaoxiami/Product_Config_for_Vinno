@@ -11,9 +11,7 @@ const routes = [
       },
       {
         path: 'series',
-        name: 'Series',
-        component: () => import('../views/Series.vue'),
-        meta: { title: '系列管理' }
+        redirect: '/models'
       },
       {
         path: 'models',
@@ -32,6 +30,12 @@ const routes = [
         name: 'Compare',
         component: () => import('../views/Compare.vue'),
         meta: { title: '配置对比' }
+      },
+      {
+        path: 'version-compare',
+        name: 'VersionCompare',
+        component: () => import('../views/VersionCompare.vue'),
+        meta: { title: '版本对比' }
       },
       {
         path: 'versions',
@@ -90,8 +94,8 @@ const routes = [
       ,
       {
         path: 'release',
-        name: 'FeatureRelease',
-        component: () => import('../views/FeatureRelease.vue'),
+        name: 'ReleaseWorkspace',
+        component: () => import('../views/ReleaseWorkspace.vue'),
         meta: { title: '功能发布' }
       }
     ]
