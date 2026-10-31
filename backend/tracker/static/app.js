@@ -3787,11 +3787,11 @@ function scenarioFeatureMarkup(data, query) {
 }
 
 function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
-  const headings = /^(临床意义|功能描述|功能说明|参数|测量结果|操作步骤|效果图示|适用范围)[：:]?$/;
+  const headings = /^(临床意义|功能描述|功能说明|参数|测量结果|操作步骤|效果图示|适用范围|兼容性说明)[：:]?$/;
   const lines = String(text || '').split(/\r?\n/);
   const groups = [{title: '', lines: []}];
   for (const line of lines) {
-    const heading = line.trim().match(headings);
+    const heading = line.trim().match(headings) || line.trim().match(/^##\s+(.+?)\s*$/);
     if (heading) groups.push({title: heading[1], lines: []});
     else groups[groups.length - 1].lines.push(line);
   }

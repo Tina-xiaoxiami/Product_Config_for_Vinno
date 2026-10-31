@@ -346,7 +346,7 @@ if (typeof document !== 'undefined') {
       <p class="release-review-hint">${row ? '本次保存会同时采纳这条更新记录，并新增一条正文修订。' : '这里只修改正文，不改变版本更新记录的采纳或忽略结论。'}</p><label>${row ? '更新后的内容' : '完整正文'}<textarea data-review-draft rows="12" maxlength="100000" required>${escapeHtml(initial)}</textarea></label>
       <label>修改原因（可选）<input data-review-reason maxlength="2000" placeholder="例如：更新测量方式说明"></label>
       <details ${row ? 'open ' : ''}class="release-review-patch-preview"><summary>查看与已保存正文的区别</summary><div data-review-preview></div></details>
-      <p class="release-review-hint">暂存仅保留当前标签页草稿；保存才更新左侧正文和修订历史。</p>
+      <p class="release-review-hint">标题需单独一行，自定义标题可写“## 标题名称”。暂存仅保留当前标签页草稿；保存才更新左侧正文和修订历史。</p>
       <p data-review-dialog-status role="status"></p><div class="dialog-actions"><button type="button" class="ghost-button" data-review-close>放弃草稿</button><button type="button" class="ghost-button" data-review-keep-close>暂存草稿并关闭</button><button type="submit" class="primary-button">${row ? '保存正文并采纳记录' : '保存正文'}</button></div></form>`);
     if (!dialog) return;
     const session = {context: ctx, busy: false, error: ''};

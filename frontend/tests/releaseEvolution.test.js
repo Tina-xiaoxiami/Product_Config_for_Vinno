@@ -20,6 +20,11 @@ test('章节标题、步骤、参数和后续补充分区，文字转义保留',
  const html=render.scenarioDocumentMarkup('新增VATT\n适用探头/应用：S1-8C\n临床意义：\n完整临床说明\n参数：\n标尺：0-4\n操作步骤：\n点击Measure；\n新增支持A；',[{operation:'append',version:'1.51.80',after:'新增支持A；'}])
  assert.match(html,/<h4>临床意义<\/h4>/);assert.match(html,/<ol class="feature-steps">/);assert.match(html,/feature-parameters/);assert.match(html,/feature-scope/);assert.doesNotMatch(html,/版本 1.51.80 补充/)
  assert.doesNotMatch(render.scenarioDocumentMarkup('<script>bad</script>'),/<script>/)
+ const headings=render.scenarioDocumentMarkup('兼容性说明：\n1.51.90进行了图像优化。\n## 自定义标题<script>\n这里是说明内容。')
+ assert.match(headings,/<h4>兼容性说明<\/h4><p>1.51.90进行了图像优化。<\/p>/)
+ assert.match(headings,/<h4>自定义标题&lt;script&gt;<\/h4>/)
+ assert.doesNotMatch(headings,/<script>|<h4>##/)
+ assert.match(render.scenarioDocumentMarkup('效果图示：\n兼容性说明：正文仍在同一行'),/<p>兼容性说明：正文仍在同一行<\/p>/)
 })
 test('基线图示带版本来源，图片不可用仍提供原文入口',()=>{
  const base={version:'1.51.30',section:{has_images:true,images_complete:true,blocks:[{type:'image',data_url:'data:image/png;base64,AA=='}]}}
