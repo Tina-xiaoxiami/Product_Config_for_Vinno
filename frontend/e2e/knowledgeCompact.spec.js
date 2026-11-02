@@ -26,6 +26,14 @@ test('knowledge query uses three scope fields and keeps status beside search', a
   const searchBox = await search.boundingBox()
   expect(statusBox.x + statusBox.width).toBeLessThan(searchBox.x)
   expect(Math.abs(statusBox.y - searchBox.y)).toBeLessThan(4)
+  expect(statusBox.height).toBe(32)
+  const marketField = page.locator('.qa-scope-controls > .el-select').first()
+  const modelField = page.locator('.qa-scope-controls > .el-select').nth(1)
+  const versionField = page.locator('.qa-scope-controls > .el-input')
+  expect((await marketField.boundingBox()).width).toBeLessThanOrEqual(200)
+  expect((await modelField.boundingBox()).width).toBeLessThanOrEqual(320)
+  expect((await versionField.boundingBox()).width).toBeLessThanOrEqual(200)
+  expect((await versionField.boundingBox()).height).toBe(32)
 
   async function chooseSelect(name, option) {
     const control = page.locator('.qa-scope-controls .el-select').filter({ has: page.getByRole('combobox', { name, exact: true }) })

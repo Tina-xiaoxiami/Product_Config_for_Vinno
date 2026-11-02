@@ -1644,8 +1644,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-filter-options .el-radio-group { display: flex; flex-direction: column; align-items: flex-start; }
 .qa-pagination { margin-top: 10px; justify-content: flex-end; }
 .qa-scope-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.qa-scope-controls > * { flex: 1 1 160px; min-width: 140px; }
-.qa-scope-controls > :nth-child(2) { flex-grow: 2; }
+.qa-scope-controls > * { flex: 0 1 180px; min-width: 140px; max-width: 100%; }
+.qa-scope-controls > :nth-child(2) { flex-basis: 300px; }
 .qa-scope-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
 .qa-queue-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .qa-queue-scope > span { color: #64748b; font-size: 12px; }
