@@ -134,7 +134,12 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
                                     and bool(re.search(r'支持.*(?:系列产品|产品|机型)', sentence)))
                 or bool(re.search(r'\bthis (?:version|release) (?:is|supports?)\b.*(?:supporting|supports?).*(?:series products|products|models)', raw, re.I))
                 or bool(re.search(r'\bthis is a (?:unified|consolidated).*release.*supporting.*(?:series products|products|models)', raw, re.I)))
-            positive = release_declaration or bool(re.search(r'适用于|适用型号|首次发放.*包括|新增.*机型', sentence)) and not re.search(r'^(?:与|对比|相比)', sentence)
+            version_application = re.search(r'(?:本|该|此)(?:次)?(?:软件)?版本(?:同样|也|还)?适用于(.+)', sentence)
+            application_object = re.split(r'[，,；;]', version_application[1], 1)[0] if version_application else ''
+            whole_version_application = bool(version_application) and not re.search(r'功能|应用|探头|模式', application_object)
+            model_field = bool(re.match(r'^(?:适用型号|适用机型|适用产品)[:：]', sentence))
+            positive = (release_declaration or whole_version_application or model_field
+                        or bool(re.search(r'首次发放.*包括|新增.*机型', sentence))) and not re.search(r'^(?:与|对比|相比)', sentence)
             if positive and not re.search(r'不适用|未适用|不支持.*(?:升级|型号)', sentence):
                 declare(names, 'series' if re.search(r'系列|\bseries\b', raw, re.I) else 'exact', ref)
             legacy_range = re.search(_VERSION_RANGE, raw, re.I)
