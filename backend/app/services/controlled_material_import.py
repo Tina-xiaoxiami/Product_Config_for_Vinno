@@ -192,10 +192,18 @@ def import_controlled_product_materials(
     controlled_root: str | Path,
     *,
     apply: bool = False,
+    materials: list[ControlledMaterial] | None = None,
 ) -> ControlledMaterialImportResult:
     """Plan or apply an idempotent import of controlled product materials."""
 
-    materials = discover_controlled_product_materials(controlled_root)
+    materials = discover_controlled_product_materials(controlled_root) if materials is None else list(materials)
+    resolved_root = Path(controlled_root).expanduser().resolve()
+    for material in materials:
+        path = material.path.expanduser().resolve()
+        if not path.is_relative_to(resolved_root) or not path.is_file():
+            raise ValueError("资料必须是受控目录中的现有文件")
+        if _sha256(path) != material.sha256:
+            raise ValueError("受控资料摘要已变化，请重新核对")
     counts: Counter[str] = Counter(scanned=len(materials), ready=0, inserted=0)
     items: list[ControlledMaterialImportItem] = []
     connection = sqlite3.connect(Path(database_path).expanduser().resolve())
