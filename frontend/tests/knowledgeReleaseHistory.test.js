@@ -48,3 +48,24 @@ test('the existing hub exposes both operations and separates unresolved sources 
   assert.match(trace, /未确认适用范围/)
   assert.match(trace, /preview_url/)
 })
+
+test('hardware constraints remain visible even when separate from a keyword match', () => {
+  const view = readFileSync(new URL('../src/components/KnowledgeHistoryTrace.vue', import.meta.url), 'utf8')
+  assert.match(view, /chain.detected_conditions/)
+  assert.match(view, /doc.detected_conditions/)
+})
+
+test('a failed applicability save retains the draft and the reviewer identity', async () => {
+  const source = readFileSync(new URL('../src/components/KnowledgeReleaseHistoryWorkspace.vue', import.meta.url), 'utf8')
+  const form = { document_ids: [1], product_model_ids: [9], country: 'CN', market: 'domestic', release_line: 'V6 POC', conditions: '仅新硬件', evidence_reference: '第3页', confirmed_by: '当前用户' }
+  const context = { bindingForm: form, savingBinding: { value: false }, bindingError: { value: '' }, bindingBaseline: { value: 'original' },
+    saveReleaseHistoryBindings: async () => { throw { response: { data: { detail: '文件已变化' } } } }, invalidateTrace() {}, refreshBindings: async () => {}, ElMessage: { success() {} } }
+  const start = source.indexOf('const saveBindings ='), end = source.indexOf('\nconst deactivateBinding',start)
+  const save = new Function(...Object.keys(context), `const bindingSession = 1; ${source.slice(start,end)}; return saveBindings`)(...Object.values(context))
+  await save()
+  assert.equal(context.bindingForm.confirmed_by, '当前用户')
+  assert.equal(context.bindingForm.conditions, '仅新硬件')
+  assert.match(context.bindingError.value, /文件已变化/)
+  assert.equal(context.bindingBaseline.value, 'original')
+  assert.equal(context.savingBinding.value, false)
+})
