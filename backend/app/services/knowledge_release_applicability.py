@@ -52,7 +52,7 @@ def source_cover_version(line: str) -> str | None:
 
 def model_clauses(value: str) -> list[str]:
     """Split explicit subjects at comparisons/contrasts, preserving source words."""
-    value = re.sub(r'(?<=[A-Za-z)])\.(?=\s+[A-Z])', '\n', value)
+    value = re.sub(r'(?<=[A-Za-z)])\.(?=\s+(?:[A-Z]|\d+\.\s))', '\n', value)
     value = re.sub(r'(?<=[^\s])(?=(?:但|而|然而)(?:VINNO|V)\s*\d)', '\n', value, flags=re.I)
     return [part.strip() for part in re.split(
         r'[。！？!?；;\n]|[，,](?=\s*(?:与|对比|相比|但|而|然而|另外|同时|(?:VINNO\s*|V\s*)\d{1,2}(?:PRO|EXP|S|P|E)?\s*(?:新增|添加|取消|移除|不支持|支持|适用|更新|升级)))', value, flags=re.I) if part.strip()]
