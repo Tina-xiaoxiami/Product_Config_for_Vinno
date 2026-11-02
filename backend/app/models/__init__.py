@@ -2,6 +2,7 @@
 数据模型初始化
 """
 from app.models.series import ProductSeries
+from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease
 from app.models.product_model import ProductModel
 from app.models.config import ConfigItem, ConfigValue
 from app.models.version import ConfigVersion, ChangeLog

@@ -214,6 +214,7 @@ async def import_product(
     db: AsyncSession = Depends(get_db)
 ):
     """导入产品 Excel：VINNO 6_探头-功能配置.xlsx（支持按 config_group 批量导入）"""
+    raise HTTPException(409, "请使用共同总集的 Excel 草稿导入入口，避免直接覆盖正式配置")
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="只支持 Excel 文件")
 
