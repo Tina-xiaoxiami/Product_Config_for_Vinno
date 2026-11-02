@@ -338,3 +338,32 @@ async def test_negated_change_verbs_do_not_invent_additions_removals_or_conflict
         assert second and all(event['change_type'] == 'unknown' for event in second)
         assert result['assessment'] == 'conditional_evidence'
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_real_cumulative_docx_table_does_not_inherit_last_paragraph_version(database):
+    from docx import Document
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.services.knowledge_content import extract_registered_document
+    source = database.parent / 'cumulative.docx'
+    doc = Document()
+    doc.add_heading('Release Note 1.14.20', level=1)
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = '新增针增益调节。'
+    doc.add_heading('Release Note 1.14.40', level=1)
+    doc.add_paragraph('其他图像处理改进。')
+    doc.save(source)
+    sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    with closing(sqlite3.connect(database)) as c, c:
+        c.execute('''UPDATE knowledge_documents SET file_path=?,file_name=?,mime_type=?,sha256=? WHERE id=1''',
+            (str(source), source.name, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sha))
+    client, engine = await _client(database)
+    async with async_sessionmaker(engine)() as session:
+        await extract_registered_document(session, 1, force=True)
+    async with client:
+        await _bind(client, (1,))
+        result = await _trace(client)
+        table = next(event for event in result['events'] if '表格' in event['source_ref'])
+        assert table['event_version'] is None
+        assert table['event_version_basis'] == 'unresolved'
+        assert result['assessment'] == 'conditional_evidence'
+    await engine.dispose()
