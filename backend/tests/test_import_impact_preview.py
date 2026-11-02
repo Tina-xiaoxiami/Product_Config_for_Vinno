@@ -24,6 +24,25 @@ async def _database_state(db):
 
 
 @pytest.mark.asyncio
+async def test_preview_audits_disabled_model_changes_without_reenabling_or_persisting(db):
+    from app.models import ProductModel
+
+    await _seed_config(db, with_snapshot=True)
+    model = await db.get(ProductModel, 1)
+    model.is_enabled = False
+    await db.commit()
+    before = await _database_state(db)
+    impact = (await preview_import(_upload(_workbook(
+        [("China", f"M//{SOURCE_UUID}")], values=["FINAL", "NEXT", "SELECT", "DONE"]
+    )), db))["impact"]
+    assert impact["modified"] == 1
+    assert impact["changed_cells"] == 1
+    assert impact["changes"][0]["old_value"] == "CURRENT"
+    assert impact["changes"][0]["new_value"] == "NEXT"
+    assert await _database_state(db) == before
+
+
+@pytest.mark.asyncio
 async def test_preview_impact_compares_current_work_not_published_baseline(db):
     await _seed_config(db, with_snapshot=True)
     value = await db.scalar(select(ConfigValue))
