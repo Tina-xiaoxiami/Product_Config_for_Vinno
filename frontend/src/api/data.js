@@ -288,3 +288,7 @@ export const checkSubmissionVersion = ({ seriesIds, versionNumber }) => {
   params.set('version_number', versionNumber || '')
   return api.get('/drafts/version-check', { params })
 }
+
+export const getFeatureNameReviews = id => api.get(`/features/standards/reviews/${id}`)
+export const confirmFeatureNames = (id, data) => api.post(`/features/standards/reviews/${id}`, data)
+export const revokeFeatureNameReview = (id, review) => api.post(`/features/standards/reviews/${id}/${review}/revoke`)

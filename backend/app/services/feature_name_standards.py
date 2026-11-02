@@ -248,6 +248,7 @@ async def _load_feature_index(session: AsyncSession) -> dict:
             text(
                 """
                 SELECT f.id, f.group_id, COALESCE(g.name, '') AS group_name, f.name,
+                       COALESCE(f.ipn, '') AS primary_ipn,
                        COALESCE(f.primary_cn_name, '') AS primary_cn_name,
                        COALESCE(f.primary_en_name, '') AS primary_en_name,
                        COALESCE(f.identity_status, '') AS identity_status,
@@ -277,6 +278,7 @@ async def _load_feature_index(session: AsyncSession) -> dict:
         feature_id = int(row.id)
         by_feature[feature_id] = {
             "id": feature_id,
+            "primary_ipn": row.primary_ipn,
             "group_id": int(row.group_id) if row.group_id is not None else None,
             "group_name": row.group_name,
             "legacy_name": row.name or "",
@@ -291,6 +293,7 @@ async def _load_feature_index(session: AsyncSession) -> dict:
             "names_cn": [],
             "names_en": [],
             "config_ipn": "",
+            "primary_links": [],
             "config_cn_desc": "",
             "config_en_desc": "",
         }
@@ -309,7 +312,7 @@ async def _load_feature_index(session: AsyncSession) -> dict:
         await session.execute(
             text(
                 """
-                SELECT link.feature_id, item.ipn, item.zh_desc, item.en_desc
+                SELECT link.feature_id, item.id AS item_id, item.ipn, item.zh_desc, item.en_desc
                 FROM feature_config_item_links link
                 JOIN config_items item ON item.id = link.config_item_id
                 WHERE link.review_status = 'approved' AND link.relation_type = 'primary'
@@ -320,8 +323,12 @@ async def _load_feature_index(session: AsyncSession) -> dict:
     ).all()
     for row in link_rows:
         feature = by_feature.get(int(row.feature_id))
-        if feature is None or feature["config_ipn"]:
+        if feature is None:
             continue
+        feature['primary_links'].append({'item_id':row.item_id,'ipn':row.ipn or '', 'cn':row.zh_desc or '', 'en':row.en_desc or ''})
+        if feature['config_ipn']:
+            continue
+        feature["config_item_id"] = row.item_id
         feature["config_ipn"] = row.ipn or ""
         feature["config_cn_desc"] = row.zh_desc or ""
         feature["config_en_desc"] = row.en_desc or ""
@@ -730,6 +737,10 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         feature_id: _config_check(feature, standard_entry_by_feature.get(feature_id))
         for feature_id, feature in features.items()
     }
+    for feature_id, feature in features.items():
+        if len(feature['primary_links']) > 1:
+            config_checks[feature_id].update(severity='ambiguous', message='关联了多个已确认的主IPN，请先在功能管理中核对对应关系',
+                                             ipn=', '.join(link['ipn'] for link in feature['primary_links']))
     for entry in entries:
         feature_id = entry["feature_id"]
         if feature_id is None or entry["severity"] == "ok":
@@ -805,6 +816,17 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         if flag["severity"] == "ok":
             flag["severity"] = "uncovered" if flag.get("uncovered") else "ok"
 
+    from copy import deepcopy
+    from app.services.feature_name_reviews import decorate_checks
+    await decorate_checks(session, features, flags_by_feature)
+    review_flags = _build_flag_index(features, deepcopy(flags_by_feature))
+    for fid, flag in list(flags_by_feature.items()):
+        active = [c['severity'] for c in flag['checks'] if not c['reviewed'] and c['severity'] not in {'ok', 'unlinked'}]
+        if not active:
+            del flags_by_feature[fid]
+        else:
+            flag['severity'] = max(active, key=lambda value: severity_rank.get(value, 0))
+
     summary = {
         "ok": sum(1 for entry in entries if entry["severity"] == "ok"),
         "config_differs": sum(
@@ -834,27 +856,21 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         "standards": entries,
         "uncovered_features": uncovered_features,
         "flags": _build_flag_index(features, flags_by_feature),
+        "review_flags": review_flags,
     }
 
 
 def _build_flag_index(features: dict[int, dict], flags_by_feature: dict[str, dict]) -> dict:
     """按功能ID 和按名称归一化键建立索引，方便前端在任何位置显示提示。"""
 
-    by_name: dict[str, dict] = {}
-    for feature_id_str, flag in flags_by_feature.items():
-        feature = features.get(int(feature_id_str))
-        if feature is None:
-            continue
-        for value in (
-            feature["cn_name"],
-            feature["legacy_name"],
-            feature["en_name"],
-            *feature["names_cn"],
-            *feature["names_en"],
-        ):
+    names_by_key: dict[str, set[int]] = {}
+    for fid, feature in features.items():
+        for value in (feature['cn_name'], feature['legacy_name'], feature['en_name'], *feature['names_cn'], *feature['names_en']):
             key = normalize_feature_name_key(value)
             if key:
-                by_name.setdefault(key, flag)
+                names_by_key.setdefault(key, set()).add(fid)
+    by_name = {key: flags_by_feature[str(next(iter(ids)))] for key, ids in names_by_key.items()
+               if len(ids) == 1 and str(next(iter(ids))) in flags_by_feature}
     return {"by_feature": flags_by_feature, "by_name": by_name}
 
 
@@ -868,5 +884,6 @@ async def feature_name_standard_flags(session: AsyncSession) -> dict:
         "last_imported_at": audit["last_imported_at"],
         "source_file": audit["source_file"],
         "by_feature": audit["flags"]["by_feature"],
+        "checks_by_feature": audit["review_flags"]["by_feature"],
         "by_name": audit["flags"]["by_name"],
     }
