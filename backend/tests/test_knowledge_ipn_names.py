@@ -217,15 +217,20 @@ async def test_explicit_ipn_disambiguates_same_current_name_and_never_selects_co
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('prefix',['新增','并非','不是','建议','仅新增','请确保','尚未支持'])
-async def test_narrative_prefix_remains_intact_when_name_is_bound_by_the_question(tmp_path, prefix):
+@pytest.mark.parametrize('prefix_in_title', [False, True])
+async def test_narrative_prefix_remains_intact_when_name_is_bound_by_the_question(tmp_path, prefix, prefix_in_title):
     path = tmp_path / 'qa.db'; _database(path)
     with closing(sqlite3.connect(path)) as c, c:
         c.execute('UPDATE knowledge_answers SET answer_text=? WHERE id=1', (f'结论：{prefix}胸膜自动识别（IPN 6000317）为选配。',))
+        if prefix_in_title:
+            c.execute('UPDATE knowledge_questions SET question_text=? WHERE id=1', (f'{prefix}胸膜自动识别在V10系列是标配吗？',))
     client, engine = await _client_for(path)
     async with client:
         result = (await client.get('/api/knowledge/questions/1')).json()
     await engine.dispose()
     assert result['answer']['display_answer_text'] == f'结论：{prefix}胸膜自动测量（IPN 6000317）为选配。'
+    if prefix_in_title:
+        assert result['display_question_text'] == f'{prefix}胸膜自动测量在V10系列是标配吗？'
 
 
 @pytest.mark.asyncio
