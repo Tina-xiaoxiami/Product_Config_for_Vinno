@@ -148,7 +148,7 @@ onBeforeUnmount(() => { [topicRequests,specRequests,versionRequests,snapshotRequ
 .parameter-filter-header { display: inline-flex; align-items: center; gap: 3px; }
 .parameter-filter-header .active { color: var(--el-color-primary); }
 .parameter-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
-.parameter-field-row { display: grid; grid-template-columns: 1.4fr 1.4fr 1fr 100px auto; gap: 7px; margin-bottom: 8px; }
+.parameter-field-row { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr) 100px auto; gap: 7px; margin-bottom: 8px; }
 .parameter-answer { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow: auto; font: inherit; line-height: 1.65; }
 @media (max-width: 650px) { .parameter-form-grid { grid-template-columns: 1fr; } .parameter-field-row { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 </style>
