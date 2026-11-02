@@ -181,3 +181,19 @@ async def test_ambiguous_current_name_does_not_select_first_of_different_ipns(tm
         result = (await client.post('/api/knowledge/questions/ask', json={'question':'胸膜自动测量在V10系列是标配吗？','scope':SCOPE})).json()
     await engine.dispose()
     assert result['status'] == 'pending' and result['answer'] is None
+
+
+def test_ambiguous_long_name_blocks_a_unique_short_substring_projection():
+    from app.services.knowledge_names import KnowledgeNameContext
+    context = KnowledgeNameContext(current={'1111111':'新自动测量','2222222':'自动测量(2D)','3333333':'自动测量(2D)'},
+                                   item_ids={'1111111':1,'2222222':2,'3333333':3})
+    context.add_alias('自动测量','1111111')
+    context.add_alias('自动测量(2D)','2222222')
+    context.add_alias('自动测量(2D)','3333333')
+    assert context.project('自动测量(2D)为选配') == ('自动测量(2D)为选配', [])
+
+
+def test_narrative_prefix_is_not_registered_as_a_feature_name():
+    from app.services.knowledge_names import _anchors
+    assert _anchors('结论：新增胸膜自动识别（IPN 6000317）为选配。') == []
+    assert _anchors('结论：胸膜自动识别（IPN 6000317）为选配。') == [('胸膜自动识别','6000317')]
