@@ -228,7 +228,7 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='', *, mo
                 # following missing-button object explicitly described here.
                 for index, part in enumerate(parts):
                     if index and any(term in _normalize(part) for term in topics):
-                        governing = re.fullmatch(r'\s*(修复|优化).*?(?:布局|模式|应用|界面|场景)(?:下|中|时)\s*', parts[index-1])
+                        governing = re.fullmatch(r'\s*(?:\d+[、.)]\s*)?(修复|优化).*?(?:布局|模式|应用|界面|场景)(?:下|中|时)\s*', parts[index-1])
                         if governing:
                             action_text = governing[1] + ' ' + action_text
                 change, _ = _classify_change(action_text, action_text, False)
