@@ -42,6 +42,7 @@ test('gap filters retain unknown candidates but distinguish later and explicitly
   assert.equal(coverageItems(report({ items }), false, '1.14.81').length, 1)
   const many = Array.from({ length: 250 }, (_,i) => ({ key: String(i), issues: issue }))
   assert.equal(coverageItems(report({ items: many }), true).length, 250)
+  assert.equal(coverageItems(report({ items: [{ key: 'not-current-gap', is_gap: false, issues: issue }] }), true).length, 0)
 })
 
 test('status labels keep unrecognized scope and unsupported formats explicit', () => {
