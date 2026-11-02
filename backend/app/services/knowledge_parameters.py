@@ -144,10 +144,11 @@ async def save_spec(db: AsyncSession, topic_id: int, payload: dict, spec_id: int
         cleaned = {field: payload[field].strip() for field in ('name', 'ipn', 'evidence_reference', 'confirmed_by')}
         if not all(cleaned.values()):
             raise ParameterError('规格名称、IPN、依据和实际核对人均须填写')
-        matches = (await db.execute(text('SELECT id FROM config_items WHERE TRIM(ipn)=:ipn'), {'ipn': cleaned['ipn']})).all()
-        if len(matches) != 1:
-            raise ParameterError('IPN不存在或对应多个配置项，请先核实身份')
+        old = await _spec(db, spec_id, topic_id) if spec_id is not None else None
         active = payload.get('is_active', True)
+        matches = (await db.execute(text('SELECT id FROM config_items WHERE TRIM(ipn)=:ipn'), {'ipn': cleaned['ipn']})).all()
+        if len(matches) != 1 and (active or old is None or old['ipn'] != cleaned['ipn']):
+            raise ParameterError('IPN不存在或对应多个配置项，请先核实身份')
         if active and (await db.execute(text('''SELECT id FROM knowledge_parameter_specs
             WHERE topic_id=:topic AND ipn=:ipn AND is_active=1 AND (:id IS NULL OR id<>:id)'''),
             {'topic': topic_id, 'ipn': cleaned['ipn'], 'id': spec_id})).first():
@@ -159,7 +160,7 @@ async def save_spec(db: AsyncSession, topic_id: int, payload: dict, spec_id: int
                 VALUES (:topic,:name,:ipn,:values,:evidence_reference,:confirmed_by,1,:active) RETURNING id'''), params)
             spec_id, revision = int(result.scalar_one()), 1
         else:
-            old = await _spec(db, spec_id, topic_id)
+            assert old is not None
             if old['revision'] != payload['expected_revision']:
                 raise ParameterConflict('规格已被修改，请刷新后再保存')
             revision = old['revision'] + 1
@@ -185,6 +186,16 @@ async def _snapshot(db: AsyncSession, version_id: int) -> tuple[dict, dict]:
         source = json.loads(row['snapshot_data'])
         if not isinstance(source, dict) or not isinstance(source.get('models'), list):
             raise ValueError('快照缺少有效机型列表')
+        raw_ids = []
+        for model in source['models']:
+            if not isinstance(model, dict) or isinstance(model.get('id'), bool):
+                raise ValueError('快照机型身份无效')
+            model_id = int(model['id'])
+            if model_id <= 0:
+                raise ValueError('快照机型编号无效')
+            raw_ids.append(model_id)
+        if len(raw_ids) != len(set(raw_ids)):
+            raise ValueError('快照原始机型列表存在重复身份')
         snapshot = await normalize_snapshot(db, row['series_id'], source)
         models = snapshot['models']
         ids = [int(model['id']) for model in models]
