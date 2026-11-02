@@ -220,3 +220,13 @@ test('仅标题格式变化的修订明确说明格式差别，不误报正文�
  const html=helpers.releaseReviewBodyHistoryMarkup(items,1,2)
  assert.match(html,/旧稿兼容格式 → 显式 ## 标题/);assert.doesNotMatch(html,/正文没有变化/)
 })
+
+test('更新记录空态紧凑显示，仍保留处理历史和已忽略记录的撤销入口',()=>{
+ const empty=helpers.releaseReviewLogMarkup({change_log:[]},'VATT')
+ assert.match(empty,/暂无更新记录/);assert.match(empty,/data-release-review-history="log"/)
+ assert.doesNotMatch(empty,/release-review-hint|还没有已记录/)
+ const ignored=helpers.releaseReviewLogMarkup({change_log:[{id:'ignored',version:'1.51.90',text:'原记录',log_status:'ignored'}]},'VATT')
+ assert.match(ignored,/data-release-review-undo="ignored"/);assert.match(ignored,/已忽略（1）/)
+ const adopted=helpers.releaseReviewLogMarkup({change_log:[{id:'a',version:'1.51.90',text:'更新描述',log_status:'adopted',review_action:'adopt'}]},'VATT')
+ assert.match(adopted,/1 条记录/);assert.match(adopted,/更新描述/);assert.match(adopted,/data-release-review-include="a"/)
+})
