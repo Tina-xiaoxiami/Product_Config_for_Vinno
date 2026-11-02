@@ -89,6 +89,16 @@ def test_child_gain_aliases_share_existing_query_forms_without_aliasing_parent_f
     assert '穿刺增强' not in forms
 
 
+def test_numbered_real_chinese_button_fix_keeps_governing_fix_predicate():
+    from app.services.knowledge_release_history import _events
+    excerpt = '3、 修复 V10 系列默认 UI 布局下,缺少针增益和自动穿刺增强按钮的问题'
+    events = _events({'id': 88, 'version': '1.14.81', 'title': 'V系列 Release Note'},
+        [{'content': excerpt, 'source_ref': '第8页', 'page_number': 8}],
+        '针增益调节', model_name='VINNO 10')
+    assert events[0]['change_type'] == 'fixed'
+    assert events[0]['excerpt'] == excerpt
+
+
 def test_english_combined_upgrade_methods_are_preserved_without_selecting_one():
     content = '''1.14.80 (VINNO10/6/5 series)
 Release Note
