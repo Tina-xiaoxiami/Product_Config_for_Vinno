@@ -99,13 +99,13 @@ def test_apply_preserves_rows_relations_indexes_triggers_and_sequence_high_water
     report = migrate_knowledge_scopes(database, apply=True)
     assert report["status"] == "applied"
     assert Path(report["backup"]).is_file()
-    assert len(_rows(Path(report["backup"]), "knowledge_questions")[0]) == 9
+    assert len(_rows(Path(report["backup"]), "knowledge_questions")[0]) == 8
     assert all(_rows(database, table) == rows for table, rows in retained.items())
     with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
         question = connection.execute("SELECT * FROM knowledge_questions WHERE id=5").fetchone()
-        assert question[:9] == (5, "原问题", "原问题", "answered", 8, "old asked", "old created", "old updated")
-        assert question[9] == ""
+        assert question[:8] == (5, "原问题", "原问题", "answered", 8, "old asked", "old created", "old updated")
+        assert question[8] == ""
         assert connection.execute("SELECT scope_key FROM knowledge_question_phrasings WHERE id=9").fetchone()[0] == ""
         assert list(connection.execute("PRAGMA foreign_key_check")) == []
         sequences = dict(connection.execute("SELECT name,seq FROM sqlite_sequence"))
