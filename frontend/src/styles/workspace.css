@@ -1,5 +1,5 @@
 /* Shared workspace surfaces follow the release workspace palette and density. */
-.system-workspace {
+:root {
   --workspace-primary: #2563c9;
   --workspace-text: #20334e;
   --workspace-muted: #52657e;

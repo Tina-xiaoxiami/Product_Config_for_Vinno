@@ -31,6 +31,7 @@ from app.database import engine, async_session, Base
 from app.api import probe_workspace, models, drafts, series, feature_standards
 from app.api import measurements
 from app.api import config, versions, enums, probe_categories, probe_models, applications, features, template_features, probe_config, registration, knowledge
+from app.services.overseas_registration_history import migrate_overseas_registration_history_schema
 from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue
 from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig, TemplateFeature
 
@@ -39,6 +40,7 @@ from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, Featu
 async def lifespan(app):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    migrate_overseas_registration_history_schema(url.database)
     async with async_session() as db:
         db.add_all([
             ProductSeries(id=1, name='国内'), ProductSeries(id=2, name='海外'),
