@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
+from typing import Any
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,8 +60,12 @@ async def _quality(document) -> list[str]:
     path = Path(document['file_path'])
     if not path.is_absolute() or not path.is_file():
         reasons.append('受控原件不可用')
-    elif document['sha256'] and await asyncio.to_thread(_file_sha256, path) != document['sha256']:
-        reasons.append('原件摘要已变化')
+    elif document['sha256']:
+        try:
+            if await asyncio.to_thread(_file_sha256, path) != document['sha256']:
+                reasons.append('原件摘要已变化')
+        except OSError:
+            reasons.append('受控原件暂时无法读取')
     return reasons
 
 
@@ -99,6 +104,7 @@ async def create_release_bindings(session: AsyncSession, payload: dict) -> dict:
     try:
         documents = {row['id']: row for row in await _documents(session)}
         created = []
+        model_names = set((await session.execute(text('SELECT name FROM product_models'))).scalars())
         for document_id in document_ids:
             document = documents.get(document_id)
             if document is None:
@@ -113,6 +119,9 @@ async def create_release_bindings(session: AsyncSession, payload: dict) -> dict:
             for model_id in model_ids:
                 scope = await resolve_query_scope(session, {**values, 'product_model_id': model_id, 'software_version': document['version']})
                 assert scope is not None
+                declared_models = {name for name in model_names if _explicit_model(document, {'model_name': name})}
+                if declared_models and scope['model_name'] not in declared_models:
+                    raise ReleaseHistoryError('资料明确记载的完整机型与所选机型冲突')
                 params = {**values, 'country': scope['country'], 'model_id': model_id, 'document_id': document_id,
                           'fingerprint': _fingerprint(document), 'model_name': scope['model_name'], 'series_name': scope['series_name']}
                 existing = (await session.execute(text('''SELECT * FROM knowledge_release_bindings
@@ -133,8 +142,8 @@ async def create_release_bindings(session: AsyncSession, payload: dict) -> dict:
     except BaseException:
         await session.rollback()
         raise
-    result = await list_release_bindings(session, include_inactive=True)
-    return {'available': True, 'items': [row for row in result['items'] if row['id'] in created]}
+    binding_list = await list_release_bindings(session, include_inactive=True)
+    return {'available': True, 'items': [row for row in binding_list['items'] if row['id'] in created]}
 
 
 async def deactivate_release_binding(session: AsyncSession, binding_id: int, expected_revision: int) -> dict:
@@ -208,6 +217,22 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> li
     return events
 
 
+def _document_conditions(document: dict, chunks: list[dict]) -> list[dict]:
+    """Keep hardware and upgrade declarations even when the queried term is elsewhere."""
+    found = []
+    for chunk in chunks:
+        for line in chunk['content'].splitlines():
+            platform = re.search(r'硬件|平台|升级|hardware|platform|upgrade|vlucid', line, re.I)
+            limited = re.search(r'仅|只|不支持|不适用|必须|要求|不兼容|不能|无法|limited|only|not\s+support|vlucid|支持.*从.*升级', line, re.I)
+            if platform and limited:
+                item = {'document_id': document['id'], 'source_ref': chunk['source_ref'],
+                        'page_number': chunk.get('page_number'), 'excerpt': line.strip()[:1500],
+                        'preview_url': f"/api/knowledge/documents/{document['id']}/preview"}
+                if item not in found:
+                    found.append(item)
+    return found
+
+
 def _explicit_model(document: dict, scope: dict) -> bool:
     needle = re.escape(scope['model_name']).replace(r'\ ', r'\s*')
     names = [needle]
@@ -223,8 +248,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         raise ReleaseHistoryError('请补齐国家、市场、完整机型和目标软件版本')
     topic = _topic(query, scope)
     available = await _ready(session)
-    coverage = {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []}
-    result = {'available': available, 'assessment': 'unavailable', 'conclusion': '历史版本追溯尚未初始化',
+    coverage: dict[str, Any] = {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []}
+    result: dict[str, Any] = {'available': available, 'assessment': 'unavailable', 'conclusion': '历史版本追溯尚未初始化',
               'scope': scope, 'query': query, 'coverage': coverage, 'chains': [], 'events': []}
     if not available:
         return result
@@ -261,11 +286,14 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             continue
         assert document is not None
         selected.add(document['id'])
-        chain = chains.setdefault(binding['release_line'], {'release_line': binding['release_line'], 'documents': [], 'events': [], 'conditions': []})
+        chain = chains.setdefault(binding['release_line'], {'release_line': binding['release_line'], 'documents': [], 'events': [], 'conditions': [], 'detected_conditions': []})
         chain['documents'].append({'document_id': document['id'], 'title': document['title'], 'version': document['version'], 'preview_url': f"/api/knowledge/documents/{document['id']}/preview"})
         if binding['conditions'] and binding['conditions'] not in chain['conditions']:
             chain['conditions'].append(binding['conditions'])
-        events = _events(document, chunks_by_document.get(document['id'], []), topic, binding['conditions'])
+        detected = _document_conditions(document, chunks_by_document.get(document['id'], []))
+        chain['detected_conditions'].extend(item for item in detected if item not in chain['detected_conditions'])
+        event_conditions = '\n'.join([binding['conditions'], *(item['excerpt'] for item in detected)]).strip()
+        events = _events(document, chunks_by_document.get(document['id'], []), topic, event_conditions)
         # Cumulative documents must not introduce a later section into an earlier target.
         chain['events'].extend(event for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
     # Related documents without a trusted applicability bridge remain visible as unresolved candidates.
@@ -278,7 +306,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             continue
         if version_sort_key(document['version']) > version_sort_key(scope['software_version']):
             continue
-        reasons = await _quality(document)
+        quality_reasons = await _quality(document)
+        reasons = list(quality_reasons)
         if not document['country']:
             reasons.append('国家范围未确认')
         if document['market'] in (None, '', 'unspecified'):
@@ -286,8 +315,9 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         reasons.append('缺少当前范围有效的人工适用关系')
         coverage['unresolved_documents'].append({'document_id': document['id'], 'title': document['title'], 'version': document['version'],
             'reasons': reasons, 'preview_url': f"/api/knowledge/documents/{document['id']}/preview",
-            'candidate_events': [] if any('摘要' in reason or '过期' in reason or '不可用' in reason or '停用' in reason for reason in reasons) else _events(document, chunks_by_document.get(document['id'], []), topic)})
-    all_events = []
+            'detected_conditions': [] if quality_reasons else _document_conditions(document, chunks_by_document.get(document['id'], [])),
+            'candidate_events': [] if quality_reasons else _events(document, chunks_by_document.get(document['id'], []), topic)})
+    all_events: list[dict[str, Any]] = []
     for chain in chains.values():
         chain['documents'].sort(key=lambda row: version_sort_key(row['version']))
         chain['events'].sort(key=lambda row: (version_sort_key(row['event_version']), row['document_id'], row['source_ref']))
@@ -305,7 +335,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     elif any({'added', 'removed'}.issubset({event['change_type'] for event in chain['events'] if event['event_version'] == version})
              for chain in chains.values() for version in {event['event_version'] for event in chain['events']}):
         result.update(assessment='conflicting_evidence', conclusion='同一版本分支与版本出现相反的新增/移除记录，需核对原文后才能判断。')
-    elif len(chains) > 1 or any(chain['conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
+    elif len(chains) > 1 or any(chain['conditions'] or chain['detected_conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
         result.update(assessment='conditional_evidence', conclusion='找到相关版本记录，但存在版本分支、硬件/升级限制或语义待核实；各分支分别展示，不直接继承为目标版本支持结论。')
     else:
         result.update(assessment='evidence_found', conclusion='找到该子能力的历史版本原文记录；以下为资料证据，尚未自动发布正式答案。')
