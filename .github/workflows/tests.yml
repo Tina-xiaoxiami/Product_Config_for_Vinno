@@ -92,7 +92,9 @@ jobs:
         if: always()
         with:
           name: workspace-ui-previews
-          path: frontend/test-results/workspaceLayout-*/**/*.png
+          path: |
+            frontend/test-results/workspaceLayout-*/**/*.png
+            frontend/test-results/measurements-*/**/measurement-compact-*.png
           if-no-files-found: ignore
 
   service-manager:

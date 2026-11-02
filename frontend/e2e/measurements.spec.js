@@ -93,6 +93,7 @@ test('measurement controls stay compact and the table fills remaining height thr
   await statistics.click()
   await expect(page.getByText('计算启用状态', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(page.getByText('计算启用状态', { exact: true })).not.toBeVisible()
   await expectFilledTable()
   await page.screenshot({ path: testInfo.outputPath('measurement-compact-wide.png') })
   await page.getByRole('button', { name: '下一页', exact: true }).click()
