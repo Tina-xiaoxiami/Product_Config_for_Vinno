@@ -125,3 +125,21 @@ def test_upgrade_note_is_not_assigned_to_the_following_configuration_section_mod
     upgrade = model_facts(result, 'VINNO 6')['upgrades'][0]
     assert upgrade['from_version']=='1.14.X' and upgrade['methods']==['OS']
     assert 'Probes change list' not in upgrade['excerpt']
+
+
+@pytest.mark.parametrize('statement', [
+    '自动测量功能适用于V6。',
+    '本版本的自动测量功能适用于V6。',
+    '本版本适用于V6的自动测量功能。',
+    '自动测量功能适用型号：V6。',
+])
+def test_function_applicability_does_not_complete_brand_cover_release_scope(statement):
+    result = facts('1.14.81(VINNO 系列)\nRelease Note\n' + statement, '1.14.81')
+    assert not model_facts(result, 'VINNO 6')['applicable']
+    assert result['models'] == []
+
+
+@pytest.mark.parametrize('statement', ['本版本适用于V6。', '本版本同样适用于V6系列的VLucid+平台。', '适用型号：VINNO 6。'])
+def test_explicit_release_subject_or_model_field_still_completes_brand_cover(statement):
+    result = facts('1.14.81(VINNO 系列)\nRelease Note\n' + statement, '1.14.81')
+    assert model_facts(result, 'VINNO 6')['applicable']
