@@ -172,3 +172,29 @@ async def test_cross_scope_merge_cannot_reassign_aliases_or_counts(database):
     assert merged.status_code == 422
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM knowledge_questions").fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_same_name_in_another_series_cannot_prove_document_applicability(database):
+    client, engine = await _client_for(database)
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.executescript("""
+        INSERT INTO product_series VALUES (904,'Tulip-China');
+        INSERT INTO product_models VALUES (904,'VINNO 10',904);
+        INSERT INTO knowledge_document_extractions (document_id,extractor_version,status,chunk_count)
+        VALUES (1,'test','completed',1);
+        INSERT INTO knowledge_document_chunks
+        (document_id,chunk_index,source_ref,content,normalized_content,content_hash)
+        VALUES (1,0,'p1','环境光自动亮度调节','环境光自动亮度调节','hash');
+        """)
+    async with client:
+        response = (await _ask(client, "环境光自动亮度调节", {**SCOPE, "product_model_id": 904})).json()
+        direct = await client.get(f"/api/knowledge/questions/{response['question_id']}/candidates")
+        published = await client.put(f"/api/knowledge/questions/{response['question_id']}/answer", json={
+            "answer_text": "wrong series", "citations": [{"document_id": 1, "source_ref": "p1"}],
+            "change_note": "test",
+        })
+    await engine.dispose()
+    assert response["candidates"] == []
+    assert direct.json()["items"] == []
+    assert published.status_code == 422

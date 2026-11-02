@@ -93,3 +93,18 @@ def test_restore_rejects_invalid_canonical_scope_before_writing(tmp_path, invali
     with pytest.raises(KnowledgeQaSnapshotError, match="范围|机型"):
         restore_knowledge_qa_snapshot(target, snapshot, apply=True)
     assert target.read_bytes() == before
+
+
+def test_failed_final_snapshot_comparison_rolls_back_all_restored_rows(tmp_path):
+    source, target = tmp_path / "source.db", tmp_path / "target.db"
+    _create(source, populated=True)
+    _create(target)
+    snapshot = export_knowledge_qa_snapshot(source)
+    snapshot["questions"][0]["review_note"] = "unexpected metadata"
+    snapshot["snapshot_sha256"] = _snapshot_hash(snapshot)
+    before = target.read_bytes()
+    with pytest.raises(KnowledgeQaSnapshotError, match="复核失败"):
+        restore_knowledge_qa_snapshot(target, snapshot, apply=True)
+    assert target.read_bytes() == before
+    with closing(sqlite3.connect(target)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_questions").fetchone()[0] == 0

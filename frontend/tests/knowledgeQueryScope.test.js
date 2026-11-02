@@ -83,6 +83,7 @@ test('saving an earlier-scope answer cannot replace the current-scope result', a
     answerSaving: { value: false }, answerDialogVisible: { value: true },
     qaScope: scope(), qaStatus: { value: 'answered' }, qaResult: { value: null },
     parseQuestionAliases: () => [], knowledgeScopePayload, knowledgeScopeFingerprint,
+    answerDialogSessionId: 1,
     publishKnowledgeAnswer: () => new Promise(resolve => { finish = resolve }),
     loadQaQuestions: async () => {}, ElMessage: { warning() {}, error() {}, success() {} }
   }
@@ -117,4 +118,28 @@ test('candidate response from an earlier answer dialog cannot cross into the nex
   requests[1].resolve({ items: [{ document_id: 22 }] })
   await second
   assert.deepEqual(context.answerCandidates.value, [{ document_id: 22 }])
+})
+
+test('an earlier save cannot close or reset a newer answer editor', async () => {
+  let finish
+  const context = {
+    answerForm: { value: { question_id: 1, scope: scope(), answer_text: 'A', change_note: 'test', alias_text: '', citations: [] } },
+    answerSaving: { value: false }, answerDialogVisible: { value: true },
+    qaScope: scope(), qaStatus: { value: 'answered' }, qaResult: { value: null },
+    parseQuestionAliases: () => [], knowledgeScopePayload, knowledgeScopeFingerprint,
+    publishKnowledgeAnswer: () => new Promise(resolve => { finish = resolve }),
+    loadQaQuestions: async () => {}, ElMessage: { warning() {}, error() {}, success() {} }
+  }
+  const start = source.indexOf('const saveAnswer =')
+  const end = source.indexOf('\nconst showHistory', start)
+  const actions = new Function(...Object.keys(context), `let answerDialogSessionId = 1; ${source.slice(start, end)}; return { saveAnswer, nextSession: () => { answerDialogSessionId += 1 } }`)(...Object.values(context))
+  const first = actions.saveAnswer()
+  actions.nextSession()
+  context.answerForm.value = { question_id: 2, scope: { ...scope(), software_version: '1.14.81' }, answer_text: 'unsaved B' }
+  context.answerSaving.value = true
+  finish({ id: 1, question_text: 'A', answer: {} })
+  await first
+  assert.equal(context.answerDialogVisible.value, true)
+  assert.equal(context.answerSaving.value, true)
+  assert.equal(context.answerForm.value.answer_text, 'unsaved B')
 })
