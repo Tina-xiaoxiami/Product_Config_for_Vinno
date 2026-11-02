@@ -77,9 +77,9 @@ async def evidence_review_summary(session: AsyncSession, question_id: int) -> di
             latest["product_model_ids"] = json.loads(latest.pop("model_ids_json"))
             latest["target_question_ids"] = json.loads(latest.pop("target_question_ids_json"))
     current = bool(source and latest and latest["source_fingerprint"] == source["fingerprint"])
-    reviewed = current and latest["action"] in {"record_reference", "confirm_scope"}
+    reviewed = bool(current and latest and latest["action"] in {"record_reference", "confirm_scope"})
     needs_review = bool(source and source["review_status"] == "published" and not reviewed and
-                        (source["citation_count"] == 0 or (current and latest["action"] == "defer")))
+                        (source["citation_count"] == 0 or (current and latest and latest["action"] == "defer")))
     return {
         "status": "reviewed" if reviewed else "needs_review" if needs_review else "not_required",
         "fingerprint": source["fingerprint"] if source else None,

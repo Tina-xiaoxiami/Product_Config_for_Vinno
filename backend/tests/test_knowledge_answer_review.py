@@ -187,3 +187,50 @@ async def test_missing_review_table_keeps_readable_queue_and_refuses_writes(data
         assert item["evidence_review"]["status"] == "needs_review"
         assert (await client.post("/api/knowledge/questions/101/review", json=payload)).status_code == 503
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_existing_different_scoped_answer_prevents_all_partial_publications(database):
+    client, engine = await _client_for(database)
+    async with client:
+        scope = {"country": "CN", "market": "domestic", "product_model_id": 902, "software_version": "1.14.80"}
+        asked = (await client.post("/api/knowledge/questions/ask", json={"question": "历史功能说明", "scope": scope})).json()
+        assert (await client.put(f"/api/knowledge/questions/{asked['question_id']}/answer", json={"answer_text": "不同的现行答案"})).status_code == 200
+        payload = await _payload(client, action="confirm_scope", country="CN", market="domestic",
+                                 product_model_ids=[901, 902], software_version="1.14.80", version_applicability="specific")
+        refused = await client.post("/api/knowledge/questions/101/review", json=payload)
+        assert refused.status_code == 409, refused.text
+        first_scope = await client.get("/api/knowledge/questions", params={**scope, "product_model_id": 901})
+        assert first_scope.json()["total"] == 0
+    await engine.dispose()
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_answer_reviews").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes", [
+    {"confirmed_by": " "}, {"evidence_reference": " "}, {"action": "defer", "note": " "},
+    {"country": "CHINA"}, {"country": "DE", "market": "domestic"},
+    {"product_model_ids": [-1]},
+    {"action": "confirm_scope", "version_applicability": "unknown"},
+    {"action": "confirm_scope", "product_model_ids": [901], "version_applicability": "specific"},
+])
+async def test_incomplete_review_is_rejected_without_a_decision(database, changes):
+    client, engine = await _client_for(database)
+    async with client:
+        payload = await _payload(client, **changes)
+        result = await client.post("/api/knowledge/questions/101/review", json=payload)
+        assert result.status_code == 422, result.text
+    await engine.dispose()
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_answer_reviews").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_answer_and_review_filter_validation(database):
+    client, engine = await _client_for(database)
+    async with client:
+        payload = await _payload(client)
+        assert (await client.post("/api/knowledge/questions/99999/review", json=payload)).status_code == 404
+        assert (await client.get("/api/knowledge/questions", params={"evidence_review": "anything"})).status_code == 422
+    await engine.dispose()
