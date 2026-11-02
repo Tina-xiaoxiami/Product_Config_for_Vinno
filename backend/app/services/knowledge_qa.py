@@ -9,6 +9,12 @@ import unicodedata
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.knowledge_scope import (
+    KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
+    missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
+    scope_schema_ready, stored_scope,
+)
+
 
 SIMILARITY_THRESHOLD = 0.72
 _STOP_PHRASES = (
@@ -143,10 +149,12 @@ async def _answer_for_question(session: AsyncSession, question_id: int) -> dict 
 
 
 async def get_question(session: AsyncSession, question_id: int) -> dict | None:
+    from app.services.knowledge_answer_review import evidence_review_summary
+    scope_column = await scope_expression(session)
     result = await session.execute(
         text(
-            """
-            SELECT id, question_text, status, asked_count, last_asked_at
+            f"""
+            SELECT id, question_text, status, asked_count, last_asked_at, {scope_column} AS scope_key
             FROM knowledge_questions WHERE id = :question_id
             """
         ),
@@ -174,10 +182,12 @@ async def get_question(session: AsyncSession, question_id: int) -> dict | None:
         "last_asked_at": question.last_asked_at,
         "alias_questions": [row.phrasing_text for row in aliases_result],
         "answer": await _answer_for_question(session, question_id),
+        "scope": stored_scope(question.scope_key),
+        "evidence_review": await evidence_review_summary(session, question_id),
     }
 
 
-async def _published_candidates(session: AsyncSession) -> list[dict]:
+async def _published_candidates(session: AsyncSession, query_scope_key: str) -> list[dict]:
     result = await session.execute(
         text(
             """
@@ -193,6 +203,7 @@ async def _published_candidates(session: AsyncSession) -> list[dict]:
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
             WHERE question.status = 'answered'
+              AND question.scope_key = :scope_key
               AND NOT EXISTS (
                   SELECT 1 FROM knowledge_answer_citations citation
                   JOIN knowledge_documents document ON document.id = citation.document_id
@@ -200,21 +211,49 @@ async def _published_candidates(session: AsyncSession) -> list[dict]:
               )
             ORDER BY question.id, phrasing.id
             """
-        )
+        ),
+        {"scope_key": query_scope_key},
     )
     return [dict(row._mapping) for row in result]
 
 
-async def ask_question(session: AsyncSession, question_text: str) -> dict:
+async def ensure_question(session: AsyncSession, question_text: str, query_scope_key: str, *, count_ask: bool) -> int:
+    cleaned = str(question_text or "").strip()
+    normalized = normalize_question(cleaned)
+    existing = (await session.execute(text(
+        "SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope"
+    ), {"normalized": normalized, "scope": query_scope_key})).one_or_none()
+    if existing:
+        if count_ask:
+            await session.execute(text(
+                "UPDATE knowledge_questions SET asked_count=asked_count+1,last_asked_at=CURRENT_TIMESTAMP,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=:id"
+            ), {"id": existing.id})
+        return int(existing.id)
+    result = await session.execute(text(
+        "INSERT INTO knowledge_questions (question_text,normalized_question,status,asked_count,scope_key) "
+        "VALUES (:question,:normalized,'pending',:count,:scope) RETURNING id"
+    ), {"question": cleaned, "normalized": normalized, "count": 1 if count_ask else 0, "scope": query_scope_key})
+    return int(result.scalar_one())
+
+
+async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)
     if len(normalized) < 2:
         raise KnowledgeQaError("问题内容过短")
+    resolved_scope = await resolve_query_scope(session, scope)
+    if resolved_scope is None:
+        return {"status": "needs_clarification", "question_id": None,
+                "question": cleaned, "match_type": "none", "similarity": 0.0,
+                "answer": None, "candidates": [], "scope": None,
+                "missing_fields": missing_scope_fields(scope)}
+    query_scope_key = scope_key(resolved_scope)
 
     best_question_id: int | None = None
     best_score = 0.0
     best_exact = False
-    for candidate in await _published_candidates(session):
+    for candidate in await _published_candidates(session, query_scope_key):
         variants = [
             (candidate["question_text"], candidate["normalized_question"]),
             (candidate["phrasing_text"], candidate["normalized_phrasing"]),
@@ -246,27 +285,28 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
             collision = await session.execute(
                 text(
                     """
-                    SELECT 1 FROM knowledge_questions WHERE normalized_question = :normalized
+                    SELECT 1 FROM knowledge_questions WHERE normalized_question = :normalized AND scope_key = :scope_key
                     UNION ALL
-                    SELECT 1 FROM knowledge_question_phrasings WHERE normalized_phrasing = :normalized
+                    SELECT 1 FROM knowledge_question_phrasings WHERE normalized_phrasing = :normalized AND scope_key = :scope_key
                     LIMIT 1
                     """
                 ),
-                {"normalized": normalized},
+                {"normalized": normalized, "scope_key": query_scope_key},
             )
             if collision.one_or_none() is None:
                 await session.execute(
                     text(
                         """
                         INSERT INTO knowledge_question_phrasings (
-                            question_id, phrasing_text, normalized_phrasing, phrasing_type
-                        ) VALUES (:question_id, :text, :normalized, 'observed')
+                            question_id, phrasing_text, normalized_phrasing, phrasing_type, scope_key
+                        ) VALUES (:question_id, :text, :normalized, 'observed', :scope_key)
                         """
                     ),
                     {
                         "question_id": best_question_id,
                         "text": cleaned,
                         "normalized": normalized,
+                        "scope_key": query_scope_key,
                     },
                 )
         await session.commit()
@@ -281,7 +321,8 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
                 "match_type": "none",
                 "similarity": best_score,
                 "answer": None,
-                "candidates": await find_candidate_evidence(session, item["question_text"]),
+                "candidates": await find_candidate_evidence(session, item["question_text"], scope=resolved_scope),
+                "scope": resolved_scope,
             }
         return {
             "status": "answered",
@@ -291,50 +332,15 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
             "similarity": best_score,
             "answer": item["answer"],
             "candidates": [],
+            "scope": resolved_scope,
         }
 
-    existing_result = await session.execute(
-        text(
-            """
-            SELECT id FROM knowledge_questions
-            WHERE normalized_question = :normalized_question
-            """
-        ),
-        {"normalized_question": normalized},
-    )
-    existing = existing_result.one_or_none()
-    if existing:
-        question_id = int(existing.id)
-        await session.execute(
-            text(
-                """
-                UPDATE knowledge_questions
-                SET asked_count = asked_count + 1,
-                    last_asked_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :question_id
-                """
-            ),
-            {"question_id": question_id},
-        )
-    else:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO knowledge_questions (
-                    question_text, normalized_question, status, asked_count
-                ) VALUES (:question_text, :normalized_question, 'pending', 1)
-                RETURNING id
-                """
-            ),
-            {"question_text": cleaned, "normalized_question": normalized},
-        )
-        question_id = int(result.scalar_one())
+    question_id = await ensure_question(session, cleaned, query_scope_key, count_ask=True)
     await session.commit()
     item = await get_question(session, question_id)
     from app.services.knowledge_content import find_candidate_evidence
 
-    candidates = await find_candidate_evidence(session, item["question_text"])
+    candidates = await find_candidate_evidence(session, item["question_text"], scope=resolved_scope)
     return {
         "status": "pending",
         "question_id": question_id,
@@ -343,6 +349,7 @@ async def ask_question(session: AsyncSession, question_text: str) -> dict:
         "similarity": best_score,
         "answer": None,
         "candidates": candidates,
+        "scope": resolved_scope,
     }
 
 
@@ -353,27 +360,38 @@ async def list_questions(
     query: str | None,
     skip: int,
     limit: int,
+    scope: dict | None = None,
+    evidence_review: str | None = None,
 ) -> tuple[list[dict], int]:
     cleaned_query = str(query or "").strip()
+    resolved_scope = await resolve_query_scope(session, scope) if scope else None
+    if scope and resolved_scope is None:
+        raise KnowledgeScopeError("问题列表的查询范围不完整")
+    scope_column = await scope_expression(session, "q")
     params = {
         "status": status,
         "pattern": f"%{cleaned_query}%" if cleaned_query else None,
         "skip": skip,
         "limit": limit,
+        "scope_key": scope_key(resolved_scope),
     }
-    filters = """
-        (:status IS NULL OR status = :status)
-        AND (:pattern IS NULL OR question_text LIKE :pattern)
+    filters = f"""
+        (:status IS NULL OR q.status = :status)
+        AND (:pattern IS NULL OR q.question_text LIKE :pattern)
+        AND ({"1" if evidence_review and not scope else scope_column + " = :scope_key"})
     """
+    if evidence_review:
+        from app.services.knowledge_answer_review import evidence_review_filter
+        filters += " AND " + await evidence_review_filter(session, evidence_review)
     total_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM knowledge_questions WHERE {filters}"), params
+        text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}"), params
     )
     rows_result = await session.execute(
         text(
             f"""
-            SELECT id FROM knowledge_questions
+            SELECT q.id FROM knowledge_questions q
             WHERE {filters}
-            ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+            ORDER BY CASE q.status WHEN 'pending' THEN 0 ELSE 1 END,
                      asked_count DESC, last_asked_at DESC, id DESC
             LIMIT :limit OFFSET :skip
             """
@@ -392,10 +410,14 @@ async def publish_answer(
     alias_questions: list[str],
     citations: list[dict],
     change_note: str | None,
+    commit: bool = True,
 ) -> dict | None:
     question = await get_question(session, question_id)
     if question is None:
         return None
+    if not question["scope"]:
+        raise KnowledgeQaError("此问题的历史范围尚未核实；请先在明确范围内建立问答")
+    query_scope_key = scope_key(question["scope"])
     cleaned_answer = str(answer_text or "").strip()
     if not cleaned_answer:
         raise KnowledgeQaError("答案不能为空")
@@ -415,31 +437,36 @@ async def publish_answer(
             text(
                 """
                 SELECT id FROM knowledge_questions
-                WHERE normalized_question = :normalized AND id != :question_id
+                WHERE normalized_question = :normalized AND id != :question_id AND scope_key = :scope_key
                 UNION ALL
                 SELECT question_id AS id FROM knowledge_question_phrasings
-                WHERE normalized_phrasing = :normalized AND question_id != :question_id
+                WHERE normalized_phrasing = :normalized AND question_id != :question_id AND scope_key = :scope_key
                 LIMIT 1
                 """
             ),
-            {"normalized": normalized_alias, "question_id": question_id},
+            {"normalized": normalized_alias, "question_id": question_id, "scope_key": query_scope_key},
         )
         if collision_result.one_or_none() is not None:
             raise KnowledgeQaError("相似问法已归属于其他问题")
 
     resolved_citations: list[dict] = []
+    if citations and not await document_model_identity_unique(session, question["scope"]):
+        raise KnowledgeQaError("同市场存在同名完整机型，资料尚无唯一机型对应，不能作为此答案依据")
     for index, citation in enumerate(citations):
         document_result = await session.execute(
             text(
                 """
-                SELECT id FROM knowledge_documents
+                SELECT id, country, market, product_series, version FROM knowledge_documents
                 WHERE id = :document_id AND source_status = 'active'
                 """
             ),
             {"document_id": citation["document_id"]},
         )
-        if document_result.one_or_none() is None:
+        document = document_result.one_or_none()
+        if document is None:
             raise KnowledgeQaError(f"引用资料不存在：{citation['document_id']}")
+        if not document_matches_scope(document._mapping, question["scope"]):
+            raise KnowledgeQaError("引用资料尚未明确关联此机型、国家及软件版本，请先核实适用范围")
         resolved_citations.append({**citation, "sort_order": index})
 
     answer_result = await session.execute(
@@ -519,14 +546,15 @@ async def publish_answer(
             text(
                 """
                 INSERT INTO knowledge_question_phrasings (
-                    question_id, phrasing_text, normalized_phrasing, phrasing_type
-                ) VALUES (:question_id, :text, :normalized, 'alias')
+                    question_id, phrasing_text, normalized_phrasing, phrasing_type, scope_key
+                ) VALUES (:question_id, :text, :normalized, 'alias', :scope_key)
                 """
             ),
             {
                 "question_id": question_id,
                 "text": alias_text,
                 "normalized": normalized_alias,
+                "scope_key": query_scope_key,
             },
         )
 
@@ -574,7 +602,8 @@ async def publish_answer(
         ),
         {"question_id": question_id},
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return await get_question(session, question_id)
 
 
@@ -587,12 +616,14 @@ async def merge_question(
     """Merge a pending duplicate into a published canonical question."""
     if source_question_id == target_question_id:
         raise KnowledgeQaError("不能将问题合并到自身")
+    if not await scope_schema_ready(session):
+        raise KnowledgeScopeUnavailable("请先完成知识库范围迁移再合并问题")
 
     result = await session.execute(
         text(
             """
             SELECT id, question_text, normalized_question, status,
-                   asked_count, last_asked_at
+                   asked_count, last_asked_at, scope_key
             FROM knowledge_questions
             WHERE id IN (:source_question_id, :target_question_id)
             """
@@ -608,6 +639,8 @@ async def merge_question(
 
     source = questions[source_question_id]
     target = questions[target_question_id]
+    if source.scope_key != target.scope_key:
+        raise KnowledgeQaError("不同国家、市场、机型或软件版本的问题不能合并")
     if source.status != "pending":
         raise KnowledgeQaError("只能合并尚未发布答案的待确认问题")
     source_answer = await session.execute(
@@ -656,10 +689,12 @@ async def merge_question(
                 """
                 SELECT id FROM knowledge_questions
                 WHERE normalized_question = :normalized
+                  AND scope_key = :scope_key
                   AND id NOT IN (:source_question_id, :target_question_id)
                 UNION ALL
                 SELECT question_id AS id FROM knowledge_question_phrasings
                 WHERE normalized_phrasing = :normalized
+                  AND scope_key = :scope_key
                   AND question_id NOT IN (:source_question_id, :target_question_id)
                 LIMIT 1
                 """
@@ -668,6 +703,7 @@ async def merge_question(
                 "normalized": normalized_value,
                 "source_question_id": source_question_id,
                 "target_question_id": target_question_id,
+                "scope_key": target.scope_key,
             },
         )
         if collision_result.one_or_none() is not None:
@@ -717,14 +753,15 @@ async def merge_question(
             text(
                 """
                 INSERT INTO knowledge_question_phrasings (
-                    question_id, phrasing_text, normalized_phrasing, phrasing_type
-                ) VALUES (:question_id, :text, :normalized, 'alias')
+                    question_id, phrasing_text, normalized_phrasing, phrasing_type, scope_key
+                ) VALUES (:question_id, :text, :normalized, 'alias', :scope_key)
                 """
             ),
             {
                 "question_id": target_question_id,
                 "text": phrasing_text,
                 "normalized": normalized_phrasing,
+                "scope_key": target.scope_key,
             },
         )
 

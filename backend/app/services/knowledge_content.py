@@ -618,7 +618,12 @@ async def find_candidate_evidence(
     question: str,
     *,
     limit: int = 5,
+    scope: dict | None = None,
 ) -> list[dict]:
+    if scope is not None:
+        from app.services.knowledge_scope import document_model_identity_unique
+        if not await document_model_identity_unique(session, scope):
+            return []
     prefilter_pairs = _candidate_prefilter_pairs(question)
     params = {
         f"prefilter_{index}": f"%{pair}%"
@@ -629,6 +634,12 @@ async def find_candidate_evidence(
         prefilter_sql = "AND (" + " OR ".join(
             f"chunk.normalized_content LIKE :{name}" for name in params
         ) + ")"
+    if scope is not None:
+        # Unknown model/software applicability is excluded rather than guessed.
+        prefilter_sql += """ AND document.country=:scope_country AND document.market=:scope_market
+            AND document.product_series=:scope_model AND document.version=:scope_version"""
+        params.update({"scope_country": scope["country"], "scope_market": scope["market"],
+                       "scope_model": scope["model_name"], "scope_version": scope["software_version"]})
     result = await session.execute(
         text(
             f"""
@@ -706,11 +717,16 @@ async def get_question_candidate_evidence(
     *,
     limit: int = 5,
 ) -> list[dict] | None:
+    from app.services.knowledge_scope import scope_expression, stored_scope
+    scope_column = await scope_expression(session)
     result = await session.execute(
-        text("SELECT question_text FROM knowledge_questions WHERE id = :question_id"),
+        text(f"SELECT question_text, {scope_column} AS scope_key FROM knowledge_questions WHERE id = :question_id"),
         {"question_id": question_id},
     )
     question = result.one_or_none()
     if question is None:
         return None
-    return await find_candidate_evidence(session, question.question_text, limit=limit)
+    scope = stored_scope(question.scope_key)
+    if scope is None:
+        return []
+    return await find_candidate_evidence(session, question.question_text, limit=limit, scope=scope)

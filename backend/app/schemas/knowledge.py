@@ -1,6 +1,6 @@
 """Schemas for the unified product knowledge API."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,8 +91,17 @@ class KnowledgeDocumentList(BaseModel):
     limit: int
 
 
+class KnowledgeQueryScope(BaseModel):
+    model_config = {"extra": "forbid"}
+    country: str | None = Field(default=None, max_length=10)
+    market: str | None = Field(default=None, pattern="^(domestic|overseas)$")
+    product_model_id: int | None = Field(default=None, gt=0)
+    software_version: str | None = Field(default=None, max_length=80)
+
+
 class KnowledgeQuestionAsk(BaseModel):
     question: str = Field(min_length=2, max_length=500)
+    scope: KnowledgeQueryScope | None = None
 
 
 class KnowledgeAnswerCitationInput(BaseModel):
@@ -135,6 +144,24 @@ class KnowledgeQuestionItem(BaseModel):
     last_asked_at: str
     alias_questions: list[str] = Field(default_factory=list)
     answer: KnowledgeAnswerItem | None = None
+    scope: dict | None = None
+    evidence_review: dict | None = None
+
+
+class KnowledgeAnswerReviewRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    expected_answer_version: int = Field(ge=1)
+    expected_fingerprint: str = Field(pattern="^[0-9a-f]{64}$")
+    expected_review_revision: int = Field(ge=0)
+    action: Literal["confirm_scope", "record_reference", "defer"]
+    country: str | None = Field(default=None, max_length=10)
+    market: Literal["domestic", "overseas"] | None = None
+    product_model_ids: list[int] = Field(default_factory=list, max_length=50)
+    software_version: str | None = Field(default=None, max_length=80)
+    version_applicability: Literal["specific", "not_applicable", "unknown"] = "unknown"
+    evidence_reference: str = Field(default="", max_length=5000)
+    note: str = Field(default="", max_length=5000)
+    confirmed_by: str = Field(min_length=1, max_length=100)
 
 
 class KnowledgeQuestionList(BaseModel):
@@ -177,12 +204,14 @@ class KnowledgeCandidateEvidenceList(BaseModel):
 
 class KnowledgeQuestionResult(BaseModel):
     status: str
-    question_id: int
+    question_id: int | None = None
     question: str
     match_type: str
     similarity: float
     answer: KnowledgeAnswerItem | None = None
     candidates: list[KnowledgeCandidateEvidence] = Field(default_factory=list)
+    scope: dict | None = None
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 class KnowledgeAnswerRevisionItem(BaseModel):

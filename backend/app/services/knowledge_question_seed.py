@@ -13,6 +13,7 @@ from app.services.knowledge_qa import (
     normalize_question,
     question_similarity,
 )
+from app.services.knowledge_scope import scope_expression
 
 
 @dataclass(frozen=True)
@@ -44,11 +45,13 @@ def _validate_specs(specs: list[SeedQuestionSpec]) -> list[tuple[SeedQuestionSpe
 
 
 async def _existing_questions(session: AsyncSession) -> dict[str, dict]:
+    scope_column = await scope_expression(session)
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT id, question_text, normalized_question, status
             FROM knowledge_questions
+            WHERE {scope_column} = ''
             ORDER BY id
             """
         )
@@ -57,9 +60,10 @@ async def _existing_questions(session: AsyncSession) -> dict[str, dict]:
 
 
 async def _published_variants(session: AsyncSession) -> list[dict]:
+    scope_column = await scope_expression(session, "question")
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT question.id AS question_id,
                    question.question_text,
                    question.normalized_question,
@@ -72,6 +76,7 @@ async def _published_variants(session: AsyncSession) -> list[dict]:
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
             WHERE question.status = 'answered'
+              AND {scope_column} = ''
             ORDER BY question.id, phrasing.id
             """
         )
