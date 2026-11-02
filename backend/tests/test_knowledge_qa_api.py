@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api import knowledge
 from app.database import get_db
 
+TEST_QUERY_SCOPE = {"country": "CN", "market": "domestic", "product_model_id": 901,
+                    "software_version": "1.14.80"}
+
 
 def _create_qa_database(path):
     connection = sqlite3.connect(path)
@@ -32,10 +35,10 @@ def _create_qa_database(path):
         );
         INSERT INTO knowledge_documents (
             id, document_type, title, file_name, file_path,
-            version, market, product_series, mime_type
+            version, market, country, product_series, mime_type
         ) VALUES (
             1, 'whitepaper', 'V10 1.14.80 白皮书', 'V10.pdf',
-            '/tmp/V10.pdf', '1.14.80', 'domestic', 'V10', 'application/pdf'
+            '/tmp/V10.pdf', '1.14.80', 'domestic', 'CN', 'VINNO 10', 'application/pdf'
         );
 
         CREATE TABLE knowledge_questions (
@@ -133,7 +136,22 @@ def _create_qa_database(path):
     connection.close()
 
 
-async def _client_for(database_path):
+async def _client_for(database_path, *, migrate_scope=True):
+    if migrate_scope:
+        from app.services.knowledge_scope_migration import migrate_knowledge_scopes
+        migrate_knowledge_scopes(database_path, apply=True)
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript("""
+        CREATE TABLE IF NOT EXISTS product_series (id INTEGER PRIMARY KEY,name TEXT);
+        CREATE TABLE IF NOT EXISTS product_models (id INTEGER PRIMARY KEY,name TEXT,series_id INTEGER);
+        INSERT OR IGNORE INTO product_series VALUES (901,'R&V10 series-China'),(902,'R&V10 series-Oversea');
+        INSERT OR IGNORE INTO product_models VALUES
+            (901,'VINNO 10',901),(902,'VINNO 10E',901),(903,'VINNO 10',902);
+        """)
+        connection.commit()
+    finally:
+        connection.close()
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
@@ -159,14 +177,14 @@ async def test_unknown_question_enters_pending_queue_and_repeated_ask_is_counted
     async with client:
         first = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "针增益调节是招标功能吗？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "针增益调节是招标功能吗？"},
         )
         repeated = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "针增益调节是招标功能吗"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "针增益调节是招标功能吗"},
         )
         pending = await client.get(
-            "/api/knowledge/questions", params={"status": "pending"}
+            "/api/knowledge/questions", params={**TEST_QUERY_SCOPE, "status": "pending"}
         )
     await engine.dispose()
 
@@ -188,7 +206,7 @@ async def test_confirmed_answer_is_reused_by_alias_and_returns_source_citation(t
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "针增益调节是招标功能吗？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "针增益调节是招标功能吗？"},
         )
         question_id = asked.json()["question_id"]
         published = await client.put(
@@ -208,7 +226,7 @@ async def test_confirmed_answer_is_reused_by_alias_and_returns_source_citation(t
         )
         answered = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "针增益是不是招标功能？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "针增益是不是招标功能？"},
         )
     await engine.dispose()
 
@@ -233,7 +251,7 @@ async def test_similar_question_reuses_only_published_answer(tmp_path):
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "环境光自动亮度调节是不是V10系列标配？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "环境光自动亮度调节是不是V10系列标配？"},
         )
         await client.put(
             f"/api/knowledge/questions/{asked.json()['question_id']}/answer",
@@ -246,7 +264,7 @@ async def test_similar_question_reuses_only_published_answer(tmp_path):
         )
         similar = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10是否标配环境光自动调节亮度功能"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10是否标配环境光自动调节亮度功能"},
         )
     await engine.dispose()
 
@@ -263,7 +281,7 @@ async def test_invalid_citation_does_not_publish_partial_answer(tmp_path):
 
     async with client:
         asked = await client.post(
-            "/api/knowledge/questions/ask", json={"question": "一个待确认问题"}
+            "/api/knowledge/questions/ask", json={"scope": TEST_QUERY_SCOPE, "question": "一个待确认问题"}
         )
         question_id = asked.json()["question_id"]
         rejected = await client.put(
@@ -291,7 +309,7 @@ async def test_answer_updates_keep_version_history(tmp_path):
 
     async with client:
         asked = await client.post(
-            "/api/knowledge/questions/ask", json={"question": "功能是否支持？"}
+            "/api/knowledge/questions/ask", json={"scope": TEST_QUERY_SCOPE, "question": "功能是否支持？"}
         )
         question_id = asked.json()["question_id"]
         await client.put(
@@ -333,7 +351,7 @@ async def test_pending_question_can_merge_into_published_question_without_losing
     async with client:
         target = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10湘证和苏证如何区分？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10湘证和苏证如何区分？"},
         )
         target_id = target.json()["question_id"]
         await client.put(
@@ -347,13 +365,13 @@ async def test_pending_question_can_merge_into_published_question_without_losing
         )
         source = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
         )
         assert source.json()["status"] == "pending"
         source_id = source.json()["question_id"]
         await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
         )
         merged = await client.post(
             f"/api/knowledge/questions/{source_id}/merge/{target_id}"
@@ -361,7 +379,7 @@ async def test_pending_question_can_merge_into_published_question_without_losing
         removed = await client.get(f"/api/knowledge/questions/{source_id}")
         reused = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "同一个V10型号同时映射湘证和苏证时怎么查？"},
         )
     await engine.dispose()
 
@@ -381,10 +399,10 @@ async def test_merge_rejects_answered_source_and_keeps_both_questions(tmp_path):
 
     async with client:
         first = await client.post(
-            "/api/knowledge/questions/ask", json={"question": "第一个问题"}
+            "/api/knowledge/questions/ask", json={"scope": TEST_QUERY_SCOPE, "question": "第一个问题"}
         )
         second = await client.post(
-            "/api/knowledge/questions/ask", json={"question": "第二个问题"}
+            "/api/knowledge/questions/ask", json={"scope": TEST_QUERY_SCOPE, "question": "第二个问题"}
         )
         await client.put(
             f"/api/knowledge/questions/{first.json()['question_id']}/answer",
@@ -421,7 +439,7 @@ async def test_similarity_never_crosses_product_model_or_negated_intent(tmp_path
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10是否标配环境光自动调节亮度功能？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10是否标配环境光自动调节亮度功能？"},
         )
         await client.put(
             f"/api/knowledge/questions/{asked.json()['question_id']}/answer",
@@ -434,11 +452,11 @@ async def test_similarity_never_crosses_product_model_or_negated_intent(tmp_path
         )
         other_model = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V9是否标配环境光自动调节亮度功能？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V9是否标配环境光自动调节亮度功能？"},
         )
         negated = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10是不是不支持环境光自动调节亮度功能？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10是不是不支持环境光自动调节亮度功能？"},
         )
     await engine.dispose()
 
@@ -455,7 +473,7 @@ async def test_observed_similar_wording_can_be_promoted_to_confirmed_alias(tmp_p
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "环境光自动亮度调节是不是V10系列标配？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "环境光自动亮度调节是不是V10系列标配？"},
         )
         question_id = asked.json()["question_id"]
         await client.put(
@@ -469,7 +487,7 @@ async def test_observed_similar_wording_can_be_promoted_to_confirmed_alias(tmp_p
         )
         wording = "V10是否标配环境光自动调节亮度功能"
         similar = await client.post(
-            "/api/knowledge/questions/ask", json={"question": wording}
+            "/api/knowledge/questions/ask", json={"scope": TEST_QUERY_SCOPE, "question": wording}
         )
         promoted = await client.put(
             f"/api/knowledge/questions/{question_id}/answer",
