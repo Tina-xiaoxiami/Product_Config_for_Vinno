@@ -61,8 +61,8 @@
         <template v-if="editorState.kind === 'topic'">
           <div class="parameter-form-grid"><el-form-item label="主题名称" required><el-input v-model="editorState.form.name" maxlength="100" placeholder="如：电池容量" /></el-form-item><el-form-item label="对应问题" required><el-input v-model="editorState.form.question" maxlength="500" placeholder="如：各型号电池容量是多少？" /></el-form-item></div>
           <el-form-item label="其他问法（每行一个）"><el-input v-model="editorState.form.aliases" type="textarea" :rows="2" /></el-form-item>
-          <p class="parameter-hint">字段键使用英文字母、数字和下划线；单位随字段保存，创建后不直接更改定义。</p>
-          <div v-for="(field,index) in editorState.form.fields" :key="index" class="parameter-field-row"><el-input v-model="field.key" placeholder="字段键，如 capacity" :aria-label="`第${index+1}字段键`" /><el-input v-model="field.label" placeholder="中文标签，如 容量" :aria-label="`第${index+1}字段名`" /><el-input v-model="field.unit" placeholder="单位，如 mAh" :aria-label="`第${index+1}字段单位`" /><el-select v-model="field.type"><el-option label="数值" value="number" /><el-option label="文字" value="text" /></el-select><el-button size="small" :disabled="editorState.form.fields.length === 1" @click="editorState.form.fields.splice(index,1)">移除</el-button></div>
+          <p class="parameter-hint">填写参数名称、单位和数值/文字类型；创建后保留字段定义，规格参数可另行修订。</p>
+          <div v-for="(field,index) in editorState.form.fields" :key="index" class="parameter-field-row"><el-input v-model="field.label" placeholder="中文标签，如 容量" :aria-label="`第${index+1}字段名`" /><el-input v-model="field.unit" placeholder="单位，如 mAh" :aria-label="`第${index+1}字段单位`" /><el-select v-model="field.type"><el-option label="数值" value="number" /><el-option label="文字" value="text" /></el-select><el-button size="small" :disabled="editorState.form.fields.length === 1" @click="editorState.form.fields.splice(index,1)">移除</el-button></div>
           <el-button size="small" @click="editorState.form.fields.push({ key:'', label:'', unit:'', type:'number' })">添加参数字段</el-button>
         </template>
         <template v-else>

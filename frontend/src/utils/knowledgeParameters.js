@@ -20,7 +20,7 @@ export function filterParameterRows(rows, search, statuses) {
 }
 export const parameterTopicPayload = form => ({ name: form.name.trim(), question: form.question.trim(),
   aliases: String(form.aliases || '').split('\n').map(value => value.trim()).filter(Boolean),
-  fields: form.fields.map(field => ({ key: field.key.trim(), label: field.label.trim(), unit: field.unit.trim(), type: field.type })) })
+  fields: form.fields.map((field,index) => ({ key: field.key.trim() || `parameter_${index+1}`, label: field.label.trim(), unit: field.unit.trim(), type: field.type })) })
 export const parameterSpecPayload = (form, topic) => ({ name: form.name.trim(), ipn: form.ipn.trim(),
   values: Object.fromEntries(topic.fields.map(field => [field.key, form.values[field.key]])),
   evidence_reference: form.evidence_reference.trim(), confirmed_by: form.confirmed_by.trim(), is_active: form.is_active,
