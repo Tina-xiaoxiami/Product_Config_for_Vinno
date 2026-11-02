@@ -74,3 +74,47 @@ test('the latest scoped queue owns rows and loading state', async () => {
   assert.deepEqual(context.qaQuestions.value, [{ id: 2 }])
   assert.equal(context.qaListLoading.value, false)
 })
+
+test('saving an earlier-scope answer cannot replace the current-scope result', async () => {
+  let finish
+  const current = { status: 'answered', answer: { answer_text: 'current scope' } }
+  const context = {
+    answerForm: { value: { question_id: 1, scope: scope(), answer_text: 'edited', change_note: 'test', alias_text: '', citations: [] } },
+    answerSaving: { value: false }, answerDialogVisible: { value: true },
+    qaScope: scope(), qaStatus: { value: 'answered' }, qaResult: { value: null },
+    parseQuestionAliases: () => [], knowledgeScopePayload, knowledgeScopeFingerprint,
+    publishKnowledgeAnswer: () => new Promise(resolve => { finish = resolve }),
+    loadQaQuestions: async () => {}, ElMessage: { warning() {}, error() {}, success() {} }
+  }
+  const start = source.indexOf('const saveAnswer =')
+  const end = source.indexOf('\nconst showHistory', start)
+  const save = new Function(...Object.keys(context), `${source.slice(start, end)}; return saveAnswer`)(...Object.values(context))
+  const pending = save()
+  context.qaScope.software_version = '1.14.81'
+  context.qaResult.value = current
+  finish({ id: 1, question_text: 'original question', answer: { answer_text: 'old scope save' } })
+  await pending
+  assert.equal(context.qaResult.value, current)
+})
+
+test('candidate response from an earlier answer dialog cannot cross into the next scope', async () => {
+  const requests = []
+  const context = {
+    answerForm: { value: {} }, answerDialogVisible: { value: false },
+    answerCandidates: { value: [] }, candidateLoading: { value: false },
+    getKnowledgeQuestionCandidates: id => new Promise(resolve => requests.push({ id, resolve })),
+    ElMessage: { error() {} }
+  }
+  const start = source.indexOf('const qaReviewNotice =')
+  const end = source.indexOf('\nconst addCitation', start)
+  const open = new Function(...Object.keys(context), `${source.slice(start, end)}; return openAnswerDialog`)(...Object.values(context))
+  const first = open({ id: 1, scope: scope(), question_text: 'a' })
+  const second = open({ id: 2, scope: { ...scope(), software_version: '1.14.81' }, question_text: 'b' })
+  requests[0].resolve({ items: [{ document_id: 11 }] })
+  await first
+  assert.deepEqual(context.answerCandidates.value, [])
+  assert.equal(context.candidateLoading.value, true)
+  requests[1].resolve({ items: [{ document_id: 22 }] })
+  await second
+  assert.deepEqual(context.answerCandidates.value, [{ document_id: 22 }])
+})
