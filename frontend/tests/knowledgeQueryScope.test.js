@@ -12,6 +12,8 @@ function setup() {
     qaScope: scope(), qaQuestion: { value: '功能如何操作？' }, qaQueueMode: { value: 'selected' },
     qaResult: { value: null }, qaAsking: { value: false }, qaStatus: { value: 'pending' },
     qaQuestions: { value: [] }, qaListLoading: { value: false },
+    qaTotal: { value: 0 }, qaPage: { value: 1 }, qaPageSize: { value: 100 }, qaSearch: { value: '' }, qaEvidenceFilter: { value: 'all' },
+    nextTick: fn => fn(), updateQaTableHeight() {},
     knowledgeScopePayload, knowledgeScopeFingerprint,
     askKnowledgeQuestion: payload => new Promise(resolve => asks.push({ payload, resolve })),
     getKnowledgeQuestions: params => new Promise(resolve => queues.push({ params, resolve })),
@@ -54,7 +56,7 @@ test('incomplete scope makes no ask or queue request; history uses a separate ex
   assert.ok(warnings.length)
   context.qaQueueMode.value = 'legacy'
   const loading = loadQaQuestions()
-  assert.deepEqual(queues[0].params, { status: 'pending', limit: 100 })
+  assert.deepEqual(queues[0].params, { status: 'pending', limit: 100, skip: 0 })
   queues[0].resolve({ items: [{ id: 71, scope: null }] })
   await loading
   assert.equal(context.qaQuestions.value[0].id, 71)

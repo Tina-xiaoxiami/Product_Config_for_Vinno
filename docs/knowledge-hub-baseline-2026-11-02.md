@@ -4,7 +4,7 @@
 
 后续工作顺序以[产品知识库优化计划 PR #99](https://github.com/Tina-xiaoxiami/product-management/pull/99)为准。KH-01完成本轮基线、核查工具、最小来源契约与验收场景准备；KH-02的结构化范围落库、界面改造及业务确认尚未完成。
 
-后续进展：KH-02的范围隔离代码、兼容迁移与界面增量已完成，正式库尚未迁移；18条答案业务确认待用户处理，见[查询范围隔离说明](knowledge-hub-query-scope.md)。
+后续进展：KH-02的范围隔离及系统内核对已完成，本机已备份、迁移并更新服务；18条答案业务确认仍待用户在系统中操作。见[查询范围隔离说明](knowledge-hub-query-scope.md)与[系统内答案核对](knowledge-hub-answer-review.md)。
 
 ## 1. 实施版本和来源归属
 

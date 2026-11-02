@@ -216,6 +216,33 @@ class KnowledgeAnswerRevision(Base):
     )
 
 
+class KnowledgeAnswerReview(Base):
+    """Append-only owner decisions about one exact answer/evidence revision."""
+
+    __tablename__ = "knowledge_answer_reviews"
+    id = Column(Integer, primary_key=True)
+    answer_id = Column(Integer, ForeignKey("knowledge_answers.id", ondelete="CASCADE"), nullable=False)
+    answer_version = Column(Integer, nullable=False)
+    source_fingerprint = Column(String(64), nullable=False)
+    review_revision = Column(Integer, nullable=False)
+    action = Column(String(30), nullable=False)
+    country = Column(String(10))
+    market = Column(String(20))
+    model_ids_json = Column(Text, nullable=False, server_default="[]")
+    software_version = Column(String(80))
+    version_applicability = Column(String(30), nullable=False)
+    evidence_reference = Column(Text, nullable=False, server_default="")
+    note = Column(Text, nullable=False, server_default="")
+    confirmed_by = Column(Text, nullable=False)
+    target_question_ids_json = Column(Text, nullable=False, server_default="[]")
+    request_fingerprint = Column(String(64), nullable=False)
+    reviewed_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    __table_args__ = (
+        UniqueConstraint("answer_id", "review_revision", name="uq_knowledge_answer_review_revision"),
+        Index("ix_knowledge_answer_reviews_answer", "answer_id"),
+    )
+
+
 class KnowledgeDocumentExtraction(Base):
     """Extraction status for one controlled source document."""
 

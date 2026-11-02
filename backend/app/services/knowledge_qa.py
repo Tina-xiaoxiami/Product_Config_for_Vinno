@@ -149,6 +149,7 @@ async def _answer_for_question(session: AsyncSession, question_id: int) -> dict 
 
 
 async def get_question(session: AsyncSession, question_id: int) -> dict | None:
+    from app.services.knowledge_answer_review import evidence_review_summary
     scope_column = await scope_expression(session)
     result = await session.execute(
         text(
@@ -182,6 +183,7 @@ async def get_question(session: AsyncSession, question_id: int) -> dict | None:
         "alias_questions": [row.phrasing_text for row in aliases_result],
         "answer": await _answer_for_question(session, question_id),
         "scope": stored_scope(question.scope_key),
+        "evidence_review": await evidence_review_summary(session, question_id),
     }
 
 
@@ -213,6 +215,26 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
         {"scope_key": query_scope_key},
     )
     return [dict(row._mapping) for row in result]
+
+
+async def ensure_question(session: AsyncSession, question_text: str, query_scope_key: str, *, count_ask: bool) -> int:
+    cleaned = str(question_text or "").strip()
+    normalized = normalize_question(cleaned)
+    existing = (await session.execute(text(
+        "SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope"
+    ), {"normalized": normalized, "scope": query_scope_key})).one_or_none()
+    if existing:
+        if count_ask:
+            await session.execute(text(
+                "UPDATE knowledge_questions SET asked_count=asked_count+1,last_asked_at=CURRENT_TIMESTAMP,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=:id"
+            ), {"id": existing.id})
+        return int(existing.id)
+    result = await session.execute(text(
+        "INSERT INTO knowledge_questions (question_text,normalized_question,status,asked_count,scope_key) "
+        "VALUES (:question,:normalized,'pending',:count,:scope) RETURNING id"
+    ), {"question": cleaned, "normalized": normalized, "count": 1 if count_ask else 0, "scope": query_scope_key})
+    return int(result.scalar_one())
 
 
 async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
@@ -313,43 +335,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
             "scope": resolved_scope,
         }
 
-    existing_result = await session.execute(
-        text(
-            """
-            SELECT id FROM knowledge_questions
-            WHERE normalized_question = :normalized_question AND scope_key = :scope_key
-            """
-        ),
-        {"normalized_question": normalized, "scope_key": query_scope_key},
-    )
-    existing = existing_result.one_or_none()
-    if existing:
-        question_id = int(existing.id)
-        await session.execute(
-            text(
-                """
-                UPDATE knowledge_questions
-                SET asked_count = asked_count + 1,
-                    last_asked_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :question_id
-                """
-            ),
-            {"question_id": question_id},
-        )
-    else:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO knowledge_questions (
-                    question_text, normalized_question, status, asked_count, scope_key
-                ) VALUES (:question_text, :normalized_question, 'pending', 1, :scope_key)
-                RETURNING id
-                """
-            ),
-            {"question_text": cleaned, "normalized_question": normalized, "scope_key": query_scope_key},
-        )
-        question_id = int(result.scalar_one())
+    question_id = await ensure_question(session, cleaned, query_scope_key, count_ask=True)
     await session.commit()
     item = await get_question(session, question_id)
     from app.services.knowledge_content import find_candidate_evidence
@@ -375,12 +361,13 @@ async def list_questions(
     skip: int,
     limit: int,
     scope: dict | None = None,
+    evidence_review: str | None = None,
 ) -> tuple[list[dict], int]:
     cleaned_query = str(query or "").strip()
     resolved_scope = await resolve_query_scope(session, scope) if scope else None
     if scope and resolved_scope is None:
         raise KnowledgeScopeError("问题列表的查询范围不完整")
-    scope_column = await scope_expression(session)
+    scope_column = await scope_expression(session, "q")
     params = {
         "status": status,
         "pattern": f"%{cleaned_query}%" if cleaned_query else None,
@@ -389,19 +376,22 @@ async def list_questions(
         "scope_key": scope_key(resolved_scope),
     }
     filters = f"""
-        (:status IS NULL OR status = :status)
-        AND (:pattern IS NULL OR question_text LIKE :pattern)
-        AND {scope_column} = :scope_key
+        (:status IS NULL OR q.status = :status)
+        AND (:pattern IS NULL OR q.question_text LIKE :pattern)
+        AND ({"1" if evidence_review and not scope else scope_column + " = :scope_key"})
     """
+    if evidence_review:
+        from app.services.knowledge_answer_review import evidence_review_filter
+        filters += " AND " + await evidence_review_filter(session, evidence_review)
     total_result = await session.execute(
-        text(f"SELECT COUNT(*) FROM knowledge_questions WHERE {filters}"), params
+        text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}"), params
     )
     rows_result = await session.execute(
         text(
             f"""
-            SELECT id FROM knowledge_questions
+            SELECT q.id FROM knowledge_questions q
             WHERE {filters}
-            ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+            ORDER BY CASE q.status WHEN 'pending' THEN 0 ELSE 1 END,
                      asked_count DESC, last_asked_at DESC, id DESC
             LIMIT :limit OFFSET :skip
             """
@@ -420,6 +410,7 @@ async def publish_answer(
     alias_questions: list[str],
     citations: list[dict],
     change_note: str | None,
+    commit: bool = True,
 ) -> dict | None:
     question = await get_question(session, question_id)
     if question is None:
@@ -611,7 +602,8 @@ async def publish_answer(
         ),
         {"question_id": question_id},
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return await get_question(session, question_id)
 
 

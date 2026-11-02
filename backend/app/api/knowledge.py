@@ -9,6 +9,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.knowledge_answer_review import (
+    KnowledgeAnswerReviewError, KnowledgeAnswerReviewConflict,
+    KnowledgeAnswerReviewUnavailable, review_answer,
+)
 from app.services.knowledge_scope import KnowledgeScopeError, KnowledgeScopeUnavailable
 from app.schemas.knowledge import (
     DataReviewBatchConfirmRequest,
@@ -23,6 +27,7 @@ from app.schemas.knowledge import (
     FeatureKnowledgeList,
     KnowledgeAnswerHistory,
     KnowledgeAnswerPublish,
+    KnowledgeAnswerReviewRequest,
     KnowledgeCandidateEvidenceList,
     KnowledgeDocumentArchiveResult,
     KnowledgeDocumentList,
@@ -205,15 +210,33 @@ async def get_knowledge_questions(
     market: str | None = Query(None, pattern="^(domestic|overseas)$"),
     product_model_id: int | None = Query(None, gt=0),
     software_version: str | None = Query(None, max_length=80),
+    evidence_review: str | None = Query(None, pattern="^(all|needs_review|reviewed)$"),
     db: AsyncSession = Depends(get_db),
 ):
     scope = {"country": country, "market": market, "product_model_id": product_model_id, "software_version": software_version}
     try:
         items, total = await list_questions(db, status=status, query=q, skip=skip, limit=limit,
-                                            scope=scope if any(value is not None for value in scope.values()) else None)
+                                            scope=scope if any(value is not None for value in scope.values()) else None,
+                                            evidence_review=evidence_review)
     except KnowledgeScopeError as exc:
         raise HTTPException(status_code=503 if isinstance(exc, KnowledgeScopeUnavailable) else 422, detail=str(exc)) from exc
     return KnowledgeQuestionList(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.post("/questions/{question_id}/review", response_model=KnowledgeQuestionItem)
+async def confirm_answer_review(question_id: int, data: KnowledgeAnswerReviewRequest,
+                                db: AsyncSession = Depends(get_db)):
+    try:
+        item = await review_answer(db, question_id, **data.model_dump())
+    except (KnowledgeAnswerReviewError, KnowledgeScopeError, KnowledgeQaError) as exc:
+        await db.rollback()
+        code = 409 if isinstance(exc, KnowledgeAnswerReviewConflict) else (
+            503 if isinstance(exc, (KnowledgeAnswerReviewUnavailable, KnowledgeScopeUnavailable)) else 422
+        )
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题或答案不存在")
+    return KnowledgeQuestionItem(**item)
 
 
 @router.get("/questions/{question_id}", response_model=KnowledgeQuestionItem)
