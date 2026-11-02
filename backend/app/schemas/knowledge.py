@@ -46,6 +46,7 @@ class FeatureKnowledgeItem(BaseModel):
     group_name: str
     identity_status: str
     primary_cn_name: str | None = None
+    display_cn_name: str | None = None
     primary_en_name: str | None = None
     names: list[FeatureKnowledgeName] = Field(default_factory=list)
     ipns: list[FeatureKnowledgeIpn] = Field(default_factory=list)
@@ -129,6 +130,7 @@ class KnowledgeAnswerCitationItem(BaseModel):
 class KnowledgeAnswerItem(BaseModel):
     id: int
     answer_text: str
+    display_answer_text: str | None = None
     review_status: str
     version: int
     change_note: str | None = None
@@ -139,6 +141,8 @@ class KnowledgeAnswerItem(BaseModel):
 class KnowledgeQuestionItem(BaseModel):
     id: int
     question_text: str
+    display_question_text: str | None = None
+    name_bindings: list[dict] = Field(default_factory=list)
     status: str
     asked_count: int
     last_asked_at: str
@@ -206,6 +210,7 @@ class KnowledgeQuestionResult(BaseModel):
     status: str
     question_id: int | None = None
     question: str
+    display_question: str | None = None
     match_type: str
     similarity: float
     answer: KnowledgeAnswerItem | None = None

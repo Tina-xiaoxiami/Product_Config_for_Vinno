@@ -1,9 +1,13 @@
 <template>
   <el-dialog v-model="visible" title="核对答案与适用范围" width="min(980px, calc(100vw - 32px))" :before-close="requestClose" destroy-on-close>
     <template v-if="question">
-      <h3 class="review-question">{{ question.question_text }}</h3>
+      <h3 class="review-question">{{ questionDisplayText(question) }}</h3>
       <div class="review-meta">答案 v{{ question.answer?.version }} · {{ question.answer?.updated_at }} · {{ knowledgeScopeLabel(question.scope) }}</div>
-      <section class="review-original" aria-label="当前答案全文"><pre>{{ question.answer?.answer_text }}</pre></section>
+      <section class="review-original" aria-label="当前答案全文"><pre>{{ answerDisplayText(question.answer) }}</pre></section>
+      <details v-if="questionDisplayText(question) !== question.question_text || answerDisplayText(question.answer) !== question.answer?.answer_text" class="review-saved-text">
+        <summary>查看保存原文（历史名称）</summary>
+        <p>{{ question.question_text }}</p><pre>{{ question.answer?.answer_text }}</pre>
+      </details>
       <el-alert v-if="question.answer?.change_note" :closable="false" type="info" title="已有确认或上次变更说明" class="review-existing"><p>{{ question.answer.change_note }}</p></el-alert>
       <div v-if="question.answer?.citations?.length" class="review-citations">
         <el-button v-for="citation in question.answer.citations" :key="citation.id" size="small" link @click="openCitation(citation)">{{ citation.document_title }} · {{ citation.source_ref || '未登记位置' }}</el-button>
@@ -45,6 +49,7 @@
 </template>
 
 <script setup>
+import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { reviewKnowledgeAnswer } from '../api/data'
@@ -119,6 +124,9 @@ defineExpose({ open })
 .review-meta { margin-bottom: 10px; }
 .review-original { max-height: 280px; overflow: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; }
 .review-original pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; color: #334155; }
+.review-saved-text { margin-top: 8px; color: #64748b; font-size: 12px; }
+.review-saved-text pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font: inherit; }
+.review-saved-text summary { cursor: pointer; }
 .review-existing { margin: 10px 0; }
 .review-existing p { margin: 4px 0; white-space: pre-wrap; }
 .review-form { margin-top: 14px; }
