@@ -4,8 +4,8 @@
     <p>{{ trace.conclusion }}</p>
     <p class="coverage">已明确适用并检索 {{ trace.coverage?.document_count || 0 }} 份资料；版本：{{ trace.coverage?.versions?.join('、') || '暂无' }}</p>
     <p v-for="gap in trace.coverage?.gaps || []" :key="String(gap)" class="warning">{{ text(gap) }}</p>
-    <article v-for="chain in trace.chains || []" :key="chain.release_line" class="trace-chain">
-      <strong>版本链：{{ chain.release_line }}</strong>
+    <article v-for="chain in trace.chains || []" :key="`${chain.country || ''}:${chain.release_line}`" class="trace-chain">
+      <strong>版本链：{{ chain.release_line }}<span v-if="chain.country"> · 来源国家 {{ chain.country }}</span></strong>
       <p v-if="chain.conditions?.length" class="warning">{{ Array.isArray(chain.conditions) ? chain.conditions.join('；') : chain.conditions }}</p>
       <div v-for="(condition,index) in chain.detected_conditions || []" :key="`condition-${index}`" class="warning"><strong>资料中的平台/升级限制</strong><pre>{{ condition.excerpt }}</pre><a :href="condition.preview_url" target="_blank" rel="noopener noreferrer">查看限制原文 · {{ condition.source_ref }}</a></div>
       <div v-for="event in chain.events || []" :key="`${event.document_id}-${event.source_ref}-${event.excerpt}`" class="trace-event">

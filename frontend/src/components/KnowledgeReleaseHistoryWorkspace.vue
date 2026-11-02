@@ -4,7 +4,7 @@
     <div class="history-controls">
       <el-input v-model="form.query" size="small" placeholder="主题，如：针增益调节" aria-label="历史追溯主题" @input="invalidateTrace" />
       <el-select v-model="form.market" size="small" placeholder="市场" aria-label="历史追溯市场" @change="form.product_model_id = null; invalidateTrace()"><el-option label="国内" value="domestic" /><el-option label="海外" value="overseas" /></el-select>
-      <el-input v-model="form.country" size="small" maxlength="2" placeholder="国家代码，如CN" aria-label="历史追溯国家" @input="invalidateTrace" />
+      <el-input v-model="form.country" size="small" maxlength="2" placeholder="来源国家（可选，如CN）" aria-label="历史追溯国家" @input="invalidateTrace" />
       <el-select v-model="form.product_model_id" size="small" filterable placeholder="完整机型" aria-label="历史追溯完整机型" @change="invalidateTrace"><el-option v-for="model in filteredModels(form.market)" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" /></el-select>
       <el-input v-model="form.software_version" size="small" placeholder="目标软件版本，如1.14.65" aria-label="历史追溯目标版本" @input="invalidateTrace" />
       <el-input v-model="form.release_line" size="small" placeholder="版本链（可选，留空分别展示）" aria-label="历史追溯版本链" @input="invalidateTrace" />
@@ -45,7 +45,7 @@ let traceRequestId = 0
 const invalidateTrace = () => { traceRequestId += 1; result.value = null; loading.value = false; error.value = '' }
 const runTrace = async () => {
   const payload = historyTracePayload(form)
-  if (!payload) { error.value = '请填写主题、国家、市场、完整机型和目标软件版本'; return }
+  if (!payload) { error.value = '请填写主题、市场、完整机型和目标软件版本'; return }
   const requestId = ++traceRequestId
   const fingerprint = JSON.stringify(payload)
   result.value = null; error.value = ''; loading.value = true
