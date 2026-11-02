@@ -1,6 +1,6 @@
 <template>
   <el-card shadow="never" v-loading="busy">
-    <template #header><div class="toolbar"><strong>探头配置 · 版本历史</strong>
+    <template #header><div class="toolbar">
       <el-select :disabled="busy" v-model="workspaceId" placeholder="选择共同总集" style="width:230px" @change="load"><el-option v-for="w in workspaces" :key="w.id" :value="w.id" :label="w.name" /></el-select>
       <el-button size="small" @click="$router.push('/probe-config')">返回配置</el-button>
     </div></template>

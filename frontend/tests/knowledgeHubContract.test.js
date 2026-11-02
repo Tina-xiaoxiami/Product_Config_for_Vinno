@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
 
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')
@@ -12,8 +13,8 @@ test('knowledge hub is reachable from router and primary navigation', () => {
 
   assert.match(router, /path:\s*'knowledge'/)
   assert.match(router, /name:\s*'KnowledgeHub'/)
-  assert.match(layout, /index="\/knowledge"/)
-  assert.match(layout, />\s*产品知识库\s*</)
+  assert.equal(WORKSPACE_SECTIONS.find(section => section.path === '/knowledge')?.label, '产品知识库')
+  assert.match(layout, /v-for="section in WORKSPACE_SECTIONS"/)
 })
 
 
@@ -297,8 +298,8 @@ test('base data management owns feature identity and registration master data', 
 
   assert.match(router, /path:\s*'registration-manage'/)
   assert.match(router, /name:\s*'RegistrationManage'/)
-  assert.match(layout, /index="\/registration-manage"/)
-  assert.match(layout, />\s*注册管理\s*</)
+  assert.equal(workspaceForPath('/registration-manage').sidebarGroup, '/manage')
+  assert.equal(workspaceForPath('/registration-manage').title, '注册管理')
   assert.match(featureView, /中文主名称/)
   assert.match(featureView, /英文主名称/)
   assert.match(featureView, /中文曾用名/)
@@ -306,7 +307,7 @@ test('base data management owns feature identity and registration master data', 
   assert.match(featureView, /IPN关系/)
   assert.match(featureView, /getFeatureMasterData/)
   assert.match(featureView, /updateFeatureMasterData/)
-  assert.match(registrationView, /注册数据由基础数据统一管理/)
+  assert.match(workspaceForPath('/registration-manage').description, /统一管理注册证/)
   assert.match(registrationView, /基础探头型号/)
   assert.match(registrationView, /getRegistrationModelProbes/)
   assert.match(api, /export const getFeatureMasterData/)

@@ -1,12 +1,6 @@
 <template>
   <div class="compare-page">
     <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>配置对比</span>
-        </div>
-      </template>
-
       <!-- 选择区域 -->
       <div class="select-area">
         <div class="select-row">

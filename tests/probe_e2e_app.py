@@ -30,6 +30,7 @@ from fastapi import FastAPI
 from app.database import engine, async_session, Base
 from app.api import probe_workspace, models, drafts, series, feature_standards
 from app.api import measurements
+from app.api import config, versions, enums, probe_categories, probe_models, applications, features, template_features, probe_config, registration, knowledge
 from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue
 from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig, TemplateFeature
 
@@ -79,3 +80,14 @@ app.include_router(drafts.router, prefix='/api/drafts')
 app.include_router(series.router, prefix='/api/series')
 app.include_router(feature_standards.router, prefix='/api/features/standards')
 app.include_router(measurements.router, prefix='/api/measurements')
+app.include_router(config.router, prefix='/api/config')
+app.include_router(versions.router, prefix='/api/versions')
+app.include_router(enums.router, prefix='/api/enums')
+app.include_router(probe_categories.router, prefix='/api/probe-categories')
+app.include_router(probe_models.router, prefix='/api/probe-models')
+app.include_router(applications.router, prefix='/api/applications')
+app.include_router(features.router, prefix='/api/features')
+app.include_router(template_features.router, prefix='/api/template-features')
+app.include_router(probe_config.router, prefix='/api/probes/config')
+app.include_router(registration.router, prefix='/api/registrations')
+app.include_router(knowledge.router, prefix='/api/knowledge')
