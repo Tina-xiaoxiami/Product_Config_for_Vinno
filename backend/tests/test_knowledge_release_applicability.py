@@ -200,3 +200,33 @@ async def test_parent_addition_before_comma_does_not_prove_a_child_addition(data
         assert all(event['change_type'] != 'added' for event in result['events'])
         assert result['assessment'] == 'conditional_evidence'
     await engine.dispose()
+
+
+def test_explicit_whole_version_exclusion_overrides_a_broad_cover_without_excluding_upgrade_only_cases():
+    facts = extract('1.14.65(VINNO 3/5/6 系列)\nRelease Note\n本版本不适用于V6。\n新增针增益调节。')
+    scoped = model_facts(facts, 'VINNO 6')
+    assert not scoped['applicable']
+    assert scoped['explicitly_excluded']
+    assert '本版本不适用于V6' in scoped['exclusion_evidence'][0]['excerpt']
+    assert model_facts(facts, 'VINNO 3')['applicable']
+    assert model_facts(extract(LUCID, '1.14.61'), 'VINNO 6')['applicable']
+    partial = extract('1.14.65(VINNO 6)\nRelease Note\n本版本的自动测量功能不适用于V6。')
+    assert model_facts(partial, 'VINNO 6')['applicable']
+
+
+@pytest.mark.asyncio
+async def test_whole_version_model_exclusion_blocks_automatic_and_manual_override(database):
+    from test_knowledge_release_history import _bind
+    _document(database, 1, '1.14.65', '1.14.65(VINNO 3/5/6 系列)\nRelease Note\n本版本不适用于V6。\n新增针增益调节。')
+    client, engine = await _client(database)
+    async with client:
+        automatic = await _trace(client)
+        assert automatic['events'] == []
+        assert automatic['coverage']['document_count'] == 0
+        excluded = next(x for x in automatic['coverage']['excluded_documents'] if x['document_id'] == 1)
+        assert any('本版本不适用于V6' in reason for reason in excluded['reasons'])
+        assert excluded['evidence_refs']
+        await _bind(client, (1,))
+        manual = await _trace(client)
+        assert manual['events'] == [] and manual['coverage']['document_count'] == 0
+    await engine.dispose()
