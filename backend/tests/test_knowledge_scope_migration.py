@@ -220,3 +220,30 @@ def test_cli_requires_explicit_database_and_defaults_to_dry_run(tmp_path):
     assert database.read_bytes() == before
     missing_argument = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
     assert missing_argument.returncode != 0
+
+
+def test_connection_open_failure_is_a_controlled_migration_error(tmp_path, monkeypatch):
+    from app.services import knowledge_scope_migration as migration
+
+    database = tmp_path / "legacy.db"
+    _legacy(database)
+
+    def denied(*args, **kwargs):
+        raise sqlite3.OperationalError("synthetic open failure")
+
+    monkeypatch.setattr(migration.sqlite3, "connect", denied)
+    with pytest.raises(KnowledgeScopeMigrationError, match="打开"):
+        migrate_knowledge_scopes(database)
+
+
+def test_cli_main_success_and_missing_source_error(tmp_path, monkeypatch, capsys):
+    from scripts.migrate_knowledge_scopes import main
+
+    database = tmp_path / "legacy.db"
+    _legacy(database)
+    monkeypatch.setattr(sys, "argv", ["migrate", "--database", str(database)])
+    assert main() == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ready"
+    monkeypatch.setattr(sys, "argv", ["migrate", "--database", str(tmp_path / "absent.db")])
+    assert main() == 1
+    assert "不存在" in capsys.readouterr().err
