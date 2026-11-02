@@ -113,7 +113,13 @@ const deactivateBinding = async row => {
   if (savingBinding.value) return
   try { await ElMessageBox.confirm('停用后，该关系不再参与历史支持判断，记录仍保留。', '停用适用关系', { type: 'warning' }) } catch { return }
   const session = bindingSession; savingBinding.value = true; bindingError.value = ''
-  try { await deactivateReleaseHistoryBinding(row.id, row.revision); invalidateTrace(); await refreshBindings(session) }
+  try {
+    await deactivateReleaseHistoryBinding(row.id, row.revision)
+    if (session !== bindingSession) return
+    invalidateTrace()
+    try { await refreshBindings(session) }
+    catch { if (session === bindingSession) bindingError.value = '适用关系已停用，列表刷新失败，请点击刷新列表重试' }
+  }
   catch (failure) { if (session === bindingSession) bindingError.value = failure?.response?.data?.detail || '停用失败' }
   finally { if (session === bindingSession) savingBinding.value = false }
 }
