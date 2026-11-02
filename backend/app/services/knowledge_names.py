@@ -26,22 +26,35 @@ def _anchors(value: str, *, question: str = '', known_names: dict[str, set[str]]
     anchors = []
     known_names = known_names or {}
     def proved_name(fragment: str, ipn: str, *, comparison: bool = False) -> str:
-        candidates = []
-        for start in range(len(fragment)):
-            suffix = fragment[start:].strip()
-            base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(suffix))
-            title_proves = len(base) >= 4 and (suffix in question or base in question)
-            approved_proves = ipn in known_names.get(suffix, set())
-            if suffix and (title_proves or approved_proves):
-                candidates.append(suffix)
-        if candidates:
-            return max(candidates, key=len)
-        # This controlled syntax has an explicit grammatical name boundary.
-        # Unknown narrative fragments still remain unregistered.
-        if (comparison and fragment and len(fragment) <= 80
-                and not re.match(r'(?:并非|不是|不|仅|只|尚|未|建议|新增|增加|请|应|需|可|将|已|该|此|本|通过|采用|推荐|打开|关闭|具备|实现|开启|进行)', fragment)
-                and not re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以)', fragment)):
-            return fragment
+        # Exact approved/configuration names are stronger than a title.
+        known = [name for name, identities in known_names.items()
+                 if ipn in identities and fragment.endswith(name)]
+        if known:
+            return max(known, key=len)
+        # Strip complete grammatical operators, never arbitrary character
+        # suffixes: "建议" must not leave a bogus name beginning with "议".
+        operators = ('并非', '不是', '并不', '不再', '不会', '不能', '不得', '不应', '无需', '不支持',
+                     '尚未支持', '尚未', '未支持', '已支持', '请确保', '确保', '建议', '推荐',
+                     '仅限', '仅', '只', '新增', '增加', '升级', '更新', '启用', '禁用', '关闭', '打开', '开启', '具备', '实现', '采用', '通过', '支持', '未', '已', '请', '应当', '应',
+                     '需', '必须', '可以', '可能', '可', '不', '非', '是', '尚', '暂未', '暂',
+                     '确认', '不要', '不必', '没有', '从未', '从不', '是否', '有无', '包括', '包含')
+        operator = re.compile('^(?:' + '|'.join(re.escape(word) for word in sorted(operators, key=len, reverse=True)) + ')')
+        name = fragment
+        while match := operator.match(name):
+            name = name[match.end():].lstrip()
+        base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(name))
+        # Unknown free clauses are not accepted merely because they are also
+        # present in a question. Such fragments need an approved identity.
+        uncertain = re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以|建议|请|[的是为了将])', name)
+        uncertain_prefix = re.match(r'^[这那该此本其在将把对从经由予让如若虽尽凡按依有能要得改升增减删换变调修启停关开加合整执进完优实建推采通支提适作用考选保]', name)
+        if not name or len(name) > 80 or uncertain or uncertain_prefix:
+            return ''
+        if len(base) >= 4 and (name in question or base in question):
+            return name
+        # A comparison supplies a controlled grammatical name boundary, e.g.
+        # "不等同于DICOM接口包(IPN...)". Operators remain outside that name.
+        if comparison:
+            return name
         return ''
     for match in _ANNOTATION.finditer(value):
         before = value[:match.start()].rstrip()

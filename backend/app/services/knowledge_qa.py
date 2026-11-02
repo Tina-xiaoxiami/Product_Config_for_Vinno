@@ -405,7 +405,7 @@ async def list_questions(
     if scope and resolved_scope is None:
         raise KnowledgeScopeError("问题列表的查询范围不完整")
     scope_column = await scope_expression(session, "q")
-    params = {
+    params: dict[str, object] = {
         "status": status,
         "pattern": f"%{cleaned_query}%" if cleaned_query else None,
         "skip": skip,
