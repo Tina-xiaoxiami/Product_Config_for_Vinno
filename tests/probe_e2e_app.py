@@ -30,7 +30,7 @@ from fastapi import FastAPI
 from app.database import engine, async_session, Base
 from app.api import probe_workspace, models, drafts, series, feature_standards
 from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue
-from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig
+from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig, TemplateFeature
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ async def lifespan(app):
             ProbeCategory(id=1, name='凸阵'), ProbeModel(id=1, category_id=1, model_number='P1'),
             ProbeModelVariant(id=1, probe_model_id=1, internal_model='P1a', ipn='P-1'),
             FeatureGroup(id=1, name='成像'), Feature(id=1, group_id=1, name='造影', config_item_id=201),
+            TemplateFeature(category_id=1, feature_id=1, default_support='supported'),
             ConfigItem(id=200, category='Probes', row_index=1, rd_name='P1', ipn='P-1'),
             ConfigItem(id=201, category='Optional Features', row_index=2, rd_name='造影', ipn='F-1'),
             ProductProbeConfig(product_model_id=10, probe_model_id=1, feature_id=1,

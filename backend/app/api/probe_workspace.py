@@ -90,14 +90,21 @@ async def create_workspace(data: ScopeInput, db=Depends(get_db)):
 
 
 @router.get('/{workspace_id}')
-async def get_workspace(workspace_id: int, db=Depends(get_db)):
-    return view(await workspace(db, workspace_id))
+async def get_workspace(workspace_id: int, refresh_template: bool = False, db=Depends(get_db)):
+    item = await workspace(db, workspace_id)
+    payload = view(item)
+    if item.draft_data is not None or refresh_template:
+        payload['template_data'] = service.resolve_template_definitions(payload['data'], await service.catalog(db))
+        payload['template_changed'] = payload['data'] != payload['template_data']
+    return payload
 
 
 @router.put('/{workspace_id}/draft')
 async def save_draft(workspace_id: int, data: DraftInput, db=Depends(get_db)):
     item = await workspace(db, workspace_id)
     document = await service.validate_document(db, data.data, refresh=data.refresh_scope)
+    document = service.resolve_template_definitions(document, await service.catalog(db))
+    document = await service.validate_document(db, document)
     await service.ensure_no_overlap(db, document, item.id)
     await change(db, item, data.revision, draft_data=service.encode(document))
     await service.reserve_members(db, item, document)
@@ -127,6 +134,7 @@ async def results(workspace_id: int, db=Depends(get_db)):
             frozen = json.loads(latest.snapshot_data)
             return {'results': frozen['results'], 'diff': service.document_diff(document, document)}
     snapshots, _, cat = await service.context(db, document)
+    document = service.resolve_template_definitions(document, cat)
     return {'results': service.calculate_results(document, snapshots, cat),
             'diff': service.document_diff(view(item)['published_data'], document)}
 
@@ -139,6 +147,7 @@ async def publication_preview(db, item, data):
         raise HTTPException(422, '请先录入共同总集')
     await service.ensure_no_overlap(db, document, item.id)
     snapshots, numbers, cat = await service.context(db, document, publishing=True, version_number=data.version_number)
+    document = service.resolve_template_definitions(document, cat)
     latest = await db.scalar(select(ProbeWorkspaceRelease).where(
         ProbeWorkspaceRelease.workspace_id == item.id).order_by(ProbeWorkspaceRelease.id.desc()).limit(1))
     if latest:
@@ -256,6 +265,7 @@ async def export(workspace_id: int, release_id: int | None = None, db=Depends(ge
             payload = json.loads(latest.snapshot_data)
         else:
             snapshots, _, cat = await service.context(db, document)
+            document = service.resolve_template_definitions(document, cat)
             payload = {'data': document, 'results': service.calculate_results(document, snapshots, cat), 'catalog': cat, 'source_snapshots': snapshots}
     content = export_workbook(payload, item.id, item.revision)
     return StreamingResponse(io.BytesIO(content), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -269,6 +279,8 @@ async def import_preview(workspace_id: int, file: UploadFile = File(...), db=Dep
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, '文件不能超过 10MB')
     document = import_workbook(content, file.filename, item.id, item.revision)
+    document = await service.validate_document(db, document)
+    document = service.resolve_template_definitions(document, await service.catalog(db))
     document = await service.validate_document(db, document)
     return {'data': document, 'revision': item.revision,
             'diff': service.document_diff(view(item)['data'], document)}

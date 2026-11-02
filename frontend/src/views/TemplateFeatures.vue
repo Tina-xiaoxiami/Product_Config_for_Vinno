@@ -138,9 +138,7 @@
                     </div>
                   </el-popover>
                   <el-tooltip v-else :content="getCellTooltip(cat.id, f.id)" placement="top" :disabled="!getCellTooltip(cat.id, f.id)">
-                    <div class="tpl-cell" :class="getCellClass(cat.id, f.id)">
-                      <div class="cell-apps" :class="{ 'is-all': isAllApps(cat.id, f.id) }">{{ getCellDisplay(cat.id, f.id) }}</div>
-                    </div>
+                    <ProbeSupportCell :status="_getStatus(`${cat.id}_${f.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${f.id}`)" :tender="_getTender(`${cat.id}_${f.id}`)" :mode="showMode" />
                   </el-tooltip>
                 </template>
               </el-table-column>
@@ -173,6 +171,8 @@ import { ElMessage } from 'element-plus'
 import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
 import api from '../api/index'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
+import ProbeSupportCell from '../components/ProbeSupportCell.vue'
+import { expandCombinedName, parseProbeExcludes, formatProbeSupport, probeGroupColors } from '../utils/probeSupport'
 
 const categories = ref([]); const features = ref([])
 const tplMap = ref({}); const loading = ref(false)
@@ -236,15 +236,7 @@ const visibleGroups = computed(() => {
 })
 
 // ---- group header coloring ----
-const groupColorMap = computed(() => {
-  const colors = ['#e3f2fd', '#e8f5e9', '#fff8e1', '#fce4ec', '#ede7f6', '#e0f2f1', '#fff3e0', '#e8eaf6', '#fbe9e7', '#f3e5f5']
-  const borderColors = ['#1976d2', '#388e3c', '#f57f17', '#c62828', '#5e35b1', '#00796b', '#e65100', '#3949ab', '#d84315', '#7b1fa2']
-  const map = {}
-  featureGroups.value.forEach((g, i) => {
-    map[g.id] = { bg: colors[i % colors.length], border: borderColors[i % borderColors.length] }
-  })
-  return map
-})
+const groupColorMap = computed(() => probeGroupColors(featureGroups.value))
 
 function headerCellStyle({ column }) {
   // Match feature columns by label
@@ -256,20 +248,6 @@ function headerCellStyle({ column }) {
 }
 
 // ---- helpers ----
-function expandCombinedName(name) {
-  const parts = name.split(/[\\/]/)
-  if (parts.length <= 1) return [name]
-  const last = parts[parts.length - 1].trim()
-  const suffix = last.length > 1 ? last.slice(1) : ''
-  const result = []
-  for (let i = 0; i < parts.length - 1; i++) {
-    const p = parts[i].trim()
-    if (p) result.push(p + suffix)
-  }
-  if (last) result.push(last)
-  return result
-}
-
 function getCatAllApps(catId) {
   const apps = categoryAppsMap.value[catId]
   if (!apps) return []
@@ -366,14 +344,7 @@ function _getStatus(key) {
   return t ? t.default_support : null
 }
 
-function _parseExcludes(excludesVal) {
-  if (!excludesVal) return { excludes: [], tender: [] }
-  if (typeof excludesVal === 'object' && !Array.isArray(excludesVal)) {
-    return { excludes: excludesVal.excludes || [], tender: excludesVal.tender || [] }
-  }
-  const arr = Array.isArray(excludesVal) ? excludesVal : []
-  return { excludes: arr, tender: [] }
-}
+function _parseExcludes(value) { return parseProbeExcludes(value) }
 
 function _getExcludes(key) {
   if (key in pendingExcludes) return _parseExcludes(pendingExcludes[key]).excludes
@@ -395,30 +366,7 @@ function _getTender(key) {
 
 const getCellDisplay = (catId, featId) => {
   const key = `${catId}_${featId}`
-  const status = _getStatus(key)
-  if (!status || status === 'unsupported') return '—'
-
-  const all = getCatAllApps(catId)
-  if (!all.length) return status === 'supported' ? 'ALL' : '△'
-
-  const excluded = _getExcludes(key).flatMap(n => expandCombinedName(n))
-  const tender = _getTender(key).flatMap(n => expandCombinedName(n))
-  const excludedSet = new Set(excluded)
-  const supported = all.filter(n => !excludedSet.has(n) && !tender.includes(n))
-
-  if (status === 'conditional' && tender.length) {
-    const parts = []
-    if (supported.length) parts.push('支:' + supported.join(','))
-    parts.push('招:' + tender.join(','))
-    return parts.join(' | ')
-  }
-
-  if (excluded.length === 0 && tender.length === 0) return 'ALL'
-
-  if (showMode.value === 'supported' || (showMode.value === 'auto' && supported.length <= excluded.length)) {
-    return supported.join(', ')
-  }
-  return '除: ' + excluded.join(', ')
+  return formatProbeSupport({ status: _getStatus(key), apps: getCatAllApps(catId), excludes: _getExcludes(key), tender: _getTender(key), mode: showMode.value })
 }
 
 const getCellTooltip = (catId, featId) => {
