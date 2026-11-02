@@ -177,43 +177,66 @@ def _topic(query: str, scope: dict) -> str:
 _RELEASE_HEADING = re.compile(r'(?:release\s*note|software\s*version|软件版本|版本)\s*[_:：vV\s-]*(\d+\.\d+(?:\.\d+){1,2})|^\s*[vV]?(\d+\.\d+(?:\.\d+){1,2})\s*(?:版本|release\s*note)', re.I)
 
 
+_NEGATED_CHANGE = re.compile(
+    r'(?:尚未|从未|未曾|并未|并没有|没有|无须|无需|不必|不需要|毋须|不得|不能|不可|不应|不用|不再|禁止|未|不)'
+    r'\s*(?:(?:进行|予以|再|被|将|直接|实际|正式)\s*)*'
+    r'(?:新增|添加|增加|取消|撤销|移除|删除|下架|上架)'
+    r'|(?:no\s+need\s+to|not|never)\s+(?:be\s+)?(?:remov\w*|delet\w*|add\w*|cancel\w*|disabl\w*)', re.I)
+_PROPOSED_CHANGE = re.compile(r'(?:计划|拟|建议|考虑|可能|预计|如果|尚需).*?(?:新增|添加|取消|移除|删除)')
+
+
 def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> list[dict]:
     headers = {m.group(1) or m.group(2) for chunk in chunks for line in chunk['content'].splitlines() if (m := _RELEASE_HEADING.search(line))}
     cumulative = len(headers) > 1
     current = None
+    table_versions: dict[str, str | None] = {}
     events = []
+    is_docx = ('wordprocessingml' in str(document.get('mime_type') or '')
+               or str(document.get('file_name') or '').casefold().endswith('.docx'))
     for chunk in chunks:
         section = str(chunk.get('section_name') or '')
+        # The existing DOCX extractor emits paragraphs first, followed by all
+        # tables. A table must never inherit the last paragraph's version.
+        table_key = section if is_docx and section.startswith('表格') else None
+        local_version = table_versions.get(table_key) if table_key else current
         section_header = _RELEASE_HEADING.search(section)
         if section_header:
-            current = section_header.group(1) or section_header.group(2)
+            local_version = section_header.group(1) or section_header.group(2)
         for line in chunk['content'].splitlines():
             header = _RELEASE_HEADING.search(line)
             if header:
-                current = header.group(1) or header.group(2)
+                local_version = header.group(1) or header.group(2)
             if topic not in _normalize(line):
                 continue
-            # An unrelated addition on the same page/line must not classify this child capability.
             clauses = [clause for clause in re.split(r'[。；;,，]', line) if topic in _normalize(clause)]
             relevant = '；'.join(clauses)
             change, _ = _classify_change(relevant, relevant, False)
-            if re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
-                change = 'removed'
-            elif re.search(r'不支持|暂不支持|尚不支持|未新增|没有新增|尚未新增|未添加|未增加|not\s+support', relevant, re.I):
+            # Negating or proposing an action is not evidence that it happened.
+            # Keep the original sentence and require review rather than inventing
+            # a removal, addition or a contradictory first-support record.
+            if _NEGATED_CHANGE.search(relevant) or _PROPOSED_CHANGE.search(relevant):
+                change = 'unknown'
+            elif re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
+                change = 'unknown' if re.search(r'(?:取消|移除|删除).*?(?:限制|约束|条件)', relevant) else 'removed'
+            elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', relevant, re.I):
                 change = 'restricted'
             elif re.search(r'仅|限制|limited|only', relevant, re.I):
                 change = 'restricted'
             elif re.search(r'添加', relevant):
                 change = 'added'
-            version = current or (None if cumulative else document['version'])
+            version = local_version or (None if cumulative or table_key else document['version'])
             event = {'document_id': document['id'], 'document_title': document['title'],
                      'release_version': document['version'], 'event_version': version,
-                     'event_version_basis': 'section_heading' if current else 'unresolved' if cumulative else 'document_version',
+                     'event_version_basis': ('table_heading' if table_key else 'section_heading') if local_version else 'unresolved' if cumulative or table_key else 'document_version',
                      'source_ref': chunk['source_ref'], 'page_number': chunk.get('page_number'),
                      'excerpt': line.strip()[:1500], 'change_type': change,
                      'preview_url': f"/api/knowledge/documents/{document['id']}/preview", 'conditions': conditions}
             if event not in events:
                 events.append(event)
+        if table_key:
+            table_versions[table_key] = local_version
+        else:
+            current = local_version
     return events
 
 
