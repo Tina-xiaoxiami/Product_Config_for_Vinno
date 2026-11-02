@@ -7,6 +7,7 @@
     <article v-for="chain in trace.chains || []" :key="chain.release_line" class="trace-chain">
       <strong>版本链：{{ chain.release_line }}</strong>
       <p v-if="chain.conditions?.length" class="warning">{{ Array.isArray(chain.conditions) ? chain.conditions.join('；') : chain.conditions }}</p>
+      <div v-for="(condition,index) in chain.detected_conditions || []" :key="`condition-${index}`" class="warning"><strong>资料中的平台/升级限制</strong><pre>{{ condition.excerpt }}</pre><a :href="condition.preview_url" target="_blank" rel="noopener noreferrer">查看限制原文 · {{ condition.source_ref }}</a></div>
       <div v-for="event in chain.events || []" :key="`${event.document_id}-${event.source_ref}-${event.excerpt}`" class="trace-event">
         <span>{{ event.event_version || '所属事件版本待核实' }} · {{ changeLabel(event.change_type) }} · {{ event.document_title }}</span>
         <pre>{{ event.excerpt }}</pre>
@@ -19,6 +20,7 @@
       <article v-for="doc in trace.coverage.unresolved_documents" :key="doc.document_id">
         <a :href="doc.preview_url" target="_blank" rel="noopener noreferrer">{{ doc.title }} · {{ doc.version }}</a>
         <p class="warning">{{ doc.reasons?.join('；') }}</p>
+        <div v-for="(condition,index) in doc.detected_conditions || []" :key="`condition-${index}`" class="warning"><strong>资料中的平台/升级限制</strong><pre>{{ condition.excerpt }}</pre><a :href="condition.preview_url" target="_blank" rel="noopener noreferrer">查看限制原文 · {{ condition.source_ref }}</a></div>
         <pre v-for="(event,index) in doc.candidate_events || []" :key="index">{{ event.excerpt }}</pre>
         <small v-if="!doc.candidate_events?.length">没有可展示的相关原文命中；资料范围或可检索状态仍需核对。</small>
       </article>
