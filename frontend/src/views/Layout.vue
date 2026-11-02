@@ -119,7 +119,7 @@ const toggleSidebar = () => {
   border-right: none;
 }
 
-.probe-management-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; flex-shrink: 0; background: #fff; border: 1px solid #e4e7ed; border-radius: 4px; padding: 0 12px; margin-bottom: 6px; }
+.probe-management-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; flex-shrink: 0; background: var(--workspace-surface); border: 1px solid var(--workspace-border); border-radius: 8px; padding: 0 12px; margin: 0; }
 .probe-management-tabs { flex: 1 1 330px; min-width: 0; }
 .probe-management-actions { display: flex; margin-left: auto; padding: 4px 0; }
 .probe-management-actions:empty { display: none; }
@@ -132,8 +132,6 @@ const toggleSidebar = () => {
 .el-main.management-workspace { display: flex; flex-direction: column; }
 
 .el-main {
-  padding: 12px;
   min-width: 0;
-  background-color: #f0f2f5;
 }
 </style>
