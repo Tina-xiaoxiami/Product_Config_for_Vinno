@@ -93,3 +93,16 @@ test('a refresh failure after a committed save is reported as saved and can be r
   assert.match(context.bindingError.value, /已保存.*刷新/)
   assert.doesNotMatch(context.bindingError.value, /保存失败/)
 })
+
+test('a refresh failure after committed deactivation is never reported as deactivation failure', async () => {
+  const source = readFileSync(new URL('../src/components/KnowledgeReleaseHistoryWorkspace.vue', import.meta.url), 'utf8')
+  let committed = false
+  const context = { savingBinding:{value:false},bindingError:{value:''},ElMessageBox:{confirm:async()=>{}},
+    deactivateReleaseHistoryBinding:async()=>{committed=true},invalidateTrace(){},refreshBindings:async()=>{throw new Error('offline')} }
+  const start = source.indexOf('const deactivateBinding ='), end = source.indexOf('\n</script>',start)
+  const deactivate = new Function(...Object.keys(context), `const bindingSession = 1; ${source.slice(start,end)}; return deactivateBinding`)(...Object.values(context))
+  await deactivate({id:1,revision:1})
+  assert.equal(committed,true)
+  assert.match(context.bindingError.value,/已停用.*刷新/)
+  assert.doesNotMatch(context.bindingError.value,/停用失败/)
+})
