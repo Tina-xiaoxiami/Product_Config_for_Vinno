@@ -238,3 +238,53 @@ def test_snapshot_round_trip_preserves_old_and_neutral_keys(tmp_path):
     assert {row["scope"]["country"] for row in snapshot["questions"]} == {"CN", None}
     assert restore_knowledge_qa_snapshot(target, snapshot, apply=True)["status"] == "restored"
     assert export_knowledge_qa_snapshot(target) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_identical_ties_prefer_neutral_record_even_when_legacy_id_is_lower(database):
+    client, engine = await _client_for(database)
+    async with client:
+        specific = await ask(client, scope={**NEUTRAL, "country": "DE"})
+        neutral = await ask(client)
+        assert specific["question_id"] < neutral["question_id"]
+        assert (await publish(client, specific["question_id"], aliases=["环境光调节操作说明"])).status_code == 200
+        assert (await publish(client, neutral["question_id"], aliases=["环境光调节操作说明"])).status_code == 200
+        result = await ask(client, "环境光调节操作说明")
+        assert result["question_id"] == neutral["question_id"]
+        assert result["matched_scope"]["country"] is None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_identical_answers_for_different_question_identities_still_require_review(database):
+    client, engine = await _client_for(database)
+    async with client:
+        await legacy_answer(client, question="第一项独立功能", aliases=[QUESTION])
+        await legacy_answer(client, "FR", question="第二项独立功能", aliases=[QUESTION])
+        result = await ask(client)
+        assert result["status"] == "pending"
+        assert result["answer"] is None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_neutral_reads_ignore_invalid_keys_and_wrong_model_identity(database):
+    client, engine = await _client_for(database)
+    async with client:
+        question_id = await legacy_answer(client)
+        with closing(sqlite3.connect(database)) as connection, connection:
+            key = connection.execute("SELECT scope_key FROM knowledge_questions WHERE id=?", (question_id,)).fetchone()[0]
+            wrong_identity = {**stored_scope(key), "model_name": "Another complete model"}
+            for invalid_key in ["{broken", key.replace('"country":"DE"', '"country":"de"'), scope_key(wrong_identity)]:
+                inserted = connection.execute(
+                    "INSERT INTO knowledge_questions (question_text,normalized_question,status,scope_key) "
+                    "VALUES (?,?,'answered',?)", (QUESTION, normalize_question(QUESTION), invalid_key))
+                connection.execute("INSERT INTO knowledge_answers (question_id,answer_text) VALUES (?,?)", (inserted.lastrowid, "wrong"))
+        result = await ask(client)
+        assert result["status"] == "answered"
+        assert result["question_id"] == question_id
+        listed = await client.get("/api/knowledge/questions", params={**NEUTRAL, "q": "环境光", "evidence_review": "needs_review", "limit": 1})
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["total"] == 1
+        assert listed.json()["items"][0]["id"] == question_id
+    await engine.dispose()
