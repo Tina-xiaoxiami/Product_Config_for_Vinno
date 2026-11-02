@@ -188,3 +188,15 @@ def test_cover_version_wins_over_upgrade_prerequisite_and_only_source_conflicts_
     conflicting = extract('1.14.61(VINNO 6)\n1.14.65(VINNO 6)\nRelease Note')
     assert conflicting['status'] == 'conflict'
     assert conflicting['issues'][0]['field'] == 'version'
+
+
+@pytest.mark.asyncio
+async def test_parent_addition_before_comma_does_not_prove_a_child_addition(database):
+    _document(database, 1, '1.14.65', '1.14.65(VINNO 6)\nRelease Note\n新增穿刺增强，针增益调节保持不变。', country=None, market='unspecified')
+    client, engine = await _client(database)
+    async with client:
+        result = await _trace(client)
+        assert result['events']
+        assert all(event['change_type'] != 'added' for event in result['events'])
+        assert result['assessment'] == 'conditional_evidence'
+    await engine.dispose()
