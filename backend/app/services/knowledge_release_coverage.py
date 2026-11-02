@@ -193,7 +193,11 @@ async def release_coverage(session, supplied_scope: dict | None = None) -> dict:
             else:
                 issues.append(_issue('release_qualification_unverified', '候选名称含副本、验证或中间材料标记，不能视为正式发布', '核对最终发布资格，不直接批量入库'))
         candidates = _candidate_versions(locations)
-        if len(versions)==1:
+        if any(issue['code']=='source_fact_conflict' for issue in issues):
+            # A conflicting cover cannot establish a target-version cutoff,
+            # even when the first parsed version or filename appears later.
+            pass
+        elif len(versions)==1:
             item.update(version=next(iter(versions)), version_basis='source_extract')
             if candidates and candidates != versions:
                 issues.append(_issue('candidate_version_mismatch', '来源名称候选版本与正文版本不同', '核对文件命名及正式发布资格，以明确原文为依据'))
