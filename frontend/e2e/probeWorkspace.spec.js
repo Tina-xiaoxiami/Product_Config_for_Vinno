@@ -3,6 +3,11 @@ import { test, expect } from '@playwright/test'
 test('shared combination retains model differences through editing, publication and history', async ({ page }) => {
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
+  async function chooseSelect(control, name) {
+    await control.click()
+    const menu = await control.getByRole('combobox').getAttribute('aria-controls')
+    await page.locator(`#${menu}`).getByRole('option', { name, exact: true }).click()
+  }
   await page.goto('/probe-config')
   await page.getByRole('button', { name: '新建共同总集', exact: true }).click()
   const create = page.getByRole('dialog', { name: '建立共同总集' })
@@ -15,8 +20,7 @@ test('shared combination retains model differences through editing, publication 
   await page.getByRole('button', { name: '编辑总集', exact: true }).first().click()
   const editor = page.getByRole('dialog', { name: '编辑共同总集' })
   for (const label of ['定义值支持状态', '现状值支持状态']) {
-    await editor.locator('.el-form-item').filter({ hasText: label }).locator('.el-select').click()
-    await page.getByRole('option', { name: '支持', exact: true }).click()
+    await chooseSelect(editor.locator('.el-form-item').filter({ hasText: label }).locator('.el-select'), '支持')
   }
   await editor.getByRole('button', { name: '应用到待保存草稿' }).click()
   await page.getByRole('button', { name: '保存草稿', exact: true }).click()
@@ -28,8 +32,7 @@ test('shared combination retains model differences through editing, publication 
   await expect(publish.getByRole('button', { name: '重新核对发布预览' })).toBeEnabled()
   await publish.getByRole('button', { name: '重新核对发布预览' }).click()
   await expect(publish.getByText(/将创建配置管理版本/)).toBeVisible()
-  await publish.locator('.el-select').first().click()
-  await page.getByRole('option', { name: '国内 / VINNO 6', exact: true }).click()
+  await chooseSelect(publish.locator('.el-select').first(), '国内 / VINNO 6')
   await expect(publish.getByText('不适用', { exact: true })).toHaveCount(2)
   await publish.getByRole('button', { name: '确认发布', exact: true }).click()
   await expect(publish).not.toBeVisible()
