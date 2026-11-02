@@ -320,3 +320,21 @@ async def test_unreadable_registered_file_is_excluded_instead_of_showing_cached_
         assert result['coverage']['excluded_documents']
         assert all(not item['candidate_events'] for item in result['coverage']['unresolved_documents'])
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wording', [
+    '未取消针增益调节，仍保持三档可调。', '不移除针增益调节。', '未删除针增益调节。',
+    '无须取消针增益调节。', '无需移除针增益调节。', '并未新增针增益调节。',
+    '尚未添加针增益调节。', '本版本不必删除针增益调节。',
+])
+async def test_negated_change_verbs_do_not_invent_additions_removals_or_conflicts(database, wording):
+    _document(database, 2, '1.14.40', 'Release Note 1.14.40\n' + wording)
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1, 2))
+        result = await _trace(client)
+        second = [event for event in result['events'] if event['document_id'] == 2]
+        assert second and all(event['change_type'] == 'unknown' for event in second)
+        assert result['assessment'] == 'conditional_evidence'
+    await engine.dispose()
