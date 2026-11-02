@@ -16,6 +16,7 @@ from app.models.probe import (
     ProbeConfigDraft, ProbeConfigVersion,
 )
 from app.models.feature_standard import FeatureNameStandard
+from app.models.measurement import MeasurementBatch, MeasurementEntry
 from app.models.knowledge import (
     FeatureName,
     FeatureRelation,
@@ -78,6 +79,8 @@ __all__ = [
     "TemplateVersion",
     "FeatureName",
     "FeatureNameStandard",
+    "MeasurementBatch",
+    "MeasurementEntry",
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",
