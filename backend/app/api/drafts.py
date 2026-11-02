@@ -21,6 +21,7 @@ from app.schemas.draft import (
     BatchSubmitRequest, BatchSubmitResponse, BatchSubmitResult
 )
 from app.utils import generate_next_version
+from app.services.config_publication import resolve_version_number as _resolve_version_number
 
 from app.services.config_history import (
     build_series_snapshot,
@@ -519,27 +520,6 @@ async def _rewind_snapshot_for_remaining_drafts(
             )
             _set_snapshot_pair(snapshot, item, draft.model_id, pair)
     return snapshot
-
-
-async def _resolve_version_number(
-    db: AsyncSession, series_id: int, requested: Optional[str]
-) -> str:
-    last_version = await _latest_version(db, series_id)
-    version_number = requested or generate_next_version(
-        last_version.version_number if last_version else None
-    )
-    duplicate = await db.scalar(
-        select(ConfigVersion.id).where(
-            ConfigVersion.series_id == series_id,
-            ConfigVersion.version_number == version_number,
-        )
-    )
-    if duplicate is not None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"版本号 {version_number} 在该系列中已存在",
-        )
-    return version_number
 
 
 @router.get("/version-check")
