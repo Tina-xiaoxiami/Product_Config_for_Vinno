@@ -1,6 +1,5 @@
 """The server must expose the workspaces and create their new empty storage."""
 import importlib
-from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
