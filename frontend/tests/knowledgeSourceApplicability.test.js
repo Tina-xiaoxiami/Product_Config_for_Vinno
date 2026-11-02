@@ -22,3 +22,10 @@ test('concrete confirmation questions remain separate from extracted document fa
   assert.match(source,/本次没有需要你重复确认的资料事实/)
   assert.match(source,/原文未声明/)
 })
+
+test('clear source values and index discrepancies do not become user confirmation requests', () => {
+  const item = {field:'version',registered_value:'1.14.61',source_value:'1.14.65',reason:'索引与封面不一致'}
+  const display = sourceApplicabilityDisplay({source_applicability:{version:{value:'1.14.65'},index_issues:[item]}})
+  assert.equal(display.version,'1.14.65')
+  assert.deepEqual(display.indexIssues,[item])
+})
