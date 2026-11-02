@@ -5,7 +5,7 @@ import io
 from sqlalchemy import select, func
 from openpyxl import load_workbook
 from app.models import ConfigItem, ConfigValue, ConfigVersion
-from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig
+from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig, Application, CategoryApplication
 from app.api import probe_config
 from test_draft_safety import _draft_harness, _seed_catalog
 
@@ -43,6 +43,7 @@ async def harness(tmp_path, monkeypatch):
             ProbeCategory(id=1, name='凸阵'), ProbeModel(id=1, category_id=1, model_number='P1'),
             ProbeModelVariant(id=1, probe_model_id=1, internal_model='P1a', ipn='P-1'),
             FeatureGroup(id=1, name='成像'), Feature(id=1, group_id=1, name='造影', config_item_id=201),
+            Application(id=1, name='心脏'), CategoryApplication(category_id=1, application_id=1),
             ConfigItem(id=200, category='Probes', row_index=3, rd_name='P1', ipn='P-1'),
             ConfigItem(id=201, category='Optional Features', row_index=4, rd_name='造影', ipn='F-1'),
         ])
@@ -50,7 +51,7 @@ async def harness(tmp_path, monkeypatch):
             db.add(ConfigValue(item_id=200, model_id=mid, final_config='X' if mid != 11 else 'N/A', current_config='X', selection_config='O'))
             db.add(ConfigValue(item_id=201, model_id=mid, final_config='X', current_config='X', selection_config='O'))
         db.add(ProductProbeConfig(product_model_id=10, probe_model_id=1, feature_id=1,
-                                  defined_status='conditional', current_status='supported', defined_excludes='["心脏"]'))
+                                  defined_status='conditional', current_status='supported', defined_excludes='["心脏"]', priority='标2'))
         await db.commit()
     return client, sessions, engine, source
 
@@ -86,6 +87,7 @@ async def test_combination_deduplicates_models_and_retains_legacy_as_unpublished
         assert d['data']['scope']['model_ids'] == [10, 11, 20]
         assert d['published_data'] is None
         assert d['data']['overrides']['10']['1:1:1']['defined_status'] == 'conditional'
+        assert d['data']['overrides']['10']['1:1:1']['priority'] == '标2'
         duplicate = await client.post('/api/probes/workspaces', json={'name': '副本', 'groups': ['V10']})
         assert duplicate.status_code == 409
         assert str(d['id']) in duplicate.json()['detail']
@@ -239,4 +241,98 @@ async def test_stale_edit_missing_mapping_invalid_rule_and_main_drafts_are_safe(
         r = await client.post(path + '/preview', json={})
         assert r.status_code == 400
         assert '草稿' in r.json()['detail']
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_history_comparison_restore_and_export_read_frozen_records(tmp_path, monkeypatch):
+    client, sessions, engine, source = await harness(tmp_path, monkeypatch)
+    async with client:
+        d = await save(client, await create(client)); path = f"/api/probes/workspaces/{d['id']}"
+        ids = []
+        for number, status in [('1.0.0', 'supported'), ('1.0.1', 'unsupported')]:
+            if ids:
+                d = (await client.get(path)).json()
+                doc = d['data']; doc['rows'][0]['current_status'] = status
+                d = await save(client, d, doc)
+            p = (await client.post(path + '/preview', json={'version_number': number})).json()
+            r = await client.post(path + '/publish', json={'version_number': number, 'signature': p['signature']})
+            assert r.status_code == 200, r.text
+            ids.append(r.json()['id'])
+        compared = await client.get(path + '/compare', params={'before': ids[0], 'after': ids[1]})
+        assert compared.status_code == 200
+        assert compared.json()['diff']['modified'] == 1
+        assert compared.json()['changes']
+        d = (await client.get(path)).json()
+        restored = await client.post(path + f'/releases/{ids[0]}/restore', json={'revision': d['revision']})
+        assert restored.status_code == 200
+        assert restored.json()['has_draft'] is True
+        assert restored.json()['data']['rows'][0]['current_status'] == 'supported'
+        assert restored.json()['published_data']['rows'][0]['current_status'] == 'unsupported'
+        source.unlink()
+        exported = await client.get(path + '/export', params={'release_id': ids[0]})
+        assert exported.status_code == 200
+        assert '编号与名称对照' in load_workbook(io.BytesIO(exported.content)).sheetnames
+        assert (await client.get(path + '/releases/999')).status_code == 404
+        assert (await client.get('/api/probes/workspaces/999')).status_code == 404
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_deleted_variant_cannot_fall_back_to_probe_name(tmp_path, monkeypatch):
+    from sqlalchemy import delete
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        d = await save(client, await create(client)); path = f"/api/probes/workspaces/{d['id']}"
+        async with sessions() as db:
+            await db.execute(delete(ProbeModelVariant).where(ProbeModelVariant.id == 1))
+            await db.commit()
+        r = await client.get(path + '/results')
+        assert r.status_code == 200
+        assert all(row['current_status'] == 'pending' for row in r.json()['results'])
+        assert (await client.post(path + '/preview', json={})).status_code == 422
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_excel_rejects_formula_stale_template_and_preserves_explicit_priority_clear(tmp_path, monkeypatch):
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        d = await save(client, await create(client)); path = f"/api/probes/workspaces/{d['id']}"
+        doc = d['data']; doc['overrides']['20']['1:1:1']['priority'] = None
+        d = await save(client, d, doc)
+        exported = await client.get(path + '/export')
+        r = await client.post(path + '/import-preview', files={'file': ('probes.xlsx', exported.content)})
+        assert r.status_code == 200
+        assert r.json()['data']['overrides']['20']['1:1:1']['priority'] is None
+        assert r.json()['diff']['modified'] == 0
+        wb = load_workbook(io.BytesIO(exported.content)); wb['共同总集'].cell(2, 8, '=1+1')
+        out = io.BytesIO(); wb.save(out)
+        assert (await client.post(path + '/import-preview', files={'file': ('probes.xlsx', out.getvalue())})).status_code == 422
+        await save(client, d, d['data'])
+        assert (await client.post(path + '/import-preview', files={'file': ('probes.xlsx', exported.content)})).status_code == 409
+        assert (await client.post(path + '/import-preview', files={'file': ('bad.xlsx', b'broken')})).status_code == 422
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_noop_release_is_blocked_and_discard_releases_expanded_members(tmp_path, monkeypatch):
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        r = await client.post('/api/probes/workspaces', json={'name': 'V10总集', 'groups': ['V10']})
+        d = r.json(); doc = d['data']; doc['overrides'] = {}
+        d = await save(client, d, doc); path = f"/api/probes/workspaces/{d['id']}"
+        p = (await client.post(path + '/preview', json={'version_number': '1.0.0'})).json()
+        assert (await client.post(path + '/publish', json={'version_number': '1.0.0', 'signature': p['signature']})).status_code == 200
+        d = (await client.get(path)).json()
+        d = await save(client, d, d['data'])
+        noop = await client.post(path + '/preview', json={'version_number': '1.0.1'})
+        assert noop.status_code == 400, noop.text
+        doc = d['data']; doc['scope']['combinations'] = ['Together']
+        r = await client.put(path + '/draft', json={'revision': d['revision'], 'data': doc, 'refresh_scope': True})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert (await client.post(path + '/discard', json={'revision': d['revision']})).status_code == 200
+        other = await client.post('/api/probes/workspaces', json={'name': 'Other总集', 'groups': ['Other']})
+        assert other.status_code == 200, other.text
     await engine.dispose()
