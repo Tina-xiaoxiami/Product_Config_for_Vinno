@@ -27,6 +27,7 @@ class DraftInput(BaseModel):
     revision: int = Field(ge=1)
     data: dict
     refresh_scope: bool = False
+    sync_materials: bool = False
 
 
 class RevisionInput(BaseModel):
@@ -86,7 +87,7 @@ async def create_workspace(data: ScopeInput, db=Depends(get_db)):
     await service.reserve_members(db, item, document)
     await db.commit()
     await db.refresh(item)
-    return view(item)
+    return await get_workspace(item.id, db=db)
 
 
 @router.get('/{workspace_id}')
@@ -96,6 +97,7 @@ async def get_workspace(workspace_id: int, refresh_template: bool = False, db=De
     if item.draft_data is not None or refresh_template:
         payload['template_data'] = service.resolve_template_definitions(payload['data'], await service.catalog(db))
         payload['template_changed'] = payload['data'] != payload['template_data']
+    payload['material_sync'] = await service.material_sync_plan(db, payload['data'])
     return payload
 
 
@@ -103,13 +105,16 @@ async def get_workspace(workspace_id: int, refresh_template: bool = False, db=De
 async def save_draft(workspace_id: int, data: DraftInput, db=Depends(get_db)):
     item = await workspace(db, workspace_id)
     document = await service.validate_document(db, data.data, refresh=data.refresh_scope)
-    document = service.resolve_template_definitions(document, await service.catalog(db))
+    cat = await service.catalog(db)
+    if data.sync_materials:
+        document = await service.sync_config_materials(db, document, cat)
+    document = service.resolve_template_definitions(document, cat)
     document = await service.validate_document(db, document)
     await service.ensure_no_overlap(db, document, item.id)
     await change(db, item, data.revision, draft_data=service.encode(document))
     await service.reserve_members(db, item, document)
     await db.commit()
-    return view(item)
+    return await get_workspace(item.id, db=db)
 
 
 @router.post('/{workspace_id}/discard')
@@ -120,7 +125,9 @@ async def discard(workspace_id: int, data: RevisionInput, db=Depends(get_db)):
     await change(db, item, data.revision, draft_data=None if empty is None else service.encode(empty))
     await service.reserve_members(db, item, empty or json.loads(item.published_data), published=True)
     await db.commit()
-    return view(item)
+    payload = view(item)
+    payload['material_sync'] = await service.material_sync_plan(db, payload['data'])
+    return payload
 
 
 @router.get('/{workspace_id}/results')

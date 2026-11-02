@@ -78,3 +78,35 @@ async def test_existing_draft_sync_is_explicit_additive_and_revision_checked(tmp
         stale=await client.put(path+'/draft',json={'revision':viewed['revision'],'data':viewed['data'],'sync_materials':True})
         assert stale.status_code==409
     await engine.dispose()
+
+
+def test_conflicting_exact_names_do_not_select_a_template_category():
+    from app.services.probe_materials import extend_material_catalog
+    cat={'probes':[{'id':1,'name':'P-A','category_id':1},{'id':2,'name':'P-B','category_id':2}], 'variants':[]}
+    result=extend_material_catalog(cat,[{'id':9,'rd_name':'P-B','en_desc':'P-A','ipn':'new'}])
+    assert result['config_materials'][0]['category_pending'] is True
+    assert next(p for p in result['probes'] if p['id']==-9)['category_id'] is None
+
+
+@pytest.mark.asyncio
+async def test_source_identity_remains_valid_after_master_registration(tmp_path,monkeypatch):
+    client,sessions,engine,_=await harness(tmp_path,monkeypatch)
+    await add_config_materials(sessions)
+    async with client:
+        initial=await create(client)
+        path=f"/api/probes/workspaces/{initial['id']}"
+        source=next(r for r in initial['data']['rows'] if r['variant_id']==-203)
+        assert source['defined_status']=='pending'
+        async with sessions() as db:
+            db.add(ProbeModel(id=3,category_id=1,model_number='Unknown'))
+            db.add(ProbeModelVariant(id=4,probe_model_id=3,internal_model='Unknown',ipn='P-3'))
+            await db.commit()
+        viewed=(await client.get(path)).json()
+        assert viewed['material_sync']['missing_count']==0
+        proposed=next(r for r in viewed['template_data']['rows'] if r['variant_id']==-203)
+        assert proposed['defined_status']=='supported'
+        saved=await client.put(path+'/draft',json={'revision':viewed['revision'],'data':viewed['template_data'],'sync_materials':True})
+        assert saved.status_code==200,saved.text
+        assert len(saved.json()['data']['rows'])==4
+        assert saved.json()['data']['overrides']==initial['data']['overrides']
+    await engine.dispose()

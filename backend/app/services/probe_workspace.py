@@ -6,10 +6,11 @@ import json
 from fastapi import HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
-from app.models import ConfigItem, ConfigVersion, ProductModel, ProductSeries
+from app.models import ConfigItem, ConfigValue, ConfigVersion, ProductModel, ProductSeries
 from app.models.probe import ProbeModel, ProbeModelVariant, Feature, ProductProbeConfig, Application, CategoryApplication, ProbeCategory, FeatureGroup, TemplateFeature, TemplateVersion
 from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceMember
 from app.services.model_identity import active_model_filter
+from app.services.probe_materials import extend_material_catalog
 from app.services.whitepaper_subseries import get_subseries_editor, SubseriesSourceError
 from app.services.config_history import build_series_snapshot
 from app.services.config_publication import resolve_version_number, ensure_no_pending_drafts
@@ -85,7 +86,7 @@ async def catalog(db):
                 break
         except (ValueError, TypeError, KeyError):
             continue
-    return {
+    result = {
         'probes': [{'id': p.id, 'name': p.model_number, 'category_id': p.category_id} for p in probes],
         'variants': [{'id': v.id, 'probe_model_id': v.probe_model_id, 'ipn': v.ipn, 'internal_model': v.internal_model, 'notes': v.notes} for v in variants],
         'features': [{'id': f.id, 'name': f.name, 'ipn': f.ipn, 'config_item_id': f.config_item_id, 'group_id': f.group_id, 'sort_order': f.sort_order} for f in features],
@@ -96,6 +97,51 @@ async def catalog(db):
         'template_version': {'id': version.id, 'number': version.version_number} if version else None,
         'applications': {str(p.category_id): sorted({r.name for r in links if r.category_id == p.category_id}) for p in probes},
     }
+    items = (await db.scalars(select(ConfigItem).where(ConfigItem.category == 'Probes').order_by(ConfigItem.row_index, ConfigItem.id))).all()
+    return extend_material_catalog(result, [dict(id=i.id, ipn=i.ipn, rd_name=i.rd_name, en_desc=i.en_desc) for i in items])
+
+
+async def material_sync_plan(db, document, cat=None):
+    cat = cat if cat is not None else await catalog(db)
+    values = (await db.scalars(select(ConfigValue).join(ConfigItem, ConfigValue.item_id == ConfigItem.id).where(
+        ConfigItem.category == 'Probes', ConfigValue.model_id.in_(document['scope']['model_ids'])
+    ).order_by(ConfigValue.item_id, ConfigValue.model_id))).all()
+    supported = {value.item_id for value in values if any(config_gate(getattr(value, field)) == 'supported' for field in ('current_config', 'final_config'))}
+    identities = {(r['probe_model_id'], r.get('variant_id')) for r in document['rows']}
+    variants = {v['id']: v for v in cat['variants']}
+    missing, unmapped, seen = [], [], set()
+    for material in cat['config_materials']:
+        if material['config_item_id'] not in supported:
+            continue
+        target = (material['probe_model_id'], material['variant_id'])
+        if target in seen:
+            continue
+        seen.add(target)
+        if material['category_pending']:
+            unmapped.append(material)
+        source_identity = (-material['config_item_id'], -material['config_item_id'])
+        exists = source_identity in identities or target in identities or any(
+            pid == material['probe_model_id'] and material['ipn'] and variants.get(vid, {}).get('ipn') == material['ipn']
+            for pid, vid in identities)
+        if not exists:
+            missing.append(material)
+    return {'source_count': len(seen), 'missing_count': len(missing), 'missing_materials': missing,
+            'unmapped_count': len(unmapped), 'unmapped_materials': unmapped}
+
+
+async def sync_config_materials(db, document, cat=None):
+    cat = cat if cat is not None else await catalog(db)
+    plan = await material_sync_plan(db, document, cat)
+    document = deepcopy(document)
+    if not cat['features'] and plan['missing_count']:
+        raise HTTPException(422, '请先维护功能模板，再补齐探头物料')
+    # Add identities only. Template resolution expands all function columns, while
+    # old current values, notes and sparse model rules remain untouched.
+    for material in plan['missing_materials']:
+        document['rows'].append({'probe_model_id': material['probe_model_id'], 'variant_id': material['variant_id'],
+                                 'feature_id': cat['features'][0]['id'], 'current_status': 'pending',
+                                 'current_excludes': [], 'notes': '', 'priority': None})
+    return resolve_template_definitions(document, cat)
 
 
 async def validate_document(db, document, *, refresh=False):
@@ -203,7 +249,7 @@ async def initial_document(db, scope):
                 'priority': cfg.priority,
                 'notes': f'历史数据待核对；{cfg.notes or ""}',
             }
-    return resolve_template_definitions({'scope': scope, 'rows': list(rows.values()), 'overrides': overrides}, cat)
+    return await sync_config_materials(db, {'scope': scope, 'rows': list(rows.values()), 'overrides': overrides}, cat)
 
 
 def resolve_template_definitions(document, cat):
@@ -234,7 +280,7 @@ def resolve_template_definitions(document, cat):
                 excludes = sorted(set(excludes))
             except (TypeError, ValueError) as error:
                 raise HTTPException(422, f"模板应用定义无效：类别 {probes[probe_id]['category_id']}，功能 {feature['id']}") from error
-            status = template['default_support'] if template else 'unsupported'
+            status = template['default_support'] if template else 'pending' if probes[probe_id]['category_id'] is None else 'unsupported'
             if status == 'supported' and excludes:
                 status = 'conditional'
             row.update(defined_status=status,
@@ -296,7 +342,7 @@ def calculate_results(document, snapshots, cat):
             variant = variants.get(row.get('variant_id'), {})
             identity_missing = not probe or not feature or bool(row.get('variant_id') and not variant)
             probe_items = [i for i in items if i['category'] == 'Probes' and (
-                (variant.get('ipn') and i.get('ipn') == variant['ipn']) or
+                (i['id'] == variant['config_item_id'] if variant.get('config_item_id') else variant.get('ipn') and i.get('ipn') == variant['ipn']) or
                 (not row.get('variant_id') and i.get('rd_name') == probe.get('name')))] if not identity_missing else []
             feature_items = [i for i in items if (
                 i['id'] == feature.get('config_item_id') if feature.get('config_item_id')
