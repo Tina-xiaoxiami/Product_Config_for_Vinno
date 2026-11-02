@@ -17,6 +17,10 @@ from app.services.feature_release_versions import version_sort_key
 from app.services.knowledge_content import _file_sha256
 from app.services.knowledge_documents import list_knowledge_documents
 from app.services.knowledge_scope import resolve_query_scope
+from app.services.knowledge_release_applicability import (
+    extract_source_applicability, model_facts, source_chain_groups,
+    scoped_condition_evidence, device_confirmation,
+)
 
 
 class ReleaseHistoryError(ValueError):
@@ -287,7 +291,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     available = await _ready(session)
     coverage: dict[str, Any] = {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []}
     result: dict[str, Any] = {'available': available, 'assessment': 'unavailable', 'conclusion': '历史版本追溯尚未初始化',
-              'scope': scope, 'query': query, 'coverage': coverage, 'chains': [], 'events': []}
+              'scope': scope, 'query': query, 'coverage': coverage, 'chains': [], 'events': [],
+              'source_documents': [], 'confirmation_items': []}
     if not available:
         return result
     documents = {row['id']: row for row in await _documents(session)}
@@ -301,6 +306,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             .bindparams(bindparam('ids', expanding=True)), {'ids': list(documents)})).mappings()
         for row in rows:
             chunks_by_document.setdefault(row['document_id'], []).append(dict(row))
+    facts_by_document = {id: extract_source_applicability(document, chunks_by_document.get(id, []))
+                         for id, document in documents.items()}
     selected = set()
     chains: dict[tuple[str, str], dict] = {}
     for binding in bindings:
@@ -310,6 +317,9 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             reasons.append('原Release Note索引不存在')
         else:
             reasons.extend(await _quality(document))
+            source_facts = facts_by_document[document['id']]
+            if source_facts['models'] and not model_facts(source_facts, scope['model_name'])['applicable']:
+                reasons.append('原文适用型号或版本与当前范围冲突，人工关系不能扩大原文')
             if binding['document_fingerprint'] != _fingerprint(document):
                 reasons.append('适用关系对应的资料内容或元数据已变化')
             if version_sort_key(document['version']) > version_sort_key(scope['software_version']):
@@ -328,13 +338,63 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         chain['documents'].append({'document_id': document['id'], 'country': binding['country'], 'market': binding['market'], 'title': document['title'], 'version': document['version'], 'preview_url': f"/api/knowledge/documents/{document['id']}/preview"})
         if binding['conditions'] and binding['conditions'] not in chain['conditions']:
             chain['conditions'].append(binding['conditions'])
-        detected = _document_conditions(document, chunks_by_document.get(document['id'], []))
+        source_facts = facts_by_document[document['id']]
+        detected = (scoped_condition_evidence(source_facts, scope['model_name'])
+                    if source_facts['status'] == 'extracted' else _document_conditions(document, chunks_by_document.get(document['id'], [])))
         chain['detected_conditions'].extend(item for item in detected if item not in chain['detected_conditions'])
         event_conditions = '\n'.join([binding['conditions'], *(item['excerpt'] for item in detected)]).strip()
         events = _events(document, chunks_by_document.get(document['id'], []), topic, event_conditions)
         # Cumulative documents must not introduce a later section into an earlier target.
         chain['events'].extend({**event, 'country': binding['country'], 'market': binding['market']} for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
-    # Related documents without a trusted applicability bridge remain visible as unresolved candidates.
+    # Explicit source statements are usable without a fabricated human approval.
+    automatic = []
+    for id, original in documents.items():
+        facts = facts_by_document[id]
+        scoped = model_facts(facts, scope['model_name'])
+        if not scoped['models']:
+            continue
+        if scope['country'] is not None and original['country'] and original['country'] != scope['country']:
+            continue
+        if original['market'] not in (None, '', 'unspecified', scope['market']):
+            continue
+        if facts['issues']:
+            result['confirmation_items'].extend({'id': f"document-{id}-{issue['field']}", **issue,
+                'required_for': 'source_version_correction'} for issue in facts['issues'])
+            continue
+        if not scoped['applicable']:
+            continue
+        document = {**original, 'version': facts['version']['value']}
+        if await _quality(document) or version_sort_key(document['version']) > version_sort_key(scope['software_version']):
+            continue
+        automatic.append({'document': document, 'facts': facts})
+        result['source_documents'].append({'document_id': id, 'title': document['title'],
+            'version': document['version'], 'preview_url': f"/api/knowledge/documents/{id}/preview",
+            'source_applicability': facts})
+    source_lines = source_chain_groups(automatic, scope['model_name'])
+    for source_row in automatic:
+        document, facts = source_row['document'], source_row['facts']
+        id = document['id']
+        if id in selected:
+            continue
+        line = source_lines[id]
+        if release_line and line != release_line:
+            continue
+        selected.add(id)
+        # A missing geographic declaration is a limitation, not an empty required form.
+        key = (document['country'], line)
+        chain = chains.setdefault(key, {'country': document['country'], 'market': document['market'],
+            'release_line': line, 'basis': 'source_extract', 'documents': [], 'events': [], 'conditions': [], 'detected_conditions': []})
+        chain['documents'].append({'document_id': id, 'country': document['country'], 'market': document['market'],
+            'title': document['title'], 'version': document['version'], 'source_applicability': facts,
+            'preview_url': f"/api/knowledge/documents/{id}/preview"})
+        detected = scoped_condition_evidence(facts, scope['model_name'])
+        chain['detected_conditions'].extend(item for item in detected if item not in chain['detected_conditions'])
+        events = _events(document, chunks_by_document.get(id, []), topic, '\n'.join(item['excerpt'] for item in detected))
+        chain['events'].extend({**event, 'country': document['country'], 'market': document['market']}
+            for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
+    result['confirmation_items'].extend(device_confirmation(query, automatic, scope['model_name']))
+    # Documents without sufficient source facts or a valid manual supplement remain unresolved.
+
     for document in documents.values():
         if document['id'] in selected or not _explicit_model(document, scope):
             continue
@@ -361,21 +421,25 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         chain['events'].sort(key=lambda row: (version_sort_key(row['event_version']), row['document_id'], row['source_ref']))
         all_events.extend({**event, 'release_line': chain['release_line']} for event in chain['events'])
     coverage['document_count'] = len(selected)
-    coverage['versions'] = sorted({documents[id]['version'] for id in selected}, key=version_sort_key)
-    if scope['country'] is None:
-        coverage['gaps'].append('本次未指定国家，按资料来源国家分别追溯；不能将某国记录推广为其他国家的支持结论')
+    coverage['versions'] = sorted({item['version'] for chain in chains.values() for item in chain['documents']}, key=version_sort_key)
+    if scope['country'] is None and any(chain.get('basis') != 'source_extract' for chain in chains.values()):
+        coverage['gaps'].append('本次未指定国家，人工补充关系按来源国家分别追溯，不能跨国推广')
+    if any(row['facts']['country']['status'] == 'not_stated' or row['facts']['market']['status'] == 'not_stated' for row in automatic):
+        coverage['gaps'].append('部分原文未限定国家/市场；已直接用于其声明型号的软件版本证据检索，不作为全球注册或配置可提供结论，无需为本次检索重复确认')
     if scope['software_version'] not in coverage['versions']:
         coverage['gaps'].append('未登记目标版本的明确适用Release Note；不能据历史记录直接保证当前版本能力')
     result.update(chains=list(chains.values()), events=all_events)
     if not chains:
         result.update(assessment='scope_unconfirmed' if coverage['unresolved_documents'] else 'no_applicable_documents',
                       conclusion='找到相关历史资料，但适用范围尚待核对。' if coverage['unresolved_documents'] else '没有当前完整机型与范围的有效历史资料；不能判断支持或不支持。')
+    elif any(item.get('field') == 'device_hardware' for item in result['confirmation_items']):
+        result.update(assessment='conditional_evidence', conclusion='原文中的型号、版本和升级路径已提取；要判断这台设备能否升级，还缺具体硬件身份，见下方唯一待确认问题。')
     elif not all_events:
         result.update(assessment='no_record', conclusion='已登记适用历史资料中未检索到该子能力的明确记录；未检索到不等于不支持。')
     elif any({'added', 'removed'}.issubset({event['change_type'] for event in chain['events'] if event['event_version'] == version})
              for chain in chains.values() for version in {event['event_version'] for event in chain['events']}):
         result.update(assessment='conflicting_evidence', conclusion='同一版本分支与版本出现相反的新增/移除记录，需核对原文后才能判断。')
-    elif scope['country'] is None or len(chains) > 1 or any(chain['conditions'] or chain['detected_conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
+    elif (scope['country'] is None and any(chain.get('basis') != 'source_extract' for chain in chains.values())) or len(chains) > 1 or any(chain['conditions'] or chain['detected_conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
         result.update(assessment='conditional_evidence', conclusion='找到相关版本记录，但存在国家适用范围、版本分支、硬件/升级限制或语义待核实；各国家与分支分别展示，不直接继承为目标版本支持结论。')
     else:
         result.update(assessment='evidence_found', conclusion='找到该子能力的历史版本原文记录；以下为资料证据，尚未自动发布正式答案。')
