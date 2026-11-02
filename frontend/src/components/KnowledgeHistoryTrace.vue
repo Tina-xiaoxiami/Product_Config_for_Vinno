@@ -20,6 +20,7 @@
         <p>适用型号：{{ document.models }}</p>
         <p v-for="(fact,index) in document.fields" :key="index"><strong>{{ fact.label }}：</strong>{{ fact.value }}</p>
         <small>来源国家：{{ document.country }}；来源市场：{{ document.market }}。原文未声明的字段保留为空，不阻止软件变化原文检索。</small>
+        <details v-if="document.indexIssues.length"><summary>登记信息与原文的差异</summary><p>本次按明确原文检索，无需你重复确认以下已确定的字段。</p><p v-for="(issue,index) in document.indexIssues" :key="index">{{ issue.reason }}；登记：{{ issue.registered_value || '未填写' }}；原文：{{ issue.source_value }}</p></details>
         <details><summary>查看逐字段原文依据</summary><div v-for="(fact,index) in document.fields" :key="index"><strong>{{ fact.label }} · {{ fact.source_ref }}</strong><pre>{{ fact.excerpt }}</pre><a :href="fact.preview_url || document.preview_url" target="_blank" rel="noopener noreferrer">查看原件</a></div></details>
       </article>
     </section>
