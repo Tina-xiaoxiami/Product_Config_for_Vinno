@@ -187,3 +187,56 @@ async def test_excel_preview_then_apply_preserves_model_differences_and_rejects_
         bad = await client.post(path + '/import-preview', files={'file': ('probes.xlsx', out.getvalue())})
         assert bad.status_code == 422, bad.text
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_source_only_change_can_publish_while_current_release_remains_frozen(tmp_path, monkeypatch):
+    from app.services.config_history import build_series_snapshot
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        d = await save(client, await create(client)); path = f"/api/probes/workspaces/{d['id']}"
+        p = (await client.post(path + '/preview', json={'version_number': '1.0.0'})).json()
+        assert (await client.post(path + '/publish', json={'version_number': '1.0.0', 'signature': p['signature']})).status_code == 200
+        frozen = (await client.get(path + '/results')).json()['results']
+        async with sessions() as db:
+            v = await db.scalar(select(ConfigValue).where(ConfigValue.model_id == 10, ConfigValue.item_id == 200))
+            v.current_config = 'N/A'; await db.commit()
+            main_snapshot = await build_series_snapshot(db, 1)
+            assert 'probe_configuration' in main_snapshot
+        assert (await client.get(path + '/results')).json()['results'] == frozen
+        d = (await client.get(path)).json()
+        d = await save(client, d, d['data'])
+        p = await client.post(path + '/preview', json={'version_number': '1.0.1'})
+        assert p.status_code == 200, p.text
+        assert next(r for r in p.json()['results'] if r['model_id'] == 10)['current_status'] == 'not_applicable'
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_edit_missing_mapping_invalid_rule_and_main_drafts_are_safe(tmp_path, monkeypatch):
+    from app.models import ConfigDraft, DraftBatch
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        initial = await create(client); d = await save(client, initial)
+        path = f"/api/probes/workspaces/{d['id']}"
+        stale = await client.put(path + '/draft', json={'revision': initial['revision'], 'data': d['data']})
+        assert stale.status_code == 409
+        for mutation in ['unknown_model', 'duplicate', 'bad_excludes', 'unknown_feature']:
+            doc = json.loads(json.dumps(d['data']))
+            if mutation == 'unknown_model': doc['overrides']['999'] = {'1:1:1': {'current_status': 'supported'}}
+            elif mutation == 'duplicate': doc['rows'].append(doc['rows'][0].copy())
+            elif mutation == 'bad_excludes': doc['rows'][0]['current_excludes'] = None
+            else: doc['rows'][0]['feature_id'] = 999
+            r = await client.put(path + '/draft', json={'revision': d['revision'], 'data': doc})
+            assert r.status_code == 422, r.text
+        async with sessions() as db:
+            feature = await db.get(Feature, 1); feature.config_item_id = None; feature.ipn = None
+            db.add(DraftBatch(id='pending-source', series_id=1))
+            db.add(ConfigDraft(series_id=1, batch_id='pending-source', item_id=200, model_id=10, change_type='update', field_name='current_config', new_value='X'))
+            await db.commit()
+        result = (await client.get(path + '/results')).json()['results']
+        assert next(r for r in result if r['model_id'] == 10)['current_status'] == 'pending'
+        r = await client.post(path + '/preview', json={})
+        assert r.status_code == 400
+        assert '草稿' in r.json()['detail']
+    await engine.dispose()
