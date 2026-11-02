@@ -241,15 +241,29 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> li
 
 
 def _document_conditions(document: dict, chunks: list[dict]) -> list[dict]:
-    """Keep hardware and upgrade declarations even when the queried term is elsewhere."""
+    """Keep original hardware/upgrade declarations, including PDF line wraps."""
     found = []
+    platform_pattern = re.compile(r'硬件|平台|升级|hardware|platform|upgrade|vlucid', re.I)
+    limited_pattern = re.compile(r'仅|只|不支持|不适用|必须|要求|不兼容|不能|无法|limited|only|not\s+support|vlucid|支持.*从.*升级', re.I)
     for chunk in chunks:
-        for line in chunk['content'].splitlines():
-            platform = re.search(r'硬件|平台|升级|hardware|platform|upgrade|vlucid', line, re.I)
-            limited = re.search(r'仅|只|不支持|不适用|必须|要求|不兼容|不能|无法|limited|only|not\s+support|vlucid|支持.*从.*升级', line, re.I)
+        lines = chunk['content'].splitlines()
+        for index, line in enumerate(lines):
+            platform = bool(platform_pattern.search(line))
+            limited = bool(limited_pattern.search(line))
+            excerpt = line.strip()
+            if platform != limited and index + 1 < len(lines) and not re.search(r'[。！？.!?；;]\s*$', line):
+                # A restriction such as "不支持已发布的V6" may be wrapped before
+                # "机器的升级". Join only an adjacent unfinished sentence, keep
+                # the newline and source location, and never rewrite its words.
+                continuation = lines[index + 1]
+                if continuation.strip() and not (platform_pattern.search(continuation) and limited_pattern.search(continuation)):
+                    joined = line.strip() + '\n' + continuation.strip()
+                    if platform_pattern.search(joined) and limited_pattern.search(joined):
+                        excerpt = joined
+                        platform = limited = True
             if platform and limited:
                 item = {'document_id': document['id'], 'source_ref': chunk['source_ref'],
-                        'page_number': chunk.get('page_number'), 'excerpt': line.strip()[:1500],
+                        'page_number': chunk.get('page_number'), 'excerpt': excerpt[:1500],
                         'preview_url': f"/api/knowledge/documents/{document['id']}/preview"}
                 if item not in found:
                     found.append(item)
