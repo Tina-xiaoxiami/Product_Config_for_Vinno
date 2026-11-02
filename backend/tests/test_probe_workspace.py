@@ -336,3 +336,23 @@ async def test_noop_release_is_blocked_and_discard_releases_expanded_members(tmp
         other = await client.post('/api/probes/workspaces', json={'name': 'Other总集', 'groups': ['Other']})
         assert other.status_code == 200, other.text
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_disabled_models_remain_in_shared_definitions_but_are_excluded_from_new_probe_scope(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with sessions() as db:
+        model = await db.get(ProductModel, 11)
+        model.is_enabled = False
+        await db.commit()
+    async with client:
+        response = await client.post('/api/probes/workspaces', json={
+            'name': '有效机型总集', 'groups': ['V10'], 'combinations': ['Together'],
+        })
+        assert response.status_code == 200, response.text
+        data = response.json()['data']
+        assert data['scope']['model_ids'] == [10, 20]
+        assert data['scope']['excluded_model_ids'] == [11]
+        assert '11' not in data['overrides']
+    await engine.dispose()
