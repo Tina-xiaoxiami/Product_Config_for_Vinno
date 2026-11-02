@@ -511,8 +511,8 @@ async def test_merge_rejects_pending_source_with_answer_and_preserves_history(tm
     _create_qa_database(database)
     client, engine = await _client_for(database)
     async with client:
-        source = (await client.post('/api/knowledge/questions/ask', json={'question': '原有问题'})).json()['question_id']
-        target = (await client.post('/api/knowledge/questions/ask', json={'question': '其他问题'})).json()['question_id']
+        source = (await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '原有问题'})).json()['question_id']
+        target = (await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '其他问题'})).json()['question_id']
         payload = {'answer_text': '保留原答案', 'citations': [{'document_id': 1, 'source_ref': '第1页', 'excerpt': '保留引文'}], 'change_note': '原审核'}
         await client.put(f'/api/knowledge/questions/{source}/answer', json=payload)
         await client.put(f'/api/knowledge/questions/{target}/answer', json={'answer_text': '目标答案'})
@@ -538,17 +538,17 @@ async def test_ask_does_not_return_answer_changed_during_lookup(tmp_path, monkey
     _create_qa_database(database)
     client, engine = await _client_for(database)
     async with client:
-        question_id = (await client.post('/api/knowledge/questions/ask', json={'question': '测试问题'})).json()['question_id']
+        question_id = (await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '测试问题'})).json()['question_id']
         await client.put(f'/api/knowledge/questions/{question_id}/answer', json={'answer_text': '旧答案'})
         original = knowledge_qa._published_candidates
-        async def changed_during_lookup(session):
-            candidates = await original(session)
+        async def changed_during_lookup(session, query_scope_key):
+            candidates = await original(session, query_scope_key)
             await session.execute(text("UPDATE knowledge_answers SET review_status = 'source_changed' WHERE question_id = :id"), {'id': question_id})
             await session.execute(text("UPDATE knowledge_questions SET status = 'pending' WHERE id = :id"), {'id': question_id})
             await session.commit()
             return candidates
         monkeypatch.setattr(knowledge_qa, '_published_candidates', changed_during_lookup)
-        response = await client.post('/api/knowledge/questions/ask', json={'question': '测试问题'})
+        response = await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '测试问题'})
     await engine.dispose()
     assert response.json()['status'] == 'pending'
     assert response.json()['answer'] is None
