@@ -106,3 +106,10 @@ test('a refresh failure after committed deactivation is never reported as deacti
   assert.match(context.bindingError.value,/已停用.*刷新/)
   assert.doesNotMatch(context.bindingError.value,/停用失败/)
 })
+
+test('history accepts country-free query context without inventing a source country', () => {
+  const payload = historyTracePayload({ ...form(), country: '' })
+  assert.ok(payload)
+  assert.equal(Object.hasOwn(payload.scope,'country'), false)
+  assert.equal(historyTracePayload(form()).scope.country,'CN')
+})
