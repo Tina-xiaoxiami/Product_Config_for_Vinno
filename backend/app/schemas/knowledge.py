@@ -91,8 +91,17 @@ class KnowledgeDocumentList(BaseModel):
     limit: int
 
 
+class KnowledgeQueryScope(BaseModel):
+    model_config = {"extra": "forbid"}
+    country: str | None = Field(default=None, max_length=10)
+    market: str | None = Field(default=None, pattern="^(domestic|overseas)$")
+    product_model_id: int | None = Field(default=None, gt=0)
+    software_version: str | None = Field(default=None, max_length=80)
+
+
 class KnowledgeQuestionAsk(BaseModel):
     question: str = Field(min_length=2, max_length=500)
+    scope: KnowledgeQueryScope | None = None
 
 
 class KnowledgeAnswerCitationInput(BaseModel):
@@ -135,6 +144,7 @@ class KnowledgeQuestionItem(BaseModel):
     last_asked_at: str
     alias_questions: list[str] = Field(default_factory=list)
     answer: KnowledgeAnswerItem | None = None
+    scope: dict | None = None
 
 
 class KnowledgeQuestionList(BaseModel):
@@ -177,12 +187,14 @@ class KnowledgeCandidateEvidenceList(BaseModel):
 
 class KnowledgeQuestionResult(BaseModel):
     status: str
-    question_id: int
+    question_id: int | None = None
     question: str
     match_type: str
     similarity: float
     answer: KnowledgeAnswerItem | None = None
     candidates: list[KnowledgeCandidateEvidence] = Field(default_factory=list)
+    scope: dict | None = None
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 class KnowledgeAnswerRevisionItem(BaseModel):
