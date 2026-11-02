@@ -80,7 +80,7 @@ def _documents(connection, verify_hashes):
            ORDER BY d.id"""
     )
     documents, findings = [], []
-    versions = Counter()
+    versions: Counter[str] = Counter()
     for row in rows:
         active = row["source_status"] == "active"
         available, hash_status = _file_status(row, verify_hashes) if active else (None, "not_checked")
@@ -244,19 +244,50 @@ def _receipt_source(root):
     if not path.is_dir():
         return {"state": "unavailable"}
     counts = {"receipts": 0, "controlled_unverified": 0, "archived_unverified": 0, "invalid": 0}
+    findings = []
     try:
-        for receipt in sorted(path.glob("*/*.json")):
+        jobs = sorted(path.iterdir())
+    except OSError:
+        return {"state": "unavailable", "findings": [_finding("receipt_directory_unreadable")]}
+    # Path.glob may silently suppress directory access errors; enumerate explicitly.
+    for job in jobs:
+        try:
+            if not job.is_dir():
+                continue
+            receipts = sorted(job.iterdir())
+        except OSError:
+            findings.append(_finding("receipt_job_unreadable"))
+            continue
+        for receipt in receipts:
+            if receipt.suffix != ".json":
+                continue
             counts["receipts"] += 1
             try:
                 counts[_receipt_kind(receipt)] += 1
             except (OSError, ValueError, KeyError, TypeError):
                 counts["invalid"] += 1
-    except OSError:
-        return {"state": "unavailable", "findings": [_finding("receipt_directory_unreadable")]}
+    if counts["invalid"]:
+        findings.append(_finding("receipt_invalid"))
     return {
-        "state": "degraded" if counts["invalid"] else "available", "counts": counts,
-        "findings": [_finding("receipt_invalid")] if counts["invalid"] else [],
+        "state": "degraded" if findings else "available", "counts": counts, "findings": findings,
     }
+
+
+def validate_baseline_destination(database, destination, *, other_inputs=(), publication_root=None):
+    """Protect missing sources as well as existing originals from report creation."""
+    output = Path(destination).expanduser().resolve()
+    sources = [Path(value).expanduser().resolve() for value in (database, *other_inputs) if value is not None]
+    try:
+        with _read_database(database, ("knowledge_documents",)) as (connection, _):
+            sources.extend(Path(row[0]).expanduser().resolve() for row in connection.execute(
+                "SELECT file_path FROM knowledge_documents"
+            ))
+    except (sqlite3.Error, OSError) as exc:
+        raise KnowledgeBaselineError("无法检查登记原件位置；未写入报告") from exc
+    if any(output == source or source in output.parents for source in sources):
+        raise KnowledgeBaselineError("输出不能位于输入来源或登记原件位置")
+    if publication_root is not None and output.is_relative_to(Path(publication_root).expanduser().resolve()):
+        raise KnowledgeBaselineError("输出不能位于发布回执来源目录")
 
 
 def build_knowledge_baseline(database, *, release_database=None, feature_library=None,

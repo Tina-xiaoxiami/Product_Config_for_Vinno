@@ -10,7 +10,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.knowledge_baseline import KnowledgeBaselineError, build_knowledge_baseline  # noqa: E402
+from app.services.knowledge_baseline import (  # noqa: E402
+    KnowledgeBaselineError,
+    build_knowledge_baseline,
+    validate_baseline_destination,
+)
 
 
 def main() -> int:
@@ -25,6 +29,11 @@ def main() -> int:
     try:
         if args.output.exists() or args.output.is_symlink():
             raise KnowledgeBaselineError("输出文件已存在；请使用新文件名，避免覆盖原件或旧报告")
+        validate_baseline_destination(
+            args.database, args.output,
+            other_inputs=(args.release_database, args.feature_library),
+            publication_root=args.publication_root,
+        )
         report = build_knowledge_baseline(
             args.database, release_database=args.release_database,
             feature_library=args.feature_library, publication_root=args.publication_root,

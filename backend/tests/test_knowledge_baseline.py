@@ -272,3 +272,25 @@ def test_cli_cannot_create_a_report_in_an_unavailable_source_location(knowledge_
     )
     assert result.returncode == 1
     assert not target.exists()
+
+
+def test_cli_main_reports_success_and_actionable_errors_without_creating_sources(
+    knowledge_source, tmp_path, monkeypatch, capsys,
+):
+    from scripts.audit_knowledge_baseline import main
+
+    database, _ = knowledge_source
+    output = tmp_path / "report.json"
+    argv = ["audit", "--database", str(database), "--output", str(output)]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert main() == 0
+    assert "uncited_answers=1" in capsys.readouterr().out
+    assert main() == 1
+    assert "已存在" in capsys.readouterr().err
+    output.unlink()
+    monkeypatch.setattr(sys, "argv", [
+        "audit", "--database", str(database), "--output", str(tmp_path / "missing.pdf"),
+    ])
+    assert main() == 1
+    assert "登记原件" in capsys.readouterr().err
+    assert not (tmp_path / "missing.pdf").exists()
