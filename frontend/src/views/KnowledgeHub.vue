@@ -75,10 +75,10 @@
                 相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
               </span>
             </div>
-            <span class="qa-question-text">{{ qaResult.question }}</span>
+            <span class="qa-question-text">{{ questionDisplayText(qaResult) }}</span>
           </div>
           <template v-if="qaResult.answer">
-            <p class="qa-answer-text">{{ qaResult.answer.answer_text }}</p>
+            <p class="qa-answer-text">{{ answerDisplayText(qaResult.answer) }}</p>
             <div class="answer-meta">
               <span>版本 v{{ qaResult.answer.version }}</span>
               <span v-if="qaResult.answer.change_note">{{ qaResult.answer.change_note }}</span>
@@ -161,9 +161,9 @@
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
                 <div class="qa-expanded-answer" data-testid="qa-answer-full">
-                  <h4>{{ row.question_text }}</h4>
+                  <h4>{{ questionDisplayText(row) }}</h4>
                   <p class="qa-answer-meta">{{ knowledgeScopeLabel(row.scope) }}<span v-if="row.answer"> · v{{ row.answer.version }} · {{ row.answer.updated_at }}</span></p>
-                  <pre>{{ row.answer?.answer_text || '此问题尚未填写答案。' }}</pre>
+                  <pre>{{ answerDisplayText(row.answer) || '此问题尚未填写答案。' }}</pre>
                   <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
                   <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
                   <el-button v-if="row.answer" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
@@ -180,10 +180,10 @@
                 </span>
               </template>
               <template #default="{ row }">
-                <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ row.answer?.answer_text || '尚无答案' }}</p><el-button v-if="row.answer" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
+                <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ answerDisplayText(row.answer) || '尚无答案' }}</p><el-button v-if="row.answer" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
                 <el-tag v-else-if="column.key === 'evidence_review'" size="small" :type="row.evidence_review?.status === 'needs_review' ? 'warning' : 'info'" effect="plain">{{ answerReviewLabel(row) }}</el-tag>
                 <span v-else-if="column.key === 'version'">{{ row.answer ? `v${row.answer.version}` : '—' }}</span>
-                <span v-else>{{ row[column.key] }}</span>
+                <span v-else>{{ column.key === 'question_text' ? questionDisplayText(row) : row[column.key] }}</span>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="160" fixed="right" align="center">
@@ -275,8 +275,8 @@
             >
               <div v-if="columnVisible('cn_name') || columnVisible('status')" class="feature-title-row">
                 <h3 v-if="columnVisible('cn_name')">
-                  {{ feature.primary_cn_name || feature.legacy_name }}
-                  <FeatureNameMark :feature-id="feature.id" :cn="feature.primary_cn_name" :en="feature.primary_en_name" :name="feature.legacy_name" />
+                  {{ featureDisplayName(feature) }}
+                  <FeatureNameMark :feature-id="feature.id" :cn="featureDisplayName(feature)" :en="feature.primary_en_name" :name="feature.legacy_name" />
                 </h3>
                 <el-tag v-if="columnVisible('status')" :type="statusType(feature.identity_status)" size="small" effect="plain">
                   {{ statusLabel(feature.identity_status) }}
@@ -289,7 +289,7 @@
               <span v-for="entry in feature.ipns" :key="`${entry.ipn}-${entry.relation_type}`" class="ipn-item">
                 <code>{{ entry.ipn }}</code>
                 <span>{{ relationLabel(entry.relation_type) }}</span>
-                <span v-if="entry.zh_desc && entry.zh_desc !== feature.primary_cn_name" class="ipn-description">
+                <span v-if="entry.zh_desc && entry.zh_desc !== featureDisplayName(feature)" class="ipn-description">
                   {{ entry.zh_desc }}
                 </span>
               </span>
@@ -807,6 +807,7 @@
 </template>
 
 <script setup>
+import { questionDisplayText, answerDisplayText, featureDisplayName } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { ElMessage, ElMessageBox } from 'element-plus'
