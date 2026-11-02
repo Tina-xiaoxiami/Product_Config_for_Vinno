@@ -290,3 +290,33 @@ async def test_uninitialized_history_does_not_break_legacy_questions_and_direct_
         assert ask.status_code == 200
         assert ask.json()['history_trace']['available'] is False
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_document_platform_and_upgrade_restrictions_are_detected_outside_the_matching_feature_line(database):
+    _document(database, 1, '1.14.40', 'Release Note 1.14.40\n仅适用于VLucid+硬件平台，不支持已发货机器升级。\n新增针增益调节。')
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,), conditions='')
+        result = await _trace(client)
+        assert result['assessment'] == 'conditional_evidence'
+        detected = result['chains'][0]['detected_conditions']
+        assert any('不支持已发货机器升级' in item['excerpt'] for item in detected)
+        assert detected[0]['source_ref'] == '第2页'
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_registered_file_is_excluded_instead_of_showing_cached_evidence(database, monkeypatch):
+    from app.services import knowledge_release_history as history
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,))
+        def unreadable(_path):
+            raise OSError('controlled source temporarily unavailable')
+        monkeypatch.setattr(history, '_file_sha256', unreadable)
+        result = await _trace(client)
+        assert result['events'] == []
+        assert result['coverage']['excluded_documents']
+        assert all(not item['candidate_events'] for item in result['coverage']['unresolved_documents'])
+    await engine.dispose()
