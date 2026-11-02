@@ -51,7 +51,7 @@ test('Config refresh rejects stale memberships without resetting selected models
   assert.equal(allModelsMap.value, previous)
   assert.doesNotMatch(block, /selectedModels\.value\s*=|loadData\(/)
   assert.match(source, /path: '\/models', query: \{ editSubseries: '1' \}/)
-  assert.match(source, /onActivated\(\(\) => \{ if \(allModelsMap.value.size\) loadModelCombinations\(\)/)
+  assert.match(source, /onActivated\(async \(\) => \{[\s\S]*await loadModels\(\)[\s\S]*await loadModelCombinations\(\)/)
 })
 
 test('editor query is consumed once and cannot open after leaving cached Models', async () => {
@@ -71,7 +71,7 @@ test('editor query is consumed once and cannot open after leaving cached Models'
 test('model management loads every market and shows all children of cross-market combinations', async () => {
   const { readFileSync } = await import('node:fs')
   const source = readFileSync(new URL('../src/views/Models.vue', import.meta.url), 'utf8')
-  assert.match(source, /getModels\(null, params\)/)
+  assert.match(source, /getModels\(null, \{ \.\.\.params, include_disabled: showDisabled\.value \}\)/)
   assert.doesNotMatch(source, /v-model="selectedSeries"/)
   assert.match(source, /series_id: form.series_id/)
   const models = [{id:1,name:'VINNO 5',series_id:1},{id:2,name:'VINNO 5',series_id:2}]

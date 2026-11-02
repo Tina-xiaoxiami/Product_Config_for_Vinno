@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 import sqlite3
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -20,7 +21,12 @@ from test_registration_packages import (
 
 
 async def _client_for(database_path):
+    from app import database
+
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    # This harness bypasses main's lifespan; apply the same startup upgrades.
+    with patch.object(database, "engine", engine):
+        await database.init_db()
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
     app.include_router(registration.router, prefix="/api/registrations")

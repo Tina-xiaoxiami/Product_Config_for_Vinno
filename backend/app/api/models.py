@@ -8,7 +8,7 @@ from typing import List
 
 from app.database import get_db
 from app.models import ProductSeries, ProductModel
-from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate
+from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate, ProductModelEnabledUpdate
 
 from app.services.model_identity import active_model_filter, model_identity_metadata
 
@@ -72,10 +72,12 @@ async def get_models(
     series_id: int = None,
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    include_disabled: bool = False,
 ):
     """获取产品型号列表"""
-    query = select(ProductModel).where(active_model_filter())
+    visibility = active_model_filter(include_disabled=include_disabled)
+    query = select(ProductModel).where(visibility)
 
     if series_id:
         query = query.where(ProductModel.series_id == series_id)
@@ -88,7 +90,7 @@ async def get_models(
         [int(item.id) for item in items],
     )
 
-    count_query = select(func.count()).select_from(ProductModel).where(active_model_filter())
+    count_query = select(func.count()).select_from(ProductModel).where(visibility)
     if series_id:
         count_query = count_query.where(ProductModel.series_id == series_id)
     count_result = await db.execute(count_query)
@@ -96,7 +98,7 @@ async def get_models(
 
     identities = await model_identity_metadata(db, [int(item.id) for item in items])
     # Resolve against all active models so pagination cannot hide ambiguities.
-    catalog = list((await db.execute(select(ProductModel).where(active_model_filter()))).scalars().all())
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter(include_disabled=True)))).scalars().all())
     parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name))).all()}
     memberships, problems = read_subseries(catalog, parents)
     return ProductModelListResponse(
@@ -107,7 +109,7 @@ async def get_models(
 
 
 async def _subseries_catalog(db):
-    catalog = list((await db.execute(select(ProductModel).where(active_model_filter()).order_by(ProductModel.series_id, ProductModel.sort_order, ProductModel.id))).scalars().all())
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter(include_disabled=True)).order_by(ProductModel.series_id, ProductModel.sort_order, ProductModel.id))).scalars().all())
     parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name).order_by(ProductSeries.id))).all()}
     return catalog, parents
 
@@ -204,18 +206,27 @@ async def update_model(
     return model
 
 
-@router.delete("/{model_id}")
-async def delete_model(
+@router.put("/{model_id}/enabled", response_model=ProductModelResponse)
+async def set_model_enabled(
     model_id: int,
+    data: ProductModelEnabledUpdate,
     db: AsyncSession = Depends(get_db)
 ):
-    """删除产品型号"""
+    """Preserve model identity, configuration and history when disabling."""
     result = await db.execute(select(ProductModel).where(ProductModel.id == model_id))
     model = result.scalar_one_or_none()
 
     if not model:
         raise HTTPException(status_code=404, detail="产品型号不存在")
 
-    await db.delete(model)
+    model.is_enabled = data.is_enabled
     await db.commit()
-    return {"message": "删除成功"}
+    await db.refresh(model)
+    return model
+
+
+@router.delete("/{model_id}")
+async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)):
+    """Compatibility for older clients: deletion now only disables the model."""
+    await set_model_enabled(model_id, ProductModelEnabledUpdate(is_enabled=False), db)
+    return {"message": "已停用，配置和历史已保留"}

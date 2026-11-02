@@ -27,7 +27,7 @@
           </el-tree>
         </aside>
         <section class="model-results">
-          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" class="model-search" clearable placeholder="搜索型号 / 描述" aria-label="搜索型号" /><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div>
+          <div class="model-toolbar"><div class="model-result-heading"><span>{{ currentGroup?.label || '全部型号' }}</span><span class="model-result-count">{{ total }} 个型号</span></div><el-input v-model="search" class="model-search" clearable placeholder="搜索型号 / 描述" aria-label="搜索型号" /><el-checkbox v-model="showDisabled" size="small" @change="loadData">显示已停用</el-checkbox><TableColumnSettings :model-value="columnLayout" :defaults="MODEL_TABLE_COLUMNS" @update:model-value="applyColumnLayout" /></div>
       <div class="model-table-area">
       <el-table :key="columnStructureKey" @dragover.prevent="rowDragOver" @drop.prevent="dropModelRow" :row-class-name="({ row }) => String(row.id) === dragOverId ? 'model-drop-target' : ''" @header-dragend="resizeColumn" ref="tableRef" :data="tableData" border stripe v-loading="loading" row-key="id" height="100%" size="small">
         <el-table-column width="36" fixed="left" class-name="model-drag-column">
@@ -45,7 +45,7 @@
               </div>
               <span v-else class="unmapped-registration">未映射注册证</span>
             </template>
-            <el-tag v-else-if="column.key === 'status'" :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag>
+            <template v-else-if="column.key === 'status'"><el-tag :type="getStatusType(row.status)">{{ row.status || '生产中' }}</el-tag><el-tag v-if="row.is_enabled === false" type="info">已停用</el-tag></template>
             <span v-else-if="column.key === 'created_at'">{{ formatTime(row.created_at) }}</span>
             <span v-else>{{ row[column.key] }}</span>
           </template>
@@ -53,7 +53,7 @@
         <el-table-column label="操作" width="120" fixed="right" class-name="model-actions">
           <template #default="{ row }">
             <el-button size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button size="small" :type="row.is_enabled === false ? 'success' : 'warning'" :loading="changingModelId === row.id" :disabled="changingModelId !== null" @click="handleToggleEnabled(row)">{{ row.is_enabled === false ? '启用' : '停用' }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -116,7 +116,7 @@
 import { ref, reactive, computed, onMounted, onActivated, onDeactivated, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Collection, Grid, Folder, InfoFilled } from '@element-plus/icons-vue'
-import { getSeriesList, createSeries, getModels, getSubseries, saveSubseries, createModel, updateModel, deleteModel } from '../api/data'
+import { getSeriesList, createSeries, getModels, getSubseries, saveSubseries, createModel, updateModel, setModelEnabled } from '../api/data'
 import { useRoute, useRouter } from 'vue-router'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
@@ -168,6 +168,7 @@ const saveNewSeries = async () => {
   finally { savingSeries.value = false }
 }
 const catalog = ref([])
+const showDisabled = ref(false)
 const sharedGroups = ref({})
 const assigningSubseries = ref(null)
 const assignSubseries = async (row, name) => {
@@ -226,7 +227,7 @@ const editorRequest = createGroupEditorRequest({
 })
 const openRequestedEditor = () => editorRequest.run()
 watch(() => route.query.editSubseries, openRequestedEditor)
-watch([search, selectedGroup], () => { currentPage.value = 1 })
+watch([search, selectedGroup, showDisabled], () => { currentPage.value = 1 })
 const selectGroup = node => { selectedGroup.value = node.key }
 const loading = ref(false)
 const total = computed(() => filteredModels.value.length)
@@ -292,7 +293,7 @@ const loadData = async () => {
   loading.value = true; loadError.value = ''; catalog.value = []; sharedGroups.value = {}
   try {
     const [models, groups] = await Promise.all([
-      loadCompleteModelCatalog(params => getModels(null, params), isCurrent), getSubseries()
+      loadCompleteModelCatalog(params => getModels(null, { ...params, include_disabled: showDisabled.value }), isCurrent), getSubseries()
     ])
     if (!isCurrent() || !models) return
     sharedGroups.value = groups
@@ -370,11 +371,16 @@ const handleSave = async () => {
   }
 }
 
-const handleDelete = async (row) => {
+const changingModelId = ref(null)
+const handleToggleEnabled = async (row) => {
+  if (changingModelId.value !== null) return
+  changingModelId.value = row.id
+  const enabled = row.is_enabled === false
+  const action = enabled ? '启用' : '停用'
   try {
     await ElMessageBox.confirm(
-      `确认删除型号 "${row.name}"（${seriesList.value.find(series => series.id === row.series_id)?.name || row.series_id}）？该操作将同时删除该型号的所有配置数据。`,
-      '确认删除',
+      `确认${action}型号 "${row.name}"（${seriesList.value.find(series => series.id === row.series_id)?.name || row.series_id}）？${enabled ? '启用后将在配置管理中显示。' : '停用后默认不显示，保留全部配置和历史版本，历史查看与回滚不受影响。'}`,
+      `确认${action}`,
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
@@ -382,14 +388,15 @@ const handleDelete = async (row) => {
       }
     )
 
-    await deleteModel(row.id)
-    ElMessage.success('删除成功')
+    await setModelEnabled(row.id, enabled)
+    ElMessage.success(`已${action}`)
     await loadData()
   } catch (error) {
-    if (error !== 'cancel') {
-      console.error('删除失败:', error)
-      ElMessage.error(error.response?.data?.detail || '删除失败')
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error.response?.data?.detail || `${action}失败`)
     }
+  } finally {
+    changingModelId.value = null
   }
 }
 
