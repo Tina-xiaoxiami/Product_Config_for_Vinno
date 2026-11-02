@@ -734,12 +734,12 @@
       <p v-if="answerForm.previous_change_note" class="answer-previous-change">上次变更说明：{{ answerForm.previous_change_note }}</p>
       <el-form label-position="top">
         <el-form-item label="问题">
-          <div class="dialog-question">{{ answerForm.question_text }}</div>
+          <div class="dialog-question">{{ questionDisplayText(answerForm) }}</div>
         </el-form-item>
         <el-form-item label="适用范围">
           <span>{{ knowledgeScopeLabel(answerForm.scope) }}</span>
         </el-form-item>
-        <el-form-item label="正式答案" required>
+        <el-form-item :label="answerForm.display_answer_text && answerForm.display_answer_text !== answerForm.answer_text ? '正式答案（保存原文，保留历史名称）' : '正式答案'" required>
           <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
         </el-form-item>
         <el-form-item label="相似问法 / 曾用问题">
@@ -1506,6 +1506,8 @@ const openAnswerDialog = async (question) => {
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
+    display_question_text: question.display_question_text,
+    display_answer_text: question.answer?.display_answer_text,
     scope: question.scope || null,
     version: question.answer?.version || 0,
     review_status: question.answer?.review_status || '',
