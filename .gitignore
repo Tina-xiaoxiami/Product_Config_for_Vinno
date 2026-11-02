@@ -45,3 +45,7 @@ backend/config/release_workbench.local.json
 
 # Detached local service state
 .runtime/
+
+# Browser verification artifacts
+frontend/playwright-report/
+frontend/test-results/
