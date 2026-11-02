@@ -28,6 +28,21 @@
             </div>
             <el-tag type="success" effect="plain">受控知识</el-tag>
           </div>
+          <div class="qa-scope-controls" data-testid="knowledge-query-scope">
+            <el-select v-model="qaScope.market" size="small" aria-label="查询市场" placeholder="国内/海外" clearable @change="onQaMarketChange">
+              <el-option label="国内" value="domestic" />
+              <el-option label="海外" value="overseas" />
+            </el-select>
+            <el-input v-model="qaScope.country" size="small" aria-label="查询国家代码" placeholder="国家代码 CN / DE" maxlength="2" @input="onQaScopeInput" @change="loadQaQuestions" />
+            <el-select v-model="qaScope.product_model_id" size="small" aria-label="查询完整机型" placeholder="完整机型" filterable clearable :loading="qaModelsLoading" @change="onQaScopeChange">
+              <el-option v-for="model in qaAvailableModels" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" />
+            </el-select>
+            <el-input v-model="qaScope.software_version" size="small" aria-label="查询软件版本" placeholder="软件版本，如 1.14.80" maxlength="80" @input="onQaScopeInput" @change="loadQaQuestions" />
+          </div>
+          <p class="qa-scope-note">{{ knowledgeScopePayload(qaScope) ? knowledgeScopeLabel({ ...knowledgeScopePayload(qaScope), model_name: qaModels.find(model => model.id === qaScope.product_model_id)?.name }) : '请明确国家、市场、完整机型和软件版本；历史答案不会自动套用到所选范围。' }}</p>
+          <el-alert v-if="qaModelsError" type="error" :closable="false" title="机型目录加载失败，请重试后查询">
+            <el-button link @click="loadQaModels">重新加载</el-button>
+          </el-alert>
           <el-input
             v-model="qaQuestion"
             data-testid="knowledge-question-input"
@@ -56,7 +71,7 @@
           <div class="qa-result-heading">
             <div>
               <el-tag :type="qaResult.status === 'answered' ? 'success' : 'warning'" effect="dark">
-                {{ qaResult.status === 'answered' ? '已有确认答案' : '等待确认' }}
+                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '等待确认' }}
               </el-tag>
               <span v-if="qaResult.match_type === 'similar'" class="similarity-note">
                 相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
@@ -88,6 +103,9 @@
               <span v-else class="empty-text">本答案由产品负责人确认，暂未绑定原文位置</span>
             </div>
           </template>
+          <template v-else-if="qaResult.status === 'needs_clarification'">
+            <p class="qa-pending-text">请补齐国家、市场、完整机型和软件版本后重新查询；本次未创建问题或计入询问次数。</p>
+          </template>
           <template v-else>
             <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
             <div v-if="qaResult.candidates?.length" class="candidate-evidence">
@@ -115,6 +133,13 @@
         </article>
 
         <section class="qa-queue">
+          <div class="qa-queue-scope">
+            <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="loadQaQuestions">
+              <el-radio-button value="selected">当前查询范围</el-radio-button>
+              <el-radio-button value="legacy">历史范围待核实</el-radio-button>
+            </el-radio-group>
+            <span>{{ qaQueueMode === 'legacy' ? '保留原问题、答案与历史记录，核实范围后再用于正式查询。' : knowledgeScopePayload(qaScope) ? '仅列出当前范围的问题。' : '补齐查询范围后显示对应问题。' }}</span>
+          </div>
           <div class="queue-heading">
             <div>
               <h3>{{ qaStatus === 'pending' ? '待确认问题' : '已发布问答' }}</h3>
@@ -680,6 +705,9 @@
         <el-form-item label="问题">
           <div class="dialog-question">{{ answerForm.question_text }}</div>
         </el-form-item>
+        <el-form-item label="适用范围">
+          <span>{{ knowledgeScopeLabel(answerForm.scope) }}</span>
+        </el-form-item>
         <el-form-item label="正式答案" required>
           <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
         </el-form-item>
@@ -730,7 +758,7 @@
       </el-form>
       <template #footer>
         <el-button @click="answerDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="answerSaving" @click="saveAnswer">确认并发布</el-button>
+        <el-button type="primary" :loading="answerSaving" :disabled="!answerForm.scope" @click="saveAnswer">确认并发布</el-button>
       </template>
     </el-dialog>
 
@@ -748,6 +776,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
 import {
@@ -764,7 +793,9 @@ import {
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
   getConfiguredRegistrationModels,
-  getRegistrationProbes
+  getRegistrationProbes,
+  getModels,
+  getSeriesList
 } from '../api/data'
 
 const activeTab = ref('qa')
@@ -836,6 +867,28 @@ const previewUrl = ref('')
 const previewTitle = ref('')
 
 const qaQuestion = ref('')
+const qaScope = reactive({ country: '', market: '', product_model_id: null, software_version: '' })
+const qaModels = ref([])
+const qaModelsLoading = ref(false)
+const qaModelsError = ref(false)
+const qaQueueMode = ref('selected')
+const qaAvailableModels = computed(() => qaModels.value.filter(model => (
+  !qaScope.market || model.series_name.endsWith(qaScope.market === 'domestic' ? '-China' : '-Oversea')
+)))
+const loadQaModels = async () => {
+  qaModelsLoading.value = true
+  qaModelsError.value = false
+  try {
+    const [models, series] = await Promise.all([getModels(null, { limit: 1000 }), getSeriesList({ limit: 1000 })])
+    const names = new Map((series.items || series).map(row => [row.id, row.name]))
+    qaModels.value = (models.items || []).map(model => ({ ...model, series_name: names.get(model.series_id) || '' }))
+  } catch {
+    qaModels.value = []
+    qaModelsError.value = true
+  } finally {
+    qaModelsLoading.value = false
+  }
+}
 const qaAsking = ref(false)
 const qaResult = ref(null)
 const qaStatus = ref('pending')
@@ -1295,36 +1348,77 @@ const openDocumentLocally = async (document, mode) => {
   }
 }
 
+let qaAskRequestId = 0
+let qaQueueRequestId = 0
+const onQaScopeInput = () => {
+  qaAskRequestId += 1
+  qaQueueRequestId += 1
+  qaResult.value = null
+  qaQuestions.value = []
+  qaAsking.value = false
+  qaListLoading.value = false
+}
+const onQaScopeChange = () => {
+  onQaScopeInput()
+  loadQaQuestions()
+}
+const onQaMarketChange = () => {
+  qaScope.product_model_id = null
+  onQaScopeChange()
+}
 const askQuestion = async () => {
   const question = qaQuestion.value.trim()
   if (!question) {
     ElMessage.warning('请输入问题')
     return
   }
+  const scope = knowledgeScopePayload(qaScope)
+  if (!scope) {
+    ElMessage.warning('请补齐国家、市场、完整机型和软件版本')
+    return
+  }
+  const requestId = ++qaAskRequestId
+  const fingerprint = knowledgeScopeFingerprint(qaScope)
   qaAsking.value = true
+  qaResult.value = null
   try {
-    qaResult.value = await askKnowledgeQuestion({ question })
+    const result = await askKnowledgeQuestion({ question, scope })
+    if (requestId !== qaAskRequestId || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
+    qaResult.value = result
     if (qaResult.value.status === 'pending') {
       qaStatus.value = 'pending'
       ElMessage.info('尚无确认答案，已加入待确认问题')
     }
     await loadQaQuestions()
-  } catch {
-    ElMessage.error('问题查询失败')
+  } catch (error) {
+    if (requestId === qaAskRequestId && fingerprint === knowledgeScopeFingerprint(qaScope)) {
+      ElMessage.error(error?.response?.data?.detail || '问题查询失败')
+    }
   } finally {
-    qaAsking.value = false
+    if (requestId === qaAskRequestId) qaAsking.value = false
   }
 }
 
 const loadQaQuestions = async () => {
+  const requestId = ++qaQueueRequestId
+  const scope = knowledgeScopePayload(qaScope)
+  const mode = qaQueueMode.value
+  const fingerprint = knowledgeScopeFingerprint(qaScope)
+  if (mode !== 'legacy' && !scope) {
+    qaQuestions.value = []
+    qaListLoading.value = false
+    return
+  }
   qaListLoading.value = true
+  qaQuestions.value = []
   try {
-    const result = await getKnowledgeQuestions({ status: qaStatus.value, limit: 100 })
+    const result = await getKnowledgeQuestions({ status: qaStatus.value, limit: 100, ...(mode === 'legacy' ? {} : scope) })
+    if (requestId !== qaQueueRequestId || mode !== qaQueueMode.value || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaQuestions.value = result.items || []
   } catch {
-    ElMessage.error('问答队列加载失败')
+    if (requestId === qaQueueRequestId) ElMessage.error('问答队列加载失败')
   } finally {
-    qaListLoading.value = false
+    if (requestId === qaQueueRequestId) qaListLoading.value = false
   }
 }
 
@@ -1338,6 +1432,7 @@ const openAnswerDialog = async (question) => {
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
+    scope: question.scope || null,
     version: question.answer?.version || 0,
     review_status: question.answer?.review_status || '',
     previous_change_note: question.answer?.change_note || '',
@@ -1368,6 +1463,10 @@ const removeCitation = (index) => answerForm.value.citations.splice(index, 1)
 const parseQuestionAliases = (value) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
 
 const saveAnswer = async () => {
+  if (!answerForm.value.scope) {
+    ElMessage.warning('历史范围尚未核实，请在明确范围内建立问答后发布')
+    return
+  }
   if (!answerForm.value.answer_text.trim()) {
     ElMessage.warning('请填写正式答案')
     return
@@ -1453,6 +1552,7 @@ const extractDocument = async (document) => {
 }
 
 onMounted(() => {
+  loadQaModels()
   loadQaQuestions()
   loadStats()
   loadFeatures()
@@ -1462,6 +1562,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.qa-scope-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.qa-scope-controls > * { flex: 1 1 160px; min-width: 140px; }
+.qa-scope-controls > :nth-child(3) { flex-grow: 2; }
+.qa-scope-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
+.qa-queue-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.qa-queue-scope > span { color: #64748b; font-size: 12px; }
 .knowledge-page { max-width: 1180px; margin: 0 auto; }
 .knowledge-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
 .knowledge-header h2 { margin: 0 0 6px; font-size: 22px; color: #1f2937; }
