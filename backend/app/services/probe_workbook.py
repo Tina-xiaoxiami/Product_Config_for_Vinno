@@ -8,7 +8,7 @@ from app.services.config_workbook import load_config_workbook
 from app.services.probe_workspace import encode, row_key
 
 ROW_FIELDS = ['probe_model_id', 'variant_id', 'feature_id', 'defined_status', 'current_status',
-              'defined_excludes', 'current_excludes', 'notes', 'priority']
+              'defined_excludes', 'current_excludes', 'notes', 'priority', 'defined_tender', 'current_tender']
 RULE_FIELDS = ROW_FIELDS[3:]
 
 
@@ -29,7 +29,7 @@ def export_workbook(payload, workspace_id, revision):
     models = {m['id']: m for snap in payload.get('source_snapshots', {}).values() for m in snap['models']}
     total.append([*ROW_FIELDS, 'row_key', '探头名称（只读）', 'IPN（只读）', '功能名称（只读）'])
     for row in payload['data']['rows']:
-        total.append([*[encode(row.get(f, [])) if f.endswith('_excludes') else row.get(f) for f in ROW_FIELDS],
+        total.append([*[encode(row.get(f, [])) if f.endswith(('_excludes', '_tender')) else row.get(f) for f in ROW_FIELDS],
                       row_key(row), probes.get(row['probe_model_id'], {}).get('name'),
                       variants.get(row.get('variant_id'), {}).get('ipn'), features.get(row['feature_id'], {}).get('name')])
     differences = workbook.create_sheet('机型差异')
@@ -37,11 +37,11 @@ def export_workbook(payload, workspace_id, revision):
     for mid, rules in payload['data']['overrides'].items():
         for key, rule in rules.items():
             differences.append([int(mid), key, *[
-                encode(rule[f]) if f.endswith('_excludes') and f in rule else
+                encode(rule[f]) if f.endswith(('_excludes', '_tender')) and f in rule else
                 '""' if f == 'notes' and rule.get(f) == '' else '(清空)' if f == 'priority' and f in rule and rule[f] is None else rule.get(f) for f in RULE_FIELDS], models.get(int(mid), {}).get('name')])
     results = workbook.create_sheet('机型结果')
     fields = ['model_id', 'model_name', 'key', 'probe_name', 'ipn', 'feature_name', 'defined_status',
-              'current_status', 'defined_excludes', 'current_excludes', 'defined_reason', 'current_reason', 'notes', 'priority', 'probe_configuration', 'feature_configuration']
+              'current_status', 'defined_excludes', 'current_excludes', 'defined_tender', 'current_tender', 'defined_reason', 'current_reason', 'notes', 'priority', 'probe_configuration', 'feature_configuration']
     results.append(fields)
     for row in payload['results']:
         results.append([encode(row.get(f)) if isinstance(row.get(f), (list, dict)) else row.get(f) for f in fields])
@@ -84,20 +84,23 @@ def import_workbook(content, filename, workspace_id, revision):
         document = {'scope': json.loads(meta['scope']), 'rows': [], 'overrides': {}}
         for sheet_name, fields in [('共同总集', ROW_FIELDS), ('机型差异', ['model_id', 'row_key', *RULE_FIELDS])]:
             sheet = workbook[sheet_name]
-            if [c.value for c in sheet[1]][:len(fields)] != fields:
+            headers = [c.value for c in sheet[1]]
+            required = [f for f in fields if not f.endswith('_tender')]
+            if any(headers.count(f) != 1 for f in required) or any(headers.count(f) > 1 for f in fields):
                 raise ValueError(f'{sheet_name}表头不匹配')
-            for number, cells in enumerate(sheet.iter_rows(min_row=2, max_col=len(fields), values_only=True), 2):
-                if all(v is None for v in cells):
+            positions = {f: headers.index(f) for f in fields if f in headers}
+            for number, cells in enumerate(sheet.iter_rows(min_row=2, values_only=True), 2):
+                entry = {f: cells[positions[f]] if f in positions else None for f in fields}
+                if all(v is None for v in entry.values()):
                     continue
-                entry = dict(zip(fields, cells))
                 rule = {}
                 for field in RULE_FIELDS:
                     value = entry[field]
                     if value is None:
                         if sheet_name == '共同总集':
-                            rule[field] = [] if field.endswith('_excludes') else '' if field == 'notes' else None if field == 'priority' else 'pending'
+                            rule[field] = [] if field.endswith(('_excludes', '_tender')) else '' if field == 'notes' else None if field == 'priority' else 'pending'
                         continue
-                    rule[field] = json.loads(value) if field.endswith('_excludes') else '' if field == 'notes' and value == '""' else None if field == 'priority' and value == '(清空)' else value
+                    rule[field] = json.loads(value) if field.endswith(('_excludes', '_tender')) else '' if field == 'notes' and value == '""' else None if field == 'priority' and value == '(清空)' else value
                 if sheet_name == '共同总集':
                     document['rows'].append({**rule, 'probe_model_id': int(entry['probe_model_id']),
                                              'variant_id': int(entry['variant_id']) if entry['variant_id'] else None,
