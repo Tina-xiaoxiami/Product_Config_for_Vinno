@@ -106,3 +106,36 @@ async def test_original_country_conflicts_and_stale_sources_remain_excluded(data
         assert result['coverage']['document_count'] == 0
         assert not result['source_documents']
     await engine.dispose()
+
+
+def test_comparison_model_is_not_a_positive_declaration():
+    facts = extract('Release Note 1.14.65\n本版本适用于V5，与V6相比，性能有所提升。')
+    assert {row['name'] for row in facts['models']} == {'VINNO 5'}
+    assert not model_facts(facts, 'VINNO 6')['applicable']
+
+
+def test_different_model_upgrade_after_contrast_is_not_lost_or_prohibited():
+    facts = extract('1.14.65(VINNO 3/5/6 系列)\nRelease Note\n不支持已发货V3和V5机器升级，但V6的VLucid+平台支持从1.14.61版本进行升级。')
+    assert not model_facts(facts, 'VINNO 6')['restrictions']
+    assert model_facts(facts, 'VINNO 6')['upgrades'][0]['from_version'] == '1.14.61'
+    assert model_facts(facts, 'VINNO 3')['restrictions']
+
+
+def test_source_field_evidence_assigns_each_product_vcode_to_its_model():
+    facts = extract(POC, '1.14.40')
+    profile = next(row for row in facts['field_evidence'] if row['field'] == 'profiles')
+    assert 'VINNO 6 POC：V10921' in profile['value']
+    assert 'VINNO 8 POC：V10922' in profile['value']
+
+
+@pytest.mark.asyncio
+async def test_body_version_is_used_when_registration_version_is_missing(database):
+    _document(database, 1, '1.14.40', POC, country=None, market='unspecified')
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute('UPDATE knowledge_documents SET version=NULL WHERE id=1')
+    client, engine = await _client(database)
+    async with client:
+        result = await _trace(client)
+        assert result['coverage']['versions'] == ['1.14.40']
+        assert result['source_documents'][0]['source_applicability']['version']['value'] == '1.14.40'
+    await engine.dispose()
