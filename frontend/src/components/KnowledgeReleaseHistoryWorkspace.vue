@@ -27,7 +27,7 @@
         <el-form-item label="硬件平台及升级限制"><el-input v-model="bindingForm.conditions" type="textarea" :rows="2" placeholder="登记原文限制；有限制时不得留空以绕过判断" /></el-form-item>
         <el-form-item label="适用依据与位置"><el-input v-model="bindingForm.evidence_reference" type="textarea" :rows="2" placeholder="封面/适用范围章节、页码及核对说明" /></el-form-item>
       </el-form>
-      <div class="binding-existing" v-loading="bindingsLoading"><strong>已登记的适用关系</strong><ul><li v-for="row in bindings" :key="row.id"><span>{{ row.document_title || row.title || `资料${row.document_id}` }} · {{ row.model_name }} · {{ row.country }} · {{ row.release_line }}<small v-if="row.conditions">{{ row.conditions }}</small></span><el-button size="small" link type="danger" :disabled="savingBinding" @click="deactivateBinding(row)">停用</el-button></li></ul><p v-if="!bindings.length">暂无已确认关系。上方保存后可用于历史追溯。</p></div>
+      <div class="binding-existing" v-loading="bindingsLoading"><strong>已登记的适用关系</strong><el-button size="small" link @click="retryBindings">刷新列表</el-button><ul><li v-for="row in bindings" :key="row.id"><span>{{ row.document_title || row.title || `资料${row.document_id}` }} · {{ row.model_name }} · {{ row.country }} · {{ row.release_line }}<small v-if="row.conditions">{{ row.conditions }}</small></span><el-button size="small" link type="danger" :disabled="savingBinding" @click="deactivateBinding(row)">停用</el-button></li></ul><p v-if="!bindings.length">暂无已确认关系。上方保存后可用于历史追溯。</p></div>
       <template #footer><el-button :disabled="savingBinding" @click="closeBindings()">关闭</el-button><el-button type="primary" :loading="savingBinding" @click="saveBindings">保存适用关系</el-button></template>
     </el-dialog>
   </section>
@@ -60,12 +60,31 @@ const emptyBinding = () => ({ document_ids: [], product_model_ids: [], country: 
 const bindingForm = reactive(emptyBinding())
 let bindingSession = 0
 const refreshBindings = async session => { const data = await getReleaseHistoryBindings({}); if (session === bindingSession) bindings.value = data.items || [] }
+const loadAllDocuments = async session => {
+  const items = []
+  let total = 0
+  do {
+    const page = await getReleaseHistoryDocuments({ skip: items.length, limit: 200 })
+    if (session !== bindingSession) return
+    const rows = page.items || []
+    total = page.total || 0
+    if (!rows.length && items.length < total) throw new Error('资料分页结果不完整，请重试')
+    items.push(...rows)
+  } while (items.length < total)
+  documents.value = items
+}
 const openBindings = async () => {
   const session = ++bindingSession
   Object.assign(bindingForm, emptyBinding()); bindingBaseline.value = JSON.stringify(bindingForm)
   bindingVisible.value = true; bindingError.value = ''; documents.value = []; bindings.value = []; bindingsLoading.value = true
-  try { const [data] = await Promise.all([getReleaseHistoryDocuments({ limit: 200 }), refreshBindings(session)]); if (session === bindingSession) documents.value = data.items || [] }
+  try { await Promise.all([loadAllDocuments(session), refreshBindings(session)]) }
   catch (failure) { if (session === bindingSession) bindingError.value = failure?.response?.data?.detail || '资料与适用关系加载失败' }
+  finally { if (session === bindingSession) bindingsLoading.value = false }
+}
+const retryBindings = async () => {
+  const session = bindingSession; bindingsLoading.value = true; bindingError.value = ''
+  try { await refreshBindings(session) }
+  catch { if (session === bindingSession) bindingError.value = '列表刷新失败，请重试；已保存的数据不受影响' }
   finally { if (session === bindingSession) bindingsLoading.value = false }
 }
 const closeBindings = async done => {
@@ -84,7 +103,9 @@ const saveBindings = async () => {
   try {
     await saveReleaseHistoryBindings({ ...JSON.parse(JSON.stringify(bindingForm)), country: bindingForm.country.trim().toUpperCase() })
     if (session !== bindingSession) return
-    bindingBaseline.value = JSON.stringify(bindingForm); invalidateTrace(); await refreshBindings(session); ElMessage.success('适用关系已保存，请重新追溯')
+    bindingBaseline.value = JSON.stringify(bindingForm); invalidateTrace(); ElMessage.success('适用关系已保存，请重新追溯')
+    try { await refreshBindings(session) }
+    catch { if (session === bindingSession) bindingError.value = '适用关系已保存，列表刷新失败，请点击刷新列表重试' }
   } catch (failure) { if (session === bindingSession) bindingError.value = failure?.response?.data?.detail || '保存失败，输入已保留' }
   finally { if (session === bindingSession) savingBinding.value = false }
 }
