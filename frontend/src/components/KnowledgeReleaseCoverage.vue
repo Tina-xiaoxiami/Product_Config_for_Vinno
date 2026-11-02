@@ -4,10 +4,10 @@
     <p v-if="scopeNotice">{{ scopeNotice }}</p>
     <div v-if="error" role="alert" class="coverage-error">{{ error }} <el-button size="small" link @click="$emit('retry')">重新检查</el-button></div>
     <template v-if="report">
-      <p>{{ report.boundary || '仅检查已配置来源目录，不能证明全部历史材料齐全。' }}</p>
+      <p>{{ coverageBoundaryLabel(report.boundary) }}</p>
       <p v-if="report.message">{{ report.message }}</p>
       <div class="coverage-counts"><span>文件 {{ report.totals?.files || 0 }}</span><span>已登记 {{ report.totals?.registered || 0 }}</span><span>可检索 {{ report.totals?.ready || 0 }}</span><span>缺口 {{ report.totals?.gaps || 0 }}</span><span>候选待核查 {{ report.totals?.unresolved || 0 }}</span><span>晚于目标 {{ report.totals?.later || 0 }}</span></div>
-      <details class="coverage-roots"><summary>本次检查的来源目录（{{ report.roots?.length || 0 }}）</summary><div v-for="(root,index) in report.roots || []" :key="`${root.path}-${index}`"><strong>{{ root.label || '来源目录' }} · {{ coverageStatusLabel('root', root.status) }}</strong><pre>{{ root.path }}</pre><p v-if="root.error" class="coverage-error">{{ root.error }}</p></div><p v-if="!report.roots?.length">尚未配置可检查的来源目录。</p></details>
+      <details class="coverage-roots"><summary>本次检查的来源目录（{{ report.roots?.length || 0 }}）</summary><div v-for="(root,index) in report.roots || []" :key="`${root.path}-${index}`"><strong>{{ coverageRootLabel(root.label) }} · {{ coverageStatusLabel('root', root.status) }}</strong><pre>{{ root.path }}</pre><p v-if="root.error" class="coverage-error">{{ root.error }}</p></div><p v-if="!report.roots?.length">尚未配置可检查的来源目录。</p></details>
       <div class="coverage-controls"><el-checkbox v-model="onlyGaps" size="small">只看缺口与候选问题</el-checkbox><el-input v-model="query" clearable size="small" placeholder="筛选文件名、版本或问题" aria-label="筛选资料覆盖条目" /><small>显示 {{ rows.length }} / {{ report.items?.length || 0 }} 条</small></div>
       <p class="coverage-note">未识别型号或版本的文件仅是候选问题，不据文件夹或语言断定适用型号、国家。晚于目标或明确不适用的资料可取消“只看缺口”查看，不计作当前确定缺项。</p>
       <div class="coverage-items">
@@ -27,7 +27,7 @@
 </template>
 <script setup>
 import { computed, ref } from 'vue'
-import { coverageAssessment, coverageItems, coverageStatusLabel, registeredPreviewUrl } from '../utils/knowledgeReleaseCoverage'
+import { coverageAssessment, coverageBoundaryLabel, coverageRootLabel, coverageItems, coverageStatusLabel, registeredPreviewUrl } from '../utils/knowledgeReleaseCoverage'
 const props = defineProps({ report: { type: Object, default: null }, loading: Boolean, error: { type: String, default: '' }, scopeNotice: { type: String, default: '' } })
 defineEmits(['retry'])
 const onlyGaps = ref(true), query = ref(''), copyError = ref('')

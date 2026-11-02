@@ -26,6 +26,17 @@ export function coverageTraceBoundary(trace, report = null) {
   return trace?.coverage?.coverage_message || '已登记资料的检索数量不能代表全部历史完整；来源目录尚未完成覆盖检查。'
 }
 
+export function coverageBoundaryLabel(value) {
+  return /[\u4e00-\u9fff]/.test(String(value || '')) ? value
+    : '仅核对已配置来源目录及已登记发布资料，不代表全部历史齐全。'
+}
+
+export function coverageRootLabel(value) {
+  return ({ RELEASE_NOTE_ROOT: '发布记录来源目录', SOURCE_ROOTS: '补充来源目录',
+    CONTROLLED_EXTRACTION_ROOTS: '已配置正文来源目录', 'CONTROLLED_MATERIALS_ROOT/发布记录': '受控发布记录目录' })[value]
+    || (/[\u4e00-\u9fff]/.test(String(value || '')) ? value : '来源目录')
+}
+
 export function coverageItems(report, onlyGaps = true, query = '') {
   const needle = String(query || '').trim().toLocaleLowerCase()
   return (Array.isArray(report?.items) ? report.items : []).filter(item => {
