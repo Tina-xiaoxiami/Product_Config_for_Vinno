@@ -174,7 +174,7 @@ async def release_coverage(session, supplied_scope: dict | None = None) -> dict:
                     country_mismatch = document['country'] and scope['country'] and document['country'] != scope['country']
                     market_mismatch = document['market'] in {'domestic','overseas'} and document['market'] != scope['market']
                     applicable.append('applicable' if model['applicable'] and not country_mismatch and not market_mismatch
-                                      else 'not_applicable' if model['explicitly_excluded'] or facts['models'] or country_mismatch or market_mismatch else 'unrecognized')
+                                      else 'not_applicable' if model['explicitly_excluded'] or (facts['models'] and not model['models']) or country_mismatch or market_mismatch else 'unrecognized')
             if not quality and not chunks.get(document['id']):
                 issues.append(_issue('extraction_empty', f"登记资料#{document['id']}无已提取正文", '重新提取受控原件'))
         if statuses:
@@ -222,7 +222,7 @@ async def release_coverage(session, supplied_scope: dict | None = None) -> dict:
     totals.update(files=len({file['path'] for file in scan['files']}), registered=len(documents),
         ready=sum(item['registration_status']=='registered' and not any(issue['code'] not in _INFORMATIONAL for issue in item['issues']) for item in report['items']),
         gaps=sum(item['is_gap'] for item in report['items']), later=sum(item['range_status']=='after_target' for item in report['items']),
-        unresolved=sum(any(issue['code'] in {'version_unrecognized','candidate_version_conflict','applicability_unrecognized','source_version_conflict','release_qualification_unverified'} for issue in item['issues']) for item in report['items']))
+        unresolved=sum(any(issue['code'] in {'version_unrecognized','candidate_version_conflict','applicability_unrecognized','source_version_conflict','source_fact_conflict','release_qualification_unverified'} for issue in item['issues']) for item in report['items']))
     report['completeness'] = ('gaps_found' if totals['gaps'] else 'no_known_gaps'
                               if report['scan_status']=='checked' and not totals['unresolved'] else 'unverified')
     return report
