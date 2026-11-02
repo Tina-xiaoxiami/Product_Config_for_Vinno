@@ -4,7 +4,7 @@ import test from 'node:test'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../src/utils/knowledgeQueryScope.js'
 
 const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
-const scope = () => ({ country: 'CN', market: 'domestic', product_model_id: 901, software_version: '1.14.80' })
+const scope = () => ({ market: 'domestic', product_model_id: 901, software_version: '1.14.80' })
 
 function setup() {
   const asks = [], queues = [], warnings = []
@@ -34,6 +34,14 @@ test('query scope never supplies a missing default and keeps history explicitly 
   assert.match(knowledgeScopeLabel({ ...scope(), model_name: 'VINNO 10' }), /VINNO 10/)
 })
 
+test('query scope ignores country while preserving historical provenance in labels', () => {
+  assert.deepEqual(knowledgeScopePayload(scope()), scope())
+  assert.deepEqual(knowledgeScopePayload({ ...scope(), country: 'DE' }), scope())
+  assert.equal(knowledgeScopeFingerprint({ ...scope(), country: 'DE' }), knowledgeScopeFingerprint(scope()))
+  assert.doesNotMatch(knowledgeScopeLabel(scope()), /undefined|null/)
+  assert.match(knowledgeScopeLabel({ ...scope(), country: 'CN' }), /CN/)
+})
+
 test('ask sends the selected scope and ignores a response after scope editing', async () => {
   const { context, asks, askQuestion, onQaScopeInput } = setup()
   const pending = askQuestion()
@@ -48,7 +56,7 @@ test('ask sends the selected scope and ignores a response after scope editing', 
 
 test('incomplete scope makes no ask or queue request; history uses a separate explicit mode', async () => {
   const { context, asks, queues, warnings, askQuestion, loadQaQuestions } = setup()
-  context.qaScope.country = ''
+  context.qaScope.software_version = ''
   await askQuestion()
   await loadQaQuestions()
   assert.equal(asks.length, 0)

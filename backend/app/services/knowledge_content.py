@@ -636,9 +636,12 @@ async def find_candidate_evidence(
         ) + ")"
     if scope is not None:
         # Unknown model/software applicability is excluded rather than guessed.
-        prefilter_sql += """ AND document.country=:scope_country AND document.market=:scope_market
+        prefilter_sql += """ AND document.market=:scope_market
             AND document.product_series=:scope_model AND document.version=:scope_version"""
-        params.update({"scope_country": scope["country"], "scope_market": scope["market"],
+        if scope["country"] is not None:
+            prefilter_sql += " AND document.country=:scope_country"
+            params["scope_country"] = scope["country"]
+        params.update({"scope_market": scope["market"],
                        "scope_model": scope["model_name"], "scope_version": scope["software_version"]})
     result = await session.execute(
         text(

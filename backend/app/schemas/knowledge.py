@@ -216,6 +216,7 @@ class KnowledgeQuestionResult(BaseModel):
     answer: KnowledgeAnswerItem | None = None
     candidates: list[KnowledgeCandidateEvidence] = Field(default_factory=list)
     scope: dict | None = None
+    matched_scope: dict | None = None
     missing_fields: list[str] = Field(default_factory=list)
 
 

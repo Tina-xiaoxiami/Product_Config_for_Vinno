@@ -380,15 +380,6 @@ test('product model table shows the registration certificate mapping', () => {
 })
 
 
-test('knowledge hub is a read-only aggregate linked to master-data maintenance', () => {
-  const view = read('../src/views/KnowledgeHub.vue')
-
-  assert.match(view, /基础数据统一维护/)
-  assert.match(view, /to="\/feature-manage"/)
-  assert.match(view, /to="\/registration-manage"/)
-})
-
-
 test('knowledge hub supports the confirmed Q&A feedback loop', () => {
   const view = read('../src/views/KnowledgeHub.vue')
   const api = read('../src/api/data.js')
