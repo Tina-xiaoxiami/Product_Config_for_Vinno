@@ -63,8 +63,6 @@
 .system-workspace .workspace-content .category-item.active { background: #e6eefb; border-color: var(--workspace-primary); color: var(--workspace-primary); }
 .system-workspace .workspace-content .measurement-library { box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--workspace-border); border-radius: 10px; background: var(--workspace-surface); }
 .system-workspace .workspace-content .measurement-library .source-line { background: #f5f8fd; border: 1px solid #e3eaf3; border-radius: 6px; padding: 6px 9px; }
-.system-workspace .workspace-content .measurement-library .statistics { border-color: var(--workspace-border); }
-.system-workspace .workspace-content .measurement-library .query-toolbar { margin-top: 10px; }
 .system-workspace .probe-management-tabs .el-tabs__item { color: var(--workspace-muted); }
 .system-workspace .probe-management-tabs .el-tabs__item.is-active { color: var(--workspace-primary); }
 @media(max-width:900px) {
