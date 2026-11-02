@@ -90,3 +90,30 @@ test('declining draft discard keeps review input, and success emits the saved re
   assert.equal(editor.events[0][0], 'saved')
   assert.equal(editor.events[0][1].reviewer, 'Current reviewer')
 })
+
+function queueActions() {
+  const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const calls = []
+  const context = { qaPage: { value: 2 }, qaQueueMode: { value: 'legacy' }, qaEvidenceFilter: { value: 'needs_review' },
+    qaStatus: { value: 'answered' }, qaSearch: { value: '' },
+    loadQaQuestions: async () => calls.push({ page: context.qaPage.value, filter: context.qaEvidenceFilter.value }),
+    loadQaReviewCount: async () => {} }
+  const start = source.indexOf('const onAnswerReviewSaved =')
+  const end = source.indexOf('const updateQaTableHeight =', start)
+  const actions = new Function(...Object.keys(context), `${source.slice(start, end)}; return { onAnswerReviewSaved, onQaQueueModeChange }`)(...Object.values(context))
+  return { ...actions, context, calls, source }
+}
+
+test('saving a review restarts pagination before reloading a shrinking queue', async () => {
+  const queue = queueActions()
+  await queue.onAnswerReviewSaved()
+  assert.equal(queue.calls[0].page, 1)
+})
+
+test('leaving review queue clears its status filter and hides the review-only funnel', () => {
+  const queue = queueActions()
+  queue.onQaQueueModeChange()
+  assert.equal(queue.context.qaEvidenceFilter.value, 'all')
+  assert.equal(queue.calls[0].page, 1)
+  assert.match(queue.source, /<el-popover v-if="qaQueueMode === 'review'"/)
+})
