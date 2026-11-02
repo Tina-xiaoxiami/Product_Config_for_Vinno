@@ -424,3 +424,21 @@ async def test_country_optional_unbound_sources_remain_visible_with_their_source
         assert asked.status_code == 200, asked.text
         assert asked.json()['history_trace']['coverage']['unresolved_documents']
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_adjacent_pdf_lines_preserve_complete_existing_machine_upgrade_restriction(database):
+    restriction = '注意，该版本不支持已发布的 V5EXP、V6、V8\n机器的升级。'
+    _document(database, 1, '1.14.40', 'Release Note 1.14.40\n' + restriction + '\n其他图像优化。')
+    client, engine = await _client(database)
+    async with client:
+        result = await _trace(client)
+        related = next(item for item in result['coverage']['unresolved_documents'] if item['document_id'] == 1)
+        detected = related['detected_conditions']
+        assert any(item['excerpt'] == restriction for item in detected)
+        assert detected[0]['source_ref'] == '第2页'
+        assert detected[0]['page_number'] == 2
+        await _bind(client, (1,))
+        qualified = await _trace(client)
+        assert any(item['excerpt'] == restriction for item in qualified['chains'][0]['detected_conditions'])
+    await engine.dispose()
