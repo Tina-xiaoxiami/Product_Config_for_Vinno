@@ -56,3 +56,19 @@ test('management hides disabled models by default with an explicit opt-in', () =
   assert.match(source, /include_disabled:\s*showDisabled\.value/)
   assert.doesNotMatch(source, /@click="handleDelete\(row\)"/)
 })
+
+test('returning to cached configuration refreshes enabled models after pending saves', async () => {
+  const config = readFileSync(new URL('../src/views/Config.vue', import.meta.url), 'utf8')
+  const code = config.slice(config.lastIndexOf('onActivated('), config.lastIndexOf('</script>'))
+  let activate
+  const calls = [], configReady = ref(false), loading = ref(false), allModelsMap = ref(new Map())
+  new Function('onActivated', 'configReady', 'loading', 'waitForDraftSaves', 'loadModels', 'loadModelCombinations', 'allModelsMap', code)(
+    callback => { activate = callback }, configReady, loading,
+    async () => calls.push('saves'), async () => calls.push('models'), async () => calls.push('groups'), allModelsMap)
+  await activate()
+  assert.deepEqual(calls, [])
+  configReady.value = true
+  allModelsMap.value.set(84, { id: 84 })
+  await activate()
+  assert.deepEqual(calls, ['saves', 'models', 'groups'])
+})
