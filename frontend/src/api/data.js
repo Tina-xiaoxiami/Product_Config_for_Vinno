@@ -170,6 +170,7 @@ export const askKnowledgeQuestion = (data) => api.post('/knowledge/questions/ask
 export const getKnowledgeQuestions = (params) => api.get('/knowledge/questions', { params })
 export const getKnowledgeQuestion = (id) => api.get(`/knowledge/questions/${id}`)
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
+export const reviewKnowledgeAnswer = (id, data) => api.post(`/knowledge/questions/${id}/review`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)
 export const getKnowledgeQuestionCandidates = (id) => api.get(`/knowledge/questions/${id}/candidates`)
 export const getDataReviewBatches = () => api.get('/knowledge/review-batches')
