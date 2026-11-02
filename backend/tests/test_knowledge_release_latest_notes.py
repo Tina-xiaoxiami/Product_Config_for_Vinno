@@ -69,14 +69,21 @@ async def test_latest_button_fixes_remain_v10_events_not_v6_additions(database):
     _document(database, 7, '1.14.81', EN81, country=None, market='unspecified')
     client, engine = await _client(database)
     async with client:
-        six = await _trace(client, query='针增益', scope={**SCOPE,'software_version':'1.14.81'})
+        six = await _trace(client, query='针增益调节', scope={**SCOPE,'software_version':'1.14.81'})
         assert {5,6,7} <= {row['document_id'] for row in six['source_documents']}
         assert not six['events'] and six['assessment']=='no_record'
         with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE product_models SET name='VINNO 10' WHERE id=902")
-        for query,expected in [('针增益',6),('needle gain',7)]:
+        for query,expected in [('针增益调节',6),('针增益调节',7)]:
             ten = await _trace(client, query=query, scope={**SCOPE,'product_model_id':902,'software_version':'1.14.81'})
             event = next(row for row in ten['events'] if row['document_id']==expected)
             assert event['change_type'] in ('fixed','optimized')
             assert event['change_type']!='added'
     await engine.dispose()
+
+
+def test_child_gain_aliases_share_existing_query_forms_without_aliasing_parent_feature():
+    from app.services.knowledge_content import _query_forms
+    forms = _query_forms('针增益调节')
+    assert '针增益' in forms and 'needlegain' in forms
+    assert '穿刺增强' not in forms
