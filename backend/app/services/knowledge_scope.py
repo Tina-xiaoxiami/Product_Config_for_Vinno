@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 SCOPE_FIELDS = ("country", "market", "product_model_id", "software_version")
+REQUIRED_SCOPE_FIELDS = ("market", "product_model_id", "software_version")
 STORED_FIELDS = {*SCOPE_FIELDS, "model_name", "series_name"}
 
 
@@ -23,7 +24,7 @@ class KnowledgeScopeUnavailable(KnowledgeScopeError):
 
 
 def missing_scope_fields(scope: dict | None) -> list[str]:
-    return [name for name in SCOPE_FIELDS if not (scope or {}).get(name)]
+    return [name for name in REQUIRED_SCOPE_FIELDS if not (scope or {}).get(name)]
 
 
 def scope_key(scope: dict | None) -> str:
@@ -64,6 +65,29 @@ async def scope_expression(session: AsyncSession, alias: str = "") -> str:
     return (f"{alias}." if alias else "") + "scope_key" if await scope_schema_ready(session) else "''"
 
 
+async def compatible_scope_keys(session: AsyncSession, scope: dict, *, overlap: bool = False) -> list[str]:
+    """Read neutral queries across valid historical countries without changing raw keys.
+
+    Explicit-country reads remain exact. Mutation checks also include neutral
+    owners because their applicability overlaps every country in that market.
+    """
+    key = scope_key(scope)
+    if scope["country"] is not None and not overlap:
+        return [key]
+    keys = {key}
+    rows = await session.execute(text("SELECT DISTINCT scope_key FROM knowledge_questions WHERE scope_key != ''"))
+    for row in rows:
+        try:
+            candidate = stored_scope(row.scope_key)
+        except KnowledgeScopeError:
+            continue
+        if not candidate or any(candidate[name] != scope[name] for name in STORED_FIELDS - {"country"}):
+            continue
+        if scope["country"] is None or candidate["country"] in {None, scope["country"]}:
+            keys.add(row.scope_key)
+    return sorted(keys)
+
+
 async def resolve_query_scope(session: AsyncSession, supplied: dict | None) -> dict | None:
     if missing_scope_fields(supplied):
         return None
@@ -82,13 +106,16 @@ async def resolve_query_scope(session: AsyncSession, supplied: dict | None) -> d
 
 
 def _normalized_values(values: dict) -> dict:
-    country = unicodedata.normalize("NFKC", str(values["country"])).strip().upper()
+    country = (unicodedata.normalize("NFKC", str(values["country"])).strip().upper()
+               if values.get("country") is not None else None)
     market = values["market"]
     version = unicodedata.normalize("NFKC", str(values["software_version"])).strip()
     model_id = values["product_model_id"]
-    if not re.fullmatch(r"[A-Z]{2}", country):
+    if country is not None and not re.fullmatch(r"[A-Z]{2}", country):
         raise KnowledgeScopeError("国家须填写两位国家代码，如CN、DE")
-    if market not in {"domestic", "overseas"} or ((country == "CN") != (market == "domestic")):
+    if market not in {"domestic", "overseas"}:
+        raise KnowledgeScopeError("请选择国内或海外市场")
+    if country is not None and ((country == "CN") != (market == "domestic")):
         raise KnowledgeScopeError("国家与国内/海外范围不一致")
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version) or len(version) > 80:
         raise KnowledgeScopeError("请填写明确的软件版本，不支持通配符或版本范围")
@@ -111,8 +138,8 @@ def document_matches_scope(document, scope: dict) -> bool:
     A generic series label or a manual revision such as R10 is not a software
     applicability declaration. Those sources await explicit scope registration.
     """
-    return all(document[name] == scope[field] for name, field in (
-        ("country", "country"), ("market", "market"),
+    return (scope["country"] is None or document["country"] == scope["country"]) and all(document[name] == scope[field] for name, field in (
+        ("market", "market"),
         ("product_series", "model_name"), ("version", "software_version"),
     ))
 
