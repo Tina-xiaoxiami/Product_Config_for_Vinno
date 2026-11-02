@@ -50,8 +50,8 @@
 
     <el-dialog v-model="importVisible" title="导入人用测量库" width="min(540px, calc(100vw - 32px))" :before-close="closeImport" :close-on-click-modal="!importing" :close-on-press-escape="!importing" :show-close="!importing">
       <el-form label-width="90px" size="small">
-        <el-form-item label="来源版本" label-for="measurement-version"><el-input id="measurement-version" v-model="importVersion" maxlength="80" placeholder="例如 1.51.90" :disabled="importing" /></el-form-item>
-        <el-form-item label="人用中文表" label-for="measurement-file"><input id="measurement-file" ref="fileInput" type="file" accept=".xlsx" :disabled="importing" @change="selectFile" /></el-form-item>
+        <el-form-item label="来源版本" for="measurement-version"><el-input id="measurement-version" v-model="importVersion" maxlength="80" placeholder="例如 1.51.90" :disabled="importing" /></el-form-item>
+        <el-form-item label="人用中文表" for="measurement-file"><input id="measurement-file" ref="fileInput" type="file" accept=".xlsx" :disabled="importing" @change="selectFile" /></el-form-item>
       </el-form>
       <p class="scope-hint">读取第一个 sheet 的测量项及第三个 sheet 的计算项。新导入保留历史版本；相同文件与版本重复导入会复用原批次。</p>
       <el-alert v-if="importError" :title="importError" type="error" :closable="false" show-icon />
@@ -134,7 +134,10 @@ async function loadLibrary() {
     detail.value = null
     await nextTick(); resizeTable()
   } catch (error) {
-    if (current === requestId) loadError.value = error.response?.data?.detail || '测量库读取失败，请重试'
+    if (current === requestId) {
+      loadError.value = error.response?.data?.detail || '测量库读取失败，请重试'
+      library.value = { ...library.value, batch: null, entries: [] }; detail.value = null
+    }
   } finally { if (current === requestId) loading.value = false }
 }
 

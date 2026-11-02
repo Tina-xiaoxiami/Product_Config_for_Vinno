@@ -1,6 +1,6 @@
 <template>
   <div class="probe-data-table">
-    <div class="table-actions"><span>{{ filtered.length }} / {{ rows.length }} 条</span><TableColumnSettings :model-value="layout" :defaults="columns" @update:model-value="applyLayout" /><el-button v-if="Object.values(filters).some(v => v != null)" size="small" @click="filters = {}">清除筛选</el-button></div>
+    <div class="table-actions"><span>{{ filtered.length }} / {{ rows.length }} 条</span><TableColumnSettings :model-value="layout" :defaults="columns" @update:model-value="applyLayout" /><el-button v-if="Object.values(filters).some(v => v != null)" size="small" @click="clearFilters">清除筛选</el-button></div>
     <el-table :key="structureKey" :data="displayRows" border stripe size="small" :height="height" :max-height="height ? undefined : 360" @header-dragend="resize">
       <el-table-column v-for="column in visibleColumns" :key="column.key" :prop="column.key" :width="column.width" :fixed="column.fixed" show-overflow-tooltip>
         <template #header><span class="column-heading">{{ column.label }}<el-popover :ref="el => { if (el) popovers[column.key] = el }" v-if="column.filter !== false && rows.length" trigger="click" :width="220" placement="bottom-start" @before-enter="openFilter(column.key)" @before-leave="finishFilter(column.key)">
@@ -43,7 +43,8 @@ watch(filtered, rows => { page.value = 1; emit('filtered', rows) }, { immediate:
 const allValues = computed(() => probeFilterOptions(props.rows, filterKey.value, props.columns.find(column => column.key === filterKey.value)?.multiValue))
 const visibleValues = computed(() => allValues.value.filter(value => filterLabel(value).toLowerCase().includes(filterSearch.value.toLowerCase())))
 function openFilter(key) { if (props.autoApplyFilters && filterKey.value && filterKey.value !== key) finishFilter(filterKey.value); filterKey.value = key; filterSearch.value = ''; draftValues.value = [...(filters.value[key] ?? allValues.value)] }
-function finishFilter(key) { if (props.autoApplyFilters && filterKey.value === key) { filters.value = { ...filters.value, [key]: [...draftValues.value] }; filterKey.value = '' } }
+function finishFilter(key) { if (filterKey.value !== key) return; if (props.autoApplyFilters) filters.value = { ...filters.value, [key]: [...draftValues.value] }; filterKey.value = '' }
+function clearFilters() { const key = filterKey.value; filterKey.value = ''; filters.value = {}; if (key) closePopover(key) }
 function selectVisible(checked) { draftValues.value = selectVisibleFilterValues(draftValues.value, visibleValues.value, checked) }
 const popovers = {}
 function filterLabel(value) { const column = props.columns.find(column => column.key === filterKey.value); return column?.filterLabel ? column.filterLabel(value) : value ? filterKey.value.endsWith('_status') ? probeStatusLabel(value) : value : '(空白)' }

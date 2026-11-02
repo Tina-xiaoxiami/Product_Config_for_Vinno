@@ -42,10 +42,12 @@ def _validate_archive(content: bytes) -> None:
 
 
 def _sheet_entries(sheet, kind: str) -> list[dict]:
-    if sheet.max_row > MAX_ROWS or sheet.max_column > 64:
+    if (sheet.max_row or 0) > MAX_ROWS or (sheet.max_column or 0) > 64:
         raise MeasurementImportError(f"{sheet.title} 超出允许的行列数")
     rows = sheet.iter_rows(values_only=True)
     headers = [_text(cell) for cell in next(rows, ())]
+    if len(headers) > 64:
+        raise MeasurementImportError(f"{sheet.title} 列数过多")
     required = ITEM_HEADERS if kind == "measurement" else CALC_HEADERS
     missing = required - set(headers)
     if missing:
@@ -54,8 +56,8 @@ def _sheet_entries(sheet, kind: str) -> list[dict]:
         raise MeasurementImportError(f"{sheet.title} 存在重复表头")
     entries = []
     for row_number, values in enumerate(rows, start=2):
-        if row_number > MAX_ROWS:
-            raise MeasurementImportError(f"{sheet.title} 行数过多")
+        if row_number > MAX_ROWS or len(values) > 64:
+            raise MeasurementImportError(f"{sheet.title} 超出允许的行列数")
         if not any(value is not None for value in values):
             continue
         row = dict(zip(headers, values))
@@ -102,9 +104,11 @@ def _source_warnings(workbook, entries: list[dict], summary: dict) -> list[str]:
         if sheet_name not in workbook.sheetnames:
             continue
         sheet = workbook[sheet_name]
-        if sheet.max_row > MAX_ROWS or sheet.max_column > 64:
+        if (sheet.max_row or 0) > MAX_ROWS or (sheet.max_column or 0) > 64:
             raise MeasurementImportError(f"{sheet_name} 超出允许的行列数")
-        for row in sheet.iter_rows(values_only=True):
+        for number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+            if number > MAX_ROWS or len(row) > 64:
+                raise MeasurementImportError(f"{sheet_name} 超出允许的行列数")
             if len(row) > 1 and _text(row[0]) == "Total" and _text(row[1]) != str(summary[count_key]):
                 warnings.append(f"{sheet_name} 的 Total 为 {_text(row[1])}，明细实际为 {summary[count_key]}；统计使用明细。")
     if summary["duplicate_rows"]:
@@ -135,6 +139,10 @@ def parse_measurement_workbook(content: bytes) -> dict:
             raise MeasurementImportError("工作簿中没有测量或计算明细")
         summary = _summary(entries)
         return {"entries": entries, "summary": summary, "warnings": _source_warnings(workbook, entries, summary)}
+    except MeasurementImportError:
+        raise
+    except Exception as exc:
+        raise MeasurementImportError("无法解析 Excel 工作表，请检查文件是否损坏") from exc
     finally:
         workbook.close()
 
