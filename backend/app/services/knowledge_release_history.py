@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.feature_release_backfill import _classify_change
 from app.services.feature_release_versions import version_sort_key
-from app.services.knowledge_content import _file_sha256
+from app.services.knowledge_content import _file_sha256, _query_forms
 from app.services.knowledge_documents import list_knowledge_documents
 from app.services.knowledge_scope import resolve_query_scope
 from app.services.knowledge_release_applicability import (
@@ -200,6 +200,7 @@ def _event_heading(line: str) -> str | None:
 
 
 def _events(document: dict, chunks: list[dict], topic: str, conditions='', *, model_name: str | None = None) -> list[dict]:
+    topics = _query_forms(topic)
     headers = {version for chunk in chunks for line in chunk['content'].splitlines() if (version := _event_heading(line))}
     cumulative = len(headers) > 1
     current = None
@@ -215,12 +216,21 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='', *, mo
         for line in chunk['content'].splitlines():
             local_version = _event_heading(line) or local_version
             relevant_clauses = [clause for clause in model_clauses(line)
-                if topic in _normalize(clause) and not re.search(r'^(?:与|对比|相比)', clause.strip())]
+                if any(term in _normalize(clause) for term in topics) and not re.search(r'^(?:与|对比|相比)', clause.strip())]
             for relevant in relevant_clauses:
                 subjects = event_subject(relevant)
                 if model_name and subjects and canonical_model(model_name) not in subjects:
                     continue
-                action_text = '；'.join(part for part in re.split(r'[，,；;]', relevant) if topic in _normalize(part))
+                parts = re.split(r'[，,；;]', relevant)
+                action_text = '；'.join(part for part in parts if any(term in _normalize(part) for term in topics))
+                # A fix predicate may precede the comma-delimited UI condition;
+                # unlike a completed parent-feature addition, it governs the
+                # following missing-button object explicitly described here.
+                for index, part in enumerate(parts):
+                    if index and any(term in _normalize(part) for term in topics):
+                        governing = re.fullmatch(r'\s*(?:\d+[、.)]\s*)?(修复|优化).*?(?:布局|模式|应用|界面|场景)(?:下|中|时)\s*', parts[index-1])
+                        if governing:
+                            action_text = governing[1] + ' ' + action_text
                 change, _ = _classify_change(action_text, action_text, False)
                 if _NEGATED_CHANGE.search(action_text) or _PROPOSED_CHANGE.search(action_text):
                     change = 'unknown'

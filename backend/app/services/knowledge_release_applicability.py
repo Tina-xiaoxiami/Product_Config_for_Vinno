@@ -6,6 +6,7 @@ import unicodedata
 from typing import Any
 
 _VERSION = r'\d+\.\d+(?:\.\d+){1,2}'
+_VERSION_RANGE = r'\d+(?:\.(?:\d+|[Xx])){1,3}'
 _COVER = re.compile(rf'^\s*({_VERSION})\s*[（(]([^）)]+)[）)]', re.I)
 _MODEL = re.compile(r'(?<![A-Za-z0-9])(?:VINNO\s*|V\s*)(\d{1,2}\s*(?:PRO|EXP|POC|SUPER|S|P|E|L|T)?)(?![A-Za-z0-9])', re.I)
 _SHORT = re.compile(r'/\s*(?:VINNO\s*|V\s*)?(\d{1,2}\s*(?:PRO|EXP|POC|SUPER|S|P|E|L|T)?)(?![A-Za-z0-9])', re.I)
@@ -40,13 +41,18 @@ def _reference(document: dict, chunk: dict, excerpt: str) -> dict:
             'preview_url': f"/api/knowledge/documents/{document['id']}/preview"}
 
 
+def _cover_label(value: str) -> bool:
+    return bool(_models(value) or re.fullmatch(r'\s*(?:VINNO|V)\s*(?:系列|series)\s*', value, re.I))
+
+
 def source_cover_version(line: str) -> str | None:
     match = _COVER.search(unicodedata.normalize('NFKC', line))
-    return match[1] if match and _models(match[2]) else None
+    return match[1] if match and _cover_label(match[2]) else None
 
 
 def model_clauses(value: str) -> list[str]:
     """Split explicit subjects at comparisons/contrasts, preserving source words."""
+    value = re.sub(r'(?<=[A-Za-z)])\.(?=\s+(?:[A-Z]|\d+\.\s))', '\n', value)
     value = re.sub(r'(?<=[^\s])(?=(?:但|而|然而)(?:VINNO|V)\s*\d)', '\n', value, flags=re.I)
     return [part.strip() for part in re.split(
         r'[。！？!?；;\n]|[，,](?=\s*(?:与|对比|相比|但|而|然而|另外|同时|(?:VINNO\s*|V\s*)\d{1,2}(?:PRO|EXP|S|P|E)?\s*(?:新增|添加|取消|移除|不支持|支持|适用|更新|升级)))', value, flags=re.I) if part.strip()]
@@ -85,7 +91,7 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
         own = []
         for raw in chunk['content'].splitlines():
             match = _COVER.search(unicodedata.normalize('NFKC', raw))
-            if match and _models(match[2]):
+            if match and _cover_label(match[2]):
                 own.append((match[1], match[2], _reference(document, chunk, raw)))
         if own:
             covers = own
@@ -114,17 +120,37 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
         # PDF wraps are retained in the reference; sentence matching uses folded whitespace.
         body = '\n'.join(line for line in chunk['content'].splitlines()
             if not source_cover_version(line) and not re.fullmatch(r'\s*(?:Release\s*Note|\d+)\s*', line, re.I))
-        # Remove layout wraps before subject clauses, not logical contrasts.
+        # Keep new product-specific upgrade paragraphs and explicit notes separate;
+        # ordinary PDF line wrapping inside a sentence is still folded.
+        body = re.sub(r'\n(?=\s*(?:Note\s*[:：]|注[:：]|注意[:：]|(?:VINNO\s*|V\s*)\d[^\n]*(?:系列|series)[^\n]*(?:升级|upgrades?)))', ';', body, flags=re.I)
         body = re.sub(r'\n', ' ', body)
         for raw in model_clauses(body):
             sentence = re.sub(r'\s+', '', unicodedata.normalize('NFKC', raw))
             if not sentence:
                 continue
             ref = _reference(document, chunk, raw)
-            names = _models(sentence)
-            positive = bool(re.search(r'适用于|适用型号|首次发放.*包括|新增.*机型', sentence)) and not re.search(r'^(?:与|对比|相比)', sentence)
+            names = _models(raw)
+            release_declaration = ((bool(re.search(r'(?:本|该|此)(?:次)?版本(?:为|是|支持|适用)', sentence))
+                                    and bool(re.search(r'支持.*(?:系列产品|产品|机型)', sentence)))
+                or bool(re.search(r'\bthis (?:version|release) (?:is|supports?)\b.*(?:supporting|supports?).*(?:series products|products|models)', raw, re.I))
+                or bool(re.search(r'\bthis is a (?:unified|consolidated).*release.*supporting.*(?:series products|products|models)', raw, re.I)))
+            version_application = re.search(r'(?:本|该|此)(?:次)?(?:软件)?版本(?:同样|也|还)?适用于(.+)', sentence)
+            application_object = re.split(r'[，,；;]', version_application[1], 1)[0] if version_application else ''
+            whole_version_application = bool(version_application) and not re.search(r'功能|应用|探头|模式', application_object)
+            model_field = bool(re.match(r'^(?:适用型号|适用机型|适用产品)[:：]', sentence))
+            positive = (release_declaration or whole_version_application or model_field
+                        or bool(re.search(r'首次发放.*包括|新增.*机型', sentence))) and not re.search(r'^(?:与|对比|相比)', sentence)
             if positive and not re.search(r'不适用|未适用|不支持.*(?:升级|型号)', sentence):
-                declare(names, 'series' if re.search(r'V\d+(?:PRO|EXP)?系列', sentence, re.I) else 'exact', ref)
+                declare(names, 'series' if re.search(r'系列|\bseries\b', raw, re.I) else 'exact', ref)
+            legacy_range = re.search(_VERSION_RANGE, raw, re.I)
+            if legacy_range and (re.search(r'不适用于?.*(?:老|旧).*机器', sentence)
+                    or re.search(r'not (?:compatible|applicable).*(?:old|legacy).*machines?', raw, re.I)):
+                restriction = {'kind': 'source_version_hardware_exclusion', 'applies_to': names,
+                    'source_version_pattern': legacy_range[0].upper(), 'hardware_label': '旧机器',
+                    'excluded_v_codes': [], 'v_codes_by_model': {}, **ref}
+                result['restrictions'].append(restriction)
+                fact('restrictions', '旧硬件/源版本限制', '、'.join(names) + '：旧机器，原文版本范围' + legacy_range[0].upper(), ref)
+                continue
             whole_exclusion = re.match(r'^(?:本|该|此)(?:软件)?版本(?:明确)?(?:不适用于?|不支持)(.+)$', sentence)
             if whole_exclusion:
                 target_text = whole_exclusion[1]
@@ -141,9 +167,9 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
             if explicit_subject:
                 names = _models(explicit_subject[1])
                 subjects = names
-            elif re.search(r'另外|同样适用|适用型号|首次发放.*包括|新增.*机型', sentence) and names:
+            elif (release_declaration or re.search(r'另外|同样适用|适用型号|首次发放.*包括|新增.*机型', sentence)) and names:
                 subjects = names
-            named_platform = names and re.search(r'VLucid\+|POC|支持从.*升级', sentence, re.I)
+            named_platform = names and (re.search(r'VLucid\+|POC|升级', sentence, re.I) or re.search(r'upgrades?', raw, re.I))
             applies_to = names if names and (positive or explicit_subject or named_platform) else list(subjects or cover_models)
             if re.search(r'不支持.*升级|不能.*升级|不允许.*升级|不适用.*(?:机器|型号)', sentence):
                 # Explicitly excluded models/code lists supersede a global document subject.
@@ -163,12 +189,20 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
                 if profile not in result['profiles']:
                     result['profiles'].append(profile)
                     fact('profiles', '硬件平台/机型规格', '；'.join(name + ' ' + platform + ('：' + '、'.join(codes[name]) if codes.get(name) else '') for name in applies_to), ref)
-            upgrade = re.search(rf'(?:支持)?从({_VERSION})(?:版本)?(?:进行)?升级', sentence)
-            if upgrade and applies_to:
-                row = {'from_version': upgrade[1], 'to_version': result['version']['value'] if result['version'] else None,
+            exact_upgrade = re.search(rf'(?:支持)?从({_VERSION})(?:版本)?(?:进行)?升级', sentence)
+            source_range = re.search(rf'(?:从|原|适用于)\s*({_VERSION_RANGE})|(?:from|original)\s*(?:version)?\s*({_VERSION_RANGE})', raw, re.I)
+            range_value = (source_range[1] or source_range[2]).upper() if source_range else None
+            methods = list(dict.fromkeys('OS' if value.casefold() == 'os' else 'patch'
+                for value in re.findall(r'(?<![A-Za-z])(OS|patch)(?![A-Za-z])', raw, re.I)))
+            if (exact_upgrade or range_value or methods) and applies_to and (re.search(r'升级', sentence) or re.search(r'upgrades?', raw, re.I)):
+                from_version = exact_upgrade[1] if exact_upgrade else range_value
+                kind = 'not_stated' if from_version is None else 'pattern' if 'X' in from_version else 'exact'
+                row = {'from_version': from_version, 'from_version_kind': kind,
+                       'to_version': result['version']['value'] if result['version'] else None,
+                       'method': methods[0] if len(methods) == 1 else None, 'methods': methods,
                        'platform': platform, 'applies_to': applies_to, **ref}
                 result['upgrades'].append(row)
-                fact('upgrades', '明确升级路径', f"{upgrade[1]} → {row['to_version']}（{'、'.join(applies_to)}，{platform or '平台未单列'}）", ref)
+                fact('upgrades', '明确升级路径', f"{from_version or '源版本原文未单列'} → {row['to_version']}（{'、'.join(applies_to)}；方式：{' / '.join(methods) if methods else '原文未单列'}）", ref)
     result['models'] = list(declared.values())
     if result['version'] and document.get('version') and result['version']['value'] != document['version']:
         result['index_issues'].append({'field': 'version', 'registered_value': document['version'], 'source_value': result['version']['value'],
@@ -209,7 +243,7 @@ def source_chain_groups(rows: list[dict], model_name: str) -> dict[int, str]:
     for target in rows:
         target_facts = model_facts(target['facts'], model_name)
         for upgrade in target_facts['upgrades']:
-            if not upgrade['platform']:
+            if not upgrade['platform'] or upgrade.get('from_version_kind', 'exact') != 'exact':
                 continue
             for source in rows:
                 source_facts = model_facts(source['facts'], model_name)
