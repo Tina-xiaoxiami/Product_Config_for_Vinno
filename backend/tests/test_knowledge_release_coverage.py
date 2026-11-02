@@ -201,10 +201,11 @@ async def test_extraction_roots_are_original_sources_not_controlled_copies(datab
 
 
 @pytest.mark.asyncio
-async def test_target_model_source_conflict_is_unresolved_gap_not_other_model(database, tmp_path, monkeypatch):
+@pytest.mark.parametrize('content', ['1.14.61(VINNO6)\n1.14.65(VINNO6)', '1.14.90(VINNO6)\n1.14.61(VINNO6)'])
+async def test_target_model_source_conflict_is_unresolved_gap_not_other_model(database, tmp_path, monkeypatch, content):
     controlled = tmp_path / 'controlled'
     configure(monkeypatch, tmp_path, RELEASE_NOTE_ROOT=None, CONTROLLED_MATERIALS_ROOT=str(controlled))
-    _document(database, 10, '1.14.65', '1.14.61(VINNO6)\n1.14.65(VINNO6)')
+    _document(database, 10, '1.14.65', content)
     with closing(sqlite3.connect(database)) as connection, connection:
         original = Path(connection.execute('SELECT file_path FROM knowledge_documents WHERE id=10').fetchone()[0])
         controlled_file = write(controlled, '发布记录/Release Note.pdf', original.read_bytes())
@@ -217,6 +218,7 @@ async def test_target_model_source_conflict_is_unresolved_gap_not_other_model(da
         report = (await client.post('/api/knowledge/release-history/coverage', json={'scope': SCOPE})).json()
         item = report['items'][0]
         assert item['applicability_status']=='unrecognized'
+        assert item['version'] is None and item['range_status']=='unknown'
         assert item['is_gap']
         assert any(issue['code']=='source_fact_conflict' for issue in item['issues'])
         assert report['completeness']=='gaps_found'
