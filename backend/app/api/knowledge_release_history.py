@@ -2,7 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.schemas.knowledge_release_history import ReleaseBindingCreate, ReleaseTraceRequest
+from app.schemas.knowledge_release_history import ReleaseBindingCreate, ReleaseTraceRequest, ReleaseCoverageRequest
+from app.services.knowledge_release_coverage import release_coverage
 from app.services.knowledge_scope import KnowledgeScopeError
 from app.services.knowledge_release_history import (
     ReleaseHistoryError, ReleaseHistoryConflict, ReleaseHistoryUnavailable,
@@ -11,6 +12,14 @@ from app.services.knowledge_release_history import (
 )
 
 router = APIRouter(prefix='/release-history', tags=['历史Release Note追溯'])
+
+
+@router.post('/coverage')
+async def coverage(data: ReleaseCoverageRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        return await release_coverage(db, data.scope.model_dump() if data.scope is not None else None)
+    except (ReleaseHistoryError, KnowledgeScopeError) as error:
+        raise _http_error(error) from error
 
 
 def _http_error(error):

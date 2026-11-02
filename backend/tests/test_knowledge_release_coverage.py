@@ -1,6 +1,6 @@
 """Coverage inventories configured sources without importing or assuming release continuity."""
 from contextlib import closing
-import hashlib
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -107,7 +107,9 @@ async def test_same_hash_keeps_every_registration_quality_and_missing_controlled
     _document(database, 11, '1.14.61', content)
     with closing(sqlite3.connect(database)) as connection, connection:
         first = connection.execute('SELECT file_path,sha256 FROM knowledge_documents WHERE id=10').fetchone()
-        connection.execute("UPDATE knowledge_documents SET file_path=?,sha256=? WHERE id=11", first)
+        other = Path(connection.execute('SELECT file_path FROM knowledge_documents WHERE id=11').fetchone()[0])
+        other.write_bytes(Path(first[0]).read_bytes())
+        connection.execute("UPDATE knowledge_documents SET sha256=? WHERE id=11", (first[1],))
         connection.execute("UPDATE knowledge_document_extractions SET status='stale' WHERE document_id=11")
     client, engine = await _client(database)
     async with client:
@@ -116,7 +118,6 @@ async def test_same_hash_keeps_every_registration_quality_and_missing_controlled
         assert {10,11} <= set(item['document_ids'])
         assert item['extraction_status'] == 'stale' and item['is_gap']
         assert any('11' in issue['reason'] for issue in item['issues'])
-        from pathlib import Path
         Path(first[0]).unlink()
         report = (await client.post('/api/knowledge/release-history/coverage', json={})).json()
         item = next(row for row in report['items'] if 10 in row['document_ids'])
@@ -137,4 +138,63 @@ async def test_api_forbids_paths_and_partial_scope_and_reports_unconfigured(data
         trace = await _trace(client)
         assert trace['coverage']['completeness'] == 'unverified'
         assert '已登记' in trace['coverage']['coverage_message']
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_valid_source_resolves_filename_typo_without_blocking_complete_inventory(database, tmp_path, monkeypatch):
+    controlled = tmp_path / 'controlled'
+    raw = tmp_path / 'release note'
+    configure(monkeypatch, tmp_path, RELEASE_NOTE_ROOT=None, CONTROLLED_MATERIALS_ROOT=str(controlled), SOURCE_ROOTS=[str(raw)])
+    _document(database, 10, '1.14.80', '1.14.80(VINNO6)\nRelease Note', country=None, market='unspecified')
+    with closing(sqlite3.connect(database)) as connection, connection:
+        old = Path(connection.execute('SELECT file_path FROM knowledge_documents WHERE id=10').fetchone()[0])
+        new = write(controlled, '发布记录/1.14.80/Release Note_1.4.80.pdf', old.read_bytes())
+        write(raw, 'Release Note_1.14.80_压缩副本.pdf', old.read_bytes())
+        connection.execute('UPDATE knowledge_documents SET file_path=? WHERE id=10', (str(new),))
+        connection.execute('DELETE FROM knowledge_document_chunks WHERE document_id!=10')
+        connection.execute('DELETE FROM knowledge_document_extractions WHERE document_id!=10')
+        connection.execute('DELETE FROM knowledge_documents WHERE id!=10')
+    client, engine = await _client(database)
+    async with client:
+        report = (await client.post('/api/knowledge/release-history/coverage', json={'scope': {**SCOPE,'software_version':'1.14.80'}})).json()
+        item = report['items'][0]
+        assert item['version']=='1.14.80' and item['version_basis']=='source_extract'
+        assert any(issue['code']=='candidate_version_mismatch' for issue in item['issues'])
+        assert any(issue['code']=='source_alias_label' for issue in item['issues'])
+        assert not any(issue['code']=='release_qualification_unverified' for issue in item['issues'])
+        assert not item['is_gap']
+        assert report['completeness']=='no_known_gaps' and report['totals']['ready']==1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_and_candidate_version_conflicts_remain_visible_without_filename_country_inference(database, tmp_path, monkeypatch):
+    configure(monkeypatch, tmp_path)
+    write(tmp_path / 'releases', '1.14.80/CN_Release Note_1.14.81.doc')
+    client, engine = await _client(database)
+    async with client:
+        report = (await client.post('/api/knowledge/release-history/coverage', json={})).json()
+        item = next(row for row in report['items'] if row['file_name'].endswith('.doc'))
+        assert item['extraction_status']=='unsupported' and item['version'] is None
+        assert item['language']=='unknown'
+        assert any(issue['code']=='candidate_version_conflict' for issue in item['issues'])
+        assert report['scope'] is None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_extraction_roots_are_original_sources_not_controlled_copies(database, tmp_path, monkeypatch):
+    raw = tmp_path / 'raw release note'
+    configure(monkeypatch, tmp_path, RELEASE_NOTE_ROOT=None, CONTROLLED_EXTRACTION_ROOTS=[str(raw)])
+    _document(database, 10, '1.14.61', '1.14.61(VINNO6)\nRelease Note')
+    with closing(sqlite3.connect(database)) as connection:
+        original = Path(connection.execute('SELECT file_path FROM knowledge_documents WHERE id=10').fetchone()[0])
+    write(raw, 'Release Note.pdf', original.read_bytes())
+    client, engine = await _client(database)
+    async with client:
+        report = (await client.post('/api/knowledge/release-history/coverage', json={})).json()
+        item = next(row for row in report['items'] if 10 in row['document_ids'])
+        assert any(issue['code']=='uncontrolled' for issue in item['issues'])
+        assert item['is_gap']
     await engine.dispose()

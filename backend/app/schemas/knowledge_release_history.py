@@ -20,3 +20,8 @@ class ReleaseTraceRequest(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     scope: KnowledgeQueryScope
     release_line: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class ReleaseCoverageRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    scope: KnowledgeQueryScope | None = None
