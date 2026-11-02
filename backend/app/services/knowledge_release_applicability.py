@@ -120,7 +120,9 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
         # PDF wraps are retained in the reference; sentence matching uses folded whitespace.
         body = '\n'.join(line for line in chunk['content'].splitlines()
             if not source_cover_version(line) and not re.fullmatch(r'\s*(?:Release\s*Note|\d+)\s*', line, re.I))
-        # Remove layout wraps before subject clauses, not logical contrasts.
+        # Keep new product-specific upgrade paragraphs and explicit notes separate;
+        # ordinary PDF line wrapping inside a sentence is still folded.
+        body = re.sub(r'\n(?=\s*(?:Note\s*[:：]|注[:：]|注意[:：]|(?:VINNO\s*|V\s*)\d[^\n]*(?:系列|series)[^\n]*(?:升级|upgrades?)))', ';', body, flags=re.I)
         body = re.sub(r'\n', ' ', body)
         for raw in model_clauses(body):
             sentence = re.sub(r'\s+', '', unicodedata.normalize('NFKC', raw))
@@ -185,17 +187,17 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
             exact_upgrade = re.search(rf'(?:支持)?从({_VERSION})(?:版本)?(?:进行)?升级', sentence)
             source_range = re.search(rf'(?:从|原|适用于)\s*({_VERSION_RANGE})|(?:from|original)\s*(?:version)?\s*({_VERSION_RANGE})', raw, re.I)
             range_value = (source_range[1] or source_range[2]).upper() if source_range else None
-            if (exact_upgrade or range_value) and applies_to and (re.search(r'升级', sentence) or re.search(r'upgrades?', raw, re.I)):
+            methods = list(dict.fromkeys('OS' if value.casefold() == 'os' else 'patch'
+                for value in re.findall(r'(?<![A-Za-z])(OS|patch)(?![A-Za-z])', raw, re.I)))
+            if (exact_upgrade or range_value or methods) and applies_to and (re.search(r'升级', sentence) or re.search(r'upgrades?', raw, re.I)):
                 from_version = exact_upgrade[1] if exact_upgrade else range_value
-                assert from_version is not None
-                methods = list(dict.fromkeys('OS' if value.casefold() == 'os' else 'patch'
-                    for value in re.findall(r'(?<![A-Za-z])(OS|patch)(?![A-Za-z])', raw, re.I)))
-                row = {'from_version': from_version, 'from_version_kind': 'pattern' if 'X' in from_version else 'exact',
+                kind = 'not_stated' if from_version is None else 'pattern' if 'X' in from_version else 'exact'
+                row = {'from_version': from_version, 'from_version_kind': kind,
                        'to_version': result['version']['value'] if result['version'] else None,
                        'method': methods[0] if len(methods) == 1 else None, 'methods': methods,
                        'platform': platform, 'applies_to': applies_to, **ref}
                 result['upgrades'].append(row)
-                fact('upgrades', '明确升级路径', f"{from_version} → {row['to_version']}（{'、'.join(applies_to)}；方式：{' / '.join(methods) if methods else '原文未单列'}）", ref)
+                fact('upgrades', '明确升级路径', f"{from_version or '源版本原文未单列'} → {row['to_version']}（{'、'.join(applies_to)}；方式：{' / '.join(methods) if methods else '原文未单列'}）", ref)
     result['models'] = list(declared.values())
     if result['version'] and document.get('version') and result['version']['value'] != document['version']:
         result['index_issues'].append({'field': 'version', 'registered_value': document['version'], 'source_value': result['version']['value'],
