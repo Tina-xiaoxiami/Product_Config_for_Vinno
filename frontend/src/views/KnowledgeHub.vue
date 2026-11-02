@@ -134,7 +134,7 @@
 
         <section class="qa-queue">
           <div class="qa-queue-scope">
-            <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="searchQaQuestions">
+            <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="onQaQueueModeChange">
               <el-radio-button value="selected">当前查询范围</el-radio-button>
               <el-radio-button value="legacy">历史范围待核实</el-radio-button>
               <el-radio-button value="review">答案核对</el-radio-button>
@@ -175,7 +175,7 @@
             <el-table-column v-for="column in qaVisibleColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false">
               <template v-if="column.key === 'evidence_review'" #header>
                 <span class="qa-filter-header">{{ column.label }}
-                  <el-popover trigger="click" placement="bottom-end" :width="230" :teleported="true">
+                  <el-popover v-if="qaQueueMode === 'review'" trigger="click" placement="bottom-end" :width="230" :teleported="true">
                     <template #reference><el-button text size="small" class="qa-filter-button" :class="{ active: qaEvidenceFilter !== 'all' }" :icon="Filter" aria-label="核对状态筛选" :title="qaEvidenceFilter === 'all' ? '核对状态：不限' : qaEvidenceFilter === 'needs_review' ? '核对状态：待核对' : '核对状态：已核对'" /></template>
                     <div class="qa-filter-options"><span>选择后立即筛选</span><el-radio-group v-model="qaEvidenceFilter" @change="onQaEvidenceFilter"><el-radio value="all">不限</el-radio><el-radio value="needs_review">待核对</el-radio><el-radio value="reviewed">已核对</el-radio></el-radio-group></div>
                   </el-popover>
@@ -946,8 +946,9 @@ const loadQaReviewCount = async () => {
   try { qaReviewCount.value = (await getKnowledgeQuestions({ status: 'answered', evidence_review: 'needs_review', limit: 1 })).total }
   catch { qaReviewCount.value = null }
 }
-const onAnswerReviewSaved = async () => { await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
+const onAnswerReviewSaved = async () => { qaPage.value = 1; await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
 const searchQaQuestions = () => { qaPage.value = 1; loadQaQuestions() }
+const onQaQueueModeChange = () => { if (qaQueueMode.value !== 'review') qaEvidenceFilter.value = 'all'; searchQaQuestions() }
 const onQaEvidenceFilter = () => { qaQueueMode.value = 'review'; qaStatus.value = 'answered'; searchQaQuestions() }
 const showPendingAnswerReviews = () => { qaEvidenceFilter.value = 'needs_review'; onQaEvidenceFilter() }
 const clearQaFilters = () => { qaSearch.value = ''; qaEvidenceFilter.value = 'all'; searchQaQuestions() }
@@ -1447,6 +1448,7 @@ const askQuestion = async () => {
     if (requestId !== qaAskRequestId || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaResult.value = result
     qaQueueMode.value = 'selected'
+    qaEvidenceFilter.value = 'all'
     qaPage.value = 1
     if (qaResult.value.status === 'pending') {
       qaStatus.value = 'pending'
