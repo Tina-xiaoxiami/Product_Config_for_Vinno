@@ -29,7 +29,9 @@ export function coverageTraceBoundary(trace, report = null) {
 export function coverageItems(report, onlyGaps = true, query = '') {
   const needle = String(query || '').trim().toLocaleLowerCase()
   return (Array.isArray(report?.items) ? report.items : []).filter(item => {
-    if (onlyGaps && (!item.issues?.length || item.range_status === 'after_target' || item.applicability_status === 'not_applicable')) return false
+    const isGap = typeof item.is_gap === 'boolean' ? item.is_gap
+      : Boolean(item.issues?.length && item.range_status !== 'after_target' && item.applicability_status !== 'not_applicable')
+    if (onlyGaps && !isGap) return false
     return !needle || [item.file_name, item.version, ...(item.source_locations || []), ...(item.issues || []).flatMap(issue => [issue.reason, issue.action])]
       .some(value => String(value || '').toLocaleLowerCase().includes(needle))
   })
@@ -41,6 +43,7 @@ const labels = {
   applicability: { applicable: '原文适用于当前范围', not_applicable: '当前范围不适用', unrecognized: '适用范围未识别', not_requested: '未指定型号范围' },
   range: { within_target: '目标版本以内', after_target: '晚于目标版本', unknown: '版本范围未识别', not_requested: '未限定目标版本' },
   language: { zh: '中文线索', en: '英文线索', unknown: '语言未识别' },
+  version: { source_extract: '正文明确版本', filename_candidate: '文件名或目录候选，发布资格未核验', unknown: '版本来源未识别' },
   root: { scanned: '已扫描', missing: '目录不可用', error: '扫描失败' }
 }
 export const coverageStatusLabel = (type, value) => labels[type]?.[value] || '未识别'

@@ -13,7 +13,7 @@
       <div class="coverage-items">
         <details v-for="(item,index) in rows" :key="item.key || index" class="coverage-item">
           <summary><strong>{{ item.file_name || '未命名资料' }}</strong><span>{{ item.version || '版本未识别' }} · {{ coverageStatusLabel('language', item.language) }}</span><span>{{ coverageStatusLabel('registration', item.registration_status) }} · {{ coverageStatusLabel('extraction', item.extraction_status) }}</span></summary>
-          <p>候选版本：{{ item.version || '未识别' }}<span v-if="item.version_basis">（来源标识：{{ item.version_basis }}）</span>；{{ coverageStatusLabel('range', item.range_status) }}；{{ coverageStatusLabel('applicability', item.applicability_status) }}</p>
+          <p>版本：{{ item.version || '未识别' }}（{{ coverageStatusLabel('version', item.version_basis) }}）；{{ coverageStatusLabel('range', item.range_status) }}；{{ coverageStatusLabel('applicability', item.applicability_status) }}</p>
           <p v-if="item.document_ids?.length">登记资料编号：{{ item.document_ids.join('、') }} <a v-if="registeredPreviewUrl(item)" :href="registeredPreviewUrl(item)" target="_blank" rel="noopener noreferrer">预览已登记原件</a></p>
           <ul v-if="item.issues?.length" class="coverage-issues"><li v-for="(issue,i) in item.issues" :key="`${issue.code}-${i}`"><strong>{{ issue.reason }}</strong><p v-if="issue.action">处理建议：{{ issue.action }}</p></li></ul>
           <p v-else>未发现该条目的已知问题，仍受本次目录及范围边界限制。</p>
