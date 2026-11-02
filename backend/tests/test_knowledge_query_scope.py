@@ -50,7 +50,7 @@ async def test_missing_scope_clarifies_without_writes_even_when_a_legacy_answer_
     assert missing.json()["status"] == "needs_clarification"
     assert missing.json()["question_id"] is None
     assert missing.json()["answer"] is None
-    assert set(missing.json()["missing_fields"]) == set(SCOPE)
+    assert set(missing.json()["missing_fields"]) == set(SCOPE) - {"country"}
     assert set(partial.json()["missing_fields"]) == set(SCOPE) - {"country"}
     assert database.read_bytes() == before
     assert legacy.json()["scope"] is None

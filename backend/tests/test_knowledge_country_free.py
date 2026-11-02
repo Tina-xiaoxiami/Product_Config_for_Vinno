@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 
 from app.services.knowledge_scope import scope_key, stored_scope
+from app.services.knowledge_qa import normalize_question
 from app.services.knowledge_qa_snapshot import export_knowledge_qa_snapshot, restore_knowledge_qa_snapshot
 from test_knowledge_qa_api import _client_for, _create_qa_database
 from test_knowledge_answer_review import database as review_database, _payload
@@ -133,7 +134,14 @@ async def test_neutral_publication_cannot_bypass_historical_owners(database, col
             await legacy_answer(client, question="另一个完全不同的问题", aliases=["专属问法"])
             aliases = ["专属问法"]
         else:
-            await legacy_answer(client, question="另一个完全不同的问题", aliases=[QUESTION])
+            owner_id = await legacy_answer(client, question="另一个完全不同的问题")
+            # A pre-existing historical alias may already overlap a newer pending record.
+            with closing(sqlite3.connect(database)) as connection, connection:
+                key = connection.execute("SELECT scope_key FROM knowledge_questions WHERE id=?", (owner_id,)).fetchone()[0]
+                connection.execute(
+                    "INSERT INTO knowledge_question_phrasings "
+                    "(question_id,phrasing_text,normalized_phrasing,scope_key) VALUES (?,?,?,?)",
+                    (owner_id, QUESTION, normalize_question(QUESTION), key))
             aliases = []
         refused = await publish(client, neutral["question_id"], aliases=aliases)
         assert refused.status_code == 422, refused.text
