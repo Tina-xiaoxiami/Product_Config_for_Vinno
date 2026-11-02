@@ -18,7 +18,7 @@
     <details v-if="trace.coverage?.unresolved_documents?.length" open class="trace-unresolved">
       <summary>相关资料，未确认适用范围（{{ trace.coverage.unresolved_documents.length }}）</summary>
       <article v-for="doc in trace.coverage.unresolved_documents" :key="doc.document_id">
-        <a :href="doc.preview_url" target="_blank" rel="noopener noreferrer">{{ doc.title }} · {{ doc.version }}</a>
+        <a :href="doc.preview_url" target="_blank" rel="noopener noreferrer">{{ doc.title }} · {{ doc.version }}<span v-if="doc.country"> · 来源国家 {{ doc.country }}</span></a>
         <p class="warning">{{ doc.reasons?.join('；') }}</p>
         <div v-for="(condition,index) in doc.detected_conditions || []" :key="`condition-${index}`" class="warning"><strong>资料中的平台/升级限制</strong><pre>{{ condition.excerpt }}</pre><a :href="condition.preview_url" target="_blank" rel="noopener noreferrer">查看限制原文 · {{ condition.source_ref }}</a></div>
         <pre v-for="(event,index) in doc.candidate_events || []" :key="index">{{ event.excerpt }}</pre>
