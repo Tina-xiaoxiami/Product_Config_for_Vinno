@@ -61,8 +61,9 @@ def test_new_declared_models_and_existing_series_are_not_guessed_from_plain_ment
     insufficient = extract('1.14.65\n与旧V6相比，功能不变。')
     assert not insufficient['models']
     conflict = extract('1.14.61(VINNO 6)\nRelease Note', '1.14.65')
-    assert conflict['status'] == 'conflict'
-    assert conflict['issues'][0]['field'] == 'version'
+    assert conflict['status'] == 'extracted'
+    assert conflict['index_issues'][0]['field'] == 'version'
+    assert conflict['issues'] == []
 
 
 @pytest.mark.asyncio
@@ -178,3 +179,12 @@ async def test_stale_cached_cover_cannot_generate_a_business_version_confirmatio
         assert result['source_documents'] == []
         assert result['coverage']['unresolved_documents']
     await engine.dispose()
+
+
+def test_cover_version_wins_over_upgrade_prerequisite_and_only_source_conflicts_need_decision():
+    facts = extract('升级前提：软件版本1.14.61\n1.14.65(VINNO 6)\nRelease Note')
+    assert facts['version']['value'] == '1.14.65'
+    assert not facts['issues'] and not facts['index_issues']
+    conflicting = extract('1.14.61(VINNO 6)\n1.14.65(VINNO 6)\nRelease Note')
+    assert conflicting['status'] == 'conflict'
+    assert conflicting['issues'][0]['field'] == 'version'
