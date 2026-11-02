@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reactive, watch, effectScope } from 'vue'
+import { workspaceForPath } from '../src/utils/workspaceNavigation.js'
 import { createVersionCompareState, createVersionCompareController, positiveQueryId } from '../src/utils/versionComparePage.js'
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 function app(overrides = {}) {
@@ -59,7 +60,9 @@ test('standalone route/nav reuse the existing matrix and unmount it on deactivat
   const page = readFileSync(new URL('../src/views/VersionCompare.vue', import.meta.url), 'utf8')
   const routes = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
   const layout = readFileSync(new URL('../src/views/Layout.vue', import.meta.url), 'utf8')
-  assert.match(routes, /path: 'version-compare'/); assert.match(layout, /index="\/version-compare"/)
+  assert.match(routes, /path: 'version-compare'/)
+  assert.equal(workspaceForPath('/version-compare').sidebarGroup, '/product-config')
+  assert.match(layout, /v-for="section in WORKSPACE_SECTIONS"/)
   assert.match(page, /<VersionComparison v-if="active"/); assert.match(page, /onDeactivated\(deactivate\)/)
   assert.match(page, /route.name === 'VersionCompare'/)
 })

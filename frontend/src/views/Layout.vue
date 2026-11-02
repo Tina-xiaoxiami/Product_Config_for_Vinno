@@ -1,5 +1,6 @@
 <template>
-  <div class="layout">
+  <el-config-provider size="small">
+  <div class="layout system-workspace">
     <el-container>
       <el-aside :width="sidebarCollapsed ? '64px' : '180px'" :class="{ collapsed: sidebarCollapsed }">
         <div class="logo">
@@ -12,96 +13,55 @@
           :default-active="probeManagementMenuPath($route.path)"
           :collapse="sidebarCollapsed"
           :collapse-transition="false"
+          :default-openeds="workspace?.sidebarGroup ? [workspace.sidebarGroup] : []"
           router
           background-color="#304156"
           text-color="#bfcbd9"
           active-text-color="#409EFF"
         >
-          <el-menu-item index="/knowledge">
-            <el-icon><Collection /></el-icon>
-            <template #title>产品知识库</template>
-          </el-menu-item>
-          <el-menu-item index="/release">
-            <el-icon><Promotion /></el-icon>
-            <template #title>功能发布</template>
-          </el-menu-item>
-          <el-menu-item index="/measurements">
-            <el-icon><DataAnalysis /></el-icon>
-            <template #title>测量库</template>
-          </el-menu-item>
-          <el-sub-menu index="/manage">
-            <template #title>
-              <el-icon><Setting /></el-icon>
-              <span>基础数据管理</span>
-            </template>
-            <el-menu-item index="/models">
-              <span>产品型号</span>
-            </el-menu-item>
-            <el-menu-item index="/template-features">
-              <span>探头&amp;应用管理</span>
-            </el-menu-item>
-            <el-menu-item index="/registration-manage">
-              <span>注册管理</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-sub-menu index="/product-config">
-            <template #title>
-              <el-icon><Document /></el-icon>
-              <span>机型配置</span>
-            </template>
-            <el-menu-item index="/config">
-              <span>配置管理</span>
-            </el-menu-item>
-            <el-menu-item index="/compare">
-              <span>配置对比</span>
-            </el-menu-item>
-            <el-menu-item index="/version-compare">
-              <span>版本对比</span>
-            </el-menu-item>
-            <el-menu-item index="/versions">
-              <span>版本历史</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-sub-menu index="/probe">
-            <template #title>
-              <el-icon><DataAnalysis /></el-icon>
-              <span>探头配置</span>
-            </template>
-            <el-menu-item index="/probe-config">
-              <span>探头配置管理</span>
-            </el-menu-item>
-            <el-menu-item index="/probe-versions">
-              <span>版本历史</span>
-            </el-menu-item>
-          </el-sub-menu>
+          <template v-for="section in WORKSPACE_SECTIONS" :key="section.id">
+            <el-sub-menu v-if="section.tabs" :index="section.menuId">
+              <template #title><el-icon><component :is="sectionIcons[section.icon]" /></el-icon><span>{{ section.label }}</span></template>
+              <el-menu-item v-for="tab in section.tabs" :key="tab.path" :index="tab.path"><span>{{ tab.label }}</span></el-menu-item>
+            </el-sub-menu>
+            <el-menu-item v-else :index="section.path"><el-icon><component :is="sectionIcons[section.icon]" /></el-icon><template #title>{{ section.label }}</template></el-menu-item>
+          </template>
         </el-menu>
       </el-aside>
       <el-main :class="{ 'management-workspace': isProbeManagementPage }">
+        <WorkspacePageHeader v-if="workspace && workspace.sectionId !== 'release'" :workspace="workspace" :before-leave="switchProbeManagementTab" />
         <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />
           </el-tabs>
           <div id="probe-management-actions" class="probe-management-actions" />
         </nav>
+        <div class="workspace-content" :class="workspace ? 'workspace-' + workspace.sectionId : ''">
         <router-view v-slot="{ Component }">
           <keep-alive>
             <component :is="Component" />
           </keep-alive>
         </router-view>
+        </div>
       </el-main>
     </el-container>
   </div>
+  </el-config-provider>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PROBE_MANAGEMENT_TABS, probeManagementMenuPath } from '../utils/probeManagementNavigation'
+import { WORKSPACE_SECTIONS, workspaceForPath } from '../utils/workspaceNavigation'
+import WorkspacePageHeader from '../components/WorkspacePageHeader.vue'
 import { ElMessage } from 'element-plus'
 import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
+const sectionIcons = { Document, DataAnalysis, Setting, Collection, Promotion }
+const workspace = computed(() => workspaceForPath(route.path))
 const isProbeManagementPage = computed(() => PROBE_MANAGEMENT_TABS.some(tab => tab.path === route.path))
 const switchProbeManagementTab = async (path) => {
   if (path === route.path) return true

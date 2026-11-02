@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parse } from '@vue/compiler-dom'
+import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
 const read = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
 const ref = value => ({ value })
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
@@ -32,18 +32,11 @@ test('late probe refresh cannot replace a newer successful refresh', async () =>
   assert.equal(app.modelMap.value[1], undefined)
 })
 test('probe management has one basic-data sidebar entry without an expanded child menu', () => {
-  const ast = parse(read('Layout').split('<script setup>')[0])
-  const entries = []
-  function visit(node, parents = []) {
-    const index = node.props?.find(p => p.name === 'index')?.value?.content
-    if (index) entries.push({ tag: node.tag, index, parents })
-    for (const child of node.children || []) visit(child, node.tag === 'el-sub-menu' ? [...parents, index] : parents)
-  }
-  visit(ast)
-  const entry = entries.find(m => m.index === '/template-features')
-  assert.equal(entry.tag, 'el-menu-item')
-  assert.deepEqual(entry.parents, ['/manage'])
-  assert.equal(entries.some(m => ['/probe-app-management', '/probe-models', '/applications', '/feature-manage'].includes(m.index)), false)
+  const entry = WORKSPACE_SECTIONS.find(section => section.id === 'master-data')
+  assert.equal(entry.menuId, '/manage')
+  assert.equal(entry.tabs.filter(tab => tab.path === '/template-features').length, 1)
+  assert.equal(entry.tabs.some(tab => ['/probe-app-management', '/probe-models', '/applications', '/feature-manage'].includes(tab.path)), false)
+  assert.equal(workspaceForPath('/applications').activeTab, '/template-features')
 })
 test('switching probe categories uses loaded details without fetching again', async () => {
   let requests = 0
