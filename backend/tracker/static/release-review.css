@@ -144,3 +144,6 @@ body .release-history-heading button { min-height: 28px; padding: 3px 10px; font
   .release-diff-row { grid-template-columns: minmax(0, 1fr); }
   .release-diff-before { border-right: 0; border-bottom: 1px solid #dbe4ef; }
 }
+
+.release-log-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.release-log-heading > span { color: var(--ink-3, #667a94); font-size: 12px; }
