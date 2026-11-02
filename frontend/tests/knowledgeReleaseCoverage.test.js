@@ -113,6 +113,7 @@ test('the history workspace exposes a compact scan with an independent result an
   assert.match(view, /issue\.action/)
   assert.match(view, /source_locations/)
   assert.match(view, /checked_at/)
-  assert.match(view, /只看缺口/)
+  assert.match(view, /只看资料缺口/)
+  assert.match(view, /当前筛选下没有资料缺口；取消筛选可查看全部候选问题及范围外资料/)
   assert.match(trace, /coverageTraceBoundary/)
 })
