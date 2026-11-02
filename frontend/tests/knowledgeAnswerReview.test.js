@@ -27,6 +27,14 @@ test('confirming query scopes requires a specific complete scope while defer req
     product_model_ids: [1, 2], software_version: '1.14.80', version_applicability: 'specific' }), '')
 })
 
+test('confirming a query scope needs no country and cannot carry over a historical country filter', () => {
+  const review = { ...form(), action: 'confirm_scope', market: 'domestic', product_model_ids: [901],
+    software_version: '1.14.80', version_applicability: 'specific' }
+  assert.equal(answerReviewError(review), '')
+  assert.equal(answerReviewPayload(question, { ...review, country: 'CN' }).country, null)
+  assert.equal(answerReviewPayload(question, { ...review, action: 'record_reference', country: 'CN' }).country, 'CN')
+})
+
 test('answer review status and stable table columns preserve full-answer access', () => {
   assert.match(answerReviewLabel(question), /待核对/)
   assert.match(answerReviewLabel({ evidence_review: { status: 'reviewed' } }), /已核对/)
