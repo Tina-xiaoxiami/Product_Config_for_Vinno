@@ -23,3 +23,10 @@ class ProbeWorkspaceRelease(Base):
     snapshot_data = Column(Text, nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     __table_args__ = (UniqueConstraint('workspace_id', 'version_number'),)
+
+
+class ProbeWorkspaceMember(Base):
+    """One authoritative total per model; overlapping selections cannot fork it."""
+    __tablename__ = 'probe_workspace_members'
+    model_id = Column(Integer, ForeignKey('product_models.id'), primary_key=True)
+    workspace_id = Column(Integer, ForeignKey('probe_workspaces.id'), nullable=False, index=True)

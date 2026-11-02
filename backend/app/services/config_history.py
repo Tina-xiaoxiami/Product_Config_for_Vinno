@@ -28,7 +28,7 @@ def _value_payload(value: ConfigValue) -> dict:
     return {field: getattr(value, field) for field in VALUE_FIELDS}
 
 
-async def build_series_snapshot(db: AsyncSession, series_id: int) -> dict:
+async def build_series_snapshot(db: AsyncSession, series_id: int, *, include_probes=True) -> dict:
     """Build a canonical snapshot without pulling in another series' items."""
     models = list(
         (
@@ -68,7 +68,11 @@ async def build_series_snapshot(db: AsyncSession, series_id: int) -> dict:
     )
     item_ids = list(dict.fromkeys(value.item_id for value in values))
     if not item_ids:
-        return {"models": snapshot_models, "items": []}
+        snapshot = {"models": snapshot_models, "items": []}
+        if include_probes:
+            from app.services.probe_workspace import attach_published_probes
+            return await attach_published_probes(db, snapshot)
+        return snapshot
 
     items = list(
         (
@@ -85,7 +89,7 @@ async def build_series_snapshot(db: AsyncSession, series_id: int) -> dict:
     for value in values:
         value_map.setdefault(value.item_id, {})[str(value.model_id)] = _value_payload(value)
 
-    return {
+    snapshot = {
         "models": snapshot_models,
         "items": [
             {**_item_payload(item), "values": value_map[item.id]}
@@ -93,6 +97,10 @@ async def build_series_snapshot(db: AsyncSession, series_id: int) -> dict:
             if item.id in value_map
         ],
     }
+    if include_probes:
+        from app.services.probe_workspace import attach_published_probes
+        snapshot = await attach_published_probes(db, snapshot)
+    return snapshot
 
 
 def _same_ipn(left, right) -> bool:

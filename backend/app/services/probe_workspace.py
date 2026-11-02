@@ -4,10 +4,11 @@ import hashlib
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
+from sqlalchemy.exc import IntegrityError
 from app.models import ConfigItem, ConfigVersion, ProductModel, ProductSeries
 from app.models.probe import ProbeModel, ProbeModelVariant, Feature, ProductProbeConfig, Application, CategoryApplication
-from app.models.probe_workspace import ProbeWorkspace
+from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceMember
 from app.services.model_identity import active_model_filter
 from app.services.whitepaper_subseries import get_subseries_editor, SubseriesSourceError
 from app.services.config_history import build_series_snapshot
@@ -17,6 +18,8 @@ from app.services.registration_rules import normalize_business_name
 
 STATUSES = {'supported', 'conditional', 'unsupported', 'pending'}
 RULE_FIELDS = {'defined_status', 'current_status', 'defined_excludes', 'current_excludes', 'notes'}
+RULE_FIELDS.add('priority')
+PRIORITIES = {None, '标1', '标2', '标3', '新', '新(未优化)', '新(未发放)'}
 
 
 def encode(value):
@@ -98,6 +101,15 @@ async def validate_document(db, document, *, refresh=False):
                 raise ValueError('总集包含重复的探头变体与功能')
             keys.add(key)
             validate_rule(row)
+            row.setdefault('variant_id', None)
+            row.setdefault('priority', None)
+            row.setdefault('notes', '')
+            for side in ('defined', 'current'):
+                row.setdefault(side + '_status', 'pending')
+                row.setdefault(side + '_excludes', [])
+                row[side + '_excludes'] = sorted(set(row[side + '_excludes']))
+                if row[side + '_status'] == 'supported' and row[side + '_excludes']:
+                    row[side + '_status'] = 'conditional'
         overrides = document['overrides']
         if not isinstance(overrides, dict):
             raise ValueError('机型差异必须是对象')
@@ -116,6 +128,8 @@ async def validate_document(db, document, *, refresh=False):
 
 
 def validate_rule(rule):
+    if rule.get('priority') not in PRIORITIES:
+        raise ValueError('优先级标记无效')
     for field in ('defined_status', 'current_status'):
         if field in rule and rule[field] not in STATUSES:
             raise ValueError(f'{field} 必须是支持、条件支持、不支持或待确认')
@@ -147,13 +161,14 @@ async def initial_document(db, scope):
         variants = [v['id'] for v in cat['variants'] if v['probe_model_id'] == cfg.probe_model_id] or [None]
         for variant in variants:
             row = {'probe_model_id': cfg.probe_model_id, 'variant_id': variant, 'feature_id': cfg.feature_id,
-                   'defined_status': 'pending', 'current_status': 'pending', 'defined_excludes': [], 'current_excludes': [], 'notes': ''}
+                   'defined_status': 'pending', 'current_status': 'pending', 'defined_excludes': [], 'current_excludes': [], 'notes': '', 'priority': None}
             key = row_key(row)
             rows[key] = row
             overrides.setdefault(str(cfg.product_model_id), {})[key] = {
                 'defined_status': cfg.defined_status, 'current_status': cfg.current_status,
                 'defined_excludes': legacy_excludes(cfg.defined_excludes),
                 'current_excludes': legacy_excludes(cfg.current_excludes),
+                'priority': cfg.priority,
                 'notes': f'历史数据待核对；{cfg.notes or ""}',
             }
     return {'scope': scope, 'rows': list(rows.values()), 'overrides': overrides}
@@ -180,6 +195,19 @@ def config_gate(value):
     return 'pending'
 
 
+async def reserve_members(db, item, document, *, published=False):
+    ids = set(document['scope']['model_ids'])
+    if not published and item.published_data:
+        ids.update(json.loads(item.published_data)['scope']['model_ids'])
+    await db.execute(delete(ProbeWorkspaceMember).where(ProbeWorkspaceMember.workspace_id == item.id))
+    db.add_all(ProbeWorkspaceMember(model_id=mid, workspace_id=item.id) for mid in sorted(ids))
+    try:
+        await db.flush()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(409, '机型已被其他总集占用，请刷新并复用已有总集') from error
+
+
 def calculate_results(document, snapshots, cat):
     probes = {p['id']: p for p in cat['probes']}
     variants = {v['id']: v for v in cat['variants']}
@@ -191,20 +219,26 @@ def calculate_results(document, snapshots, cat):
         for row in document['rows']:
             key = row_key(row)
             rule = {**row, **document['overrides'].get(str(mid), {}).get(key, {})}
-            probe, feature = probes[row['probe_model_id']], features[row['feature_id']]
+            probe, feature = probes.get(row['probe_model_id'], {}), features.get(row['feature_id'], {})
             variant = variants.get(row.get('variant_id'), {})
+            identity_missing = not probe or not feature or bool(row.get('variant_id') and not variant)
             probe_items = [i for i in items if i['category'] == 'Probes' and (
                 (variant.get('ipn') and i.get('ipn') == variant['ipn']) or
-                (not variant.get('ipn') and i.get('rd_name') == probe['name']))]
+                (not row.get('variant_id') and i.get('rd_name') == probe.get('name')))] if not identity_missing else []
             feature_items = [i for i in items if (
                 i['id'] == feature.get('config_item_id') if feature.get('config_item_id')
-                else bool(feature.get('ipn')) and i.get('ipn') == feature['ipn'])]
+                else bool(feature.get('ipn')) and i.get('ipn') == feature['ipn'])] if not identity_missing else []
             sources = {'probe': probe_items[0]['values'][str(mid)] if len(probe_items) == 1 else {},
                        'feature': feature_items[0]['values'][str(mid)] if len(feature_items) == 1 else {}}
             result = {'key': key, 'model_id': mid, 'model_name': models.get(mid, {}).get('name', str(mid)),
-                      'probe_name': probe['name'], 'ipn': variant.get('ipn'), 'feature_name': feature['name'],
+                      'probe_name': probe.get('name', f"探头 #{row['probe_model_id']}（身份缺失）"), 'ipn': variant.get('ipn'), 'feature_name': feature.get('name', f"功能 #{row['feature_id']}（身份缺失）"),
                       'source': sources, 'notes': rule.get('notes', ''),
+                      'priority': rule.get('priority'),
                       'has_override': key in document['overrides'].get(str(mid), {})}
+            for kind, value in sources.items():
+                result[kind + '_configuration'] = ' · '.join(
+                    f"{label}：{value.get(field) or '待确认'}" for label, field in
+                    [('定义', 'final_config'), ('现状', 'current_config'), ('选型', 'selection_config')])
             for side, config_field in (('defined', 'final_config'), ('current', 'current_config')):
                 status = rule.get(side + '_status', 'pending')
                 gates = [config_gate(v.get(config_field)) for v in sources.values()]
@@ -217,6 +251,15 @@ def calculate_results(document, snapshots, cat):
                 result[side + '_status'] = status
                 result[side + '_reason'] = reason
                 result[side + '_excludes'] = rule.get(side + '_excludes', [])
+                if status in {'supported', 'conditional'} and any(
+                    app not in cat.get('applications', {}).get(str(probe.get('category_id')), [])
+                    for app in result[side + '_excludes']
+                ):
+                    result[side + '_status'] = 'pending'
+                    result[side + '_reason'] = '排除应用不在该探头类别的已确认应用范围内，请核对'
+                    continue
+                if status in {'supported', 'conditional'} and result[side + '_excludes']:
+                    result[side + '_status'] = 'conditional'
             results.append(result)
     return results
 
@@ -231,8 +274,30 @@ async def context(db, document, *, publishing=False, version_number=None):
         if publishing:
             await ensure_no_pending_drafts(db, sid)
             numbers[str(sid)] = await resolve_version_number(db, sid, version_number)
-        snapshots[str(sid)] = await build_series_snapshot(db, sid)
+        snapshots[str(sid)] = await build_series_snapshot(db, sid, include_probes=False)
     return snapshots, numbers, await catalog(db)
+
+
+async def attach_published_probes(db, snapshot, replacement=None):
+    """Normal configuration releases freeze applicable probe rules as well."""
+    snapshot = deepcopy(snapshot)
+    model_ids = {m['id'] for m in snapshot['models']}
+    if not model_ids:
+        return snapshot
+    documents = {w.id: json.loads(w.published_data) for w in
+                 (await db.scalars(select(ProbeWorkspace).where(ProbeWorkspace.published_data.isnot(None)))).all()}
+    if replacement:
+        documents[replacement[0]] = replacement[1]
+    relevant = [(wid, doc) for wid, doc in documents.items() if model_ids.intersection(doc['scope']['model_ids'])]
+    if relevant:
+        cat = await catalog(db)
+        snapshot['probe_configuration'] = []
+        for wid, doc in relevant:
+            scoped = deepcopy(doc)
+            scoped['scope']['model_ids'] = sorted(model_ids.intersection(doc['scope']['model_ids']))
+            snapshot['probe_configuration'].append({'workspace_id': wid, 'data': doc,
+                'results': calculate_results(scoped, {'current': snapshot}, cat)})
+    return snapshot
 
 
 def document_diff(before, after):

@@ -109,3 +109,14 @@ test('a model edit with no target cannot modify the shared total', () => {
   assert.equal(messages.length, 1)
   assert.deepEqual(document.value, baseline)
 })
+
+test('confirming route leave discards local changes so cached reactivation can load restored drafts', async () => {
+  const document = ref({ rows: [{ notes: 'unsaved' }] })
+  const saved = ref(JSON.stringify({ rows: [{ notes: 'saved' }] }))
+  const leave = handler('leaveWorkspace', {
+    busy: ref(false), editing: ref(false), dirty: ref(true), document, saved,
+    allowDiscardLocal: async () => true,
+  })
+  assert.equal(await leave(), true)
+  assert.equal(document.value.rows[0].notes, 'saved')
+})

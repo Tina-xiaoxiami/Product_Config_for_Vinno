@@ -7,6 +7,8 @@ export function applyProbeRule(document, key, patch, modelIds) {
   const row = result.rows.find(row => probeRuleKey(row) === key)
   if (!row) throw new Error('条目已变化，请刷新')
   const ids = [...new Set(modelIds)]
+  for (const id of ids) if (!document.scope.model_ids.includes(id)) throw new Error('机型不在当前总集范围内')
+  if (!Object.keys(patch).length) return result
   if (!ids.length) Object.assign(row, patch)
   for (const id of ids) {
     if (!document.scope.model_ids.includes(id)) throw new Error('机型不在当前总集范围内')

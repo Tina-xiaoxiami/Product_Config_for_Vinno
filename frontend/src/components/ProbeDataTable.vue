@@ -1,0 +1,51 @@
+<template>
+  <div class="probe-data-table">
+    <div class="table-actions"><span>{{ filtered.length }} / {{ rows.length }} 条</span><TableColumnSettings :model-value="layout" :defaults="columns" @update:model-value="applyLayout" /><el-button v-if="Object.values(filters).some(v => v != null)" size="small" @click="filters = {}">清除筛选</el-button></div>
+    <el-table :key="structureKey" :data="filtered" border stripe size="small" :height="height" :max-height="height ? undefined : 360" @header-dragend="resize">
+      <el-table-column v-for="column in visibleColumns" :key="column.key" :prop="column.key" :width="column.width" :fixed="column.fixed" show-overflow-tooltip>
+        <template #header><span class="column-heading">{{ column.label }}<el-popover :ref="el => { if (el) popovers[column.key] = el }" v-if="column.filter !== false && rows.length" trigger="click" :width="220" placement="bottom-start" @before-enter="openFilter(column.key)">
+          <template #reference><el-button class="filter-button" size="small" text :type="filters[column.key] != null ? 'primary' : 'info'" :icon="Filter" :aria-label="'筛选' + column.label" :title="'筛选' + column.label" /></template>
+          <el-input v-model="filterSearch" size="small" placeholder="搜索候选值" clearable />
+          <div class="filter-tools"><el-button size="small" link @click="selectVisible(true)">全选搜索结果</el-button><el-button size="small" link @click="selectVisible(false)">清空搜索结果</el-button></div>
+          <el-checkbox-group v-model="draftValues" class="filter-options"><el-checkbox v-for="value in visibleValues" :key="value" :value="value" :label="value">{{ filterLabel(value) }}</el-checkbox></el-checkbox-group>
+          <div class="filter-tools"><el-button size="small" @click="resetFilter(column.key)">不限</el-button><el-button size="small" type="primary" @click="applyFilter(column.key)">应用</el-button></div>
+        </el-popover></span></template>
+        <template #default="{row}">{{ format(row, column) }}</template>
+      </el-table-column>
+      <el-table-column v-if="$slots.actions" label="操作" fixed="right" :width="actionsWidth"><template #default="{row}"><slot name="actions" :row="row" /></template></el-table-column>
+    </el-table>
+  </div>
+</template>
+<script setup>
+import { ref, computed, watch } from 'vue'
+import { Filter } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import TableColumnSettings from './TableColumnSettings.vue'
+import { loadColumnLayout, normalizeColumnLayout, saveColumnLayout } from '../utils/tableColumnLayout'
+import { probeStatusLabel } from '../utils/probeWorkspace'
+import { probeFilterValue, filterProbeRows, selectVisibleFilterValues } from '../utils/probeTableFilters'
+const props = defineProps({ rows: { type: Array, required: true }, columns: { type: Array, required: true }, tableId: { type: String, required: true }, height: Number, actionsWidth: { type: Number, default: 180 } })
+const storage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const key = `probe-${props.tableId}-layout-v1`
+const layout = ref(loadColumnLayout(storage, key, props.columns, ElMessage.warning))
+const visibleColumns = computed(() => layout.value.filter(c => c.visible))
+const structureKey = computed(() => visibleColumns.value.map(c => c.key + ':' + c.fixed).join('|'))
+function applyLayout(value) { layout.value = normalizeColumnLayout(props.columns, value); saveColumnLayout(storage, key, layout.value, ElMessage.warning) }
+function resize(width, old, column) { applyLayout(layout.value.map(c => c.key === column.property ? { ...c, width } : c)) }
+const filters = ref({}), filterKey = ref(''), filterSearch = ref(''), draftValues = ref([])
+const filtered = computed(() => filterProbeRows(props.rows, filters.value))
+const allValues = computed(() => [...new Set(props.rows.map(row => probeFilterValue(row[filterKey.value])))].sort())
+const visibleValues = computed(() => allValues.value.filter(value => filterLabel(value).toLowerCase().includes(filterSearch.value.toLowerCase())))
+function openFilter(key) { filterKey.value = key; filterSearch.value = ''; draftValues.value = [...(filters.value[key] ?? allValues.value)] }
+function selectVisible(checked) { draftValues.value = selectVisibleFilterValues(draftValues.value, visibleValues.value, checked) }
+const popovers = {}
+function filterLabel(value) { return value ? filterKey.value.endsWith('_status') ? probeStatusLabel(value) : value : '(空白)' }
+function closePopover(key) { popovers[key]?.hide() }
+function resetFilter(key) { filters.value = { ...filters.value, [key]: null }; closePopover(key) }
+function applyFilter(key) { filters.value = { ...filters.value, [key]: [...draftValues.value] }; closePopover(key) }
+function format(row, column) { const value = row[column.key]; return column.format ? column.format(row) : column.key.endsWith('_status') ? probeStatusLabel(value) : probeFilterValue(value) }
+watch(() => props.columns.map(c => c.key).join('|'), () => { layout.value = normalizeColumnLayout(props.columns, layout.value) })
+</script>
+<style scoped>
+.table-actions,.filter-tools,.column-heading{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.table-actions{justify-content:flex-end;margin:4px 0}.table-actions .el-button+.el-button{margin-left:0}.column-heading{justify-content:space-between;flex-wrap:nowrap}.filter-button{width:24px;height:24px;padding:3px}.filter-tools{margin-top:7px}.filter-options{display:flex;flex-direction:column;align-items:flex-start;max-height:220px;overflow:auto;margin-top:8px}.filter-options .el-checkbox{margin:0;width:100%;height:auto;min-height:26px;white-space:normal}.probe-data-table{width:100%;overflow:hidden}
+</style>

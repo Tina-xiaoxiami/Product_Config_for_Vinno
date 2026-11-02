@@ -19,6 +19,7 @@
         </div>
         <div class="toolbar">
           <el-button size="small" type="primary" :disabled="!dirty" @click="save">保存草稿</el-button>
+          <el-button size="small" v-if="!current.has_draft" :disabled="dirty" @click="save">建立下一版草稿</el-button>
           <el-button size="small" :disabled="!current.has_draft && !dirty" @click="discard">废弃草稿</el-button>
           <el-button size="small" type="success" :disabled="dirty || !current.has_draft" @click="startPublish">发布预览</el-button>
           <el-button size="small" :disabled="dirty" @click="download">导出 Excel / 模板</el-button>
@@ -37,20 +38,17 @@
               <el-tag v-if="dirty" type="warning" size="small">结果为上次保存草稿；保存后重新计算</el-tag>
             </template>
             <el-button v-if="tab === 'total'" size="small" @click="newRow">添加探头功能</el-button>
-            <span>{{ tableRows.length }} 条</span><TableColumnSettings :model-value="columns" :defaults="defaultColumns" @update:model-value="setColumns" />
+
           </div>
           <div ref="tableContainer" class="table-container">
-            <el-table :key="columnKey + tab + resultModel" :data="tableRows" border stripe size="small" :height="tableHeight" row-key="key" @header-dragend="resizeColumn">
-              <el-table-column v-for="c in visibleColumns" :key="c.key" :prop="c.key" :label="c.label" :width="c.width" :fixed="c.fixed" show-overflow-tooltip
-                :filters="columnFilters(c.key)" :filter-method="(value, row) => String(row[c.key] ?? '') === value" :filter-multiple="true">
-                <template #default="{ row }">{{ displayValue(row[c.key], c.key) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" fixed="right" width="175"><template #default="{ row }">
+            <ProbeDataTable :key="tab + resultModel" :rows="tableRows" :columns="defaultColumns" :height="tableHeight" table-id="workspace" :actions-width="190">
+              <template #actions="{ row }">
                 <el-button size="small" link type="primary" @click="edit(row)">{{ tab === 'models' ? '编辑机型差异' : '编辑总集' }}</el-button>
                 <el-button v-if="tab === 'total'" size="small" link type="danger" @click="remove(row)">删除</el-button>
                 <el-button v-else-if="row.has_override" size="small" link @click="inherit(row)">恢复继承</el-button>
-              </template></el-table-column>
-            </el-table>
+
+              </template>
+            </ProbeDataTable>
           </div>
         </template>
       </template>
@@ -70,24 +68,25 @@
       <p>新增成员不会自动复制其他机型差异；移除机型的差异将在核对后从当前草稿移除，历史版本仍保留。</p>
       <template #footer><el-button @click="closeScope()">取消</el-button><el-button type="primary" @click="applyScope">核对并保存范围</el-button></template>
     </el-dialog>
-    <el-dialog v-model="editing" :title="editIsNew ? '添加探头功能' : editModels.length ? '编辑机型特有差异' : '编辑共同总集'" width="620px" :before-close="closeEdit">
+    <el-dialog v-model="editing" :title="editIsNew ? '添加探头功能' : editIsModel ? '编辑机型特有差异' : '编辑共同总集'" width="620px" :before-close="closeEdit">
       <el-form label-position="top">
         <div v-if="editIsNew" class="toolbar"><el-select v-model="newProbe" filterable placeholder="探头 / IPN" style="width:300px"><el-option v-for="p in probeOptions" :key="p.key" :value="p.key" :label="p.label" /></el-select><el-select v-model="newFeature" filterable placeholder="功能"><el-option v-for="f in catalog.features" :key="f.id" :value="f.id" :label="f.name" /></el-select></div>
-        <el-form-item v-else-if="editModels.length" label="应用到机型（仅当前总集成员）"><el-select v-model="editModels" multiple style="width:100%"><el-option v-for="m in memberModels" :key="m.id" :value="m.id" :label="m.series + ' / ' + m.name" /></el-select></el-form-item>
+        <el-form-item v-else-if="editIsModel" label="应用到机型（仅当前总集成员）"><el-select v-model="editModels" multiple style="width:100%"><el-option v-for="m in memberModels" :key="m.id" :value="m.id" :label="m.series + ' / ' + m.name" /></el-select></el-form-item>
         <div class="rule-grid"><div v-for="side in ['defined', 'current']" :key="side"><el-form-item :label="side === 'defined' ? '定义值支持状态' : '现状值支持状态'"><el-select v-model="editRule[side + '_status']"><el-option v-for="s in statuses" :key="s" :value="s" :label="probeStatusLabel(s)" /></el-select></el-form-item>
           <el-form-item label="排除应用"><el-select v-model="editRule[side + '_excludes']" multiple filterable allow-create default-first-option><el-option v-for="a in appOptions" :key="a" :value="a" :label="a" /></el-select></el-form-item></div></div>
+        <el-form-item label="优先级"><el-select v-model="editRule.priority" clearable @clear="editRule.priority = null"><el-option v-for="p in priorities" :key="p" :value="p" :label="p" /></el-select></el-form-item>
         <el-form-item label="说明"><el-input v-model="editRule.notes" type="textarea" :rows="3" /></el-form-item>
         <p>{{ editModels.length ? '差异不会使主配置中不可用的探头或功能变为支持。' : '修改总集会保留各机型已经明确设置的差异。' }}</p>
       </el-form>
       <template #footer><el-button @click="closeEdit()">取消</el-button><el-button type="primary" @click="applyEdit">应用到待保存草稿</el-button></template>
     </el-dialog>
     <el-dialog v-model="publishVisible" title="发布探头配置" width="780px" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :before-close="closePublish">
-      <div class="toolbar"><el-input v-model="versionNumber" placeholder="业务版本号（留空按配置管理规则递增）" style="width:340px" /><el-button @click="preparePreview" :disabled="versionCheck.pending || !!versionCheck.error">重新核对发布预览</el-button></div>
-      <el-input v-model="description" placeholder="发布说明" type="textarea" :rows="2" />
+      <div class="toolbar"><el-input :disabled="busy" v-model="versionNumber" placeholder="业务版本号（留空按配置管理规则递增）" style="width:340px" /><el-button @click="preparePreview" :disabled="versionCheck.pending || !!versionCheck.error">重新核对发布预览</el-button></div>
+      <el-input :disabled="busy" v-model="description" placeholder="发布说明" type="textarea" :rows="2" />
       <el-alert v-if="versionCheck.error" :title="versionCheck.error" type="error" :closable="false" />
       <template v-if="preview"><p>{{ previewSummary }}</p><p>将创建配置管理版本：{{ JSON.stringify(preview.version_numbers) }}</p>
         <el-select v-model="previewModel" style="width:280px" placeholder="核对机型"><el-option v-for="m in memberModels" :key="m.id" :value="m.id" :label="m.series + ' / ' + m.name" /></el-select>
-        <el-table :data="previewResults" max-height="300" size="small" border><el-table-column prop="probe_name" label="探头" /><el-table-column prop="feature_name" label="功能" /><el-table-column label="定义 / 现状"><template #default="{row}">{{ probeStatusLabel(row.defined_status) }} / {{ probeStatusLabel(row.current_status) }}</template></el-table-column><el-table-column prop="current_reason" label="依据" /></el-table>
+        <ProbeDataTable :rows="previewResults" :columns="previewColumns" table-id="publish-preview" />
       </template>
       <template #footer><el-button :disabled="busy" @click="closePublish()">取消</el-button><el-button type="primary" :disabled="!preview || versionCheck.pending || !!versionCheck.error || busy" @click="publish">确认发布</el-button></template>
     </el-dialog>
@@ -96,15 +95,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onUnmounted, nextTick } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SubseriesEditor from '../components/SubseriesEditor.vue'
 import SubseriesCombinations from '../components/SubseriesCombinations.vue'
-import TableColumnSettings from '../components/TableColumnSettings.vue'
+import ProbeDataTable from '../components/ProbeDataTable.vue'
 import { getSubseries, checkSubmissionVersion } from '../api/data'
 import { useVersionPreflight } from '../utils/useVersionPreflight'
-import { normalizeColumnLayout, loadColumnLayout, saveColumnLayout } from '../utils/tableColumnLayout'
 import { probeRuleKey, probeStatusLabel, applyProbeRule, removeProbeRule } from '../utils/probeWorkspace'
 import * as api from '../api/probeWorkspace'
 const copy = value => JSON.parse(JSON.stringify(value))
@@ -123,7 +121,7 @@ function assign(data) { current.value = data; document.value = copy(data.data); 
 async function loadResults() { const data = await api.getProbeResults(current.value.id); results.value = data.results; diff.value = data.diff }
 async function allowDiscardLocal() { if (!dirty.value) return true; try { await ElMessageBox.confirm('有未保存的编辑，确定放弃？', '未保存修改', { type: 'warning' }); return true } catch { return false } }
 async function openWorkspace(id) { if (!await allowDiscardLocal()) return; await run(async () => { assign(await api.getProbeWorkspace(id)); await loadResults() }) }
-async function create() { await run(async () => { assign(await api.createProbeWorkspace({ name: createName.value, groups: selectedGroups.value, combinations: selectedCombinations.value })); createVisible.value = false; createName.value = ''; selectedGroups.value = []; selectedCombinations.value = []; await refreshList(); await loadResults() }) }
+async function create() { if (!await allowDiscardLocal()) return; await run(async () => { assign(await api.createProbeWorkspace({ name: createName.value, groups: selectedGroups.value, combinations: selectedCombinations.value })); createVisible.value = false; createName.value = ''; selectedGroups.value = []; selectedCombinations.value = []; await refreshList(); await loadResults() }) }
 async function closeCreate(done) { if (createName.value || selectedGroups.value.length || selectedCombinations.value.length) { try { await ElMessageBox.confirm('确定放弃新总集的范围设置？', '未保存设置') } catch { return } } createVisible.value = false; createName.value = ''; selectedGroups.value = []; selectedCombinations.value = []; done?.() }
 async function persist(refresh = false) { assign(await api.saveProbeDraft(current.value.id, { revision: current.value.revision, data: document.value, refresh_scope: refresh })); await refreshList(); await loadResults() }
 async function save() { await run(async () => { await persist(); ElMessage.success('草稿已保存，尚未发布') }) }
@@ -132,30 +130,40 @@ const scopeVisible = ref(false), scopeGroups = ref([]), scopeCombinations = ref(
 watch(scopeVisible, visible => { if (visible) { scopeGroups.value = [...document.value.scope.groups]; scopeCombinations.value = [...document.value.scope.combinations] } })
 async function closeScope(done) { const changed = JSON.stringify([scopeGroups.value, scopeCombinations.value]) !== JSON.stringify([document.value.scope.groups, document.value.scope.combinations]); if (changed) { try { await ElMessageBox.confirm('放弃范围修改？', '未保存设置') } catch { return } } scopeVisible.value = false; done?.() }
 async function applyScope() { await run(async () => { await loadShared(); const names = scopeGroups.value; const combinations = scopeCombinations.value; const groups = shared.value.groups.filter(g => names.includes(g.name)); const combo = shared.value.combinations.filter(g => combinations.includes(g.name)); const ids = new Set([...groups, ...combo].flatMap(g => g.model_ids)); const next = copy(document.value); next.scope.groups = [...names]; next.scope.combinations = [...combinations]; for (const mid of Object.keys(next.overrides)) if (!ids.has(Number(mid))) delete next.overrides[mid]; const data = await api.saveProbeDraft(current.value.id, { revision: current.value.revision, data: next, refresh_scope: true }); assign(data); scopeVisible.value = false; await refreshList(); await loadResults() }) }
-async function refreshScope() { if (!await allowDiscardLocal()) return; await run(async () => { await loadShared(); await persist(true) }) }
+async function refreshScope() {
+  if (!await allowDiscardLocal()) return
+  await run(async () => {
+    await loadShared()
+    assign(await api.getProbeWorkspace(current.value.id))
+    const scope = document.value.scope
+    scopeGroups.value = [...scope.groups]
+    scopeCombinations.value = [...scope.combinations]
+    const selected = [...shared.value.groups.filter(g => scope.groups.includes(g.name)), ...shared.value.combinations.filter(g => scope.combinations.includes(g.name))]
+    const ids = new Set(selected.flatMap(g => g.model_ids))
+    for (const mid of Object.keys(document.value.overrides)) if (!ids.has(Number(mid))) delete document.value.overrides[mid]
+    await persist(true)
+  })
+}
+const priorities = ['标1', '标2', '标3', '新', '新(未优化)', '新(未发放)']
+const editIsModel = ref(false), editOriginalRule = ref({})
 const statuses = ['supported', 'conditional', 'unsupported', 'pending'], editing = ref(false), editRule = ref({}), editKey = ref(''), editModels = ref([]), editIsNew = ref(false), newProbe = ref(''), newFeature = ref(null), editBaseline = ref('')
 const probeOptions = computed(() => catalog.value.probes.flatMap(p => { const variants = catalog.value.variants.filter(v => v.probe_model_id === p.id); return (variants.length ? variants : [{ id: 0, ipn: '' }]).map(v => ({ key: `${p.id}:${v.id}`, label: `${p.name} ${v.ipn || ''}` })) }))
 const appOptions = computed(() => [...new Set(Object.values(catalog.value.applications).flat())])
 const editState = () => JSON.stringify([editRule.value, editModels.value, newProbe.value, newFeature.value])
-function startEdit() { editing.value = true; editBaseline.value = editState() }
-function newRow() { editIsNew.value = true; editModels.value = []; newProbe.value = ''; newFeature.value = null; editRule.value = { defined_status: 'pending', current_status: 'pending', defined_excludes: [], current_excludes: [], notes: '' }; startEdit() }
-function edit(row) { editIsNew.value = false; editKey.value = row.key; const common = document.value.rows.find(r => probeRuleKey(r) === row.key); editModels.value = tab.value === 'models' ? [row.model_id] : []; const rule = { ...common, ...(editModels.value.length ? document.value.overrides[row.model_id]?.[row.key] : {}) }; editRule.value = Object.fromEntries(['defined_status', 'current_status', 'defined_excludes', 'current_excludes', 'notes'].map(f => [f, copy(rule[f] ?? (f.endsWith('excludes') ? [] : f === 'notes' ? '' : 'pending'))])); startEdit() }
+function startEdit() { editOriginalRule.value = copy(editRule.value); editing.value = true; editBaseline.value = editState() }
+function newRow() { editIsNew.value = true; editIsModel.value = false; editModels.value = []; newProbe.value = ''; newFeature.value = null; editRule.value = { defined_status: 'pending', current_status: 'pending', defined_excludes: [], current_excludes: [], notes: '', priority: null }; startEdit() }
+function edit(row) { editIsNew.value = false; editIsModel.value = tab.value === 'models'; editKey.value = row.key; const common = document.value.rows.find(r => probeRuleKey(r) === row.key); editModels.value = tab.value === 'models' ? [row.model_id] : []; const rule = { ...common, ...(editModels.value.length ? document.value.overrides[row.model_id]?.[row.key] : {}) }; editRule.value = Object.fromEntries(['defined_status', 'current_status', 'defined_excludes', 'current_excludes', 'notes', 'priority'].map(f => [f, copy(rule[f] ?? (f.endsWith('excludes') ? [] : f === 'notes' ? '' : f === 'priority' ? null : 'pending'))])); startEdit() }
 async function closeEdit(done) { if (editState() !== editBaseline.value) { try { await ElMessageBox.confirm('放弃尚未应用的编辑？', '未保存修改') } catch { return } } editing.value = false; done?.() }
-function applyEdit() { try { if (editIsNew.value) { if (!newProbe.value || !newFeature.value) throw new Error('请选择探头和功能'); const [probe, variant] = newProbe.value.split(':').map(Number); const row = { probe_model_id: probe, variant_id: variant || null, feature_id: newFeature.value, ...copy(editRule.value) }; if (document.value.rows.some(r => probeRuleKey(r) === probeRuleKey(row))) throw new Error('该探头与功能已经存在'); document.value.rows.push(row) } else { if (tab.value === 'models' && !editModels.value.length) throw new Error('请至少选择一个目标机型'); document.value = applyProbeRule(document.value, editKey.value, editRule.value, editModels.value) } editing.value = false } catch (e) { ElMessage.error(e.message) } }
+function applyEdit() { try { if (editIsNew.value) { if (!newProbe.value || !newFeature.value) throw new Error('请选择探头和功能'); const [probe, variant] = newProbe.value.split(':').map(Number); const row = { probe_model_id: probe, variant_id: variant || null, feature_id: newFeature.value, ...copy(editRule.value) }; if (document.value.rows.some(r => probeRuleKey(r) === probeRuleKey(row))) throw new Error('该探头与功能已经存在'); document.value.rows.push(row) } else { if (tab.value === 'models' && !editModels.value.length) throw new Error('请至少选择一个目标机型'); const patch = Object.fromEntries(Object.entries(editRule.value).filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(editOriginalRule.value[field]))); document.value = applyProbeRule(document.value, editKey.value, patch, editModels.value) } editing.value = false } catch (e) { ElMessage.error(e.message) } }
 async function remove(row) { try { await ElMessageBox.confirm('删除总集条目及其机型特有差异？发布前可废弃草稿。', '删除条目') } catch { return } document.value = removeProbeRule(document.value, row.key) }
 function inherit(row) { const next = copy(document.value); delete next.overrides[row.model_id]?.[row.key]; document.value = next }
-const defaultColumns = [ ['probe_name','探头',180,true], ['ipn','IPN',130,false], ['feature_name','功能',180,true], ['defined_status','定义支持',120,false], ['current_status','现状支持',120,false], ['defined_excludes','定义排除应用',170,false], ['current_excludes','现状排除应用',170,false], ['notes','说明',220,false], ['current_reason','现状依据',200,false] ].map(([key,label,width,fixed]) => ({ key,label,width,fixed,visible:true }))
-const storage = {getItem:key=>localStorage.getItem(key),setItem:(key,value)=>localStorage.setItem(key,value)}, layoutKey = 'probe-workspace-columns-v1'
-const columns = ref(loadColumnLayout(storage, layoutKey, defaultColumns, ElMessage.warning)), visibleColumns = computed(() => columns.value.filter(c => c.visible)), columnKey = computed(() => visibleColumns.value.map(c => `${c.key}:${c.fixed}`).join('|'))
-function setColumns(value) { columns.value = normalizeColumnLayout(defaultColumns, value); saveColumnLayout(storage, layoutKey, columns.value, ElMessage.warning) }
-function resizeColumn(width, old, column) { setColumns(columns.value.map(c => c.key === column.property ? { ...c, width } : c)) }
+const defaultColumns = [ ['probe_name','探头',180,true], ['ipn','IPN',130,false], ['feature_name','功能',180,true], ['defined_status','定义支持',120,false], ['current_status','现状支持',120,false], ['defined_excludes','定义排除应用',170,false], ['current_excludes','现状排除应用',170,false], ['priority','优先级',110,false], ['notes','说明',220,false], ['current_reason','现状依据',200,false], ['probe_configuration','探头主配置',260,false], ['feature_configuration','功能主配置',260,false] ].map(([key,label,width,fixed]) => ({ key,label,width,fixed,visible:true }))
 const tableRows = computed(() => { const rows = tab.value === 'models' ? results.value.filter(r => r.model_id === resultModel.value && (!differencesOnly.value || r.has_override || r.defined_status !== r.current_status)) : (document.value?.rows || []).map(r => ({ ...r, key: probeRuleKey(r), probe_name: catalog.value.probes.find(p => p.id === r.probe_model_id)?.name || String(r.probe_model_id), ipn: catalog.value.variants.find(v => v.id === r.variant_id)?.ipn || '', feature_name: catalog.value.features.find(f => f.id === r.feature_id)?.name || String(r.feature_id), current_reason: '共同总集' })); const q = search.value.trim().toLowerCase(); return q ? rows.filter(r => JSON.stringify(r).toLowerCase().includes(q)) : rows })
-function displayValue(value, key) { return key.endsWith('_status') ? probeStatusLabel(value) : Array.isArray(value) ? value.join('、') : value ?? '' }
-function columnFilters(key) { if (key.endsWith('excludes') || key === 'notes') return undefined; return [...new Set(tableRows.value.map(r => String(r[key] ?? '')))].sort().map(value => ({value, text: value ? displayValue(value,key) : '(空白)'})) }
 const diffLabel = computed(() => `相对已发布总集：新增 ${diff.value.added || 0}，修改 ${diff.value.modified || 0}，删除 ${diff.value.deleted || 0}；机型差异${diff.value.model_differences_changed ? '有变化' : '无变化'}${dirty.value ? '（先保存以更新统计）' : ''}`)
 const tableContainer = ref(), tableToolbar = ref(), tableHeight = ref(400)
-function measure() { if (tableContainer.value) tableHeight.value = Math.max(220, window.innerHeight - tableContainer.value.getBoundingClientRect().top - 30) }
+function measure() { if (tableContainer.value) tableHeight.value = Math.max(220, window.innerHeight - tableContainer.value.getBoundingClientRect().top - 70) }
 watch([tab, current, error], async () => { await nextTick(); measure() })
+const previewColumns = [['probe_name', '探头'], ['feature_name', '功能'], ['defined_status', '定义'], ['current_status', '现状'], ['current_reason', '依据']].map(([key, label]) => ({key, label, width:140, visible:true}))
 const publishVisible = ref(false), versionNumber = ref(''), description = ref(''), preview = ref(null), previewModel = ref(null)
 const versionCheck = useVersionPreflight(() => ({enabled:publishVisible.value, seriesIds:[...new Set(memberModels.value.map(m=>m.series_id))], versionNumber:versionNumber.value || undefined}), checkSubmissionVersion)
 watch([versionNumber, description], () => { preview.value = null })
@@ -170,8 +178,24 @@ async function importFile(event) { const file = event.target.files?.[0]; event.t
 async function applyImport() { await run(async () => { assign(await api.saveProbeDraft(current.value.id, {revision:imported.value.revision,data:imported.value.data})); importVisible.value = false; await refreshList(); await loadResults() }) }
 async function download() { await run(async () => { const blob = await api.exportProbeWorkbook(current.value.id); const url = URL.createObjectURL(blob); const link = window.document.createElement('a'); link.href = url; link.download = `${current.value.name}.xlsx`; link.click(); URL.revokeObjectURL(url) }) }
 function beforeUnload(event) { if (dirty.value || editing.value) { event.preventDefault(); event.returnValue = '' } }
-onBeforeRouteLeave(async () => { if (busy.value || editing.value) return false; return allowDiscardLocal() })
+async function leaveWorkspace() {
+  if (busy.value || editing.value) return false
+  const allowed = await allowDiscardLocal()
+  if (allowed && dirty.value) document.value = JSON.parse(saved.value)
+  return allowed
+}
+onBeforeRouteLeave(leaveWorkspace)
 onMounted(async () => { window.addEventListener('resize',measure); window.addEventListener('beforeunload',beforeUnload); await run(async () => { await Promise.all([loadShared(),refreshList(),api.getProbeCatalog().then(c=>{catalog.value=c})]); if (workspaces.value.length) { assign(workspaces.value[0]); await loadResults() } }); await nextTick(); measure() })
+let firstActivation = true
+onActivated(async () => {
+  if (firstActivation) { firstActivation = false; return }
+  if (busy.value || dirty.value || editing.value) return
+  await run(async () => {
+    await Promise.all([loadShared(), refreshList()])
+    catalog.value = await api.getProbeCatalog()
+    if (current.value) { assign(await api.getProbeWorkspace(current.value.id)); await loadResults() }
+  })
+})
 onUnmounted(() => {window.removeEventListener('resize',measure);window.removeEventListener('beforeunload',beforeUnload)})
 </script>
 <style scoped>

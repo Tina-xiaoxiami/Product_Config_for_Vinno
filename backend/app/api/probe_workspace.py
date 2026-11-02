@@ -1,9 +1,8 @@
 """Probe totals use shared subseries and the main configuration version store."""
 import io
 import json
-from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -76,11 +75,15 @@ async def get_catalog(db=Depends(get_db)):
 
 @router.post('')
 async def create_workspace(data: ScopeInput, db=Depends(get_db)):
+    if not data.name.strip():
+        raise HTTPException(422, '总集名称不能为空')
     scope = await service.shared_scope(db, data.groups, data.combinations)
     document = await service.initial_document(db, scope)
     await service.ensure_no_overlap(db, document)
     item = ProbeWorkspace(name=data.name.strip(), draft_data=service.encode(document))
     db.add(item)
+    await db.flush()
+    await service.reserve_members(db, item, document)
     await db.commit()
     await db.refresh(item)
     return view(item)
@@ -97,6 +100,7 @@ async def save_draft(workspace_id: int, data: DraftInput, db=Depends(get_db)):
     document = await service.validate_document(db, data.data, refresh=data.refresh_scope)
     await service.ensure_no_overlap(db, document, item.id)
     await change(db, item, data.revision, draft_data=service.encode(document))
+    await service.reserve_members(db, item, document)
     await db.commit()
     return view(item)
 
@@ -107,6 +111,7 @@ async def discard(workspace_id: int, data: RevisionInput, db=Depends(get_db)):
     # An unpublished workspace retains only its scope, without legacy suggestions.
     empty = {'scope': json.loads(item.draft_data)['scope'], 'rows': [], 'overrides': {}} if not item.published_data else None
     await change(db, item, data.revision, draft_data=None if empty is None else service.encode(empty))
+    await service.reserve_members(db, item, empty or json.loads(item.published_data), published=True)
     await db.commit()
     return view(item)
 
@@ -115,6 +120,12 @@ async def discard(workspace_id: int, data: RevisionInput, db=Depends(get_db)):
 async def results(workspace_id: int, db=Depends(get_db)):
     item = await workspace(db, workspace_id)
     document = view(item)['data']
+    if item.draft_data is None:
+        latest = await db.scalar(select(ProbeWorkspaceRelease).where(
+            ProbeWorkspaceRelease.workspace_id == item.id).order_by(ProbeWorkspaceRelease.id.desc()).limit(1))
+        if latest:
+            frozen = json.loads(latest.snapshot_data)
+            return {'results': frozen['results'], 'diff': service.document_diff(document, document)}
     snapshots, _, cat = await service.context(db, document)
     return {'results': service.calculate_results(document, snapshots, cat),
             'diff': service.document_diff(view(item)['published_data'], document)}
@@ -126,10 +137,14 @@ async def publication_preview(db, item, data):
     document = await service.validate_document(db, json.loads(item.draft_data))
     if not document['rows'] and not item.published_data:
         raise HTTPException(422, '请先录入共同总集')
-    if item.published_data == service.encode(document):
-        raise HTTPException(400, '草稿与已发布总集相同，无需创建版本')
     await service.ensure_no_overlap(db, document, item.id)
     snapshots, numbers, cat = await service.context(db, document, publishing=True, version_number=data.version_number)
+    latest = await db.scalar(select(ProbeWorkspaceRelease).where(
+        ProbeWorkspaceRelease.workspace_id == item.id).order_by(ProbeWorkspaceRelease.id.desc()).limit(1))
+    if latest:
+        previous = json.loads(latest.snapshot_data)
+        if previous['data'] == document and previous['source_snapshots'] == snapshots and previous['catalog'] == cat:
+            raise HTTPException(400, '总集、机型差异与来源配置均无变化，无需创建版本')
     result = {'data': document, 'source_snapshots': snapshots, 'version_numbers': numbers,
               'results': service.calculate_results(document, snapshots, cat),
               'catalog': cat, 'revision': item.revision, 'description': data.description,
@@ -146,17 +161,18 @@ async def preview(workspace_id: int, data: PublishInput, db=Depends(get_db)):
 @router.post('/{workspace_id}/publish')
 async def publish(workspace_id: int, data: PublishInput, db=Depends(get_db)):
     item = await workspace(db, workspace_id)
+    # Acquire SQLite's write lock before re-reading source facts and signature.
+    await db.execute(update(ProbeWorkspace).where(ProbeWorkspace.id == item.id).values(revision=ProbeWorkspace.revision))
+    await db.refresh(item)
     checked = await publication_preview(db, item, data)
     if not data.signature or data.signature != checked['signature']:
         raise HTTPException(409, '草稿、配置或发布范围已变化，请重新核对发布预览')
     # Optimistic write lock before any version is created. All writes commit together.
     await change(db, item, checked['revision'], published_data=service.encode(checked['data']), draft_data=None)
+    await service.reserve_members(db, item, checked['data'], published=True)
     version_ids = {}
     for sid, snapshot in checked['source_snapshots'].items():
-        series_data = {**snapshot, 'probe_configuration': {
-            'workspace_id': item.id, 'data': checked['data'],
-            'results': [r for r in checked['results'] if r['model_id'] in {m['id'] for m in snapshot['models']}],
-        }}
+        series_data = await service.attach_published_probes(db, snapshot, replacement=(item.id, checked['data']))
         version = ConfigVersion(series_id=int(sid), version_number=checked['version_numbers'][sid],
                                 version_name=f'探头配置 · {item.name}', description=data.description,
                                 snapshot_data=service.encode(series_data), row_count=len(snapshot['items']))
@@ -207,9 +223,11 @@ async def restore(workspace_id: int, release_id: int, data: RevisionInput, db=De
     item = await workspace(db, workspace_id)
     release = await release_for(db, workspace_id, release_id)
     document = json.loads(release.snapshot_data)['data']
+    await service.ensure_no_overlap(db, document, item.id)
     # Historical membership is preserved in history, but a new publication must
     # explicitly re-resolve today's membership before it can be saved.
     await change(db, item, data.revision, draft_data=service.encode(document))
+    await service.reserve_members(db, item, document)
     await db.commit()
     return view(item)
 
@@ -232,8 +250,13 @@ async def export(workspace_id: int, release_id: int | None = None, db=Depends(ge
         payload = json.loads((await release_for(db, workspace_id, release_id)).snapshot_data)
     else:
         document = view(item)['data']
-        snapshots, _, cat = await service.context(db, document)
-        payload = {'data': document, 'results': service.calculate_results(document, snapshots, cat)}
+        if item.draft_data is None:
+            latest = await db.scalar(select(ProbeWorkspaceRelease).where(
+                ProbeWorkspaceRelease.workspace_id == item.id).order_by(ProbeWorkspaceRelease.id.desc()).limit(1))
+            payload = json.loads(latest.snapshot_data)
+        else:
+            snapshots, _, cat = await service.context(db, document)
+            payload = {'data': document, 'results': service.calculate_results(document, snapshots, cat), 'catalog': cat, 'source_snapshots': snapshots}
     content = export_workbook(payload, item.id, item.revision)
     return StreamingResponse(io.BytesIO(content), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                              headers={'Content-Disposition': 'attachment; filename="probe-configuration.xlsx"'})
