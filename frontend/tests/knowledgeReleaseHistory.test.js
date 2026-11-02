@@ -16,6 +16,7 @@ function traceActions() {
   const source = readFileSync(new URL('../src/components/KnowledgeReleaseHistoryWorkspace.vue', import.meta.url), 'utf8')
   const requests = []
   const context = { form: form(), result: { value: null }, loading: { value: false }, error: { value: '' }, historyTracePayload,
+    coverageWorkspace: { invalidate() {} }, runCoverage: async () => false, onBeforeUnmount() {},
     traceReleaseHistory: () => new Promise(resolve => requests.push(resolve)) }
   const start = source.indexOf('const invalidateTrace =')
   const end = source.indexOf('\nconst useCurrentScope', start)
