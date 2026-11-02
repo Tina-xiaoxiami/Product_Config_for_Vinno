@@ -1450,11 +1450,12 @@ const openAnswerDialog = async (question) => {
   candidateLoading.value = true
   try {
     const result = await getKnowledgeQuestionCandidates(question.id)
+    if (answerForm.value.question_id !== question.id || !answerDialogVisible.value) return
     answerCandidates.value = result.items || []
   } catch {
-    ElMessage.error('材料候选依据加载失败')
+    if (answerForm.value.question_id === question.id) ElMessage.error('材料候选依据加载失败')
   } finally {
-    candidateLoading.value = false
+    if (answerForm.value.question_id === question.id) candidateLoading.value = false
   }
 }
 
@@ -1480,6 +1481,7 @@ const saveAnswer = async () => {
     return
   }
   answerSaving.value = true
+  const savedScope = knowledgeScopeFingerprint(knowledgeScopePayload(answerForm.value.scope))
   try {
     const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
       answer_text: answerForm.value.answer_text.trim(),
@@ -1492,14 +1494,12 @@ const saveAnswer = async () => {
       change_note: answerForm.value.change_note.trim()
     })
     answerDialogVisible.value = false
-    qaStatus.value = 'answered'
-    qaResult.value = {
-      status: 'answered',
-      question_id: saved.id,
-      question: saved.question_text,
-      match_type: 'exact',
-      similarity: 1,
-      answer: saved.answer
+    if (knowledgeScopePayload(qaScope) && savedScope === knowledgeScopeFingerprint(knowledgeScopePayload(qaScope))) {
+      qaStatus.value = 'answered'
+      qaResult.value = {
+        status: 'answered', question_id: saved.id, question: saved.question_text,
+        match_type: 'exact', similarity: 1, answer: saved.answer, scope: saved.scope
+      }
     }
     ElMessage.success('答案已确认发布')
     await loadQaQuestions()
