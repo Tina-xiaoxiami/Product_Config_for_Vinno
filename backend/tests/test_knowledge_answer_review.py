@@ -242,3 +242,46 @@ async def test_missing_answer_and_review_filter_validation(database):
         assert (await client.post("/api/knowledge/questions/99999/review", json=payload)).status_code == 404
         assert (await client.get("/api/knowledge/questions", params={"evidence_review": "anything"})).status_code == 422
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_status", ["source_changed", "scope_changed"])
+@pytest.mark.parametrize("action", ["record_reference", "confirm_scope", "defer"])
+async def test_unpublished_source_cannot_receive_any_new_review_or_query_copy(database, source_status, action):
+    client, engine = await _client_for(database)
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute("UPDATE knowledge_answers SET review_status=? WHERE id=201", (source_status,))
+    async with client:
+        payload = await _payload(client, action=action, country="CN", market="domestic",
+                                 product_model_ids=[901], software_version="1.14.80", version_applicability="specific")
+        refused = await client.post("/api/knowledge/questions/101/review", json=payload)
+        assert refused.status_code == 409, refused.text
+    await engine.dispose()
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_answer_reviews").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_questions").fetchone()[0] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_status", ["source_changed", "scope_changed"])
+async def test_invalidated_review_is_not_reviewed_in_summary_or_sql_and_cannot_replay(database, source_status):
+    client, engine = await _client_for(database)
+    async with client:
+        payload = await _payload(client)
+        assert (await client.post("/api/knowledge/questions/101/review", json=payload)).status_code == 200
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("UPDATE knowledge_answers SET review_status=? WHERE id=201", (source_status,))
+        current = (await client.get("/api/knowledge/questions/101")).json()["evidence_review"]
+        # Older clients could record decisions while a source was unpublished.
+        # Even a matching legacy fingerprint must not make that source reviewed.
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("UPDATE knowledge_answer_reviews SET source_fingerprint=? WHERE answer_id=201", (current["fingerprint"],))
+        item = (await client.get("/api/knowledge/questions/101")).json()
+        reviewed = (await client.get("/api/knowledge/questions", params={"evidence_review": "reviewed"})).json()
+        assert item["evidence_review"]["status"] == "not_required"
+        assert item["evidence_review"]["latest"]["confirmed_by"] == "测试负责人"
+        assert reviewed["total"] == 0
+        assert (await client.post("/api/knowledge/questions/101/review", json=payload)).status_code == 409
+    await engine.dispose()
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM knowledge_answer_reviews").fetchone()[0] == 1
