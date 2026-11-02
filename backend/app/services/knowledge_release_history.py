@@ -220,16 +220,17 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='', *, mo
                 subjects = event_subject(relevant)
                 if model_name and subjects and canonical_model(model_name) not in subjects:
                     continue
-                change, _ = _classify_change(relevant, relevant, False)
-                if _NEGATED_CHANGE.search(relevant) or _PROPOSED_CHANGE.search(relevant):
+                action_text = '；'.join(part for part in re.split(r'[，,；;]', relevant) if topic in _normalize(part))
+                change, _ = _classify_change(action_text, action_text, False)
+                if _NEGATED_CHANGE.search(action_text) or _PROPOSED_CHANGE.search(action_text):
                     change = 'unknown'
-                elif re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
-                    change = 'unknown' if re.search(r'(?:取消|移除|删除).*?(?:限制|约束|条件)', relevant) else 'removed'
-                elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', relevant, re.I):
+                elif re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', action_text, re.I):
+                    change = 'unknown' if re.search(r'(?:取消|移除|删除).*?(?:限制|约束|条件)', action_text) else 'removed'
+                elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', action_text, re.I):
                     change = 'restricted'
-                elif re.search(r'仅|限制|limited|only', relevant, re.I):
+                elif re.search(r'仅|限制|limited|only', action_text, re.I):
                     change = 'restricted'
-                elif re.search(r'添加', relevant):
+                elif re.search(r'添加', action_text):
                     change = 'added'
                 version = local_version or (None if cumulative or table_key else document['version'])
                 event = {'document_id': document['id'], 'document_title': document['title'],
