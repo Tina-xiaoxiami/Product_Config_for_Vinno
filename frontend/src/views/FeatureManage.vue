@@ -41,6 +41,7 @@
                 <span v-if="feature.sort_order > 0" class="feature-order">{{ feature.sort_order }}</span>
               </div>
               <div class="feature-actions">
+                <el-button size="small" text @click="nameReview.open(feature.id)">名称核对</el-button>
                 <el-button size="small" text @click="handleEditFeature(feature, group.id)">编辑</el-button>
                 <el-button size="small" text type="danger" @click="handleDeleteFeature(feature)">删除</el-button>
               </div>
@@ -53,6 +54,7 @@
       </div>
     </div>
 
+    <FeatureNameReviewDialog ref="nameReview" />
     <!-- 功能组对话框 -->
     <el-dialog v-model="showGroupForm" :title="editingGroupId ? '编辑功能组' : '新增功能组'" width="420px" destroy-on-close>
       <el-form :model="groupForm" label-width="60px">
@@ -369,14 +371,14 @@
               </el-table-column>
               <el-table-column label="功能名称标准表" min-width="250">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="baselineTagType(row.standard.severity)">{{ severityLabel(row.standard.severity) }}</el-tag>
+                  <el-tag size="small" :type="baselineTagType(row.standard.severity)">{{ row.standard.reviewed ? '已确认沿用' : severityLabel(row.standard.severity) }}</el-tag>
                   <div class="std-after" v-if="row.standard.standard_cn_name">标准：{{ row.standard.standard_cn_name }}</div>
                   <div class="std-before" v-if="row.standard.severity === 'differs' || row.standard.severity === 'style'">{{ row.standard.message }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="配置管理描述" min-width="250">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="baselineTagType(row.config.severity)">{{ severityLabel(row.config.severity) }}</el-tag>
+                  <el-tag size="small" :type="baselineTagType(row.config.severity)">{{ row.config.reviewed ? '已确认沿用' : severityLabel(row.config.severity) }}</el-tag>
                   <div class="std-after" v-if="row.config.ipn">IPN：{{ row.config.ipn }}</div>
                   <div class="std-before" v-if="row.config.severity === 'differs' || row.config.severity === 'style'">{{ row.config.message }}</div>
                 </template>
@@ -402,6 +404,8 @@
 </template>
 
 <script setup>
+import FeatureNameReviewDialog from '../components/FeatureNameReviewDialog.vue'
+
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
@@ -485,7 +489,7 @@ const baselineTagType = (severity) => (
 )
 // 逐条列出每个功能在两个基准上的结论：标准表（从核对条目取）与配置管理描述（从提示标记取）
 const baselineRows = computed(() => {
-  const byFeature = featureFlags.value?.by_feature || {}
+  const byFeature = featureFlags.value?.checks_by_feature || featureFlags.value?.by_feature || {}
   const flagOf = (featureId) => byFeature[String(featureId)] || {}
   return (standardData.value?.standards || [])
     .filter((entry) => entry.feature_id)
@@ -515,6 +519,7 @@ const featureForm = reactive({
   sort_order: 0
 })
 
+const nameReview = ref()
 const totalFeatures = computed(() => {
   return tableData.value.reduce((sum, g) => sum + (g.features || []).length, 0)
 })

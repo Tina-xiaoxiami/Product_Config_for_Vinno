@@ -10,7 +10,7 @@ import { getFeatureNameStandardFlags } from '../api/data'
 // 与后端 services/feature_name_standards.normalize_feature_name_key 保持一致
 const NORMALIZE_PATTERN = /[\s\u3000（）()\[\]【】{}〈〉《》:：,，、;；·.\-_/\\|!！?？"'"'“”‘’]+/g
 
-const emptyFlags = () => ({ by_feature: {}, by_name: {}, summary: {}, standard_count: 0 })
+const emptyFlags = () => ({ by_feature: {}, by_name: {}, checks_by_feature: {}, summary: {}, standard_count: 0 })
 
 const flags = ref(emptyFlags())
 const loaded = ref(false)
@@ -23,25 +23,23 @@ export function normalizeFeatureName(value) {
     .toLowerCase()
 }
 
-export async function loadFeatureNameStandardFlags({ force = false } = {}) {
+let requestSequence = 0
+export async function loadFeatureNameStandardFlags({ force = false, strict = false } = {}) {
   if (loaded.value && !force) return flags.value
   if (!pending || force) {
-    pending = getFeatureNameStandardFlags()
-      .then((data) => {
-        flags.value = {
-          by_feature: data.by_feature || {},
-          by_name: data.by_name || {},
-          summary: data.summary || {},
-          standard_count: data.standard_count || 0,
-          last_imported_at: data.last_imported_at || null,
-          source_file: data.source_file || ''
-        }
-        loaded.value = true
-      })
-      .catch(() => { flags.value = emptyFlags() })
-      .finally(() => { pending = null })
+    const sequence = ++requestSequence
+    pending = getFeatureNameStandardFlags().then(data => {
+      if (sequence !== requestSequence) return
+      flags.value = {
+        by_feature: data.by_feature || {}, by_name: data.by_name || {}, checks_by_feature: data.checks_by_feature || {}, summary: data.summary || {},
+        standard_count: data.standard_count || 0, last_imported_at: data.last_imported_at || null, source_file: data.source_file || ''
+      }
+      loaded.value = true
+    })
   }
-  await pending
+  const task = pending
+  try { await task } catch (error) { if (strict) throw error }
+  finally { if (pending === task) pending = null }
   return flags.value
 }
 
@@ -51,8 +49,8 @@ export async function loadFeatureNameStandardFlags({ force = false } = {}) {
  */
 export function featureNameFlag({ featureId = null, names = [] } = {}) {
   const byFeature = flags.value.by_feature || {}
-  if (featureId !== null && featureId !== undefined && byFeature[String(featureId)]) {
-    return byFeature[String(featureId)]
+  if (featureId !== null && featureId !== undefined && String(featureId).trim() !== '') {
+    return byFeature[String(featureId)] || null
   }
   const byName = flags.value.by_name || {}
   for (const name of names) {

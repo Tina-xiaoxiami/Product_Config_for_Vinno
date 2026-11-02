@@ -32,7 +32,7 @@ from app.api import probe_workspace, models, drafts, series, feature_standards
 from app.api import measurements
 from app.api import config, versions, enums, probe_categories, probe_models, applications, features, template_features, probe_config, registration, knowledge
 from app.services.overseas_registration_history import migrate_overseas_registration_history_schema
-from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue
+from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue, FeatureNameStandard
 from app.models.probe import ProbeCategory, ProbeModel, ProbeModelVariant, FeatureGroup, Feature, ProductProbeConfig, TemplateFeature
 
 
@@ -49,8 +49,9 @@ async def lifespan(app):
             ProductModel(id=20, series_id=2, name='ULTIMUS 9'),
             ProbeCategory(id=1, name='凸阵'), ProbeModel(id=1, category_id=1, model_number='P1'),
             ProbeModelVariant(id=1, probe_model_id=1, internal_model='P1a', ipn='P-1'),
-            FeatureGroup(id=1, name='成像'), Feature(id=1, group_id=1, name='造影', config_item_id=201),
+            FeatureGroup(id=1, name='成像'), Feature(id=1, group_id=1, name='造影', config_item_id=201, primary_cn_name='现用造影名称', primary_en_name='Imaging'),
             TemplateFeature(category_id=1, feature_id=1, default_support='supported'),
+            FeatureNameStandard(cn_name='标准造影名称', en_name='Imaging'),
             ProbeModel(id=2, category_id=1, model_number='P2'),
             ProbeModelVariant(id=2, probe_model_id=2, internal_model='P2a', ipn='P-2'),
             ConfigItem(id=202, category='Probes', row_index=3, rd_name='P2a', en_desc='P2', ipn='P-2'),

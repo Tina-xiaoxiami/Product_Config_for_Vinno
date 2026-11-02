@@ -4,7 +4,7 @@
 应用只做提示，不自动改写正式数据。
 """
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Integer, String, Text, ForeignKey
 
 from app.database import Base
 from app.utils.time import utcnow
@@ -24,3 +24,17 @@ class FeatureNameStandard(Base):
     source_file = Column(String(255), nullable=True)
     sort_order = Column(Integer, default=0)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class FeatureNameReview(Base):
+    """A reversible confirmation of one exact baseline comparison; names stay unchanged."""
+    __tablename__ = 'feature_name_reviews'
+    id = Column(Integer, primary_key=True)
+    feature_id = Column(Integer, ForeignKey('features.id', ondelete='CASCADE'), nullable=False, index=True)
+    baseline = Column(String(20), nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    snapshot_data = Column(Text, nullable=False)
+    note = Column(String(1000), nullable=False, default='')
+    confirmed_by = Column(String(100), nullable=False, default='local_user')
+    confirmed_at = Column(DateTime, nullable=False, default=utcnow)
+    revoked_at = Column(DateTime, nullable=True)

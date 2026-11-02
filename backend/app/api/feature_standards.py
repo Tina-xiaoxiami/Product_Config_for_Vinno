@@ -88,3 +88,24 @@ async def import_feature_name_standards(
         "source_file": imported["source_file"],
         "summary": audit["summary"],
     }
+
+
+from pydantic import BaseModel, Field
+from app.services.feature_name_reviews import review_detail, confirm_differences, revoke_confirmation
+
+class NameReviewInput(BaseModel):
+    checks: dict[str,str] = Field(min_length=1,max_length=2)
+    note: str = Field(default='',max_length=1000)
+    confirmed_by: str = Field(default='local_user',min_length=1,max_length=100)
+
+@router.get('/reviews/{feature_id}')
+async def get_name_reviews(feature_id: int, db: AsyncSession = Depends(get_db)):
+    return await review_detail(db,feature_id)
+
+@router.post('/reviews/{feature_id}')
+async def confirm_name_reviews(feature_id: int, data: NameReviewInput, db: AsyncSession = Depends(get_db)):
+    return await confirm_differences(db,feature_id,data.checks,data.note,data.confirmed_by)
+
+@router.post('/reviews/{feature_id}/{review_id}/revoke')
+async def revoke_name_review(feature_id: int, review_id: int, db: AsyncSession = Depends(get_db)):
+    return await revoke_confirmation(db,feature_id,review_id)
