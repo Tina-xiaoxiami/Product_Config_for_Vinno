@@ -1428,7 +1428,10 @@ const qaReviewNotice = (status) => ({
   evidence_changed: '引用原文和适用范围均已变化，请核对依据后重新确认答案。'
 }[status] || '')
 
+let answerDialogSessionId = 0
 const openAnswerDialog = async (question) => {
+  const dialogSession = ++answerDialogSessionId
+  answerSaving.value = false
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
@@ -1450,12 +1453,12 @@ const openAnswerDialog = async (question) => {
   candidateLoading.value = true
   try {
     const result = await getKnowledgeQuestionCandidates(question.id)
-    if (answerForm.value.question_id !== question.id || !answerDialogVisible.value) return
+    if (dialogSession !== answerDialogSessionId || !answerDialogVisible.value) return
     answerCandidates.value = result.items || []
   } catch {
-    if (answerForm.value.question_id === question.id) ElMessage.error('材料候选依据加载失败')
+    if (dialogSession === answerDialogSessionId) ElMessage.error('材料候选依据加载失败')
   } finally {
-    if (answerForm.value.question_id === question.id) candidateLoading.value = false
+    if (dialogSession === answerDialogSessionId) candidateLoading.value = false
   }
 }
 
@@ -1481,6 +1484,7 @@ const saveAnswer = async () => {
     return
   }
   answerSaving.value = true
+  const dialogSession = answerDialogSessionId
   const savedScope = knowledgeScopeFingerprint(knowledgeScopePayload(answerForm.value.scope))
   try {
     const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
@@ -1493,8 +1497,8 @@ const saveAnswer = async () => {
       })),
       change_note: answerForm.value.change_note.trim()
     })
-    answerDialogVisible.value = false
-    if (knowledgeScopePayload(qaScope) && savedScope === knowledgeScopeFingerprint(knowledgeScopePayload(qaScope))) {
+    if (dialogSession === answerDialogSessionId) answerDialogVisible.value = false
+    if (dialogSession === answerDialogSessionId && knowledgeScopePayload(qaScope) && savedScope === knowledgeScopeFingerprint(knowledgeScopePayload(qaScope))) {
       qaStatus.value = 'answered'
       qaResult.value = {
         status: 'answered', question_id: saved.id, question: saved.question_text,
@@ -1504,9 +1508,9 @@ const saveAnswer = async () => {
     ElMessage.success('答案已确认发布')
     await loadQaQuestions()
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '答案发布失败')
+    if (dialogSession === answerDialogSessionId) ElMessage.error(error?.response?.data?.detail || '答案发布失败')
   } finally {
-    answerSaving.value = false
+    if (dialogSession === answerDialogSessionId) answerSaving.value = false
   }
 }
 

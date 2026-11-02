@@ -115,3 +115,15 @@ def document_matches_scope(document, scope: dict) -> bool:
         ("country", "country"), ("market", "market"),
         ("product_series", "model_name"), ("version", "software_version"),
     ))
+
+
+async def document_model_identity_unique(session: AsyncSession, scope: dict) -> bool:
+    """Legacy document model labels cannot distinguish same-name series identities."""
+    rows = await session.execute(text(
+        "SELECT p.id, s.name AS series_name FROM product_models p "
+        "JOIN product_series s ON s.id=p.series_id WHERE p.name=:name"
+    ), {"name": scope["model_name"]})
+    matches = [row.id for row in rows if {
+        "china": "domestic", "oversea": "overseas"
+    }.get(row.series_name.rsplit("-", 1)[-1].casefold()) == scope["market"]]
+    return matches == [scope["product_model_id"]]

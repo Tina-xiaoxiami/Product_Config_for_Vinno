@@ -47,85 +47,78 @@ def _snapshot_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def export_knowledge_qa_snapshot(database_path: str | Path) -> dict[str, Any]:
-    """Export Q&A content without database-specific row identifiers or file paths."""
-    connection = _connect(database_path, read_only=True)
-    try:
-        connection.execute("PRAGMA query_only=ON")
-        connection.execute("BEGIN")
-        scoped = "scope_key" in {row[1] for row in connection.execute("PRAGMA table_info(knowledge_questions)")}
-        scope_column = "scope_key" if scoped else "''"
-        question_rows = _rows(
+def _export_snapshot(connection: sqlite3.Connection) -> dict[str, Any]:
+    scoped = "scope_key" in {row[1] for row in connection.execute("PRAGMA table_info(knowledge_questions)")}
+    scope_column = "scope_key" if scoped else "''"
+    question_rows = _rows(
+        connection,
+        f"""
+        SELECT id, question_text, normalized_question, status, asked_count,
+               last_asked_at, created_at, updated_at, {scope_column} AS scope_key
+        FROM knowledge_questions
+        ORDER BY normalized_question, scope_key
+        """,
+    )
+    questions = []
+    for question_row in question_rows:
+        question_id = question_row.pop("id")
+        question = dict(question_row)
+        try:
+            question["scope"] = stored_scope(question.pop("scope_key"))
+        except KnowledgeScopeError as exc:
+            raise KnowledgeQaSnapshotError("问答范围记录无效，不能导出") from exc
+        question["phrasings"] = _rows(
             connection,
-            f"""
-            SELECT id, question_text, normalized_question, status, asked_count,
-                   last_asked_at, created_at, updated_at, {scope_column} AS scope_key
-            FROM knowledge_questions
-            ORDER BY normalized_question, scope_key
+            """
+            SELECT phrasing_text, normalized_phrasing, phrasing_type, created_at
+            FROM knowledge_question_phrasings
+            WHERE question_id = ?
+            ORDER BY normalized_phrasing
             """,
+            (question_id,),
         )
-        questions = []
-        for question_row in question_rows:
-            question_id = question_row.pop("id")
-            question = dict(question_row)
-            try:
-                question["scope"] = stored_scope(question.pop("scope_key"))
-            except KnowledgeScopeError as exc:
-                raise KnowledgeQaSnapshotError("问答范围记录无效，不能导出") from exc
-            question["phrasings"] = _rows(
+        answer_row = connection.execute(
+            """
+            SELECT id, answer_text, review_status, version, change_note,
+                   created_at, updated_at
+            FROM knowledge_answers
+            WHERE question_id = ?
+            """,
+            (question_id,),
+        ).fetchone()
+        if answer_row is None:
+            question["answer"] = None
+        else:
+            answer = dict(answer_row)
+            answer_id = answer.pop("id")
+            answer["citations"] = _rows(
                 connection,
                 """
-                SELECT phrasing_text, normalized_phrasing, phrasing_type, created_at
-                FROM knowledge_question_phrasings
-                WHERE question_id = ?
-                ORDER BY normalized_phrasing
+                SELECT document.sha256 AS document_sha256,
+                       document.title AS document_title,
+                       citation.source_ref, citation.excerpt,
+                       citation.sort_order
+                FROM knowledge_answer_citations citation
+                JOIN knowledge_documents document
+                  ON document.id = citation.document_id
+                WHERE citation.answer_id = ?
+                ORDER BY citation.sort_order, citation.id
                 """,
-                (question_id,),
+                (answer_id,),
             )
-            answer_row = connection.execute(
+            answer["revisions"] = _rows(
+                connection,
                 """
-                SELECT id, answer_text, review_status, version, change_note,
-                       created_at, updated_at
-                FROM knowledge_answers
-                WHERE question_id = ?
+                SELECT version, answer_text, review_status,
+                       change_note, created_at
+                FROM knowledge_answer_revisions
+                WHERE answer_id = ?
+                ORDER BY version
                 """,
-                (question_id,),
-            ).fetchone()
-            if answer_row is None:
-                question["answer"] = None
-            else:
-                answer = dict(answer_row)
-                answer_id = answer.pop("id")
-                answer["citations"] = _rows(
-                    connection,
-                    """
-                    SELECT document.sha256 AS document_sha256,
-                           document.title AS document_title,
-                           citation.source_ref, citation.excerpt,
-                           citation.sort_order
-                    FROM knowledge_answer_citations citation
-                    JOIN knowledge_documents document
-                      ON document.id = citation.document_id
-                    WHERE citation.answer_id = ?
-                    ORDER BY citation.sort_order, citation.id
-                    """,
-                    (answer_id,),
-                )
-                answer["revisions"] = _rows(
-                    connection,
-                    """
-                    SELECT version, answer_text, review_status,
-                           change_note, created_at
-                    FROM knowledge_answer_revisions
-                    WHERE answer_id = ?
-                    ORDER BY version
-                    """,
-                    (answer_id,),
-                )
-                question["answer"] = answer
-            questions.append(question)
-    finally:
-        connection.close()
+                (answer_id,),
+            )
+            question["answer"] = answer
+        questions.append(question)
 
     schema_version = SCOPED_SCHEMA_VERSION if any(question["scope"] for question in questions) else SCHEMA_VERSION
     if schema_version == SCHEMA_VERSION:
@@ -134,6 +127,18 @@ def export_knowledge_qa_snapshot(database_path: str | Path) -> dict[str, Any]:
     snapshot = {"schema_version": schema_version, "questions": questions}
     snapshot["snapshot_sha256"] = _snapshot_hash(snapshot)
     return snapshot
+
+
+def export_knowledge_qa_snapshot(database_path: str | Path) -> dict[str, Any]:
+    """Export content and verified scope identity without question IDs or paths."""
+    connection = _connect(database_path, read_only=True)
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
+        return _export_snapshot(connection)
+    finally:
+        connection.close()
+
 
 
 def _validate_snapshot(snapshot: dict[str, Any]) -> None:
@@ -338,9 +343,8 @@ def restore_knowledge_qa_snapshot(
                             revision["created_at"],
                         ),
                     )
-        restored = export_knowledge_qa_snapshot(database_path)
-        if restored != snapshot:
-            raise KnowledgeQaSnapshotError("恢复后复核失败")
+            if _export_snapshot(connection) != snapshot:
+                raise KnowledgeQaSnapshotError("恢复后复核失败")
         return {"status": "restored", **counts}
     finally:
         try:

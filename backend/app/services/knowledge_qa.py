@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.knowledge_scope import (
-    KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope,
+    KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
     missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
     scope_schema_ready, stored_scope,
 )
@@ -459,6 +459,8 @@ async def publish_answer(
             raise KnowledgeQaError("相似问法已归属于其他问题")
 
     resolved_citations: list[dict] = []
+    if citations and not await document_model_identity_unique(session, question["scope"]):
+        raise KnowledgeQaError("同市场存在同名完整机型，资料尚无唯一机型对应，不能作为此答案依据")
     for index, citation in enumerate(citations):
         document_result = await session.execute(
             text(

@@ -620,6 +620,10 @@ async def find_candidate_evidence(
     limit: int = 5,
     scope: dict | None = None,
 ) -> list[dict]:
+    if scope is not None:
+        from app.services.knowledge_scope import document_model_identity_unique
+        if not await document_model_identity_unique(session, scope):
+            return []
     prefilter_pairs = _candidate_prefilter_pairs(question)
     params = {
         f"prefilter_{index}": f"%{pair}%"
