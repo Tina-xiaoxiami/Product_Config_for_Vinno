@@ -137,3 +137,38 @@ async def test_unconfirmed_scope_materials_are_visible_but_never_enter_applicabl
         assert unresolved['candidate_events']
         assert unresolved['reasons']
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_narrative_negation_and_other_changes_on_same_line_do_not_become_added_child_evidence(database):
+    _document(database, 1, '1.14.40', 'Release Note 1.14.40\n新增穿刺增强；针增益调节保持不变。\n未新增针增益调节。')
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,))
+        result = await _trace(client)
+        assert all(event['change_type'] != 'added' for event in result['events'])
+        assert result['assessment'] == 'conditional_evidence'
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_same_version_contradictory_events_require_review_and_later_removal_is_visible(database):
+    _document(database, 2, '1.14.40', 'Release Note 1.14.40\n取消针增益调节。')
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1, 2, 3))
+        conflict = await _trace(client)
+        assert conflict['assessment'] == 'conflicting_evidence'
+        later = await _trace(client, scope={**SCOPE, 'software_version': '1.14.80'})
+        assert any(event['change_type'] == 'removed' for event in later['events'])
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_generic_pending_question_does_not_fail_because_history_topic_is_not_specific(database):
+    client, engine = await _client(database)
+    async with client:
+        response = await client.post('/api/knowledge/questions/ask', json={'question': '是否支持功能？', 'scope': SCOPE})
+        assert response.status_code == 200, response.text
+        assert response.json()['status'] == 'pending'
+    await engine.dispose()
