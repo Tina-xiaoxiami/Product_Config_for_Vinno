@@ -35,7 +35,7 @@ test('knowledge query uses three scope fields and keeps status beside search', a
   await chooseSelect('查询市场', '海外')
   await chooseSelect('查询完整机型', 'QA MODEL · QA-Oversea')
   await page.getByRole('textbox', { name: '查询软件版本' }).fill('1.51.90')
-  await page.getByTestId('knowledge-question-input').fill('QA国家筛选取消回归问题')
+  await page.getByTestId('knowledge-question-input').getByRole('textbox').fill('QA国家筛选取消回归问题')
   const asked = page.waitForResponse(response => response.url().endsWith('/api/knowledge/questions/ask') && response.request().method() === 'POST')
   await page.getByTestId('ask-knowledge-question').click()
   const response = await asked
