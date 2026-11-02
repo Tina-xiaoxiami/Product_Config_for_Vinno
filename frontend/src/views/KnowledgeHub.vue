@@ -130,6 +130,8 @@
           </template>
         </article>
 
+        <KnowledgeHistoryTrace v-if="qaResult?.history_trace" :trace="qaResult.history_trace" />
+
         <section class="qa-queue">
           <div class="qa-queue-scope">
             <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="onQaQueueModeChange">
@@ -199,6 +201,8 @@
         </section>
       </el-tab-pane>
 
+      <el-tab-pane label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
+      <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace /></el-tab-pane>
       <el-tab-pane label="功能主数据" name="features">
         <section class="toolbar">
           <el-input
@@ -807,6 +811,9 @@
 </template>
 
 <script setup>
+import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
+import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
+import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import { questionDisplayText, answerDisplayText, featureDisplayName } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
