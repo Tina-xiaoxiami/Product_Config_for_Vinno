@@ -34,8 +34,14 @@ def row_key(row):
     return f"{row['probe_model_id']}:{row.get('variant_id') or 0}:{row['feature_id']}"
 
 
+def scope_member_ids(scope):
+    """Disabled members retain ownership and sparse rules until explicitly removed."""
+    return set(scope['model_ids']) | set(scope.get('excluded_model_ids', []))
+
+
 async def shared_scope(db, groups, combinations):
-    models = list((await db.scalars(select(ProductModel).where(active_model_filter()).order_by(ProductModel.id))).all())
+    models = list((await db.scalars(select(ProductModel).where(active_model_filter(include_disabled=True)).order_by(ProductModel.id))).all())
+    enabled_ids = {model.id for model in models if model.is_enabled}
     parents = {r.id: r.name for r in (await db.execute(select(ProductSeries.id, ProductSeries.name))).all()}
     try:
         shared = get_subseries_editor(models, parents)
@@ -53,8 +59,12 @@ async def shared_scope(db, groups, combinations):
             selected.extend(group['model_ids'])
     if not selected:
         raise HTTPException(422, '请至少选择一个有效子系列或组合')
+    effective_ids = set(selected).intersection(enabled_ids)
+    if not effective_ids:
+        raise HTTPException(422, '所选子系列或组合没有启用的机型')
     return {'groups': sorted(set(groups)), 'combinations': sorted(set(combinations)),
-            'revision': shared['revision'], 'model_ids': sorted(set(selected))}
+            'revision': shared['revision'], 'model_ids': sorted(effective_ids),
+            'excluded_model_ids': sorted(set(selected) - enabled_ids)}
 
 
 async def catalog(db):
@@ -113,8 +123,11 @@ async def validate_document(db, document, *, refresh=False):
         overrides = document['overrides']
         if not isinstance(overrides, dict):
             raise ValueError('机型差异必须是对象')
+        if refresh:
+            departed = scope_member_ids(old_scope) - scope_member_ids(actual)
+            overrides = {mid: rules for mid, rules in overrides.items() if mid not in {str(value) for value in departed}}
         for model, changes in overrides.items():
-            if str(int(model)) != model or int(model) not in actual['model_ids']:
+            if str(int(model)) != model or int(model) not in scope_member_ids(actual):
                 raise ValueError('差异机型不在所选范围内')
             if not isinstance(changes, dict):
                 raise ValueError('机型差异格式无效')
@@ -156,7 +169,7 @@ async def initial_document(db, scope):
     cat = await catalog(db)
     rows, overrides = {}, {}
     legacy = list((await db.scalars(select(ProductProbeConfig).where(
-        ProductProbeConfig.product_model_id.in_(scope['model_ids'])))).all())
+        ProductProbeConfig.product_model_id.in_(scope_member_ids(scope))))).all())
     for cfg in legacy:
         variants = [v['id'] for v in cat['variants'] if v['probe_model_id'] == cfg.probe_model_id] or [None]
         for variant in variants:
@@ -175,13 +188,13 @@ async def initial_document(db, scope):
 
 
 async def ensure_no_overlap(db, document, workspace_id=None):
-    ids = set(document['scope']['model_ids'])
+    ids = scope_member_ids(document['scope'])
     for other in (await db.scalars(select(ProbeWorkspace))).all():
         if other.id == workspace_id:
             continue
         # Both the live membership and pending scope reserve their own models.
         for value in (other.published_data, other.draft_data):
-            if value and ids.intersection(json.loads(value)['scope']['model_ids']):
+            if value and ids.intersection(scope_member_ids(json.loads(value)['scope'])):
                 raise HTTPException(409, f'机型已属于共同总集 {other.id}（{other.name}），请打开已有总集维护，避免重复配置')
 
 
@@ -196,9 +209,9 @@ def config_gate(value):
 
 
 async def reserve_members(db, item, document, *, published=False):
-    ids = set(document['scope']['model_ids'])
+    ids = scope_member_ids(document['scope'])
     if not published and item.published_data:
-        ids.update(json.loads(item.published_data)['scope']['model_ids'])
+        ids.update(scope_member_ids(json.loads(item.published_data)['scope']))
     await db.execute(delete(ProbeWorkspaceMember).where(ProbeWorkspaceMember.workspace_id == item.id))
     db.add_all(ProbeWorkspaceMember(model_id=mid, workspace_id=item.id) for mid in sorted(ids))
     try:

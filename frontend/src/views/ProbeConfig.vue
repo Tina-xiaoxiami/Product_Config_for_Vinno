@@ -13,6 +13,7 @@
       <el-empty v-if="!current" description="选择子系列或组合建立共同总集，再按各机型配置计算结果。原有数据保留为待核对初始草稿。" />
       <template v-else>
         <div class="toolbar scope-line"><span>{{ scopeLabel }}</span><el-tag size="small">{{ document.scope.model_ids.length }} 个机型</el-tag>
+          <el-tag v-if="document.scope.excluded_model_ids?.length" size="small" type="info">已排除 {{ document.scope.excluded_model_ids.length }} 个停用机型</el-tag>
           <el-tag size="small" :type="current.has_draft || dirty ? 'warning' : 'success'">{{ dirty ? '未保存' : current.has_draft ? '待发布草稿' : '已发布' }}</el-tag>
           <el-button size="small" @click="scopeVisible = true">调整子系列范围</el-button>
           <el-button size="small" @click="refreshScope">重新核对共享范围</el-button>
