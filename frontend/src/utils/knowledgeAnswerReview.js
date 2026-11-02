@@ -7,10 +7,11 @@ export const QA_COLUMNS = [
 ].map(column => ({ visible: true, fixed: false, ...column }))
 
 export function answerReviewLabel(question) {
+  if (question.answer?.review_status && question.answer.review_status !== 'published') return '依据已变化'
   const status = question.evidence_review?.status
   if (status === 'reviewed') return '已核对'
   if (status === 'needs_review') return question.evidence_review?.latest?.action === 'defer' ? '暂缓核对' : '待核对'
-  return question.answer ? '已有文档依据' : '尚无答案'
+  return question.answer?.citations?.length ? '已有文档依据' : question.answer ? '核对状态未知' : '尚无答案'
 }
 
 export function answerReviewError(form) {

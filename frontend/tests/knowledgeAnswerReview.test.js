@@ -117,3 +117,9 @@ test('leaving review queue clears its status filter and hides the review-only fu
   assert.equal(queue.calls[0].page, 1)
   assert.match(queue.source, /<el-popover v-if="qaQueueMode === 'review'"/)
 })
+
+
+test('invalidated answers never claim document-backed review status', () => {
+  assert.equal(answerReviewLabel({ answer: { review_status: 'source_changed' }, evidence_review: { status: 'not_required' } }), '依据已变化')
+  assert.equal(answerReviewLabel({ answer: { review_status: 'published', citations: [] } }), '核对状态未知')
+})
