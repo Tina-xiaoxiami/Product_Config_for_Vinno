@@ -44,6 +44,8 @@ test('实际查询函数抑制旧请求且错误可重试', async () => {
 
 test('三个任务、隐藏高级检索和窄屏换行均接入实际页面', () => {
   for (const task of ['probe','feature','version']) assert.match(template,new RegExp(`data-scenario-task="${task}"`))
+  assert.match(template,/<summary><strong>搜索更多资料<\/strong>/);
+  assert.match(template,/查找其他版本、白皮书及相关资料/);
   assert.match(template,/<details id="advanced-search-wrap"/); assert.match(app,/scenario-form'\)\.addEventListener\('submit'/)
   assert.match(styles,/@media \(max-width: 600px\)/); assert.match(styles,/flex: 1 1 100%/)
 })

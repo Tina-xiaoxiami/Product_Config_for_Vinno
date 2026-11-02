@@ -102,3 +102,12 @@ test('标题只由显式标记决定，普通换行和原固定词都不会被�
  assert.equal((html.match(/<h4>/g)||[]).length,1);assert.match(html,/<h4>我的新标题<\/h4>/)
  for(const text of ['普通首行','临床意义：','效果图示','兼容性说明：','参数'])assert.ok(html.includes(`<p>${text}</p>`))
 })
+
+test('本功能原始变更默认折叠，原文和资料覆盖说明保留在同一核对区',()=>{
+ const html=render.scenarioEvolutionMarkup({baseline:{version:'1.51.30'},content:'## 正文\n内容',review:{heading_format:'markdown-v1'},timeline:[{version:'1.51.90',operation:'append',content:'来源原文',source_id:'release:source:40'}],coverage_notice:'仅覆盖登记资料'},'VATT')
+ assert.match(html,/<details class="feature-source-history"><summary><strong>本功能的原始变更/)
+ assert.match(html,/按版本追溯 Release Note 原文/);assert.match(html,/来源原文/);assert.match(html,/release:source:40/)
+ const area=html.slice(html.indexOf('<details class="feature-source-history"'))
+ assert.match(area,/feature-source-coverage/);assert.ok(area.indexOf('仅覆盖登记资料')<area.indexOf('</details>'))
+ assert.doesNotMatch(area,/<details[^>]*open|原始版本记录与依据/)
+})
