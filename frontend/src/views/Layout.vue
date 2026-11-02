@@ -25,6 +25,10 @@
             <el-icon><Promotion /></el-icon>
             <template #title>功能发布</template>
           </el-menu-item>
+          <el-menu-item index="/measurements">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>测量库</template>
+          </el-menu-item>
           <el-sub-menu index="/manage">
             <template #title>
               <el-icon><Setting /></el-icon>

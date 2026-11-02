@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterProbeRows, selectVisibleFilterValues } from '../src/utils/probeTableFilters.js'
+import { filterProbeRows, probeFilterOptions, selectVisibleFilterValues } from '../src/utils/probeTableFilters.js'
 
 test('table filters distinguish unrestricted, no values, blank, N/A, zero and false', () => {
   const rows = [null, '', 'N/A', 0, false].map(value => ({ value }))
@@ -16,4 +16,13 @@ test('values in one column use OR while different columns use AND', () => {
 test('search select and clear preserve choices outside the visible candidates', () => {
   assert.deepEqual(selectVisibleFilterValues(['A', 'C'], ['A', 'B'], false), ['C'])
   assert.deepEqual(selectVisibleFilterValues(['C'], ['A', 'B'], true), ['C', 'A', 'B'])
+})
+
+test('opt-in multi-value columns filter individual applications without splitting rows', () => {
+  const rows = [{ categories: ['ABD', 'GYN'], mode: 'Tissue' }, { categories: [], mode: 'Tissue' }, { categories: ['CARD'], mode: 'Doppler' }]
+  assert.deepEqual(probeFilterOptions(rows, 'categories', true), ['', 'ABD', 'CARD', 'GYN'])
+  assert.deepEqual(filterProbeRows(rows, { categories: ['GYN', 'CARD'], mode: ['Tissue'] }, ['categories']), [rows[0]])
+  assert.deepEqual(filterProbeRows(rows, { categories: [''] }, ['categories']), [rows[1]])
+  assert.deepEqual(filterProbeRows(rows, { categories: [] }, ['categories']), [])
+  assert.deepEqual(filterProbeRows(rows, { categories: ['ABD、GYN'] }), [rows[0]])
 })
