@@ -19,7 +19,7 @@ from app.services.knowledge_documents import list_knowledge_documents
 from app.services.knowledge_scope import resolve_query_scope
 from app.services.knowledge_release_applicability import (
     extract_source_applicability, model_facts, source_chain_groups,
-    scoped_condition_evidence, device_confirmation,
+    scoped_condition_evidence, device_confirmation, canonical_model, model_clauses, event_subject, source_cover_version,
 )
 
 
@@ -189,8 +189,18 @@ _NEGATED_CHANGE = re.compile(
 _PROPOSED_CHANGE = re.compile(r'(?:计划|拟|建议|考虑|可能|预计|如果|尚需).*?(?:新增|添加|取消|移除|删除)')
 
 
-def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> list[dict]:
-    headers = {m.group(1) or m.group(2) for chunk in chunks for line in chunk['content'].splitlines() if (m := _RELEASE_HEADING.search(line))}
+def _event_heading(line: str) -> str | None:
+    cover = source_cover_version(line)
+    if cover:
+        return cover
+    if re.search(r'升级前提|基于|(?:支持)?从.*升级', line):
+        return None
+    match = _RELEASE_HEADING.search(line)
+    return match.group(1) or match.group(2) if match else None
+
+
+def _events(document: dict, chunks: list[dict], topic: str, conditions='', *, model_name: str | None = None) -> list[dict]:
+    headers = {version for chunk in chunks for line in chunk['content'].splitlines() if (version := _event_heading(line))}
     cumulative = len(headers) > 1
     current = None
     table_versions: dict[str, str | None] = {}
@@ -199,44 +209,37 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> li
                or str(document.get('file_name') or '').casefold().endswith('.docx'))
     for chunk in chunks:
         section = str(chunk.get('section_name') or '')
-        # The existing DOCX extractor emits paragraphs first, followed by all
-        # tables. A table must never inherit the last paragraph's version.
         table_key = section if is_docx and section.startswith('表格') else None
         local_version = table_versions.get(table_key) if table_key else current
-        section_header = _RELEASE_HEADING.search(section)
-        if section_header:
-            local_version = section_header.group(1) or section_header.group(2)
+        local_version = _event_heading(section) or local_version
         for line in chunk['content'].splitlines():
-            header = _RELEASE_HEADING.search(line)
-            if header:
-                local_version = header.group(1) or header.group(2)
-            if topic not in _normalize(line):
-                continue
-            clauses = [clause for clause in re.split(r'[。；;,，]', line) if topic in _normalize(clause)]
-            relevant = '；'.join(clauses)
-            change, _ = _classify_change(relevant, relevant, False)
-            # Negating or proposing an action is not evidence that it happened.
-            # Keep the original sentence and require review rather than inventing
-            # a removal, addition or a contradictory first-support record.
-            if _NEGATED_CHANGE.search(relevant) or _PROPOSED_CHANGE.search(relevant):
-                change = 'unknown'
-            elif re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
-                change = 'unknown' if re.search(r'(?:取消|移除|删除).*?(?:限制|约束|条件)', relevant) else 'removed'
-            elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', relevant, re.I):
-                change = 'restricted'
-            elif re.search(r'仅|限制|limited|only', relevant, re.I):
-                change = 'restricted'
-            elif re.search(r'添加', relevant):
-                change = 'added'
-            version = local_version or (None if cumulative or table_key else document['version'])
-            event = {'document_id': document['id'], 'document_title': document['title'],
-                     'release_version': document['version'], 'event_version': version,
-                     'event_version_basis': ('table_heading' if table_key else 'section_heading') if local_version else 'unresolved' if cumulative or table_key else 'document_version',
-                     'source_ref': chunk['source_ref'], 'page_number': chunk.get('page_number'),
-                     'excerpt': line.strip()[:1500], 'change_type': change,
-                     'preview_url': f"/api/knowledge/documents/{document['id']}/preview", 'conditions': conditions}
-            if event not in events:
-                events.append(event)
+            local_version = _event_heading(line) or local_version
+            relevant_clauses = [clause for clause in model_clauses(line)
+                if topic in _normalize(clause) and not re.search(r'^(?:与|对比|相比)', clause.strip())]
+            for relevant in relevant_clauses:
+                subjects = event_subject(relevant)
+                if model_name and subjects and canonical_model(model_name) not in subjects:
+                    continue
+                change, _ = _classify_change(relevant, relevant, False)
+                if _NEGATED_CHANGE.search(relevant) or _PROPOSED_CHANGE.search(relevant):
+                    change = 'unknown'
+                elif re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
+                    change = 'unknown' if re.search(r'(?:取消|移除|删除).*?(?:限制|约束|条件)', relevant) else 'removed'
+                elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', relevant, re.I):
+                    change = 'restricted'
+                elif re.search(r'仅|限制|limited|only', relevant, re.I):
+                    change = 'restricted'
+                elif re.search(r'添加', relevant):
+                    change = 'added'
+                version = local_version or (None if cumulative or table_key else document['version'])
+                event = {'document_id': document['id'], 'document_title': document['title'],
+                    'release_version': document['version'], 'event_version': version,
+                    'event_version_basis': ('table_heading' if table_key else 'section_heading') if local_version else 'unresolved' if cumulative or table_key else 'document_version',
+                    'source_ref': chunk['source_ref'], 'page_number': chunk.get('page_number'),
+                    'excerpt': relevant.strip()[:1500], 'change_type': change,
+                    'preview_url': f"/api/knowledge/documents/{document['id']}/preview", 'conditions': conditions}
+                if event not in events:
+                    events.append(event)
         if table_key:
             table_versions[table_key] = local_version
         else:
@@ -311,7 +314,10 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     selected = set()
     chains: dict[tuple[str, str], dict] = {}
     for binding in bindings:
-        document = documents.get(binding['document_id'])
+        original = documents.get(binding['document_id'])
+        document = original
+        if original is not None and facts_by_document[original['id']]['version']:
+            document = {**original, 'version': facts_by_document[original['id']]['version']['value']}
         reasons = []
         if document is None:
             reasons.append('原Release Note索引不存在')
@@ -320,7 +326,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             source_facts = facts_by_document[document['id']]
             if source_facts['models'] and not model_facts(source_facts, scope['model_name'])['applicable']:
                 reasons.append('原文适用型号或版本与当前范围冲突，人工关系不能扩大原文')
-            if binding['document_fingerprint'] != _fingerprint(document):
+            if binding['document_fingerprint'] != _fingerprint(original):
                 reasons.append('适用关系对应的资料内容或元数据已变化')
             if version_sort_key(document['version']) > version_sort_key(scope['software_version']):
                 reasons.append('晚于目标版本')
@@ -343,13 +349,17 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
                     if source_facts['status'] == 'extracted' else _document_conditions(document, chunks_by_document.get(document['id'], [])))
         chain['detected_conditions'].extend(item for item in detected if item not in chain['detected_conditions'])
         event_conditions = '\n'.join([binding['conditions'], *(item['excerpt'] for item in detected)]).strip()
-        events = _events(document, chunks_by_document.get(document['id'], []), topic, event_conditions)
+        events = _events(document, chunks_by_document.get(document['id'], []), topic, event_conditions, model_name=scope['model_name'])
         # Cumulative documents must not introduce a later section into an earlier target.
         chain['events'].extend({**event, 'country': binding['country'], 'market': binding['market']} for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
     # Explicit source statements are usable without a fabricated human approval.
     automatic = []
     for id, original in documents.items():
         facts = facts_by_document[id]
+        document = {**original, 'version': facts['version']['value'] if facts['version'] else original['version']}
+        # Bad source quality is a system issue; stale text must not generate a business question.
+        if await _quality(document):
+            continue
         scoped = model_facts(facts, scope['model_name'])
         if not scoped['models']:
             continue
@@ -357,29 +367,29 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             continue
         if original['market'] not in (None, '', 'unspecified', scope['market']):
             continue
+        if version_sort_key(document['version']) > version_sort_key(scope['software_version']):
+            continue
         if facts['issues']:
-            result['confirmation_items'].extend({'id': f"document-{id}-{issue['field']}", **issue,
-                'required_for': 'source_version_correction'} for issue in facts['issues'])
+            if not release_line or id in selected:
+                result['confirmation_items'].extend({'id': f"document-{id}-{issue['field']}", **issue,
+                    'required_for': 'source_version_correction'} for issue in facts['issues'])
             continue
-        if not scoped['applicable']:
-            continue
-        document = {**original, 'version': facts['version']['value']}
-        if await _quality(document) or version_sort_key(document['version']) > version_sort_key(scope['software_version']):
-            continue
-        automatic.append({'document': document, 'facts': facts})
-        result['source_documents'].append({'document_id': id, 'title': document['title'],
-            'version': document['version'], 'preview_url': f"/api/knowledge/documents/{id}/preview",
-            'source_applicability': facts})
+        if scoped['applicable']:
+            automatic.append({'document': document, 'facts': facts})
     source_lines = source_chain_groups(automatic, scope['model_name'])
     for source_row in automatic:
         document, facts = source_row['document'], source_row['facts']
         id = document['id']
         if id in selected:
+            result['source_documents'].append({'document_id': id, 'title': document['title'], 'version': document['version'],
+                'preview_url': f"/api/knowledge/documents/{id}/preview", 'source_applicability': facts})
             continue
         line = source_lines[id]
         if release_line and line != release_line:
             continue
         selected.add(id)
+        result['source_documents'].append({'document_id': id, 'title': document['title'], 'version': document['version'],
+            'preview_url': f"/api/knowledge/documents/{id}/preview", 'source_applicability': facts})
         # A missing geographic declaration is a limitation, not an empty required form.
         key = (document['country'], line)
         chain = chains.setdefault(key, {'country': document['country'], 'market': document['market'],
@@ -389,10 +399,10 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
             'preview_url': f"/api/knowledge/documents/{id}/preview"})
         detected = scoped_condition_evidence(facts, scope['model_name'])
         chain['detected_conditions'].extend(item for item in detected if item not in chain['detected_conditions'])
-        events = _events(document, chunks_by_document.get(id, []), topic, '\n'.join(item['excerpt'] for item in detected))
+        events = _events(document, chunks_by_document.get(id, []), topic, '\n'.join(item['excerpt'] for item in detected), model_name=scope['model_name'])
         chain['events'].extend({**event, 'country': document['country'], 'market': document['market']}
             for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
-    result['confirmation_items'].extend(device_confirmation(query, automatic, scope['model_name']))
+    result['confirmation_items'].extend(device_confirmation(query, [row for row in automatic if row['document']['id'] in selected], scope['model_name'], has_events=any(chain['events'] for chain in chains.values())))
     # Documents without sufficient source facts or a valid manual supplement remain unresolved.
 
     for document in documents.values():
@@ -414,7 +424,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         coverage['unresolved_documents'].append({'document_id': document['id'], 'country': document['country'], 'market': document['market'], 'title': document['title'], 'version': document['version'],
             'reasons': reasons, 'preview_url': f"/api/knowledge/documents/{document['id']}/preview",
             'detected_conditions': [] if quality_reasons else _document_conditions(document, chunks_by_document.get(document['id'], [])),
-            'candidate_events': [] if quality_reasons else _events(document, chunks_by_document.get(document['id'], []), topic)})
+            'candidate_events': [] if quality_reasons else _events(document, chunks_by_document.get(document['id'], []), topic, model_name=scope['model_name'])})
     all_events: list[dict[str, Any]] = []
     for chain in chains.values():
         chain['documents'].sort(key=lambda row: version_sort_key(row['version']))

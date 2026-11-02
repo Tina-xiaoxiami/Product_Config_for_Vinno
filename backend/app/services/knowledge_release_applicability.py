@@ -40,9 +40,27 @@ def _reference(document: dict, chunk: dict, excerpt: str) -> dict:
             'preview_url': f"/api/knowledge/documents/{document['id']}/preview"}
 
 
+def source_cover_version(line: str) -> str | None:
+    match = _COVER.search(unicodedata.normalize('NFKC', line))
+    return match[1] if match and _models(match[2]) else None
+
+
+def model_clauses(value: str) -> list[str]:
+    """Split explicit subjects at comparisons/contrasts, preserving source words."""
+    value = re.sub(r'(?<=[^\s])(?=(?:但|而|然而)(?:VINNO|V)\s*\d)', '\n', value, flags=re.I)
+    return [part.strip() for part in re.split(
+        r'[。！？!?；;\n]|[，,](?=\s*(?:与|对比|相比|但|而|然而|另外|同时|(?:VINNO\s*|V\s*)\d{1,2}(?:PRO|EXP|S|P|E)?\s*(?:新增|添加|取消|移除|不支持|支持|适用|更新|升级)))', value, flags=re.I) if part.strip()]
+
+
+def event_subject(clause: str) -> list[str]:
+    if re.search(r'^(?:与|对比|相比)', clause.strip()):
+        return []
+    return _models(clause)
+
+
 def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
     result: dict = {'provenance': 'source_extract', 'status': 'incomplete', 'models': [], 'version': None,
-        'profiles': [], 'upgrades': [], 'restrictions': [], 'field_evidence': [], 'issues': [],
+        'profiles': [], 'upgrades': [], 'restrictions': [], 'field_evidence': [], 'issues': [], 'index_issues': [],
         'country': {'value': document.get('country'), 'status': 'registered' if document.get('country') else 'not_stated'},
         'market': {'value': document.get('market') if document.get('market') not in ('', None, 'unspecified') else None,
                    'status': 'registered' if document.get('market') not in ('', None, 'unspecified') else 'not_stated'}}
@@ -61,21 +79,32 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
         if names:
             fact('models', '适用型号', '、'.join(names) + ('（系列）' if scope == 'series' else ''), ref)
 
-    # Only body-written cover/model declarations qualify; metadata titles alone do not.
+    # The cover is stronger than a prerequisite/version mention in the preface.
+    covers = []
     for chunk in chunks:
+        own = []
         for raw in chunk['content'].splitlines():
-            line = unicodedata.normalize('NFKC', raw)
-            cover = _COVER.search(line)
-            if cover and _models(cover[2]):
-                ref = _reference(document, chunk, raw)
-                if result['version'] is None:
-                    result['version'] = {'value': cover[1], **ref}
-                    fact('version', '软件版本', cover[1], ref)
-                    cover_models = _models(cover[2])
-                    declare(cover_models, 'series' if '系列' in cover[2] else 'exact', ref)
-            elif result['version'] is None:
-                match = re.search(rf'(?:Release\s*Note|软件版本|版本)\s*[:：_ ]*({_VERSION})|^\s*({_VERSION})\s*(?:版本|Release\s*Note)', line, re.I)
-                if match:
+            match = _COVER.search(unicodedata.normalize('NFKC', raw))
+            if match and _models(match[2]):
+                own.append((match[1], match[2], _reference(document, chunk, raw)))
+        if own:
+            covers = own
+            break
+    if covers:
+        version, names, ref = covers[0]
+        result['version'] = {'value': version, **ref}
+        fact('version', '软件版本', version, ref)
+        cover_models = _models(names)
+        declare(cover_models, 'series' if '系列' in names else 'exact', ref)
+        if len({row[0] for row in covers}) > 1:
+            result['issues'].append({'field': 'version', 'question': '同一封面出现不同本版版本，哪一个是本版？',
+                'reason': '原文同一封面的版本声明相互冲突。', 'evidence_refs': [row[2] for row in covers]})
+    else:
+        for chunk in chunks:
+            for raw in chunk['content'].splitlines():
+                line = unicodedata.normalize('NFKC', raw)
+                match = re.match(rf'\s*(?:Release\s*Note|软件版本|版本)\s*[:：_ ]*({_VERSION})|^\s*({_VERSION})\s*(?:版本|Release\s*Note)', line, re.I)
+                if match and result['version'] is None:
                     version = match[1] or match[2]
                     ref = _reference(document, chunk, raw)
                     result['version'] = {'value': version, **ref}
@@ -83,13 +112,17 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
     subjects = list(cover_models)
     for chunk in chunks:
         # PDF wraps are retained in the reference; sentence matching uses folded whitespace.
-        for raw in re.split(r'[。！？!?；;]', chunk['content']):
+        body = '\n'.join(line for line in chunk['content'].splitlines()
+            if not source_cover_version(line) and not re.fullmatch(r'\s*(?:Release\s*Note|\d+)\s*', line, re.I))
+        # Remove layout wraps before subject clauses, not logical contrasts.
+        body = re.sub(r'\n', ' ', body)
+        for raw in model_clauses(body):
             sentence = re.sub(r'\s+', '', unicodedata.normalize('NFKC', raw))
             if not sentence:
                 continue
             ref = _reference(document, chunk, raw)
             names = _models(sentence)
-            positive = bool(re.search(r'适用于|适用型号|首次发放.*包括|新增.*机型', sentence))
+            positive = bool(re.search(r'适用于|适用型号|首次发放.*包括|新增.*机型', sentence)) and not re.search(r'^(?:与|对比|相比)', sentence)
             if positive and not re.search(r'不适用|未适用|不支持.*(?:升级|型号)', sentence):
                 declare(names, 'series' if re.search(r'V\d+(?:PRO|EXP)?系列', sentence, re.I) else 'exact', ref)
             explicit_subject = re.search(r'针对(.+?)(?:来说|此次|本次|，|,)', sentence)
@@ -98,7 +131,8 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
                 subjects = names
             elif re.search(r'另外|同样适用|适用型号|首次发放.*包括|新增.*机型', sentence) and names:
                 subjects = names
-            applies_to = names if names and (positive or explicit_subject) else list(subjects or cover_models)
+            named_platform = names and re.search(r'VLucid\+|POC|支持从.*升级', sentence, re.I)
+            applies_to = names if names and (positive or explicit_subject or named_platform) else list(subjects or cover_models)
             if re.search(r'不支持.*升级|不能.*升级|不允许.*升级|不适用.*(?:机器|型号)', sentence):
                 # Explicitly excluded models/code lists supersede a global document subject.
                 excluded = names if explicit_subject else _models(sentence)
@@ -116,7 +150,7 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
                            'v_codes': [code for values in codes.values() for code in values], 'v_codes_by_model': codes, **ref}
                 if profile not in result['profiles']:
                     result['profiles'].append(profile)
-                    fact('profiles', '硬件平台/机型规格', platform + '：' + '、'.join(applies_to) + ('；' + '、'.join(profile['v_codes']) if profile['v_codes'] else ''), ref)
+                    fact('profiles', '硬件平台/机型规格', '；'.join(name + ' ' + platform + ('：' + '、'.join(codes[name]) if codes.get(name) else '') for name in applies_to), ref)
             upgrade = re.search(rf'(?:支持)?从({_VERSION})(?:版本)?(?:进行)?升级', sentence)
             if upgrade and applies_to:
                 row = {'from_version': upgrade[1], 'to_version': result['version']['value'] if result['version'] else None,
@@ -125,8 +159,8 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
                 fact('upgrades', '明确升级路径', f"{upgrade[1]} → {row['to_version']}（{'、'.join(applies_to)}，{platform or '平台未单列'}）", ref)
     result['models'] = list(declared.values())
     if result['version'] and document.get('version') and result['version']['value'] != document['version']:
-        result['issues'].append({'field': 'version', 'question': '原文版本与登记版本不一致，哪一项需要纠正？',
-            'reason': f"登记为{document['version']}，原文封面为{result['version']['value']}", 'evidence_refs': [result['version']]})
+        result['index_issues'].append({'field': 'version', 'registered_value': document['version'], 'source_value': result['version']['value'],
+            'reason': '登记版本与明确原文封面不一致；本次按原文版本检索，索引待系统修正，无需重复确认文档事实。', 'evidence_refs': [result['version']]})
     if result['issues']:
         result['status'] = 'conflict'
     elif result['models'] and result['version']:
@@ -191,8 +225,10 @@ def scoped_condition_evidence(facts: dict, model_name: str) -> list[dict]:
     return result
 
 
-def device_confirmation(query: str, rows: list[dict], model_name: str) -> list[dict]:
-    if not re.search(r'这台|现有|旧机|旧.*V|已发货|升级', query, re.I):
+def device_confirmation(query: str, rows: list[dict], model_name: str, *, has_events: bool = False) -> list[dict]:
+    specific_device = re.search(r'这台|此台|我的(?:机器|设备|V)|现有(?:的)?(?:机器|设备)|旧(?:机|硬件|V\d)|已发货(?:的)?(?:机器|设备)', query, re.I)
+    upgrade_decision = bool(re.search(r'升级|更新|刷机|安装', query))
+    if not specific_device or not (upgrade_decision or has_events):
         return []
     options = []
     evidence = []
@@ -206,13 +242,15 @@ def device_confirmation(query: str, rows: list[dict], model_name: str) -> list[d
         for restriction in scoped['restrictions']:
             if restriction['excluded_v_codes']:
                 option = '原文排除升级的旧硬件（' + '、'.join(restriction['excluded_v_codes']) + '）'
-                if option not in options:
-                    options.append(option)
-    # A concrete platform or V-code already supplied in the question is not missing.
-    if len(options) < 2 or any(token and token.casefold() in query.casefold()
-            for token in [part for option in options for part in re.findall(r'VLucid\+|V\d{4,}|POC', option, re.I)]):
+            else:
+                option = '已发货的旧机器（原文禁止直接升级）'
+            if option not in options:
+                options.append(option)
+            evidence.append({key: restriction[key] for key in ('document_id', 'source_ref', 'page_number', 'excerpt', 'preview_url')})
+    if not evidence or any(token.casefold() in query.casefold()
+            for option in options for token in re.findall(r'VLucid\+|V\d{4,}|POC', option, re.I)):
         return []
     return [{'id': 'device_hardware', 'field': 'device_hardware',
              'question': f"需要判断的这台{model_name}属于哪种硬件/产品V代码？",
-             'reason': '原文已分别明确新平台与旧机升级限制，但机型名称本身未给出这台设备的硬件身份。',
+             'reason': '原文已明确新平台与已发货旧机器的不同升级条件，但机型名称本身未给出这台设备的硬件身份。',
              'required_for': 'device_upgrade_decision', 'options': options, 'evidence_refs': evidence}]
