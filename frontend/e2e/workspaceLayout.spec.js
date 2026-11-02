@@ -39,15 +39,23 @@ test('workspace frames share typography and surfaces across modules without page
     await page.goto(`/${path}`)
     await expect(page.getByRole('heading', { name: title, exact: true }).first()).toBeVisible()
     await expect(page.locator('.workspace-page-header')).toHaveCSS('border-radius', '10px')
+    await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(238, 243, 249)')
     await expect(page.locator('.workspace-content')).toBeVisible()
     await page.waitForLoadState('networkidle')
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
     expect(overflow, path).toBe(false)
+    if (path === 'models') {
+      const table = await page.locator('.model-table-area').boundingBox()
+      const content = await page.locator('.workspace-content').boundingBox()
+      expect(table.height).toBeGreaterThan(200)
+      expect(table.y + table.height).toBeLessThanOrEqual(content.y + content.height + 1)
+    }
     await page.screenshot({ path: testInfo.outputPath(`${path}.png`), fullPage: false })
   }
   await page.setViewportSize({ width: 860, height: 720 })
   await page.goto('/models')
   await expect(page.getByRole('heading', { name: '产品型号', exact: true })).toBeVisible()
+  await expect(page.locator('main')).toHaveCSS('padding', '8px')
   await page.getByRole('button', { name: '收起导航', exact: true }).click()
   await expect(page.getByRole('button', { name: '展开导航', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('compact-models.png'), fullPage: false })

@@ -35,8 +35,8 @@
 .system-workspace .workspace-content > .knowledge-page,
 .system-workspace .workspace-content > .registration-manage-page { width: 100%; max-width: none; margin: 0; }
 .system-workspace .workspace-content .el-card { border-color: var(--workspace-border); border-radius: 10px; box-shadow: none; }
-.system-workspace .workspace-content .el-card__header { padding: 10px 14px; background: var(--workspace-soft); color: var(--workspace-text); border-color: var(--workspace-border); }
-.system-workspace .workspace-content .el-card__body { padding: 12px 14px; }
+.system-workspace .workspace-content .el-card > .el-card__header { padding: 10px 14px; background: var(--workspace-soft); color: var(--workspace-text); border-color: var(--workspace-border); }
+.system-workspace .workspace-content .el-card > .el-card__body { padding: 12px 14px; }
 .system-workspace .workspace-content .el-table { --el-table-header-bg-color: var(--workspace-soft); --el-table-header-text-color: var(--workspace-muted); --el-table-border-color: var(--workspace-border); --el-table-row-hover-bg-color: #f2f7fe; }
 .system-workspace .workspace-content .el-table th.el-table__cell { background: var(--workspace-soft); color: var(--workspace-muted); font-weight: 600; }
 .system-workspace .workspace-content .el-tabs__item { font-size: 13px; }
@@ -65,11 +65,10 @@
 .system-workspace .workspace-content .measurement-library .source-line { background: #f5f8fd; border: 1px solid #e3eaf3; border-radius: 6px; padding: 6px 9px; }
 .system-workspace .workspace-content .measurement-library .statistics { border-color: var(--workspace-border); }
 .system-workspace .workspace-content .measurement-library .query-toolbar { margin-top: 10px; }
-.system-workspace .probe-management-navigation { margin: 0; border-color: var(--workspace-border); border-radius: 8px; background: var(--workspace-surface); }
 .system-workspace .probe-management-tabs .el-tabs__item { color: var(--workspace-muted); }
 .system-workspace .probe-management-tabs .el-tabs__item.is-active { color: var(--workspace-primary); }
 @media(max-width:900px) {
   .system-workspace .el-main { padding: 8px; gap: 8px; }
   .system-workspace .workspace-content .header-actions { flex-wrap: wrap; }
-  .system-workspace .workspace-content .el-card__body { padding: 10px; }
+  .system-workspace .workspace-content .el-card > .el-card__body { padding: 10px; }
 }
