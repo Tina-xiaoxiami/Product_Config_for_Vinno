@@ -367,3 +367,60 @@ async def test_real_cumulative_docx_table_does_not_inherit_last_paragraph_versio
         assert table['event_version_basis'] == 'unresolved'
         assert result['assessment'] == 'conditional_evidence'
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_country_optional_trace_keeps_country_specific_binding_as_conditional_evidence(database):
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,))
+        neutral = await _trace(client, scope={key: value for key, value in SCOPE.items() if key != 'country'})
+        assert neutral['scope']['country'] is None
+        assert neutral['assessment'] == 'conditional_evidence'
+        assert neutral['chains'][0]['country'] == 'CN'
+        assert neutral['events'][0]['country'] == 'CN'
+        assert neutral['coverage']['document_count'] == 1
+        explicit = await _trace(client)
+        assert explicit['assessment'] == 'evidence_found'
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_country_optional_overseas_trace_does_not_merge_opposing_country_records_into_a_conflict(database):
+    _document(database, 6, '1.14.40', 'Release Note 1.14.40\n新增针增益调节。', country='DE', market='overseas')
+    _document(database, 7, '1.14.40', 'Release Note 1.14.40\n取消针增益调节。', country='FR', market='overseas')
+    client, engine = await _client(database)
+    with closing(sqlite3.connect(database)) as c, c:
+        c.execute("UPDATE product_models SET name='VINNO 6' WHERE id=903")
+    async with client:
+        await _bind(client, (6,), product_model_ids=[903], country='DE', market='overseas')
+        await _bind(client, (7,), product_model_ids=[903], country='FR', market='overseas')
+        neutral_scope = {'market': 'overseas', 'product_model_id': 903, 'software_version': '1.14.65'}
+        result = await _trace(client, scope=neutral_scope)
+        assert result['assessment'] == 'conditional_evidence'
+        assert {(chain['country'], chain['release_line']) for chain in result['chains']} == {('DE', 'V6-main'), ('FR', 'V6-main')}
+        assert len(result['events']) == 2
+        assert {event['country'] for event in result['events']} == {'DE', 'FR'}
+        explicit = await _trace(client, scope={**neutral_scope, 'country': 'DE'})
+        assert explicit['assessment'] == 'evidence_found'
+        assert {event['document_id'] for event in explicit['events']} == {6}
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_country_optional_unbound_sources_remain_visible_with_their_source_country_and_market(database):
+    _document(database, 5, '1.14.65', 'Release Note 1.14.65\n其他图像更新。', country=None, market='unspecified')
+    client, engine = await _client(database)
+    async with client:
+        neutral_scope = {key: value for key, value in SCOPE.items() if key != 'country'}
+        result = await _trace(client, scope=neutral_scope)
+        unresolved = {item['document_id']: item for item in result['coverage']['unresolved_documents']}
+        assert unresolved[1]['country'] == 'CN'
+        assert unresolved[1]['market'] == 'domestic'
+        assert unresolved[5]['country'] is None
+        assert unresolved[5]['market'] == 'unspecified'
+        assert 4 not in unresolved  # V10 must remain isolated.
+        asked = await client.post('/api/knowledge/questions/ask', json={'question': 'V6是否支持针增益调节？', 'scope': neutral_scope})
+        assert asked.status_code == 200, asked.text
+        assert asked.json()['history_trace']['coverage']['unresolved_documents']
+    await engine.dispose()
