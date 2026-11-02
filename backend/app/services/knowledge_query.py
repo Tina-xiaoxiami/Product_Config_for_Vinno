@@ -89,7 +89,10 @@ async def _hydrate_features(
 
     ipns_by_feature: dict[int, list[dict]] = {feature_id: [] for feature_id in feature_ids}
     primary_names: dict[int, list[tuple[str, str]]] = {}
+    primary_counts: dict[int, int] = {}
     for row in links_result:
+        if row.relation_type == "primary":
+            primary_counts[int(row.feature_id)] = primary_counts.get(int(row.feature_id), 0) + 1
         if row.relation_type == "primary" and row.ipn_count == 1 and clean_feature_name(row.zh_desc):
             primary_names.setdefault(int(row.feature_id), []).append((str(row.ipn).strip(), clean_feature_name(row.zh_desc)))
         ipns_by_feature[int(row.feature_id)].append(
@@ -105,7 +108,7 @@ async def _hydrate_features(
     for row in feature_rows:
         feature_id = int(row.id)
         primaries = primary_names.get(feature_id, [])
-        display_cn_name = (primaries[0][1] if len(primaries) == 1
+        display_cn_name = (primaries[0][1] if len(primaries) == 1 and primary_counts.get(feature_id) == 1
                            and primaries[0][0] == str(row.primary_ipn or '').strip() else None)
         names = names_by_feature[feature_id]
         if display_cn_name and row.primary_cn_name and display_cn_name != row.primary_cn_name:

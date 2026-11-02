@@ -17,23 +17,51 @@ _IPN = re.compile(r"(?i)(?<![A-Za-z0-9])IPN\s*[:：]?\s*(\d{7})(?!\d)")
 _ANNOTATION = re.compile(r"[（(]\s*IPN\s*[:：]?\s*(?P<ipn>\d{7})\s*[）)]", re.I)
 
 
-def _anchors(value: str) -> list[tuple[str, str]]:
-    """Accept explicit name annotations, not arbitrary sentence/name guesses."""
+def _anchors(value: str, *, question: str = '', known_names: dict[str, set[str]] | None = None) -> list[tuple[str, str]]:
+    """Prove name boundaries from a title, an approved name, or a comparison.
+
+    A free sentence adjacent to IPN is not itself a feature name. Choosing a
+    proved suffix leaves qualifiers and negation outside the projected span.
+    """
     anchors = []
+    known_names = known_names or {}
+    def proved_name(fragment: str, ipn: str, *, comparison: bool = False) -> str:
+        candidates = []
+        for start in range(len(fragment)):
+            suffix = fragment[start:].strip()
+            base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(suffix))
+            title_proves = len(base) >= 4 and (suffix in question or base in question)
+            approved_proves = ipn in known_names.get(suffix, set())
+            if suffix and (title_proves or approved_proves):
+                candidates.append(suffix)
+        if candidates:
+            return max(candidates, key=len)
+        # This controlled syntax has an explicit grammatical name boundary.
+        # Unknown narrative fragments still remain unregistered.
+        if (comparison and fragment and len(fragment) <= 80
+                and not re.match(r'(?:并非|不是|不|仅|只|尚|未|建议|新增|增加|请|应|需|可|将|已|该|此|本|通过|采用|推荐|打开|关闭|具备|实现|开启|进行)', fragment)
+                and not re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以)', fragment)):
+            return fragment
+        return ''
     for match in _ANNOTATION.finditer(value):
         before = value[:match.start()].rstrip()
+        comparison = False
         if before.endswith(('”', '"')):
             quote = '“' if before.endswith('”') else '"'
             start = before.rfind(quote, 0, len(before) - 1)
             name = before[start + 1:-1] if start >= 0 else ''
         else:
             fragment = re.split(r'[。；;：:\n，,]', before)[-1].strip()
+            comparison = '不等同于' in fragment
             name = fragment.rsplit('不等同于', 1)[-1].strip()
-        if name and len(name) <= 80 and not re.match(r'(?:新增|增加|升级|更新|启用|禁用|该|此|本|通过|采用|推荐|可|将|已经|已|打开|关闭|具备|实现|开启|进行)', name) and not re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以)', name):
+        name = proved_name(name, match['ipn'], comparison=comparison)
+        if name:
             anchors.append((name, match['ipn']))
     # Existing controlled answers also use “NAME以主IPN 1234567查询”.
     for match in re.finditer(r'([^。；;：:\n，,]+?)以主IPN\s*(\d{7})查询', value, re.I):
-        anchors.append((match[1].strip(), match[2]))
+        name = proved_name(match[1].strip(), match[2])
+        if name:
+            anchors.append((name, match[2]))
     return anchors
 
 
@@ -121,20 +149,6 @@ async def load_name_context(session: AsyncSession) -> KnowledgeNameContext:
             continue
         context.current[ipn] = clean_feature_name(matches[0]['zh_desc'])
         context.item_ids[ipn] = int(matches[0]['id'])
-    if {'knowledge_questions', 'knowledge_answers'} <= tables:
-        sources = (await session.execute(text('''
-            SELECT q.question_text,a.answer_text FROM knowledge_questions q
-            JOIN knowledge_answers a ON a.question_id=q.id
-            WHERE a.review_status='published' AND q.status='answered'
-        '''))).all()
-        for question, answer in sources:
-            for name, ipn in _anchors(str(question or '') + '\n' + str(answer or '')):
-                context.add_alias(name, ipn)
-                # A trailing dimension qualifier may be omitted by a question;
-                # it remains bound to this IPN and still participates in collisions.
-                base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(name))
-                if base != clean_feature_name(name):
-                    context.add_alias(base, ipn)
     if {'features', 'feature_names', 'feature_config_item_links'} <= tables:
         aliases = (await session.execute(text("""
             SELECT f.ipn,n.name FROM features f
@@ -149,4 +163,18 @@ async def load_name_context(session: AsyncSession) -> KnowledgeNameContext:
         """))).all()
         for ipn, name in aliases:
             context.add_alias(str(name), str(ipn).strip())
+    if {'knowledge_questions', 'knowledge_answers'} <= tables:
+        sources = (await session.execute(text('''
+            SELECT q.question_text,a.answer_text FROM knowledge_questions q
+            JOIN knowledge_answers a ON a.question_id=q.id
+            WHERE a.review_status='published' AND q.status='answered'
+        '''))).all()
+        for question, answer in sources:
+            for name, ipn in _anchors(str(answer or ''), question=str(question or ''), known_names=context.aliases):
+                context.add_alias(name, ipn)
+                # A trailing dimension qualifier may be omitted by a question;
+                # it remains bound to this IPN and still participates in collisions.
+                base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(name))
+                if base != clean_feature_name(name):
+                    context.add_alias(base, ipn)
     return context

@@ -196,7 +196,7 @@ def test_ambiguous_long_name_blocks_a_unique_short_substring_projection():
 def test_narrative_prefix_is_not_registered_as_a_feature_name():
     from app.services.knowledge_names import _anchors
     assert _anchors('结论：新增胸膜自动识别（IPN 6000317）为选配。') == []
-    assert _anchors('结论：胸膜自动识别（IPN 6000317）为选配。') == [('胸膜自动识别','6000317')]
+    assert _anchors('结论：胸膜自动识别（IPN 6000317）为选配。', question='胸膜自动识别如何配置？') == [('胸膜自动识别','6000317')]
 
 
 @pytest.mark.asyncio
