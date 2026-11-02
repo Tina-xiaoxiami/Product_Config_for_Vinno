@@ -210,7 +210,7 @@ async def get_knowledge_questions(
     market: str | None = Query(None, pattern="^(domestic|overseas)$"),
     product_model_id: int | None = Query(None, gt=0),
     software_version: str | None = Query(None, max_length=80),
-    evidence_review: str | None = Query(None, pattern="^(needs_review|reviewed)$"),
+    evidence_review: str | None = Query(None, pattern="^(all|needs_review|reviewed)$"),
     db: AsyncSession = Depends(get_db),
 ):
     scope = {"country": country, "market": market, "product_model_id": product_model_id, "software_version": software_version}

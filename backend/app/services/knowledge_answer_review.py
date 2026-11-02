@@ -48,8 +48,11 @@ def _fingerprint_expression(scope_column: str) -> str:
         'citations',COALESCE((SELECT json_group_array(json_object(
             'id',ordered.id,'document_id',ordered.document_id,'source_ref',ordered.source_ref,
             'excerpt',ordered.excerpt,'sort_order',ordered.sort_order,
-            'document_sha256',ordered.sha256,'document_status',ordered.source_status
-        )) FROM (SELECT c.id,c.document_id,c.source_ref,c.excerpt,c.sort_order,d.sha256,d.source_status
+            'document_sha256',ordered.sha256,'document_status',ordered.source_status,
+            'country',ordered.country,'market',ordered.market,
+            'product_series',ordered.product_series,'document_version',ordered.version
+        )) FROM (SELECT c.id,c.document_id,c.source_ref,c.excerpt,c.sort_order,d.sha256,d.source_status,
+                        d.country,d.market,d.product_series,d.version
           FROM knowledge_answer_citations c LEFT JOIN knowledge_documents d ON d.id=c.document_id
           WHERE c.answer_id=a.id ORDER BY c.sort_order,c.id) ordered),'[]')
     ))"""
@@ -90,6 +93,8 @@ async def evidence_review_summary(session: AsyncSession, question_id: int) -> di
 
 async def evidence_review_filter(session: AsyncSession, mode: str) -> str:
     """Return a server-side predicate for the outer knowledge_questions alias q."""
+    if mode == "all":
+        return "1"
     available = await _prepare(session)
     fingerprint = _fingerprint_expression(await scope_expression(session, "q"))
     if available:
