@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 
 test('imports human measurements, searches both UI names and filters modes and applications', async ({ page }) => {
+  page.setDefaultTimeout(10000)
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto('/measurements')
@@ -18,7 +19,8 @@ test('imports human measurements, searches both UI names and filters modes and a
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '详情', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '测量记录详情' })).toContainText('Bladder Vol.')
-  await page.getByRole('dialog', { name: '测量记录详情' }).getByRole('button', { name: 'Close this dialog' }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: '测量记录详情' })).not.toBeVisible()
   await search.clear()
   await page.getByRole('radio', { name: '应用测量', exact: true }).click()
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
