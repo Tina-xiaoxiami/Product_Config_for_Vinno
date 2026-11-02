@@ -88,7 +88,7 @@ const requestClose = async done => {
 }
 const useCurrentScope = () => {
   if (!props.currentScope) return
-  Object.assign(form, { country: '', market: props.currentScope.market,
+  Object.assign(form, { market: props.currentScope.market,
     product_model_ids: [props.currentScope.product_model_id], software_version: props.currentScope.software_version, version_applicability: 'specific' })
 }
 const save = async () => {
