@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { formatParameterValues, filterParameterRows, parameterTopicPayload, parameterSpecPayload, createParameterEditor, createLatestParameterRequest } from '../src/utils/knowledgeParameters.js'
+import { formatParameterValues, filterParameterRows, parameterTopicPayload, parameterSpecPayload, createParameterEditor, createLatestParameterRequest, parameterStatusLabel } from '../src/utils/knowledgeParameters.js'
 
 const topic = { fields: [{ key: 'capacity', label: '容量', unit: 'mAh', type: 'number' }, { key: 'energy', label: '能量', unit: 'Wh', type: 'number' }] }
 test('parameters preserve zero, explicit units and unprovided values without guessing or conversion', () => {
@@ -72,4 +72,28 @@ test('workspace uses shared table controls, protected dialogs and snapshot model
   assert.match(source, /:before-close="closeEditor"/)
   assert.match(source, /未保存/)
   assert.doesNotMatch(source, /6700|96\.48|1001036/)
+})
+
+
+test('actual preview missing-spec and needs-review outcomes are readable', () => {
+  assert.equal(parameterStatusLabel('missing_spec'), '未匹配规格')
+  assert.equal(parameterStatusLabel('needs_review'), '需核对')
+})
+
+test('changing selection invalidates obsolete errors and save-in-progress cannot be dismissed', async () => {
+  const latest = createLatestParameterRequest(), events = []
+  let reject
+  const pending = latest.run(() => new Promise((_resolve, fail) => { reject = fail }), { error: () => events.push('error'), finish: () => events.push('finished') })
+  latest.invalidate()
+  reject(new Error('obsolete'))
+  await pending
+  assert.deepEqual(events, [])
+  const state = {}, responses = []
+  const editor = createParameterEditor({ state, save: () => new Promise(resolve => responses.push(resolve)), confirmDiscard: async () => {} })
+  editor.open('spec', { name: '规格A' })
+  const saving = editor.submit()
+  await editor.close()
+  assert.equal(state.visible, true)
+  responses[0]({ id: 1 })
+  await saving
 })
