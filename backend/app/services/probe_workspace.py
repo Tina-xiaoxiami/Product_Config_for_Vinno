@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from app.models import ConfigItem, ConfigVersion, ProductModel, ProductSeries
-from app.models.probe import ProbeModel, ProbeModelVariant, Feature, ProductProbeConfig, Application, CategoryApplication
+from app.models.probe import ProbeModel, ProbeModelVariant, Feature, ProductProbeConfig, Application, CategoryApplication, ProbeCategory, FeatureGroup, TemplateFeature, TemplateVersion
 from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceMember
 from app.services.model_identity import active_model_filter
 from app.services.whitepaper_subseries import get_subseries_editor, SubseriesSourceError
@@ -19,6 +19,7 @@ from app.services.registration_rules import normalize_business_name
 STATUSES = {'supported', 'conditional', 'unsupported', 'pending'}
 RULE_FIELDS = {'defined_status', 'current_status', 'defined_excludes', 'current_excludes', 'notes'}
 RULE_FIELDS.add('priority')
+RULE_FIELDS.update({'defined_tender', 'current_tender'})
 PRIORITIES = {None, '标1', '标2', '标3', '新', '新(未优化)', '新(未发放)'}
 
 
@@ -72,10 +73,27 @@ async def catalog(db):
     variants = list((await db.scalars(select(ProbeModelVariant).order_by(ProbeModelVariant.id))).all())
     features = list((await db.scalars(select(Feature).order_by(Feature.id))).all())
     links = (await db.execute(select(CategoryApplication.category_id, Application.name).join(Application))).all()
+    typed_links = (await db.execute(select(CategoryApplication.category_id, CategoryApplication.probe_type, Application.name).join(Application).order_by(Application.sort_order, Application.id))).all()
+    templates = list((await db.scalars(select(TemplateFeature).order_by(TemplateFeature.category_id, TemplateFeature.feature_id))).all())
+    template_rows = [{'category_id': t.category_id, 'feature_id': t.feature_id, 'default_support': t.default_support, 'default_excludes': t.default_excludes} for t in templates]
+    version = None
+    for candidate in (await db.scalars(select(TemplateVersion).order_by(TemplateVersion.id.desc()))).all():
+        try:
+            saved_templates = json.loads(candidate.snapshot_data)
+            if sorted(saved_templates, key=lambda t: (t['category_id'], t['feature_id'])) == template_rows:
+                version = candidate
+                break
+        except (ValueError, TypeError, KeyError):
+            continue
     return {
         'probes': [{'id': p.id, 'name': p.model_number, 'category_id': p.category_id} for p in probes],
-        'variants': [{'id': v.id, 'probe_model_id': v.probe_model_id, 'ipn': v.ipn, 'internal_model': v.internal_model} for v in variants],
-        'features': [{'id': f.id, 'name': f.name, 'ipn': f.ipn, 'config_item_id': f.config_item_id} for f in features],
+        'variants': [{'id': v.id, 'probe_model_id': v.probe_model_id, 'ipn': v.ipn, 'internal_model': v.internal_model, 'notes': v.notes} for v in variants],
+        'features': [{'id': f.id, 'name': f.name, 'ipn': f.ipn, 'config_item_id': f.config_item_id, 'group_id': f.group_id, 'sort_order': f.sort_order} for f in features],
+        'categories': [{'id': c.id, 'name': c.name, 'sort_order': c.sort_order} for c in (await db.scalars(select(ProbeCategory).order_by(ProbeCategory.sort_order, ProbeCategory.id))).all()],
+        'feature_groups': [{'id': g.id, 'name': g.name} for g in (await db.scalars(select(FeatureGroup).order_by(FeatureGroup.sort_order, FeatureGroup.id))).all()],
+        'category_apps': {str(p.category_id): {kind: [r.name for r in typed_links if r.category_id == p.category_id and r.probe_type == kind] for kind in ('regular', 'poc')} for p in probes},
+        'templates': template_rows,
+        'template_version': {'id': version.id, 'number': version.version_number} if version else None,
         'applications': {str(p.category_id): sorted({r.name for r in links if r.category_id == p.category_id}) for p in probes},
     }
 
@@ -135,7 +153,8 @@ async def validate_document(db, document, *, refresh=False):
                 if key not in keys or not isinstance(rule, dict) or set(rule) - RULE_FIELDS:
                     raise ValueError('机型差异引用无效条目或字段')
                 validate_rule(rule)
-        return {'scope': actual, 'rows': rows, 'overrides': overrides}
+        return {'scope': actual, 'rows': rows, 'overrides': overrides,
+                **{key: document[key] for key in ('template_revision', 'template_version') if key in document}}
     except (KeyError, TypeError, ValueError, AttributeError) as error:
         raise HTTPException(422, f'探头配置格式无效：{error}') from error
 
@@ -146,7 +165,7 @@ def validate_rule(rule):
     for field in ('defined_status', 'current_status'):
         if field in rule and rule[field] not in STATUSES:
             raise ValueError(f'{field} 必须是支持、条件支持、不支持或待确认')
-    for field in ('defined_excludes', 'current_excludes'):
+    for field in ('defined_excludes', 'current_excludes', 'defined_tender', 'current_tender'):
         if field in rule and (not isinstance(rule[field], list) or not all(isinstance(v, str) and v.strip() for v in rule[field])):
             raise ValueError('排除应用必须是非空名称的数组；清空请使用 []')
     if 'notes' in rule and (not isinstance(rule['notes'], str) or len(rule['notes']) > 4000):
@@ -184,7 +203,48 @@ async def initial_document(db, scope):
                 'priority': cfg.priority,
                 'notes': f'历史数据待核对；{cfg.notes or ""}',
             }
-    return {'scope': scope, 'rows': list(rows.values()), 'overrides': overrides}
+    return resolve_template_definitions({'scope': scope, 'rows': list(rows.values()), 'overrides': overrides}, cat)
+
+
+def resolve_template_definitions(document, cat):
+    """Fill the full matrix from committed template rows without touching model exceptions."""
+    document = deepcopy(document)
+    templates = {(t['category_id'], t['feature_id']): t for t in cat['templates']}
+    probes = {p['id']: p for p in cat['probes']}
+    old = {row_key(r): r for r in document['rows']}
+    identities = list(dict.fromkeys((r['probe_model_id'], r.get('variant_id')) for r in document['rows']))
+    output = []
+    for probe_id, variant_id in identities:
+        if probe_id not in probes:
+            # Keep broken identities visible for validation instead of deleting them.
+            output.extend(r for r in document['rows'] if r['probe_model_id'] == probe_id and r.get('variant_id') == variant_id)
+            continue
+        known_features = {f['id'] for f in cat['features']}
+        for feature in cat['features']:
+            key = f"{probe_id}:{variant_id or 0}:{feature['id']}"
+            row = deepcopy(old.get(key, {'probe_model_id': probe_id, 'variant_id': variant_id,
+                'feature_id': feature['id'], 'current_status': 'pending', 'current_excludes': [], 'notes': '', 'priority': None}))
+            row.setdefault('current_tender', [])
+            template = templates.get((probes[probe_id]['category_id'], feature['id']))
+            try:
+                raw = json.loads(template['default_excludes']) if template and template.get('default_excludes') else []
+                excludes = raw.get('excludes', []) if isinstance(raw, dict) else raw
+                tender = raw.get('tender', []) if isinstance(raw, dict) else []
+                validate_rule({'defined_excludes': excludes, 'defined_tender': tender})
+                excludes = sorted(set(excludes))
+            except (TypeError, ValueError) as error:
+                raise HTTPException(422, f"模板应用定义无效：类别 {probes[probe_id]['category_id']}，功能 {feature['id']}") from error
+            status = template['default_support'] if template else 'unsupported'
+            if status == 'supported' and excludes:
+                status = 'conditional'
+            row.update(defined_status=status,
+                       defined_excludes=excludes, defined_tender=tender)
+            output.append(row)
+        output.extend(r for r in document['rows'] if r['probe_model_id'] == probe_id and r.get('variant_id') == variant_id and r['feature_id'] not in known_features)
+    document['rows'] = output
+    document['template_revision'] = signature(cat['templates'])
+    document['template_version'] = cat['template_version']
+    return document
 
 
 async def ensure_no_overlap(db, document, workspace_id=None):
@@ -264,6 +324,7 @@ def calculate_results(document, snapshots, cat):
                 result[side + '_status'] = status
                 result[side + '_reason'] = reason
                 result[side + '_excludes'] = rule.get(side + '_excludes', [])
+                result[side + '_tender'] = rule.get(side + '_tender', [])
                 if status in {'supported', 'conditional'} and any(
                     app not in cat.get('applications', {}).get(str(probe.get('category_id')), [])
                     for app in result[side + '_excludes']

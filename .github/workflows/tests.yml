@@ -35,7 +35,7 @@ jobs:
           --cov-report=term-missing --cov-fail-under=80
       - name: Probe publication integration and greenlet-aware coverage
         run: >-
-          python -m pytest backend/tests/test_probe_workspace.py backend/tests/test_probe_fixture_safety.py -q
+          python -m pytest backend/tests/test_probe_workspace.py backend/tests/test_probe_template_definition.py backend/tests/test_probe_fixture_safety.py -q
           --cov-config=backend/coverage.ini
           --cov=app.services.probe_workspace
           --cov=app.services.probe_workbook
