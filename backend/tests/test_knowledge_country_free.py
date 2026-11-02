@@ -288,3 +288,34 @@ async def test_neutral_reads_ignore_invalid_keys_and_wrong_model_identity(databa
         assert listed.json()["total"] == 1
         assert listed.json()["items"][0]["id"] == question_id
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["alias", "similar", "explicit_ipn"])
+async def test_country_conflict_blocks_unique_alias_and_ipn_filtered_matches(database, variant):
+    client, engine = await _client_for(database)
+    alias = "亮度自动适应的操作步骤"
+    if variant == "explicit_ipn":
+        alias += "（IPN 1234567）"
+    query = "请问" + alias if variant == "similar" else alias
+    async with client:
+        german = await legacy_answer(client, answer="支持自动调节（IPN 1234567）。", aliases=[alias])
+        french = await legacy_answer(client, "FR", "不支持自动调节（IPN 7654321）。")
+        with closing(sqlite3.connect(database)) as connection:
+            before = connection.execute(
+                "SELECT id,scope_key,asked_count FROM knowledge_questions ORDER BY id").fetchall()
+        result = await ask(client, query)
+        assert result["status"] == "pending"
+        assert result["question_id"] not in {german, french}
+        assert result["answer"] is None
+        assert result["scope"]["country"] is None
+        with closing(sqlite3.connect(database)) as connection:
+            assert connection.execute(
+                "SELECT id,scope_key,asked_count FROM knowledge_questions WHERE id IN (?,?) ORDER BY id",
+                (german, french)).fetchall() == before
+            assert connection.execute(
+                "SELECT COUNT(*) FROM knowledge_question_phrasings WHERE phrasing_type='observed'").fetchone()[0] == 0
+        explicit = await ask(client, query, {**NEUTRAL, "country": "DE"})
+        assert explicit["status"] == "answered"
+        assert explicit["question_id"] == german
+    await engine.dispose()
