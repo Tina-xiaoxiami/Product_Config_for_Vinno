@@ -808,3 +808,87 @@ async def test_single_update_records_a_revision_with_the_operator(tmp_path):
         "confirmed",
         "created",
     ]
+
+
+@pytest.mark.asyncio
+async def test_source_revalidation_is_atomic_and_refresh_does_not_repeat_review(tmp_path, monkeypatch):
+    import hashlib
+    from app.services import knowledge_content, knowledge_qa, knowledge_source_import
+    from app.services.knowledge_source_import import KnowledgeSource
+
+    database = tmp_path / 'release.db'
+    source = tmp_path / 'release.txt'
+    source.write_text('原始版本正文', encoding='utf-8')
+    client, engine = await _client_for(database)
+    initial_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE knowledge_documents SET file_path = ?, file_name = ?, mime_type = 'text/plain', sha256 = ? WHERE id = 100", (str(source), source.name, initial_hash))
+        connection.execute('UPDATE knowledge_document_extractions SET source_sha256 = ? WHERE document_id = 100', (initial_hash,))
+        connection.execute("INSERT INTO knowledge_questions (id, question_text, normalized_question, status, asked_count) VALUES (1, '测试问题', '测试问题', 'answered', 1)")
+        connection.execute("INSERT INTO knowledge_answers (id, question_id, answer_text, review_status, version) VALUES (1, 1, '已确认答案', 'published', 1)")
+        connection.execute("INSERT INTO knowledge_answer_citations (answer_id, document_id, excerpt, sort_order) VALUES (1, 100, '原引文', 0)")
+    item = KnowledgeSource('release_note', 'V10系列Release Note_1.14.40', source, '1.14.40', 'domestic', None, 'V10', 'text/plain')
+    monkeypatch.setattr(knowledge_source_import, 'discover_v10_knowledge_sources', lambda _: [item])
+    async with client:
+        confirmed = await _create_version(client, 1, software_version='1.14.40', evidence_document_id=100, change_note='人工说明')
+        unaffected = await _create_version(client, 7, software_version='1.14.80', evidence_document_id=101)
+        pending = await _create_version(client, 1, software_version='1.14.80', review_status='pending', evidence_document_id=100)
+        version_id = confirmed.json()['id']
+        source.write_text(CONFIG_CHUNK_114_40.replace('V10 系列选配支持', 'V10 系列标配支持'), encoding='utf-8')
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TRIGGER fail_revision BEFORE INSERT ON feature_version_revisions WHEN NEW.changed_by = 'source_revalidation' BEGIN SELECT RAISE(ABORT, 'revision rollback'); END")
+        with pytest.raises(sqlite3.IntegrityError, match='revision rollback'):
+            knowledge_source_import.import_knowledge_sources(database, tmp_path)
+        with sqlite3.connect(database) as connection:
+            assert connection.execute('SELECT sha256 FROM knowledge_documents WHERE id = 100').fetchone()[0] == initial_hash
+            assert connection.execute('SELECT review_status FROM feature_versions WHERE id = ?', (version_id,)).fetchone()[0] == 'confirmed'
+            assert connection.execute('SELECT status FROM knowledge_document_extractions WHERE document_id = 100').fetchone()[0] == 'completed'
+            connection.execute('DROP TRIGGER fail_revision')
+        knowledge_source_import.import_knowledge_sources(database, tmp_path)
+        changed = await client.get(f'/api/release/versions/{version_id}')
+        timeline = await client.get('/api/release/features/1/versions')
+        revisions = await client.get(f'/api/release/versions/{version_id}/revisions')
+        assert changed.json()['review_status'] == 'pending'
+        with sqlite3.connect(database) as connection:
+            assert connection.execute('SELECT review_status FROM knowledge_answers WHERE id = 1').fetchone()[0] == 'source_changed'
+        assert changed.json()['change_note'] == '人工说明'
+        assert changed.json()['evidence_review_reason'] == '引用原文已变化，请重新确认'
+        pending_edit = await client.put(f'/api/release/versions/{version_id}', json={'change_note': '普通编辑', 'changed_by': 'reviewer'})
+        assert pending_edit.json()['evidence_review_reason'] == '引用原文已变化，请重新确认'
+        assert timeline.json()['first_release'] is None
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            candidates = await knowledge_content.find_candidate_evidence(session, '梯形成像 V30001')
+            assert all(candidate['document_id'] != 100 for candidate in candidates)
+        backfill = await client.post('/api/release/backfill', json={})
+        assert all(row['evidence_document_id'] != 100 for row in backfill.json()['candidates'])
+        assert (await client.get(f"/api/release/versions/{unaffected.json()['id']}")).json()['review_status'] == 'confirmed'
+        assert (await client.get(f"/api/release/versions/{pending.json()['id']}")).json()['evidence_review_reason'] is None
+        event = revisions.json()['items'][0]
+        assert event['changed_by'] == 'source_revalidation' and event['action'] == 'updated'
+        assert event['before']['review_status'] == 'confirmed' and event['after']['review_status'] == 'pending'
+        reconfirmed = await client.put(f'/api/release/versions/{version_id}', json={'review_status': 'confirmed', 'changed_by': 'reviewer'})
+        assert reconfirmed.status_code == 200
+        assert reconfirmed.json()['evidence_review_reason'] is None
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            await knowledge_qa.publish_answer(session, question_id=1, answer_text='已确认答案', alias_questions=[], citations=[{'document_id': 100, 'source_ref': None, 'excerpt': '原引文'}], change_note='重新确认')
+            await knowledge_content.extract_registered_document(session, 100, force=True)
+            assert (await knowledge_qa.get_question(session, 1))['answer']['review_status'] == 'published'
+        refreshed = await client.get(f'/api/release/versions/{version_id}')
+        assert refreshed.json()['review_status'] == 'confirmed'
+        assert refreshed.json()['evidence_review_reason'] is None
+        async with session_factory() as session:
+            candidates = await knowledge_content.find_candidate_evidence(session, '梯形成像 V30001')
+            assert any(candidate['document_id'] == 100 and '标配支持' in candidate['excerpt'] for candidate in candidates)
+        refreshed_backfill = await client.post('/api/release/backfill', json={})
+        assert any(row['evidence_document_id'] == 100 and '标配支持' in row['evidence_excerpt'] for row in refreshed_backfill.json()['candidates'])
+        manually_pending = await client.put(f'/api/release/versions/{version_id}', json={'review_status': 'pending', 'changed_by': 'reviewer'})
+        assert manually_pending.json()['evidence_review_reason'] is None
+        await client.put(f'/api/release/versions/{version_id}', json={'review_status': 'confirmed', 'changed_by': 'reviewer'})
+        source.write_text('再次变化的版本正文', encoding='utf-8')
+        async with session_factory() as session:
+            await knowledge_content.extract_registered_document(session, 100)
+            assert (await knowledge_qa.get_question(session, 1))['answer']['review_status'] == 'source_changed'
+        assert (await client.get(f'/api/release/versions/{version_id}')).json()['evidence_review_reason'] == '引用原文已变化，请重新确认'
+    await engine.dispose()

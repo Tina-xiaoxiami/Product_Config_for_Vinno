@@ -1,5 +1,5 @@
 """产品探头-功能配置 API"""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -28,7 +28,12 @@ from app.schemas.probe import (
     SeriesMatrixResponse, MergedConfigItem,
     SeriesFeatureUpdateRequest, SeriesSubmitRequest,
 )
-router = APIRouter()
+async def _require_release_workspace(request: Request):
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        raise HTTPException(409, "请在子系列共同总集工作区保存草稿并发布；旧写入入口已停用")
+
+
+router = APIRouter(dependencies=[Depends(_require_release_workspace)])
 
 
 def _normalize_status(status: str) -> str:

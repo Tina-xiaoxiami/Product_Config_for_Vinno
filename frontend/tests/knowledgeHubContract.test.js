@@ -31,7 +31,7 @@ test('knowledge hub exposes search, status filters, identity details and documen
   assert.match(view, /关联功能/)
   assert.match(view, /relationNote\(feature\)/)
   assert.match(view, /个功能待确认/)
-  assert.match(view, /统计信息加载失败/)
+  assert.match(view, /待确认功能数量加载失败/)
   assert.match(view, /data-testid="knowledge-document-list"/)
   assert.match(view, /data-testid="document-preview-dialog"/)
   assert.match(view, /<iframe/)
@@ -370,7 +370,9 @@ test('registration management supports paired upload mapping review and publish'
 test('product model table shows the registration certificate mapping', () => {
   const modelView = read('../src/views/Models.vue')
 
-  assert.match(modelView, /对应注册证/)
+  assert.match(modelView, /MODEL_TABLE_COLUMNS/)
+  const modelColumns = readFileSync(new URL('../src/utils/tableColumnLayout.js', import.meta.url), 'utf8')
+  assert.match(modelColumns, /对应注册证/)
   assert.match(modelView, /registration_packages/)
   assert.match(modelView, /registration_number/)
   assert.match(modelView, /registration_model_name/)

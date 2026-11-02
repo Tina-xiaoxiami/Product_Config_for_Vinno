@@ -1,19 +1,13 @@
 <template>
   <div class="page">
-    <!-- 顶部操作栏 -->
-    <div class="page-header">
-      <div class="header-left">
-        <h3 class="page-title">功能管理</h3>
-        <span class="page-subtitle">{{ tableData.length }} 个功能组 / {{ totalFeatures }} 项功能</span>
-      </div>
-      <div class="header-actions">
-        <el-button size="small" @click="openStandardDialog">标准名称</el-button>
-        <el-button size="small" :loading="exporting" @click="handleExportTemplate">导出模板</el-button>
-        <el-button size="small" type="success" @click="openImportDialog">导入更新</el-button>
-        <el-button size="small" @click="handleCreateGroup">新增功能组</el-button>
-        <el-button size="small" type="primary" :icon="Plus" @click="handleCreateFeature">新增功能</el-button>
-      </div>
-    </div>
+    <ProbeManagementActions path="/feature-manage">
+      <span class="management-meta" :title="`${tableData.length} 个功能组 / ${totalFeatures} 项功能`">{{ tableData.length }} 组 · {{ totalFeatures }} 项</span>
+      <el-button size="small" @click="openStandardDialog">标准名称</el-button>
+      <el-button size="small" :loading="exporting" @click="handleExportTemplate">导出模板</el-button>
+      <el-button size="small" type="success" @click="openImportDialog">导入更新</el-button>
+      <el-button size="small" @click="handleCreateGroup">新增功能组</el-button>
+      <el-button size="small" type="primary" :icon="Plus" @click="handleCreateFeature">新增功能</el-button>
+    </ProbeManagementActions>
 
     <!-- 功能组卡片列表 -->
     <div class="group-list" v-loading="loading">
@@ -411,6 +405,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 import { loadFeatureNameStandardFlags, useFeatureNameStandard } from '../utils/featureNameStandard'
 import {
   getFeatureGroups,
@@ -527,8 +522,9 @@ const totalFeatures = computed(() => {
 const loadData = async () => {
   loading.value = true
   try {
-    const groups = (await getFeatureGroups()).items || []
-    const features = (await getFeatures({ limit: 500 })).items || []
+    const [groupRes, featureRes] = await Promise.all([getFeatureGroups(), getFeatures({ limit: 500 })])
+    const groups = groupRes.items || []
+    const features = featureRes.items || []
     const featMap = {}
     features.forEach(f => {
       const gid = f.group_id
@@ -798,47 +794,21 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-  padding: 0;
-  max-width: 960px;
-}
-
-/* Header */
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.header-left {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-.page-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
-  color: #303133;
-}
-.page-subtitle {
-  font-size: 12px;
-  color: #909399;
-}
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
+.page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 360px; }
 
 /* Group Cards */
 .group-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 .group-card {
+  flex-shrink: 0;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
   transition: box-shadow 0.2s;
   background: #fff;
@@ -850,7 +820,7 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 8px 12px;
   background: linear-gradient(135deg, #f0f5ff 0%, #fafcff 100%);
   border-bottom: 1px solid #e4e7ed;
 }
@@ -891,7 +861,7 @@ onMounted(() => {
 .feature-item {
   display: flex;
   align-items: center;
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid #f0f2f5;
   transition: background 0.15s;
 }

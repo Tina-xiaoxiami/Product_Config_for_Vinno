@@ -30,6 +30,7 @@
                 <el-button size="small" @click="openCompareDialog(version)">版本对比</el-button>
                 <el-button size="small" type="warning" @click="handleRollback(version)">回滚</el-button>
                 <el-button size="small" type="primary" link @click="handleEditVersion(version)">编辑</el-button>
+                <el-button size="small" type="danger" link :disabled="deletingVersionId !== null" :loading="deletingVersionId === version.id" @click="handleDeleteVersion(version)">删除</el-button>
               </div>
             </div>
 
@@ -93,17 +94,6 @@
       </div>
     </el-dialog>
 
-    <!-- 版本对比对话框 -->
-    <el-dialog v-model="compareDialogVisible" title="版本对比" width="90%" top="5vh">
-      <el-tabs v-model="selectedSeries" class="series-tabs compare-series-tabs" aria-label="对比产品系列" @tab-change="handleCompareSeriesChange">
-        <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
-      </el-tabs>
-      <VersionComparison v-if="compareDialogVisible" :key="selectedSeries"
-        v-model:version1="compareVersion1" v-model:version2="compareVersion2"
-        :versions="versionOptions" :options-loading="versionOptionsLoading" :result="compareResult" :loading="compareLoading"
-        @compare="executeCompare" />
-    </el-dialog>
-
     <!-- 编辑版本对话框 -->
     <el-dialog v-model="editDialogVisible" title="编辑版本信息" width="500px">
       <el-form :model="editVersionForm" label-width="100px">
@@ -126,12 +116,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import VersionComparison from '../components/VersionComparison.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSeriesList, getVersions, compareVersions, rollbackVersion, updateVersion, getModels } from '../api/data'
-import { formatTime, getFieldLabel } from '../utils/modelHelpers'
+import { getSeriesList, getVersions, rollbackVersion, updateVersion, deleteVersion } from '../api/data'
+import { formatTime } from '../utils/modelHelpers'
 
 // 路由
 const router = useRouter()
@@ -143,27 +132,13 @@ const versions = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
-const modelList = ref([])  // 机型列表
-const selectedModels = ref([])  // 选中的机型
 
 // 详情对话框
 const detailDialogVisible = ref(false)
 const currentVersion = ref(null)
 const versionDetail = ref(null)
 
-// 对比对话框
-const compareDialogVisible = ref(false)
-const compareVersion1 = ref(null)
-const compareVersion2 = ref(null)
-const compareResult = ref(null)
-const compareLoading = ref(false)
-const versionOptions = ref([])
-const versionOptionsLoading = ref(false)
-const activeTab = ref('modified')
-const VERSION_OPTION_PAGE_SIZE = 100
 let versionLoadRequest = 0
-let versionOptionLoadRequest = 0
-let compareRequest = 0
 
 // 编辑版本对话框
 const editDialogVisible = ref(false)
@@ -196,7 +171,6 @@ const loadVersions = async () => {
 
   // 切换筛选时先重置数据，避免显示旧数据
   versions.value = []
-  modelList.value = []
   total.value = 0
 
   try {
@@ -207,16 +181,9 @@ const loadVersions = async () => {
     if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
     versions.value = res.items || []
     total.value = res.total || 0
-    versionOptions.value = []
-
-    // 加载机型列表
-    const modelRes = await getModels(seriesId)
-    if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
-    modelList.value = modelRes.items || []
   } catch (error) {
     if (request !== versionLoadRequest || selectedSeries.value !== seriesId) return
     versions.value = []
-    modelList.value = []
     total.value = 0
     console.error('加载版本列表失败:', error)
     ElMessage.error('加载版本列表失败')
@@ -224,61 +191,13 @@ const loadVersions = async () => {
 }
 
 const handleSeriesChange = () => {
-  compareRequest++
-  compareLoading.value = false
-  compareResult.value = null
   currentPage.value = 1
-  versionOptions.value = []
-  versionOptionLoadRequest++
   return loadVersions()
-}
-
-const handleCompareSeriesChange = async () => {
-  compareVersion1.value = null
-  compareVersion2.value = null
-  selectedModels.value = []
-  const loadingHistory = handleSeriesChange()
-  const request = compareRequest
-  const seriesId = selectedSeries.value
-  const isCurrent = () => request === compareRequest && selectedSeries.value === seriesId && compareDialogVisible.value
-  try {
-    await loadingHistory
-    if (!isCurrent()) return
-    const options = await loadAllVersionOptions(seriesId)
-    if (!isCurrent()) return
-    compareVersion1.value = options[0]?.id ?? null
-    compareVersion2.value = options[1]?.id ?? null
-  } catch (error) {
-    if (isCurrent()) ElMessage.error('加载该系列的版本失败，请重新切换系列重试')
-  }
 }
 
 const handlePageSizeChange = () => {
   currentPage.value = 1
   loadVersions()
-}
-
-const loadAllVersionOptions = async (seriesId) => {
-  const request = ++versionOptionLoadRequest
-  let skip = 0
-  let total = Number.MAX_SAFE_INTEGER
-  const items = []
-  versionOptionsLoading.value = true
-  try {
-    while (skip < total) {
-      const res = await getVersions(seriesId, { skip, limit: VERSION_OPTION_PAGE_SIZE })
-      if (request !== versionOptionLoadRequest || selectedSeries.value !== seriesId) return []
-      const pageItems = res.items || []
-      items.push(...pageItems)
-      total = res.total || 0
-      if (pageItems.length === 0) break
-      skip += pageItems.length
-    }
-    versionOptions.value = items
-    return items
-  } finally {
-    if (request === versionOptionLoadRequest) versionOptionsLoading.value = false
-  }
 }
 
 // 查看版本详情
@@ -304,86 +223,10 @@ const viewVersion = async (version) => {
   }
 }
 
-// 打开对比对话框
-const openCompareDialog = async (version) => {
-  const seriesId = selectedSeries.value
-  compareLoading.value = false
-  compareVersion1.value = version.id
-  compareVersion2.value = null
-  compareResult.value = null
-  activeTab.value = 'modified'
-  selectedModels.value = []  // 重置机型选择
-  versionOptions.value = [...versions.value]
-  compareDialogVisible.value = true
-  const request = ++compareRequest
-
-  try {
-    const options = await loadAllVersionOptions(seriesId)
-    if (request !== compareRequest || selectedSeries.value !== seriesId) return
-    const idx = options.findIndex(v => v.id === version.id)
-    compareVersion2.value = idx >= 0 && idx < options.length - 1 ? options[idx + 1].id : null
-  } catch (error) {
-    if (request !== compareRequest || selectedSeries.value !== seriesId) return
-    console.error('加载完整版本列表失败:', error)
-    ElMessage.error('加载完整版本列表失败')
-  }
-}
-
-// 执行版本对比
-const executeCompare = async () => {
-  compareResult.value = null
-  if (!compareVersion1.value || !compareVersion2.value) {
-    ElMessage.warning('请选择两个版本进行对比')
-    return
-  }
-
-  if (compareVersion1.value === compareVersion2.value) {
-    ElMessage.warning('请选择不同的版本进行对比')
-    return
-  }
-
-  const request = ++compareRequest
-  const seriesId = selectedSeries.value
-  const version1 = compareVersion1.value
-  const version2 = compareVersion2.value
-  const modelIds = [...selectedModels.value]
-  const isCurrent = () => (
-    request === compareRequest &&
-    compareDialogVisible.value &&
-    selectedSeries.value === seriesId &&
-    compareVersion1.value === version1 &&
-    compareVersion2.value === version2 &&
-    modelIds.length === selectedModels.value.length &&
-    modelIds.every((id, index) => id === selectedModels.value[index])
-  )
-
-  compareLoading.value = true
-  try {
-    const res = await compareVersions({
-      version_id_1: version1,
-      version_id_2: version2,
-      model_ids: modelIds.length > 0 ? modelIds : undefined
-    })
-
-    if (!isCurrent()) return
-    compareResult.value = res
-
-    // 自动选择有数据的标签页
-    if (res.modified.length > 0) {
-      activeTab.value = 'modified'
-    } else if (res.added.length > 0) {
-      activeTab.value = 'added'
-    } else if (res.deleted.length > 0) {
-      activeTab.value = 'deleted'
-    }
-  } catch (error) {
-    if (!isCurrent()) return
-    console.error('对比失败:', error)
-    ElMessage.error('对比失败')
-  } finally {
-    if (request === compareRequest) compareLoading.value = false
-  }
-}
+// 历史记录保留入口，进入独立对比页并带上当前系列与版本。
+const openCompareDialog = version => router.push({
+  name: 'VersionCompare', query: { series: String(selectedSeries.value), version: String(version.id) }
+})
 
 // 回滚版本
 const handleRollback = async (version) => {
@@ -421,6 +264,38 @@ const handleRollback = async (version) => {
   }
 }
 
+const deletingVersionId = ref(null)
+const handleDeleteVersion = async (version) => {
+  if (deletingVersionId.value !== null) return
+  const versionId = version.id
+  const seriesId = version.series_id ?? selectedSeries.value
+  const seriesName = seriesList.value.find(series => series.id === seriesId)?.name || '当前系列'
+  deletingVersionId.value = versionId
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${seriesName} 的版本 ${version.version_number}？该历史快照及关联变更记录将永久删除，无法再用于对比或回滚；当前配置不会改变。`,
+      '删除历史版本',
+      { confirmButtonText: '删除版本', cancelButtonText: '取消', type: 'warning', distinguishCancelAndClose: true }
+    )
+    await deleteVersion(versionId)
+    ElMessage.success('版本已删除，当前配置未改变')
+    if (currentVersion.value?.id === versionId) {
+      detailDialogVisible.value = false
+      currentVersion.value = null
+      versionDetail.value = null
+    }
+    if (editVersionForm.value.id === versionId) editDialogVisible.value = false
+    if (selectedSeries.value === seriesId) {
+      currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil((total.value - 1) / pageSize.value)))
+      await loadVersions()
+    }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.response?.data?.detail || '删除版本失败，请重试')
+  } finally {
+    deletingVersionId.value = null
+  }
+}
+
 // 编辑版本信息
 const handleEditVersion = (version) => {
   editVersionForm.value = {
@@ -449,14 +324,6 @@ const saveVersionEdit = async () => {
   }
 }
 
-// 版本对比条件生命周期
-watch([compareVersion1, compareVersion2, selectedModels, compareDialogVisible], () => {
-  compareRequest++
-  compareLoading.value = false
-  compareResult.value = null
-}, { deep: true, flush: 'sync' })
-// 版本对比条件生命周期结束
-
 onMounted(() => {
   loadSeries()
 })
@@ -477,6 +344,7 @@ onMounted(() => {
   align-items: center;
 }
 
+.history-card { width: 100%; max-width: 1120px; box-sizing: border-box; }
 .history-card > :deep(.el-card__header) { padding: 12px 16px 8px; }
 .history-card > :deep(.el-card__body) { padding: 14px 16px; }
 .history-card :deep(.el-timeline) { padding-left: 8px; }
@@ -551,30 +419,4 @@ onMounted(() => {
   color: #909399;
 }
 
-.compare-select {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.compare-vs {
-  font-size: 18px;
-  font-weight: bold;
-  color: #409EFF;
-}
-
-.compare-result {
-  margin-top: 16px;
-}
-
-.old-value {
-  color: #F56C6C;
-  text-decoration: line-through;
-}
-
-.new-value {
-  color: #67C23A;
-  font-weight: 500;
-}
 </style>

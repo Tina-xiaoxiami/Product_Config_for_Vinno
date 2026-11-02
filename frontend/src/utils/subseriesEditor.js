@@ -1,30 +1,19 @@
 export const cloneSubseriesGroups = groups => groups.map(group => ({
-  ...group, models: [...group.models], options: (group.options || []).map(option => ({ ...option }))
+  ...group,
+  series_names: [...(group.series_names || (group.series ? [group.series] : []))],
+  models: group.model_ids ? [...group.model_ids.map(id => `id:${id}`), ...(group.missing_models || [])] : [...group.models],
+  options: (group.options || []).map(option => ({ ...option }))
 }))
 export const subseriesGroupOptions = (group, catalog) => {
-  const originalById = new Map((group.options || []).filter(option => option.id != null).map(option => [option.id, option]))
-  const candidates = catalog.filter(model => !group.series || model.series === group.series).map(model => ({
-    id: model.id, value: originalById.get(model.id)?.value || model.name,
-    label: model.name, series: model.series
-  }))
-  const byValue = new Map()
-  for (const option of candidates) {
-    const existing = byValue.get(option.value)
-    if (existing) {
-      if (option.series && !existing.seriesNames.includes(option.series)) existing.seriesNames.push(option.series)
-    } else {
-      byValue.set(option.value, { ...option, seriesNames: option.series ? [option.series] : [] })
-    }
-  }
-  const options = [...byValue.values()].map(option => ({
-    ...option,
-    label: !group.series && option.seriesNames.length ? `${option.label}（${option.seriesNames.join('、')}）` : option.label
+  const series = group.series_names || (group.series ? [group.series] : [])
+  const options = catalog.filter(model => !series.length || series.includes(model.series)).map(model => ({
+    id: model.id, value: `id:${model.id}`, label: `${model.name}（${model.series}）`, series: model.series
   }))
   const values = new Set(options.map(option => option.value))
   for (const value of group.models) {
     if (!values.has(value)) {
-      const known = (group.options || []).find(option => option.value === value)
-      options.push({ value, label: known?.label || `${value}（未匹配或不属于当前系列，请核对）` })
+      const model = catalog.find(model => `id:${model.id}` === value)
+      options.push({ value, label: model ? `${model.name}（${model.series}，不属于当前系列）` : `${value}（未匹配，保留）` })
       values.add(value)
     }
   }
@@ -40,7 +29,7 @@ export const cloneSubseriesCombinations = (combinations, groups) => combinations
 }))
 export const subseriesPayload = (revision, groups, combinations) => {
   const payload = {
-    revision, groups: groups.map(group => ({ name: group.name.trim(), series: group.series || '', models: [...new Set(group.models)] }))
+    revision, groups: groups.map(group => ({ name: group.name.trim(), ...(group.unresolved_refs ? { unresolved_refs: group.unresolved_refs.filter(ref => group.models.includes(ref.name)) } : {}), series_names: [...(group.series_names || (group.series ? [group.series] : []))], model_ids: [...new Set(group.models.filter(value => /^id:\d+$/.test(value)).map(value => Number(value.slice(3))))], models: [...new Set(group.models.filter(value => !/^id:\d+$/.test(value)))] }))
   }
   if (combinations !== undefined) payload.combinations = combinations.map(combination => ({
     name: combination.name.trim(),

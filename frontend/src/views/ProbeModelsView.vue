@@ -1,11 +1,29 @@
 <template>
   <div class="page">
+    <ProbeManagementActions path="/probe-models">
+      <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
+      <template v-if="selectedCategory">
+
+              <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
+              <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置自动填充</el-button>
+              <el-upload
+                :show-file-list="false"
+                :auto-upload="false"
+                :on-change="h => importAllVariants(h.raw)"
+                accept=".xlsx,.xls"
+                style="display:inline-block"
+              >
+                <el-button size="small" @click="">导入变体</el-button>
+              </el-upload>
+              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
+      </template>
+      <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增类别</el-button>
+    </ProbeManagementActions>
     <div class="panel-layout">
       <!-- Left: Category Panel -->
       <div class="panel panel-left">
         <div class="panel-header">
           <span class="panel-title">探头类别</span>
-          <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增</el-button>
         </div>
         <div class="panel-body" v-loading="loading">
           <div
@@ -30,29 +48,9 @@
 
       <!-- Right: Models Panel -->
       <div class="panel panel-right">
-        <div class="panel-header">
-          <template v-if="selectedCategory">
-            <span class="panel-title">{{ selectedCategory.name }} — 探头型号</span>
-            <div class="panel-header-actions">
-              <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
-              <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置自动填充</el-button>
-              <el-upload
-                :show-file-list="false"
-                :auto-upload="false"
-                :on-change="h => importAllVariants(h.raw)"
-                accept=".xlsx,.xls"
-                style="display:inline-block"
-              >
-                <el-button size="small" @click="">导入变体</el-button>
-              </el-upload>
-              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
-            </div>
-          </template>
-          <span v-else class="panel-title placeholder">请选择一个探头类别</span>
-        </div>
         <div class="panel-body" v-loading="loading">
           <template v-if="selectedCategory">
-            <el-table :data="currentModels" border stripe size="small" style="width:100%" max-height="560" v-if="currentModels.length">
+            <el-table :data="currentModels" border stripe size="small" style="width:100%" height="100%" v-if="currentModels.length">
               <el-table-column type="index" label="#" width="40" />
               <el-table-column prop="model_number" label="型号" width="130" />
               <el-table-column label="内部型号 / IPN" min-width="240">
@@ -196,6 +194,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, FolderOpened } from '@element-plus/icons-vue'
 import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, getApplications, getProbeModelApps, setProbeModelApps, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
 import api from '../api/index'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
 const loading = ref(false)
 const categories = ref([])
@@ -207,38 +206,31 @@ const modelDialogVisible = ref(false); const editingModelId = ref(null); const s
 const catForm = reactive({ name: '', sort_order: 0 })
 const modelForm = reactive({ category_id: null, model_number: '', sort_order: 0 })
 
+let dataLoadRequest = 0
 const loadData = async () => {
+  const request = ++dataLoadRequest
   loading.value = true
   try {
     const [catRes, modelRes] = await Promise.all([
       getProbeCategories({ limit: 200 }),
-      getProbeModels({ limit: 2000 })
+      getProbeModels({ limit: 2000, include_details: true })
     ])
-    categories.value = catRes.items || []
-    const models = modelRes.items || []
-
-    const mm = {}; models.forEach(m => { if (!mm[m.category_id]) mm[m.category_id] = []; mm[m.category_id].push(m) })
-    modelMap.value = mm
-
-    // Load app counts and variants for current category's models
-    const curModels = selectedCategory.value ? (mm[selectedCategory.value.id] || []) : []
-    const appCounts = {};
-    const varMap = {};
-    await Promise.all(curModels.map(async m => {
-      try { appCounts[m.id] = (await getProbeModelApps(m.id)).length } catch { appCounts[m.id] = 0 }
-      try { varMap[m.id] = await api.get(`/probe-models/${m.id}/variants`) } catch { varMap[m.id] = [] }
-    }))
-    // Rebuild modelMap with enriched data
-    const enriched = {}
-    for (const cid of Object.keys(mm)) {
-      enriched[cid] = mm[cid].map(m => ({
-        ...m,
-        _appCount: appCounts[m.id] || 0,
-        _variants: varMap[m.id] || []
-      }))
+    if (request !== dataLoadRequest) return
+    const nextCategories = catRes.items || []
+    const nextMap = {}
+    for (const model of modelRes.items || []) {
+      const row = { ...model, _appCount: model.application_count || 0, _variants: model.variant_items || [] }
+      if (!nextMap[model.category_id]) nextMap[model.category_id] = []
+      nextMap[model.category_id].push(row)
     }
-    modelMap.value = enriched
-  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+    categories.value = nextCategories
+    modelMap.value = nextMap
+    selectedCategory.value = nextCategories.find(cat => cat.id === selectedCategory.value?.id) || nextCategories[0] || null
+  } catch {
+    if (request === dataLoadRequest) ElMessage.error('加载失败')
+  } finally {
+    if (request === dataLoadRequest) loading.value = false
+  }
 }
 
 const currentModels = computed(() => {
@@ -248,7 +240,6 @@ const currentModels = computed(() => {
 
 const selectCategory = (cat) => {
   selectedCategory.value = cat
-  loadData()
 }
 
 // Category CRUD
@@ -304,9 +295,16 @@ const allApps = ref([]); const appDialogVisible = ref(false); const appTarget = 
 const selectedAppIds = ref([]); const appSaving = ref(false)
 
 const openAppDialog = async (m) => {
-  appTarget.value = m; selectedAppIds.value = []
-  try { selectedAppIds.value = ((await getProbeModelApps(m.id)) || []).map(a => a.id) } catch { selectedAppIds.value = [] }
-  appDialogVisible.value = true
+  try {
+    const [apps, catalog] = await Promise.all([
+      getProbeModelApps(m.id),
+      getApplications({ limit: 500 })
+    ])
+    appTarget.value = m
+    allApps.value = catalog.items || []
+    selectedAppIds.value = (apps || []).map(a => a.id)
+    appDialogVisible.value = true
+  } catch { ElMessage.error('加载探头应用失败') }
 }
 const saveApps = async () => {
   appSaving.value = true
@@ -394,70 +392,59 @@ const importAllVariants = async (file) => {
   } catch { ElMessage.error('导入失败') }
 }
 
-onMounted(async () => {
-  allApps.value = ((await getApplications({ limit: 500 })).items || [])
-  await loadData()
-  if (categories.value.length) selectedCategory.value = categories.value[0]
-})
+onMounted(loadData)
 </script>
 
 <style scoped>
-.page { padding: 0; height: calc(100vh - 120px); }
+.page { padding: 0; flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 
 .panel-layout {
   display: flex;
-  gap: 16px;
-  height: 100%;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel {
   background: #fff;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .panel-left {
-  width: 280px;
-  min-width: 240px;
+  width: 220px;
+  min-width: 200px;
   flex-shrink: 0;
 }
 
 .panel-right {
   flex: 1;
+  min-width: 0;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e4e7ed;
   background: #fafafa;
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #303133;
 }
 
-.panel-title.placeholder {
-  color: #c0c4cc;
-  font-weight: 400;
-}
-
-.panel-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .panel-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 /* Category items */
@@ -465,7 +452,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
@@ -479,7 +466,7 @@ onMounted(async () => {
 .category-item.active {
   background: #ecf5ff;
   border-left: 3px solid #409eff;
-  padding-left: 9px;
+  padding-left: 7px;
 }
 
 .category-info {
@@ -522,7 +509,7 @@ onMounted(async () => {
 }
 
 .placeholder-content p {
-  font-size: 14px;
+  font-size: 13px;
   margin: 0;
 }
 
@@ -540,7 +527,7 @@ onMounted(async () => {
 
 /* Dialog styles */
 .dialog-info {
-  font-size: 14px;
+  font-size: 13px;
   color: #606266;
 }
 

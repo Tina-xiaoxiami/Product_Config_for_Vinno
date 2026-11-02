@@ -25,6 +25,7 @@ from app.schemas.version import (
     ConfigVersionListResponse
 )
 from app.utils import generate_next_version
+from app.services.config_publication import ensure_no_pending_drafts as _ensure_no_pending_drafts
 
 from app.services.config_history import (
     build_series_snapshot,
@@ -45,23 +46,6 @@ async def _comparison_snapshot(db, version):
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
 router = APIRouter()
-
-
-async def _ensure_no_pending_drafts(db: AsyncSession, series_id: int) -> None:
-    pending = await db.scalar(
-        select(ConfigDraft.id)
-        .join(DraftBatch, DraftBatch.id == ConfigDraft.batch_id)
-        .where(
-            ConfigDraft.series_id == series_id,
-            DraftBatch.status == "draft",
-        )
-        .limit(1)
-    )
-    if pending is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="当前系列存在未提交草稿，请先提交或废弃草稿",
-        )
 
 
 @router.get("", response_model=ConfigVersionListResponse)

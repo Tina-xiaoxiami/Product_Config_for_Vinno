@@ -1,31 +1,20 @@
 <template>
   <div class="page">
-    <!-- Draft bar -->
-    <div v-if="editMode" class="draft-bar">
-      <el-tag type="warning">编辑中</el-tag>
-      <span><strong>{{ pendingCount }}</strong> 项待提交变更</span>
-      <div class="draft-actions">
+    <ProbeManagementActions path="/applications">
+      <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
+      <el-tag v-if="editMode" size="small" type="warning">编辑中 · {{ pendingCount }} 项</el-tag>
+      <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
+      <template v-if="!editMode">
+        <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
+        <el-button size="small" @click="openVersions">版本历史</el-button>
+      </template>
+      <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
+      <template v-if="editMode">
         <el-button size="small" @click="cancelEdit">撤销</el-button>
         <el-button size="small" type="primary" @click="submitChanges" :loading="submitting">提交并创建版本</el-button>
         <el-button size="small" type="danger" @click="discardChanges">废弃全部</el-button>
-      </div>
-    </div>
-
-    <div class="card-header">
-      <span>应用管理（按探头类别）</span>
-      <div style="display:flex;gap:12px;align-items:center">
-        <template v-if="!editMode">
-          <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
-          <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
-          <el-button size="small" @click="openVersions">版本历史</el-button>
-          <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
-        </template>
-        <template v-else>
-          <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
-          <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
-        </template>
-      </div>
-    </div>
+      </template>
+    </ProbeManagementActions>
     <div class="panel-layout">
       <!-- Left: Category Panel -->
       <div class="panel panel-left">
@@ -56,9 +45,6 @@
       <!-- Right: Apps Panel -->
       <div class="panel panel-right">
         <template v-if="selectedCategory">
-          <div class="panel-header">
-            <span class="panel-title">{{ selectedCategory.name }} — 应用</span>
-          </div>
           <div class="panel-body" v-loading="loadingApps">
             <!-- Regular Apps -->
             <div class="app-group">
@@ -190,6 +176,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getProbeCategories, getApplications, createApplication, deleteApplication } from '../api/data'
 import api from '../api/index'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
 const loading = ref(false)
 const categories = ref([])
@@ -472,31 +459,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.page { padding: 0; height: calc(100vh - 120px); display: flex; flex-direction: column; }
-
-/* Draft bar */
-.draft-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-.draft-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-}
-
-.card-header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; padding: 0 0 12px; gap: 12px; }
+.page { padding: 0; flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 
 .panel-layout {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   flex: 1;
   min-height: 0;
 }
@@ -504,41 +471,43 @@ onMounted(async () => {
 .panel {
   background: #fff;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .panel-left {
-  width: 280px;
-  min-width: 240px;
+  width: 220px;
+  min-width: 200px;
   flex-shrink: 0;
 }
 
 .panel-right {
   flex: 1;
+  min-width: 0;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e4e7ed;
   background: #fafafa;
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #303133;
 }
 
 .panel-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 /* Category items */
@@ -546,7 +515,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
@@ -556,7 +525,7 @@ onMounted(async () => {
 .category-item.active {
   background: #ecf5ff;
   border-left: 3px solid #409eff;
-  padding-left: 9px;
+  padding-left: 7px;
 }
 
 .category-info {
@@ -580,7 +549,7 @@ onMounted(async () => {
 .count-poc { color: #e6a23c; font-weight: 500 }
 
 /* App groups */
-.app-group { padding: 12px 16px; border-bottom: 1px solid #f0f0f0 }
+.app-group { padding: 8px 10px; border-bottom: 1px solid #f0f0f0 }
 .app-group-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 500; font-size: 13px }
 .app-count { font-weight: 400; font-size: 12px; color: #909399 }
 .app-list { display: flex; flex-wrap: wrap; gap: 6px }
@@ -596,7 +565,7 @@ onMounted(async () => {
 /* Pending changes list */
 .pending-list {
   margin-top: 8px;
-  padding: 8px;
+  padding: 6px;
   background: #fffbeb;
   border: 1px solid #fde68a;
   border-radius: 6px;

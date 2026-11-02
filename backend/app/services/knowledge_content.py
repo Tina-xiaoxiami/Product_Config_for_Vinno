@@ -15,6 +15,7 @@ import unicodedata
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.knowledge_evidence_review import mark_changed_async
 from app.services.knowledge_qa import normalize_question
 
 
@@ -276,6 +277,15 @@ def build_document_chunks(blocks: list[ExtractedBlock]) -> list[dict]:
     return chunks
 
 
+async def _record_source_observation(session: AsyncSession, document_id: int, old_hash: str | None, source_sha256: str) -> None:
+    if old_hash and old_hash != source_sha256:
+        await mark_changed_async(session, document_id, "source_changed")
+    await session.execute(
+        text("UPDATE knowledge_documents SET sha256 = :sha256 WHERE id = :document_id"),
+        {"sha256": source_sha256, "document_id": document_id},
+    )
+
+
 async def extract_registered_document(
     session: AsyncSession,
     document_id: int,
@@ -285,7 +295,7 @@ async def extract_registered_document(
     document_result = await session.execute(
         text(
             """
-            SELECT id, file_path, mime_type
+            SELECT id, file_path, mime_type, sha256
             FROM knowledge_documents
             WHERE id = :document_id AND source_status = 'active'
             """
@@ -317,6 +327,7 @@ async def extract_registered_document(
         and current.status == "completed"
         and current.extractor_version == EXTRACTOR_VERSION
         and current.source_sha256 == source_sha256
+        and document.sha256 == source_sha256
     ):
         return {
             "document_id": document_id,
@@ -327,11 +338,35 @@ async def extract_registered_document(
             "reused": True,
         }
 
-    blocks = await asyncio.to_thread(extract_document_blocks, path, document.mime_type)
-    chunks = build_document_chunks(blocks)
-    if not chunks:
-        raise KnowledgeContentError("未从原文件中提取到可检索正文")
+    old_hash = document.sha256 or (current.source_sha256 if current else None)
+    try:
+        blocks = await asyncio.to_thread(extract_document_blocks, path, document.mime_type)
+        chunks = build_document_chunks(blocks)
+        if not chunks:
+            raise KnowledgeContentError("未从原文件中提取到可检索正文")
+    except Exception as exc:
+        # Parsing failure does not make the old evidence current. Commit the
+        # observed change and failed index together before reporting the error.
+        if (old_hash and old_hash != source_sha256) or current is None or current.status != "completed" or (current.source_sha256 and current.source_sha256 != source_sha256):
+            await _record_source_observation(session, document_id, old_hash, source_sha256)
+            message = str(exc) if isinstance(exc, KnowledgeContentError) else "正文提取失败"
+            await session.execute(
+                text("""
+                    INSERT INTO knowledge_document_extractions (
+                        document_id, extractor_version, source_sha256, status,
+                        chunk_count, error_message, updated_at
+                    ) VALUES (:document_id, :extractor_version, NULL, 'failed', 0, :message, CURRENT_TIMESTAMP)
+                    ON CONFLICT(document_id) DO UPDATE SET status = 'failed',
+                        error_message = :message, updated_at = CURRENT_TIMESTAMP
+                """),
+                {"document_id": document_id, "extractor_version": EXTRACTOR_VERSION, "message": message[:1000]},
+            )
+            await session.commit()
+        if isinstance(exc, KnowledgeContentError):
+            raise
+        raise KnowledgeContentError("正文提取失败") from exc
 
+    await _record_source_observation(session, document_id, old_hash, source_sha256)
     await session.execute(
         text("DELETE FROM knowledge_document_chunks WHERE document_id = :document_id"),
         {"document_id": document_id},
