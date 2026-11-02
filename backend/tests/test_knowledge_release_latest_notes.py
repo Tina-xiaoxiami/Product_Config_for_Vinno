@@ -87,3 +87,14 @@ def test_child_gain_aliases_share_existing_query_forms_without_aliasing_parent_f
     forms = _query_forms('针增益调节')
     assert '针增益' in forms and 'needlegain' in forms
     assert '穿刺增强' not in forms
+
+
+def test_english_combined_upgrade_methods_are_preserved_without_selecting_one():
+    content = '''1.14.80 (VINNO10/6/5 series)
+Release Note
+This version is a consolidated V Series release, supporting VLucid+ platform V5, V6, and V10 series products.
+V5/6 series (original version 1.14.X): Supports patch & OS upgrade (If you do not need to support the Slovak input method, you can choose the patch upgrade).'''
+    upgrade = model_facts(facts(content,'1.14.80'),'VINNO 6')['upgrades'][0]
+    assert upgrade['methods'] == ['patch','OS']
+    assert upgrade['method'] is None
+    assert upgrade['from_version'] == '1.14.X'
