@@ -207,6 +207,7 @@ class KnowledgeCandidateEvidenceList(BaseModel):
 
 
 class KnowledgeQuestionResult(BaseModel):
+    history_trace: dict | None = None
     status: str
     question_id: int | None = None
     question: str

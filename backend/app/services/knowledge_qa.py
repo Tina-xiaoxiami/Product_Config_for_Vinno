@@ -378,6 +378,8 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     from app.services.knowledge_content import find_candidate_evidence
 
     candidates = await find_candidate_evidence(session, item["question_text"], scope=resolved_scope)
+    from app.services.knowledge_release_history import trace_release_history
+    history_trace = await trace_release_history(session, cleaned, resolved_scope)
     return {
         "status": "pending",
         "question_id": question_id,
@@ -386,6 +388,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
         "similarity": best_score,
         "answer": None,
         "candidates": candidates,
+        "history_trace": history_trace,
         "scope": resolved_scope,
     }
 
