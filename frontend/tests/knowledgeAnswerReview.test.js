@@ -48,3 +48,45 @@ test('review dialog protects drafts and treats saving records separately from pu
   assert.match(source, /answer_text/)
   assert.match(source, /change_note/)
 })
+
+function dialogActions(submit, confirm = async () => {}) {
+  const source = readFileSync(new URL('../src/components/KnowledgeAnswerReviewDialog.vue', import.meta.url), 'utf8')
+  const form = {}, events = []
+  const context = {
+    form, visible: { value: false }, saving: { value: false }, question: { value: null },
+    error: { value: '' }, baseline: { value: '' }, lastReviewer: { value: '' }, props: { currentScope: null },
+    dirty: { get value() { return JSON.stringify(form) !== context.baseline.value } },
+    ElMessageBox: { confirm }, ElMessage: { success() {} }, emit: (...event) => events.push(event),
+    answerReviewError, answerReviewPayload, reviewKnowledgeAnswer: submit
+  }
+  const start = source.indexOf('const open = value =>')
+  const end = source.indexOf('\nconst openCitation', start)
+  const actions = new Function(...Object.keys(context), `let sessionId = 0; ${source.slice(start, end)}; return { open, save, requestClose }`)(...Object.values(context))
+  actions.open({ ...question, answer: { version: 1, answer_text: 'Original full answer', change_note: 'Existing owner confirmation' }, evidence_review: { ...question.evidence_review, available: true } })
+  return { ...actions, context, events }
+}
+
+test('failed review submission retains text, actor and the open editor', async () => {
+  const editor = dialogActions(async () => { throw { response: { data: { detail: 'Answer changed, reload before confirming' } } } })
+  editor.context.form.confirmed_by = 'Current reviewer'
+  editor.context.form.note = 'Unsaved exception'
+  await editor.save()
+  assert.equal(editor.context.visible.value, true)
+  assert.equal(editor.context.form.note, 'Unsaved exception')
+  assert.equal(editor.context.form.confirmed_by, 'Current reviewer')
+  assert.match(editor.context.error.value, /Answer changed/)
+  assert.equal(editor.context.saving.value, false)
+  assert.equal(editor.events.length, 0)
+})
+
+test('declining draft discard keeps review input, and success emits the saved record', async () => {
+  const editor = dialogActions(async (_id, payload) => ({ id: question.id, evidence_review: { status: 'reviewed' }, reviewer: payload.confirmed_by }), async () => { throw new Error('continue editing') })
+  editor.context.form.confirmed_by = 'Current reviewer'
+  await editor.requestClose()
+  assert.equal(editor.context.visible.value, true)
+  assert.equal(editor.context.form.confirmed_by, 'Current reviewer')
+  await editor.save()
+  assert.equal(editor.context.visible.value, false)
+  assert.equal(editor.events[0][0], 'saved')
+  assert.equal(editor.events[0][1].reviewer, 'Current reviewer')
+})

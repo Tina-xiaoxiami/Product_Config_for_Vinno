@@ -1475,11 +1475,12 @@ const loadQaQuestions = async () => {
   }
   qaListLoading.value = true
   qaQuestions.value = []
+  qaTotal.value = 0
   try {
     const result = await getKnowledgeQuestions({ status: mode === 'review' ? 'answered' : qaStatus.value, limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value,
       ...(qaSearch.value.trim() ? { q: qaSearch.value.trim() } : {}),
       ...(mode === 'selected' ? scope : {}),
-      ...(mode === 'review' && qaEvidenceFilter.value !== 'all' ? { evidence_review: qaEvidenceFilter.value } : {}) })
+      ...(mode === 'review' ? { evidence_review: qaEvidenceFilter.value } : {}) })
     if (requestId !== qaQueueRequestId || mode !== qaQueueMode.value || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaQuestions.value = result.items || []
     qaTotal.value = result.total || 0
