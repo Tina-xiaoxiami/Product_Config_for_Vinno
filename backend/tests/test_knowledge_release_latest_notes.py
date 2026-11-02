@@ -116,3 +116,12 @@ Bluetooth, and the Slovak input method, you can choose the patch upgrade)'''
     assert ten[0]['methods']==['patch','OS']
     cn_ten = model_facts(facts(CN80,'1.14.80'),'VINNO 10')['upgrades'][0]
     assert cn_ten['methods']==['OS','patch'] and cn_ten['from_version'] is None
+
+
+def test_upgrade_note_is_not_assigned_to_the_following_configuration_section_model():
+    content = EN81.replace('Fixed missing needle gain and Auto Needle buttons in the default UI layout on V10 series systems.',
+        '2. Configuration changes\nV10 Probes change list:\nProbe Vcode V10\nS1-6PE V20086 Added\nBP4-9 V20129 Changed from ∆ to support.')
+    result = facts(content, '1.14.81')
+    upgrade = model_facts(result, 'VINNO 6')['upgrades'][0]
+    assert upgrade['from_version']=='1.14.X' and upgrade['methods']==['OS']
+    assert 'Probes change list' not in upgrade['excerpt']
