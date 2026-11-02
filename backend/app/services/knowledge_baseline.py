@@ -150,8 +150,8 @@ def _knowledge_source(database, verify_hashes):
         documents, findings, versions = _documents(connection, verify_hashes)
         queue = _answer_review_queue(connection, documents)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(knowledge_questions)")}
-        scope_columns = [name for name in SCOPE_COLUMNS if name in columns]
-        if len(scope_columns) != len(SCOPE_COLUMNS):
+        scope_columns = ["scope_key"] if "scope_key" in columns else [name for name in SCOPE_COLUMNS if name in columns]
+        if "scope_key" not in columns and len(scope_columns) != len(SCOPE_COLUMNS):
             findings.append(_finding("structured_question_scope_missing"))
         active = [row for row in documents if row["source_status"] == "active"]
         return {
@@ -184,6 +184,9 @@ def _knowledge_source(database, verify_hashes):
                 for table in NATIVE_RELEASE_TABLES
             },
             "question_scope_columns": scope_columns, "whitepaper_versions": versions,
+            "legacy_question_count": connection.execute(
+                "SELECT COUNT(*) FROM knowledge_questions" + (" WHERE scope_key=''" if "scope_key" in columns else "")
+            ).fetchone()[0],
             "documents": documents, "answer_review_queue": queue, "findings": findings,
         }
 

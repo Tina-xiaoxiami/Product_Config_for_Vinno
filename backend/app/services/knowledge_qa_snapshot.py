@@ -149,6 +149,8 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> None:
         raise KnowledgeQaSnapshotError("旧版快照不能携带未经校验的范围")
     if snapshot["schema_version"] == SCOPED_SCHEMA_VERSION and not any(question.get("scope") for question in questions):
         raise KnowledgeQaSnapshotError("范围快照缺少范围信息")
+    if snapshot["schema_version"] == SCOPED_SCHEMA_VERSION and not all("scope" in question for question in questions):
+        raise KnowledgeQaSnapshotError("范围快照存在未记录范围状态的问题")
 
 
 def _resolve_scope_keys(connection: sqlite3.Connection, snapshot: dict) -> list[str]:

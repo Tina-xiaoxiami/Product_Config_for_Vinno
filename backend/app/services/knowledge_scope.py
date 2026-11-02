@@ -37,6 +37,12 @@ def stored_scope(key: str) -> dict | None:
         scope = json.loads(key)
         if not isinstance(scope, dict) or set(scope) != STORED_FIELDS or missing_scope_fields(scope):
             raise ValueError("invalid stored scope")
+        values = _normalized_values(scope)
+        if any(scope[name] != values[name] for name in SCOPE_FIELDS):
+            raise ValueError("nonnormalized scope")
+        if not all(isinstance(scope[name], str) and scope[name].strip() for name in ("model_name", "series_name")):
+            raise ValueError("invalid model identity")
+        _check_series_market(scope["series_name"], scope["market"])
         if scope_key(scope) != key:
             raise ValueError("noncanonical stored scope")
         return scope
@@ -63,7 +69,19 @@ async def resolve_query_scope(session: AsyncSession, supplied: dict | None) -> d
         return None
     if not await scope_schema_ready(session):
         raise KnowledgeScopeUnavailable("查询范围尚未迁移；请先演练并执行知识库范围迁移")
-    values = supplied or {}
+    values = _normalized_values(supplied or {})
+    model_id = values["product_model_id"]
+    row = (await session.execute(text(
+        "SELECT p.id, p.name, s.name AS series_name FROM product_models p "
+        "JOIN product_series s ON s.id=p.series_id WHERE p.id=:id"
+    ), {"id": model_id})).one_or_none()
+    if row is None:
+        raise KnowledgeScopeError("所选完整机型不存在")
+    _check_series_market(row.series_name, values["market"])
+    return {**values, "model_name": row.name, "series_name": row.series_name}
+
+
+def _normalized_values(values: dict) -> dict:
     country = unicodedata.normalize("NFKC", str(values["country"])).strip().upper()
     market = values["market"]
     version = unicodedata.normalize("NFKC", str(values["software_version"])).strip()
@@ -77,17 +95,14 @@ async def resolve_query_scope(session: AsyncSession, supplied: dict | None) -> d
     version = ".".join(str(int(part)) for part in version.split("."))
     if not isinstance(model_id, int) or isinstance(model_id, bool) or model_id <= 0:
         raise KnowledgeScopeError("请选择有效的完整机型")
-    row = (await session.execute(text(
-        "SELECT p.id, p.name, s.name AS series_name FROM product_models p "
-        "JOIN product_series s ON s.id=p.series_id WHERE p.id=:id"
-    ), {"id": model_id})).one_or_none()
-    if row is None:
-        raise KnowledgeScopeError("所选完整机型不存在")
-    suffix = row.series_name.rsplit("-", 1)[-1].casefold()
+    return {"country": country, "market": market, "product_model_id": model_id,
+            "software_version": version}
+
+
+def _check_series_market(series_name: str, market: str) -> None:
+    suffix = series_name.rsplit("-", 1)[-1].casefold()
     if {"china": "domestic", "oversea": "overseas"}.get(suffix) != market:
         raise KnowledgeScopeError("所选机型的正式系列与查询市场不一致或尚未明确")
-    return {"country": country, "market": market, "product_model_id": model_id,
-            "software_version": version, "model_name": row.name, "series_name": row.series_name}
 
 
 def document_matches_scope(document, scope: dict) -> bool:
