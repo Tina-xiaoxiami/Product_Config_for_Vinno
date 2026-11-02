@@ -197,3 +197,19 @@ def test_narrative_prefix_is_not_registered_as_a_feature_name():
     from app.services.knowledge_names import _anchors
     assert _anchors('结论：新增胸膜自动识别（IPN 6000317）为选配。') == []
     assert _anchors('结论：胸膜自动识别（IPN 6000317）为选配。') == [('胸膜自动识别','6000317')]
+
+
+@pytest.mark.asyncio
+async def test_explicit_ipn_disambiguates_same_current_name_and_never_selects_comparison_ipn(tmp_path):
+    path = tmp_path / 'qa.db'; _database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.execute("INSERT INTO config_items VALUES(6,'6000318','OtherPleura','胸膜自动测量','Other')")
+    client, engine = await _client_for(path)
+    async with client:
+        qid = (await client.post('/api/knowledge/questions/ask', json={'question':'胸膜自动识别在V10系列是标配吗？','scope':SCOPE})).json()['question_id']
+        await client.put(f'/api/knowledge/questions/{qid}/answer', json={'answer_text':'结论：胸膜自动识别（IPN 6000317）为选配。','alias_questions':[],'citations':[],'change_note':'Explicit test confirmation'})
+        explicit = (await client.post('/api/knowledge/questions/ask', json={'question':'胸膜自动测量（IPN 6000317）在V10系列是标配吗？','scope':SCOPE})).json()
+        wrong = (await client.post('/api/knowledge/questions/ask', json={'question':'胸膜自动测量（IPN 6000318）在V10系列是标配吗？','scope':SCOPE})).json()
+    await engine.dispose()
+    assert explicit['status'] == 'answered' and explicit['question_id'] == qid
+    assert wrong['status'] == 'pending'
