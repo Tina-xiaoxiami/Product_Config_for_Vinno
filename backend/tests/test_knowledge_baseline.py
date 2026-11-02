@@ -1,7 +1,9 @@
 """Read-only baseline and evidence-gap contracts; all data is synthetic."""
 
+from contextlib import closing
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -20,7 +22,7 @@ def knowledge_source(tmp_path):
     original = tmp_path / "original.pdf"
     original.write_bytes(b"controlled original")
     digest = hashlib.sha256(original.read_bytes()).hexdigest()
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "UPDATE knowledge_documents SET file_path=?, sha256=? WHERE id=1",
             (str(original), digest),
@@ -130,7 +132,7 @@ def test_missing_primary_database_is_not_created(tmp_path):
 
 def test_incomplete_primary_schema_fails_instead_of_reporting_healthy_zero_counts(tmp_path):
     database = tmp_path / "partial.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE unrelated (id INTEGER)")
     with pytest.raises(KnowledgeBaselineError, match="缺少"):
         build_knowledge_baseline(database)
@@ -154,7 +156,7 @@ def test_unrequested_and_missing_optional_sources_are_distinct(knowledge_source,
 def test_existing_release_records_are_not_confused_with_native_feature_versions(knowledge_source, tmp_path):
     database, _ = knowledge_source
     release = tmp_path / "release.db"
-    with sqlite3.connect(release) as connection:
+    with closing(sqlite3.connect(release)) as connection, connection:
         connection.executescript(
             "CREATE TABLE projects (id INTEGER); INSERT INTO projects VALUES (1);"
             "CREATE TABLE releases (id INTEGER); INSERT INTO releases VALUES (1), (2);"
@@ -227,3 +229,46 @@ def test_cli_writes_a_local_report_and_refuses_to_overwrite_inputs_or_existing_f
         )
         assert failed.returncode == 1
         assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("denied_directory", ["root", "job"])
+def test_receipt_directory_permission_failures_do_not_look_like_healthy_zero_counts(
+    knowledge_source, tmp_path, monkeypatch, denied_directory,
+):
+    root = tmp_path / "receipts"
+    job = root / "blocked-job"
+    job.mkdir(parents=True)
+    denied = root if denied_directory == "root" else job
+    # Exercise the OS failure regardless of Path traversal details or host OS.
+    for name in ["scandir", "listdir"]:
+        original = getattr(os, name)
+
+        def failing_read(path, _original=original):
+            if Path(path).resolve() == denied.resolve():
+                raise PermissionError("synthetic denied directory")
+            return _original(path)
+
+        monkeypatch.setattr(os, name, failing_read)
+    report = build_knowledge_baseline(knowledge_source[0], publication_root=root)
+    receipts = report["sources"]["publication_receipts"]
+    assert receipts["state"] == ("unavailable" if denied_directory == "root" else "degraded")
+    assert receipts["findings"]
+
+
+@pytest.mark.parametrize("destination", ["missing_input", "missing_original", "receipt_directory"])
+def test_cli_cannot_create_a_report_in_an_unavailable_source_location(knowledge_source, tmp_path, destination):
+    database, _ = knowledge_source
+    library = tmp_path / "missing-library.json"
+    receipts = tmp_path / "receipts"
+    target = {
+        "missing_input": library, "missing_original": tmp_path / "missing.pdf",
+        "receipt_directory": receipts / "new-job" / "report.json",
+    }[destination]
+    script = Path(__file__).resolve().parents[1] / "scripts" / "audit_knowledge_baseline.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--database", str(database),
+         "--feature-library", str(library), "--publication-root", str(receipts),
+         "--output", str(target)], capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert not target.exists()
