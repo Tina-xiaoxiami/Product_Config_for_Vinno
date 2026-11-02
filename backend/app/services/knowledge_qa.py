@@ -312,6 +312,13 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
         best_question_id = min(best_ties, key=lambda question_id: (
             stored_scope(matched_records[question_id]["scope_key"])["country"] is not None, question_id
         )) if len(identities) == 1 else None
+    if resolved_scope["country"] is None and best_question_id is not None:
+        selected = matched_records[best_question_id]
+        # A unique alias or IPN match cannot hide a conflicting country sibling.
+        if any(candidate["normalized_question"] == selected["normalized_question"]
+               and candidate["answer_text"] != selected["answer_text"]
+               for candidate in matched_records.values()):
+            best_question_id = None
     if best_question_id is not None and best_score >= SIMILARITY_THRESHOLD:
         matched_key = matched_records[best_question_id]["scope_key"]
         await session.execute(
@@ -763,6 +770,9 @@ async def merge_question(
     variants = [(source.question_text, source.normalized_question)] + [
         (row.phrasing_text, row.normalized_phrasing) for row in aliases_result
     ]
+    target_scope = stored_scope(target.scope_key)
+    overlap_keys = (await compatible_scope_keys(session, target_scope, overlap=True)
+                    if target_scope else [target.scope_key])
     unique_variants: list[tuple[str, str]] = []
     seen = {target.normalized_question}
     for text_value, normalized_value in variants:
@@ -774,21 +784,21 @@ async def merge_question(
                 """
                 SELECT id FROM knowledge_questions
                 WHERE normalized_question = :normalized
-                  AND scope_key = :scope_key
+                  AND scope_key IN :scope_keys
                   AND id NOT IN (:source_question_id, :target_question_id)
                 UNION ALL
                 SELECT question_id AS id FROM knowledge_question_phrasings
                 WHERE normalized_phrasing = :normalized
-                  AND scope_key = :scope_key
+                  AND scope_key IN :scope_keys
                   AND question_id NOT IN (:source_question_id, :target_question_id)
                 LIMIT 1
                 """
-            ),
+            ).bindparams(bindparam("scope_keys", expanding=True)),
             {
                 "normalized": normalized_value,
                 "source_question_id": source_question_id,
                 "target_question_id": target_question_id,
-                "scope_key": target.scope_key,
+                "scope_keys": overlap_keys,
             },
         )
         if collision_result.one_or_none() is not None:
