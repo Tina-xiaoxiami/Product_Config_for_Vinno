@@ -1,6 +1,6 @@
 <template>
-  <el-dialog v-model="visible" title="功能名称核对" width="620px" append-to-body :before-close="close" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving">
-    <div v-loading="loading">
+  <el-dialog v-model="visible" title="功能名称核对" width="620px" top="5vh" append-to-body :before-close="close" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving">
+    <div v-loading="loading" class="name-review-body">
       <el-alert v-if="error" :title="error" type="error" :closable="false" />
       <p><strong>{{ detail?.name }}</strong> · 功能 ID {{ featureId }}</p>
       <p class="review-help">确认表示已核对并沿用当前写法，不修改名称、IPN或配置。仅清除所选差异的提示；相关名称或来源变化后会重新提醒。</p>
@@ -66,5 +66,5 @@ onBeforeRouteLeave(async()=>{ if(!visible.value)return true; await close(); retu
 defineExpose({open})
 </script>
 <style scoped>
-.review-help{font-size:12px;color:#64748b;line-height:1.6}.name-review-check{border-top:1px solid #dce4ed;padding:10px 0;font-size:12px;line-height:1.6}.name-review-check p{white-space:pre-line;margin:4px 0}.review-person,.review-history{margin-top:8px}.review-history summary{cursor:pointer}pre{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.name-review-body{max-height:calc(85vh - 140px);overflow:auto}.review-help{font-size:12px;color:#64748b;line-height:1.6}.name-review-check{border-top:1px solid #dce4ed;padding:10px 0;font-size:12px;line-height:1.6}.name-review-check p{white-space:pre-line;margin:4px 0}.review-person,.review-history{margin-top:8px}.review-history summary{cursor:pointer}pre{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 </style>
