@@ -8,8 +8,8 @@
       <p v-if="report.message">{{ report.message }}</p>
       <div class="coverage-counts"><span>文件 {{ report.totals?.files || 0 }}</span><span>已登记 {{ report.totals?.registered || 0 }}</span><span>可检索 {{ report.totals?.ready || 0 }}</span><span>缺口 {{ report.totals?.gaps || 0 }}</span><span>候选待核查 {{ report.totals?.unresolved || 0 }}</span><span>晚于目标 {{ report.totals?.later || 0 }}</span></div>
       <details class="coverage-roots"><summary>本次检查的来源目录（{{ report.roots?.length || 0 }}）</summary><div v-for="(root,index) in report.roots || []" :key="`${root.path}-${index}`"><strong>{{ coverageRootLabel(root.label) }} · {{ coverageStatusLabel('root', root.status) }}</strong><pre>{{ root.path }}</pre><p v-if="root.error" class="coverage-error">{{ root.error }}</p></div><p v-if="!report.roots?.length">尚未配置可检查的来源目录。</p></details>
-      <div class="coverage-controls"><el-checkbox v-model="onlyGaps" size="small">只看缺口与候选问题</el-checkbox><el-input v-model="query" clearable size="small" placeholder="筛选文件名、版本或问题" aria-label="筛选资料覆盖条目" /><small>显示 {{ rows.length }} / {{ report.items?.length || 0 }} 条</small></div>
-      <p class="coverage-note">未识别型号或版本的文件仅是候选问题，不据文件夹或语言断定适用型号、国家。晚于目标或明确不适用的资料可取消“只看缺口”查看，不计作当前确定缺项。</p>
+      <div class="coverage-controls"><el-checkbox v-model="onlyGaps" size="small">只看资料缺口</el-checkbox><el-input v-model="query" clearable size="small" placeholder="筛选文件名、版本或问题" aria-label="筛选资料覆盖条目" /><small>显示 {{ rows.length }} / {{ report.items?.length || 0 }} 条</small></div>
+      <p class="coverage-note">未识别型号或版本的文件仅是候选问题，不据文件夹或语言断定适用型号、国家。晚于目标或明确不适用的资料可取消“只看资料缺口”查看，不计作当前确定缺项。</p>
       <div class="coverage-items">
         <details v-for="(item,index) in rows" :key="item.key || index" class="coverage-item">
           <summary><strong>{{ item.file_name || '未命名资料' }}</strong><span>{{ item.version || '版本未识别' }} · {{ coverageStatusLabel('language', item.language) }}</span><span>{{ coverageStatusLabel('registration', item.registration_status) }} · {{ coverageStatusLabel('extraction', item.extraction_status) }}</span></summary>
@@ -19,7 +19,7 @@
           <p v-else>未发现该条目的已知问题，仍受本次目录及范围边界限制。</p>
           <div class="coverage-path-heading"><strong>来源位置</strong><el-button v-if="item.source_locations?.length" size="small" link @click="copySources(item)">复制全部来源位置</el-button></div><pre v-for="(location,i) in item.source_locations || []" :key="i">{{ location }}</pre>
         </details>
-        <p v-if="!rows.length">{{ onlyGaps ? '当前筛选下没有缺口或候选问题；可取消“只看缺口”查看全部条目。' : '当前筛选下没有资料条目。' }}</p>
+        <p v-if="!rows.length">{{ onlyGaps ? '当前筛选下没有资料缺口；取消筛选可查看全部候选问题及范围外资料。' : '当前筛选下没有资料条目。' }}</p>
       </div>
       <p v-if="copyError" role="alert" class="coverage-error">{{ copyError }}</p>
     </template>
