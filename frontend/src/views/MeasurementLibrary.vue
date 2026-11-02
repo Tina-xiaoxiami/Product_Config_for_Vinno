@@ -1,7 +1,6 @@
 <template>
   <section class="measurement-library" v-loading="loading">
     <div class="toolbar">
-      <h1>测量库</h1>
       <el-select v-if="library.batches.length" v-model="batchId" aria-label="测量库版本" size="small" class="batch-select" @change="loadLibrary">
         <el-option v-for="batch in library.batches" :key="batch.id" :value="batch.id" :label="`${batch.version} · ${batch.source_file} · #${batch.id}`" />
       </el-select>

@@ -2,9 +2,6 @@
   <div class="versions-page">
     <el-card shadow="never" class="history-card">
       <template #header>
-        <div class="card-header">
-          <span>版本历史</span>
-        </div>
         <el-tabs v-model="selectedSeries" class="series-tabs" aria-label="产品系列" @tab-change="handleSeriesChange">
           <el-tab-pane v-for="series in seriesList" :key="series.id" :label="series.name" :name="series.id" />
         </el-tabs>

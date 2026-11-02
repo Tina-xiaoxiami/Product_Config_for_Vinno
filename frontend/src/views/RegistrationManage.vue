@@ -1,10 +1,6 @@
 <template>
   <div class="registration-manage-page">
     <header class="page-header">
-      <div>
-        <h2>注册管理</h2>
-        <p>注册数据由基础数据统一管理，知识库和产品策略查询共同引用这里的数据。</p>
-      </div>
       <div class="header-actions">
         <el-tag type="success" effect="plain">受控主数据</el-tag>
         <el-button type="primary" :icon="Plus" @click="openPackageDialog">

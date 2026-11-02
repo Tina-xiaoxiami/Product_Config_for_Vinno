@@ -2,8 +2,6 @@
   <div class="knowledge-page">
     <header class="knowledge-header">
       <div>
-        <h2>产品知识库</h2>
-        <p>查询已确认产品知识；没有可靠答案的问题自动回流，确认后成为可复用知识。</p>
         <p class="master-data-note">
           主数据由基础数据统一维护：
           <router-link to="/feature-manage">功能管理</router-link>

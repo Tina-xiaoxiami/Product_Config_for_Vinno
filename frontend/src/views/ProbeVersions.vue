@@ -1,13 +1,13 @@
 <template>
   <el-card shadow="never" v-loading="busy">
-    <template #header><div class="toolbar"><strong>探头配置 · 版本历史</strong>
+    <template #header><div class="toolbar">
       <el-select :disabled="busy" v-model="workspaceId" placeholder="选择共同总集" style="width:230px" @change="load"><el-option v-for="w in workspaces" :key="w.id" :value="w.id" :label="w.name" /></el-select>
       <el-button size="small" @click="$router.push('/probe-config')">返回配置</el-button>
     </div></template>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-empty v-if="!releases.length" description="暂无已发布总集。原有数据未自动归入任何发布版本。" />
     <template v-else>
-      <div class="toolbar"><el-select v-model="before" placeholder="对比起始版本"><el-option v-for="r in releases" :key="r.id" :value="r.id" :label="r.version_number" /></el-select><el-select v-model="after" placeholder="对比目标版本"><el-option v-for="r in releases" :key="r.id" :value="r.id" :label="r.version_number" /></el-select><el-button size="small" :disabled="!before || !after" @click="compare">对比版本</el-button></div>
+      <div class="toolbar version-comparison-toolbar"><el-select v-model="before" placeholder="对比起始版本"><el-option v-for="r in releases" :key="r.id" :value="r.id" :label="r.version_number" /></el-select><el-select v-model="after" placeholder="对比目标版本"><el-option v-for="r in releases" :key="r.id" :value="r.id" :label="r.version_number" /></el-select><el-button size="small" :disabled="!before || !after" @click="compare">对比版本</el-button></div>
       <ProbeDataTable :rows="releases" :columns="releaseColumns" table-id="release-history" :actions-width="260"><template #actions="{row}"><el-button size="small" link @click="inspect(row)">查看快照</el-button><el-button size="small" link @click="download(row)">导出</el-button><el-button size="small" link type="warning" @click="restore(row)">恢复为新草稿</el-button></template></ProbeDataTable>
     </template>
     <template v-if="detail"><p>发布时总集和机型范围：{{ [...detail.snapshot.data.scope.groups, ...detail.snapshot.data.scope.combinations].join(' + ') }}；{{ detail.snapshot.data.scope.model_ids.length }} 个机型。配置版本：{{ JSON.stringify(detail.snapshot.config_version_ids) }}</p>
@@ -60,4 +60,4 @@ onActivated(async () => {
   })
 })
 </script>
-<style scoped>.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.toolbar .el-button+.el-button{margin-left:0}p{font-size:13px;line-height:1.6;overflow-wrap:anywhere}</style>
+<style scoped>.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.toolbar .el-button+.el-button{margin-left:0}.version-comparison-toolbar>.el-select{width:240px;max-width:100%;flex:0 1 240px}p{font-size:13px;line-height:1.6;overflow-wrap:anywhere}</style>

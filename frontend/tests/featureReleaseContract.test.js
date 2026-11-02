@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { WORKSPACE_SECTIONS } from '../src/utils/workspaceNavigation.js'
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 
@@ -14,8 +15,8 @@ test('feature release records are reachable inside the unified release workspace
   assert.match(router, /views\/ReleaseWorkspace\.vue/)
   assert.match(workspace, /import FeatureRelease from '\.\/FeatureRelease\.vue'/)
   assert.match(workspace, /<FeatureRelease\s+ref="nativeRelease"\s+\/>/)
-  assert.match(layout, /index="\/release"/)
-  assert.match(layout, />\s*功能发布\s*</)
+  assert.equal(WORKSPACE_SECTIONS.find(section => section.path === '/release')?.label, '功能发布')
+  assert.match(layout, /v-for="section in WORKSPACE_SECTIONS"/)
   assert.match(layout, /Promotion/)
 })
 

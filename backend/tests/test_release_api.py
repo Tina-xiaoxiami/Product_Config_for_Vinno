@@ -824,10 +824,16 @@ async def test_source_revalidation_is_atomic_and_refresh_does_not_repeat_review(
     with sqlite3.connect(database) as connection:
         connection.execute("UPDATE knowledge_documents SET file_path = ?, file_name = ?, mime_type = 'text/plain', sha256 = ? WHERE id = 100", (str(source), source.name, initial_hash))
         connection.execute('UPDATE knowledge_document_extractions SET source_sha256 = ? WHERE document_id = 100', (initial_hash,))
-        connection.execute("INSERT INTO knowledge_questions (id, question_text, normalized_question, status, asked_count) VALUES (1, '测试问题', '测试问题', 'answered', 1)")
+        from app.services.knowledge_scope import scope_key
+        connection.execute("INSERT INTO product_series (id, name) VALUES (900, 'R&V10 series-China')")
+        connection.execute("INSERT INTO product_models (id, series_id, name) VALUES (900, 900, 'V10')")
+        connection.execute("UPDATE knowledge_documents SET country = 'CN' WHERE id = 100")
+        query_scope = scope_key({'country':'CN', 'market':'domestic', 'product_model_id':900,
+                                 'software_version':'1.14.40', 'model_name':'V10', 'series_name':'R&V10 series-China'})
+        connection.execute("INSERT INTO knowledge_questions (id, question_text, normalized_question, status, asked_count, scope_key) VALUES (1, '测试问题', '测试问题', 'answered', 1, ?)", (query_scope,))
         connection.execute("INSERT INTO knowledge_answers (id, question_id, answer_text, review_status, version) VALUES (1, 1, '已确认答案', 'published', 1)")
         connection.execute("INSERT INTO knowledge_answer_citations (answer_id, document_id, excerpt, sort_order) VALUES (1, 100, '原引文', 0)")
-    item = KnowledgeSource('release_note', 'V10系列Release Note_1.14.40', source, '1.14.40', 'domestic', None, 'V10', 'text/plain')
+    item = KnowledgeSource('release_note', 'V10系列Release Note_1.14.40', source, '1.14.40', 'domestic', 'CN', 'V10', 'text/plain')
     monkeypatch.setattr(knowledge_source_import, 'discover_v10_knowledge_sources', lambda _: [item])
     async with client:
         confirmed = await _create_version(client, 1, software_version='1.14.40', evidence_document_id=100, change_note='人工说明')

@@ -3,7 +3,6 @@
     <el-card shadow="never" class="models-card">
       <template #header>
         <div class="card-header">
-          <span>产品型号管理</span>
           <div class="header-actions">
             <el-button :icon="Plus" @click="openSeriesDialog">新增系列</el-button>
             <SubseriesEditor ref="subseriesEditorRef" button-label="管理子系列与组合" @saved="loadData" />

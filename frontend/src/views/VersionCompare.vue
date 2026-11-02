@@ -1,6 +1,5 @@
 <template>
   <el-card shadow="never" class="version-compare-page">
-    <template #header><span>版本对比</span></template>
     <el-tabs :model-value="state.selectedSeries" class="series-tabs" aria-label="对比产品系列" @tab-change="selectSeries">
       <el-tab-pane v-for="series in state.series" :key="series.id" :label="series.name" :name="series.id" />
     </el-tabs>

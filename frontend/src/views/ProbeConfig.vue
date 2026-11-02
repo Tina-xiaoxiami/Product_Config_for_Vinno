@@ -1,7 +1,7 @@
 <template>
   <div class="probe-workspace" v-loading="busy">
     <el-card shadow="never">
-      <template #header><div class="toolbar"><strong>探头配置 · 子系列共同总集</strong>
+      <template #header><div class="toolbar">
         <el-select :model-value="current?.id" placeholder="选择已有总集" @change="openWorkspace" style="width:220px" :disabled="busy">
           <el-option v-for="w in workspaces" :key="w.id" :value="w.id" :label="w.name + (w.has_draft ? ' · 草稿' : '')" />
         </el-select>
