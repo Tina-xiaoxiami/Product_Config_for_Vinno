@@ -34,3 +34,18 @@ test('all current knowledge reading paths use shared name projections and revisi
   assert.match(view, /revision.answer_text/)
   assert.match(view, /answer_text: question.answer\?\.answer_text/)
 })
+
+test('answer editor shows the current question label while editing saved text without implicit changes', async () => {
+  const view = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const context = { answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
+    answerCandidates: { value: [] }, candidateLoading: { value: false },
+    getKnowledgeQuestionCandidates: async () => ({ items: [] }), ElMessage: { error() {} } }
+  const start = view.indexOf('const qaReviewNotice =')
+  const end = view.indexOf('\nconst addCitation', start)
+  const open = new Function(...Object.keys(context), `${view.slice(start, end)}; return openAnswerDialog`)(...Object.values(context))
+  await open({ id: 26, question_text: '胸膜自动识别？', display_question_text: '胸膜自动测量？',
+    answer: { answer_text: '胸膜自动识别(IPN 6000317)', display_answer_text: '胸膜自动测量(IPN 6000317)' } })
+  assert.equal(questionDisplayText(context.answerForm.value), '胸膜自动测量？')
+  assert.equal(context.answerForm.value.answer_text, '胸膜自动识别(IPN 6000317)')
+  assert.match(view, /questionDisplayText\(answerForm\)/)
+})
