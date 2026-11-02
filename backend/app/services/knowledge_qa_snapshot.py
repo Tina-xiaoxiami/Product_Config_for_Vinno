@@ -8,8 +8,11 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from app.services.knowledge_scope import KnowledgeScopeError, scope_key, stored_scope
+
 
 SCHEMA_VERSION = 1
+SCOPED_SCHEMA_VERSION = 2
 
 
 class KnowledgeQaSnapshotError(ValueError):
@@ -21,7 +24,7 @@ def _connect(database_path: str | Path, *, read_only: bool) -> sqlite3.Connectio
     if not path.is_file():
         raise KnowledgeQaSnapshotError(f"数据库不存在：{path}")
     if read_only:
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     else:
         connection = sqlite3.connect(path)
         connection.execute("PRAGMA foreign_keys = ON")
@@ -48,19 +51,27 @@ def export_knowledge_qa_snapshot(database_path: str | Path) -> dict[str, Any]:
     """Export Q&A content without database-specific row identifiers or file paths."""
     connection = _connect(database_path, read_only=True)
     try:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
+        scoped = "scope_key" in {row[1] for row in connection.execute("PRAGMA table_info(knowledge_questions)")}
+        scope_column = "scope_key" if scoped else "''"
         question_rows = _rows(
             connection,
-            """
+            f"""
             SELECT id, question_text, normalized_question, status, asked_count,
-                   last_asked_at, created_at, updated_at
+                   last_asked_at, created_at, updated_at, {scope_column} AS scope_key
             FROM knowledge_questions
-            ORDER BY normalized_question
+            ORDER BY normalized_question, scope_key
             """,
         )
         questions = []
         for question_row in question_rows:
             question_id = question_row.pop("id")
             question = dict(question_row)
+            try:
+                question["scope"] = stored_scope(question.pop("scope_key"))
+            except KnowledgeScopeError as exc:
+                raise KnowledgeQaSnapshotError("问答范围记录无效，不能导出") from exc
             question["phrasings"] = _rows(
                 connection,
                 """
@@ -116,13 +127,17 @@ def export_knowledge_qa_snapshot(database_path: str | Path) -> dict[str, Any]:
     finally:
         connection.close()
 
-    snapshot = {"schema_version": SCHEMA_VERSION, "questions": questions}
+    schema_version = SCOPED_SCHEMA_VERSION if any(question["scope"] for question in questions) else SCHEMA_VERSION
+    if schema_version == SCHEMA_VERSION:
+        for question in questions:
+            question.pop("scope")
+    snapshot = {"schema_version": schema_version, "questions": questions}
     snapshot["snapshot_sha256"] = _snapshot_hash(snapshot)
     return snapshot
 
 
 def _validate_snapshot(snapshot: dict[str, Any]) -> None:
-    if snapshot.get("schema_version") != SCHEMA_VERSION:
+    if snapshot.get("schema_version") not in {SCHEMA_VERSION, SCOPED_SCHEMA_VERSION}:
         raise KnowledgeQaSnapshotError("不支持的问答快照版本")
     questions = snapshot.get("questions")
     if not isinstance(questions, list):
@@ -130,6 +145,37 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> None:
     expected_hash = snapshot.get("snapshot_sha256")
     if not expected_hash or expected_hash != _snapshot_hash(snapshot):
         raise KnowledgeQaSnapshotError("问答快照校验失败，内容可能已被修改")
+    if snapshot["schema_version"] == SCHEMA_VERSION and any("scope" in question for question in questions):
+        raise KnowledgeQaSnapshotError("旧版快照不能携带未经校验的范围")
+    if snapshot["schema_version"] == SCOPED_SCHEMA_VERSION and not any(question.get("scope") for question in questions):
+        raise KnowledgeQaSnapshotError("范围快照缺少范围信息")
+
+
+def _resolve_scope_keys(connection: sqlite3.Connection, snapshot: dict) -> list[str]:
+    if snapshot["schema_version"] == SCHEMA_VERSION:
+        return [""] * len(snapshot["questions"])
+    for table in ("knowledge_questions", "knowledge_question_phrasings"):
+        if "scope_key" not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
+            raise KnowledgeQaSnapshotError("请先迁移目标库的问答范围结构")
+    keys = []
+    for question in snapshot["questions"]:
+        key = scope_key(question.get("scope"))
+        try:
+            scope = stored_scope(key)
+        except KnowledgeScopeError as exc:
+            raise KnowledgeQaSnapshotError("快照中的机型范围记录无效") from exc
+        if scope:
+            try:
+                row = connection.execute(
+                    "SELECT p.name, s.name AS series_name FROM product_models p "
+                    "JOIN product_series s ON s.id=p.series_id WHERE p.id=?", (scope["product_model_id"],),
+                ).fetchone()
+            except sqlite3.Error as exc:
+                raise KnowledgeQaSnapshotError("目标库缺少可验证的机型目录") from exc
+            if row is None or row["name"] != scope["model_name"] or row["series_name"] != scope["series_name"]:
+                raise KnowledgeQaSnapshotError("快照机型ID与目标库完整机型/系列不一致，已拒绝恢复")
+        keys.append(key)
+    return keys
 
 
 def _snapshot_counts(snapshot: dict[str, Any]) -> dict[str, int]:
@@ -194,17 +240,21 @@ def restore_knowledge_qa_snapshot(
             )
 
         documents = _resolve_documents(connection, snapshot)
+        scope_keys = _resolve_scope_keys(connection, snapshot)
         if not apply:
             return {"status": "ready", **counts}
 
         with connection:
-            for question in snapshot["questions"]:
+            scoped_snapshot = snapshot["schema_version"] == SCOPED_SCHEMA_VERSION
+            extra_column = ", scope_key" if scoped_snapshot else ""
+            extra_placeholder = ", ?" if scoped_snapshot else ""
+            for question, key in zip(snapshot["questions"], scope_keys):
                 inserted_question = connection.execute(
-                    """
+                    f"""
                     INSERT INTO knowledge_questions (
                         question_text, normalized_question, status, asked_count,
-                        last_asked_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        last_asked_at, created_at, updated_at{extra_column}
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?{extra_placeholder})
                     """,
                     (
                         question["question_text"],
@@ -214,16 +264,16 @@ def restore_knowledge_qa_snapshot(
                         question["last_asked_at"],
                         question["created_at"],
                         question["updated_at"],
-                    ),
+                    ) + ((key,) if scoped_snapshot else ()),
                 )
                 question_id = int(inserted_question.lastrowid)
                 for phrasing in question["phrasings"]:
                     connection.execute(
-                        """
+                        f"""
                         INSERT INTO knowledge_question_phrasings (
                             question_id, phrasing_text, normalized_phrasing,
-                            phrasing_type, created_at
-                        ) VALUES (?, ?, ?, ?, ?)
+                            phrasing_type, created_at{extra_column}
+                        ) VALUES (?, ?, ?, ?, ?{extra_placeholder})
                         """,
                         (
                             question_id,
@@ -231,7 +281,7 @@ def restore_knowledge_qa_snapshot(
                             phrasing["normalized_phrasing"],
                             phrasing["phrasing_type"],
                             phrasing["created_at"],
-                        ),
+                        ) + ((key,) if scoped_snapshot else ()),
                     )
                 answer = question["answer"]
                 if answer is None:
