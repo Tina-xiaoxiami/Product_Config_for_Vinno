@@ -89,7 +89,6 @@ async def create_release_bindings(session: AsyncSession, payload: dict) -> dict:
     values = {field: str(payload.get(field) or '').strip() for field in ('country', 'market', 'release_line', 'conditions', 'evidence_reference', 'confirmed_by')}
     if any(not values[field] for field in ('release_line', 'evidence_reference', 'confirmed_by')):
         raise ReleaseHistoryError('版本分支、适用依据和实际核对人不能为空')
-    documents = {row['id']: row for row in await _documents(session)}
     document_ids = sorted(set(payload['document_ids']))
     model_ids = sorted(set(payload['product_model_ids']))
     if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in document_ids + model_ids):
@@ -98,6 +97,7 @@ async def create_release_bindings(session: AsyncSession, payload: dict) -> dict:
     await session.rollback()
     await session.execute(text('BEGIN IMMEDIATE'))
     try:
+        documents = {row['id']: row for row in await _documents(session)}
         created = []
         for document_id in document_ids:
             document = documents.get(document_id)
@@ -184,15 +184,17 @@ def _events(document: dict, chunks: list[dict], topic: str, conditions='') -> li
                 current = header.group(1) or header.group(2)
             if topic not in _normalize(line):
                 continue
-            # Classify the relevant line rather than unrelated additions elsewhere on the page.
-            change, _ = _classify_change(line, line, False)
-            if re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', line, re.I):
+            # An unrelated addition on the same page/line must not classify this child capability.
+            clauses = [clause for clause in re.split(r'[。；;,，]', line) if topic in _normalize(clause)]
+            relevant = '；'.join(clauses)
+            change, _ = _classify_change(relevant, relevant, False)
+            if re.search(r'取消|不再支持|停止支持|移除|删除|removed|disabled', relevant, re.I):
                 change = 'removed'
-            elif re.search(r'不支持|暂不支持|尚不支持|not\s+support', line, re.I):
+            elif re.search(r'不支持|暂不支持|尚不支持|未新增|没有新增|尚未新增|未添加|未增加|not\s+support', relevant, re.I):
                 change = 'restricted'
-            elif re.search(r'仅|限制|limited|only', line, re.I):
+            elif re.search(r'仅|限制|limited|only', relevant, re.I):
                 change = 'restricted'
-            elif re.search(r'添加', line):
+            elif re.search(r'添加', relevant):
                 change = 'added'
             version = current or (None if cumulative else document['version'])
             event = {'document_id': document['id'], 'document_title': document['title'],
@@ -300,8 +302,22 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
                       conclusion='找到相关历史资料，但适用范围尚待核对。' if coverage['unresolved_documents'] else '没有当前完整机型与范围的有效历史资料；不能判断支持或不支持。')
     elif not all_events:
         result.update(assessment='no_record', conclusion='已登记适用历史资料中未检索到该子能力的明确记录；未检索到不等于不支持。')
+    elif any({'added', 'removed'}.issubset({event['change_type'] for event in chain['events'] if event['event_version'] == version})
+             for chain in chains.values() for version in {event['event_version'] for event in chain['events']}):
+        result.update(assessment='conflicting_evidence', conclusion='同一版本分支与版本出现相反的新增/移除记录，需核对原文后才能判断。')
     elif len(chains) > 1 or any(chain['conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
         result.update(assessment='conditional_evidence', conclusion='找到相关版本记录，但存在版本分支、硬件/升级限制或语义待核实；各分支分别展示，不直接继承为目标版本支持结论。')
     else:
         result.update(assessment='evidence_found', conclusion='找到该子能力的历史版本原文记录；以下为资料证据，尚未自动发布正式答案。')
     return result
+
+
+async def history_for_question(session: AsyncSession, query: str, scope: dict) -> dict:
+    """A broad ordinary question must not become a failed ask request."""
+    try:
+        return await trace_release_history(session, query, scope)
+    except ReleaseHistoryError as error:
+        return {'available': await _ready(session), 'assessment': 'needs_clarification',
+                'conclusion': str(error), 'scope': scope, 'query': query,
+                'coverage': {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []},
+                'chains': [], 'events': []}
