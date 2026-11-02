@@ -12,8 +12,10 @@ from app.models.draft import ConfigDraft, DraftBatch
 MERGED_STATUS = "已合并"
 
 
-def active_model_filter():
-    return or_(ProductModel.status.is_(None), ProductModel.status != MERGED_STATUS)
+def active_model_filter(*, include_disabled: bool = False):
+    """Current visibility differs from retained identity/history membership."""
+    unmerged = or_(ProductModel.status.is_(None), ProductModel.status != MERGED_STATUS)
+    return unmerged if include_disabled else unmerged & ProductModel.is_enabled.is_(True)
 
 
 def parse_model_header(raw: str) -> tuple[str, str | None]:
@@ -49,7 +51,7 @@ async def inspect_import_model(
     name, source_uuid = parse_model_header(raw)
     records = await identity_records(db, series_id)
     known = next(((identity, model) for identity, model in records if source_uuid and identity.source_uuid == source_uuid), None)
-    names = (await db.execute(select(ProductModel).where(ProductModel.series_id == series_id, ProductModel.name == name, active_model_filter()))).scalars().all()
+    names = (await db.execute(select(ProductModel).where(ProductModel.series_id == series_id, ProductModel.name == name, active_model_filter(include_disabled=True)))).scalars().all()
     if len(names) > 1:
         raise ValueError(f"系列内存在重复机型名 {name}，请先核对身份")
     named = names[0] if names else None
@@ -154,7 +156,7 @@ async def normalize_snapshot(db: AsyncSession, series_id: int, snapshot: dict) -
     registered_ids = {model.id for _, model in records}
     candidates = list(records)
     current_models = (await db.execute(select(ProductModel).where(
-        ProductModel.series_id == series_id, active_model_filter()
+        ProductModel.series_id == series_id, active_model_filter(include_disabled=True)
     ))).scalars().all()
     candidates.extend((None, model) for model in current_models if model.id not in registered_ids)
     for record, model in candidates:

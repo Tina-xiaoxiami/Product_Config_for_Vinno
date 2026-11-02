@@ -4969,7 +4969,12 @@ onMounted(() => {
   updateAllSelectDisplay()
 })
 
-onActivated(() => { if (allModelsMap.value.size) loadModelCombinations() })
+onActivated(async () => {
+  if (!configReady.value || loading.value) return
+  await waitForDraftSaves()
+  await loadModels()
+  await loadModelCombinations()
+})
 </script>
 
 <style scoped>

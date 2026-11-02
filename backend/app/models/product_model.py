@@ -1,7 +1,7 @@
 """
 产品型号模型
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint, true
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -17,6 +17,7 @@ class ProductModel(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text)  # 型号描述
     status = Column(String(50), default="生产中")  # 状态：生产中、停产、研发中
+    is_enabled = Column(Boolean, nullable=False, default=True, server_default=true())
     column_start = Column(Integer)
     column_end = Column(Integer)
     sort_order = Column(Integer, default=0)

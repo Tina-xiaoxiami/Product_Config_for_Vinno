@@ -13,6 +13,7 @@ export const getModel = (id) => api.get(`/models/${id}`)
 export const createModel = (data) => api.post('/models', data)
 export const updateModel = (id, data) => api.put(`/models/${id}`, data)
 export const deleteModel = (id) => api.delete(`/models/${id}`)
+export const setModelEnabled = (id, isEnabled) => api.put(`/models/${id}/enabled`, { is_enabled: isEnabled })
 
 // ==================== 配置数据 ====================
 export const getConfigRows = (params) => api.get('/config/rows', { params })

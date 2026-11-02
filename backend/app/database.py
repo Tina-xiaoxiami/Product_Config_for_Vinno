@@ -3,7 +3,7 @@
 """
 import os
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -39,6 +39,15 @@ async def init_db():
     """初始化数据库表"""
     try:
         async with engine.begin() as conn:
+            # create_all does not add columns to existing installations.
+            columns = await conn.run_sync(
+                lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("product_models")}
+                if inspect(sync_conn).has_table("product_models") else set()
+            )
+            if columns and "is_enabled" not in columns:
+                await conn.execute(text(
+                    "ALTER TABLE product_models ADD COLUMN is_enabled BOOLEAN NOT NULL DEFAULT 1"
+                ))
             await conn.run_sync(Base.metadata.create_all)
             from app.models.draft import DRAFT_BUSINESS_KEY_INDEX
 
