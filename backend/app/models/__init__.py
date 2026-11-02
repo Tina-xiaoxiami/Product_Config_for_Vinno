@@ -1,6 +1,8 @@
 """
 数据模型初始化
 """
+from app.models.knowledge_release_history import KnowledgeReleaseBinding
+from app.models.knowledge_parameters import KnowledgeParameterTopic, KnowledgeParameterSpec, KnowledgeParameterRevision
 from app.models.series import ProductSeries
 from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease, ProbeWorkspaceMember
 from app.models.product_model import ProductModel
@@ -53,6 +55,7 @@ from app.models.registration import (
 )
 
 __all__ = [
+    "KnowledgeReleaseBinding", "KnowledgeParameterTopic", "KnowledgeParameterSpec", "KnowledgeParameterRevision",
     "ProductSeries",
     "ProductModel",
     "ConfigItem",
