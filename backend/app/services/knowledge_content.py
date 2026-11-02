@@ -36,6 +36,7 @@ _QUESTION_FILLERS = (
     "有没有",
 )
 _CONFIRMED_QUERY_EQUIVALENCES = (
+    ("针增益调节", "穿刺针增益调节", "针增益", "needle gain"),
     (
         "环境光自动调节亮度",
         "环境光线自动调节亮度",
