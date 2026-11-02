@@ -6,7 +6,7 @@ export const PARAMETER_PREVIEW_COLUMNS = [
   { key: 'selection_text', label: '正式选型', width: 160 },
   { key: 'issues_text', label: '缺项 / 说明', width: 280 }
 ].map(column => ({ visible: true, fixed: false, ...column }))
-export const parameterStatusLabel = status => ({ matched: '已匹配', multiple: '多种规格', missing: '缺少数据', ambiguous: '匹配有歧义', unsupported: '不允许支持', incomplete: '待补充', no_match: '未匹配' }[status] || status || '未明确')
+export const parameterStatusLabel = status => ({ matched: '已匹配', missing_spec: '未匹配规格', needs_review: '需核对', multiple: '多种规格', missing: '缺少数据', ambiguous: '匹配有歧义', unsupported: '不允许支持', incomplete: '待补充', no_match: '未匹配' }[status] || status || '未明确')
 export const parameterFailure = error => {
   const detail = error?.response?.data?.detail
   return typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(item => item.msg || String(item)).join('；') : error?.message || '操作失败，请重试'

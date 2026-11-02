@@ -14,7 +14,7 @@
       <div class="parameter-specs" v-loading="specsLoading">
         <article v-for="spec in specs" :key="spec.id" class="parameter-spec" :class="{ inactive: !spec.is_active }">
           <div><strong>{{ spec.name }}</strong> <code>{{ spec.ipn }}</code> <el-tag size="small" :type="spec.is_active ? 'success' : 'info'">{{ spec.is_active ? '启用' : '停用' }}</el-tag> <span class="parameter-hint">修订 {{ spec.revision }}</span></div>
-          <p>{{ formatParameterValues(topic, spec.values) }}</p>
+          <p>{{ formatParameterValues(topic, spec.values) }}</p><p class="parameter-hint">配置项：{{ spec.current_cn_name || '尚未明确' }}</p><p v-if="spec.identity_issue" class="parameter-issue">{{ spec.identity_issue }}</p>
           <details><summary>依据与核对记录</summary><p>{{ spec.evidence_reference }}</p><p>核对人：{{ spec.confirmed_by }}</p></details>
           <el-button size="small" link type="primary" @click="openSpec(spec)">编辑 / 停用</el-button>
         </article>
@@ -74,12 +74,12 @@
       </el-form>
       <template #footer><el-button :disabled="editorState.saving" @click="closeEditor()">取消</el-button><el-button type="primary" :loading="editorState.saving" @click="editor.submit()">保存</el-button></template>
     </el-dialog>
-    <el-dialog :model-value="!!detailRow" title="型号匹配详情" width="min(800px, calc(100vw - 32px))" @update:model-value="value => { if (!value) detailRow = null }"><template v-if="detailRow"><h3>{{ detailRow.model_name }}</h3><p v-for="issue in detailRow.issues" :key="String(issue)">{{ issue }}</p><article v-for="match in detailRow.matches" :key="`${match.spec_id}-${match.ipn}`" class="parameter-spec"><strong>{{ match.name || match.spec_name }} · {{ match.ipn }}</strong><p>{{ formatParameterValues(topic, match.values) }}</p><p>{{ match.selection_label || match.selection_config || '选型未明确' }}</p><p v-if="match.current_config_note">研发当前配置（辅助）：{{ match.current_config_note }}</p><p>依据：{{ match.evidence_reference }}</p><p>规格修订：{{ match.revision }}</p></article><pre class="parameter-answer">{{ detailRow.answer_text }}</pre></template></el-dialog>
+    <el-dialog :model-value="!!detailRow" title="型号匹配详情" width="min(800px, calc(100vw - 32px))" @update:model-value="value => { if (!value) detailRow = null }"><template v-if="detailRow"><h3>{{ detailRow.model_name }}</h3><p v-for="issue in detailRow.issues" :key="String(issue)">{{ issue }}</p><article v-for="match in detailRow.matches" :key="`${match.spec_id}-${match.ipn}`" class="parameter-spec"><strong>{{ match.name || match.spec_name }} · {{ match.ipn }}</strong><p>{{ formatParameterValues(topic, match.values) }}</p><p>配置快照名称：{{ match.snapshot_cn_name || '未记录' }}</p><p v-if="match.current_cn_name && match.current_cn_name !== match.snapshot_cn_name">当前中文描述：{{ match.current_cn_name }}</p><p>{{ match.selection_label || match.selection_config || '选型未明确' }}</p><p v-if="match.current_config_note">研发当前配置（辅助）：{{ match.current_config_note }}</p><p>依据：{{ match.evidence_reference }}</p><p>规格修订：{{ match.revision }}</p></article><pre class="parameter-answer">{{ detailRow.answer_text }}</pre></template></el-dialog>
     <el-dialog v-model="answerVisible" title="参数匹配答案预览" width="min(800px, calc(100vw - 32px))"><p class="parameter-hint">结果依据所选配置快照与当前已保存规格，不代表已发布正式问答。</p><pre class="parameter-answer">{{ preview?.answer_text }}</pre><template #footer><el-button @click="copyAnswer">复制答案</el-button><el-button @click="answerVisible = false">关闭</el-button></template></el-dialog>
   </section>
 </template>
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Filter } from '@element-plus/icons-vue'
 import TableColumnSettings from './TableColumnSettings.vue'
@@ -124,6 +124,7 @@ const resizeColumn = (width,_old,column) => applyColumns(columnLayout.value.map(
 const tableArea = ref(null), tableHeight = ref(300)
 const updateTableHeight = () => { if (tableArea.value) tableHeight.value = Math.max(260, window.innerHeight - Math.max(0, tableArea.value.getBoundingClientRect().top) - 85) }
 let resizeObserver
+watch(tableArea, (area, previous) => { if (previous) resizeObserver?.unobserve(previous); if (area) { resizeObserver?.observe(area); nextTick(updateTableHeight) } }, { flush: 'post' })
 const copyAnswer = async () => { try { await navigator.clipboard.writeText(preview.value?.answer_text || ''); ElMessage.success('答案预览已复制') } catch { ElMessage.error('复制失败，可从预览中选择文字复制') } }
 onMounted(async () => { window.addEventListener('resize', updateTableHeight); resizeObserver = new ResizeObserver(updateTableHeight); await Promise.all([loadTopics(), getSeriesList({ limit: 1000 }).then(result => { seriesList.value = result.items || [] }).catch(fail)]); await nextTick(); if (tableArea.value) resizeObserver.observe(tableArea.value) })
 onBeforeUnmount(() => { [topicRequests,specRequests,versionRequests,snapshotRequests,previewRequests].forEach(request => request.invalidate()); resizeObserver?.disconnect(); window.removeEventListener('resize', updateTableHeight) })
@@ -139,6 +140,7 @@ onBeforeUnmount(() => { [topicRequests,specRequests,versionRequests,snapshotRequ
 .parameter-specs { display: flex; flex-wrap: wrap; gap: 8px; max-height: 300px; overflow: auto; }
 .parameter-spec { border: 1px solid var(--el-border-color-light); border-radius: 5px; padding: 9px 11px; flex: 1 1 270px; min-width: 0; }
 .parameter-spec p { margin: 5px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.parameter-issue { color: var(--el-color-warning-dark-2); font-size: 12px; }
 .parameter-spec.inactive { opacity: .7; }
 .parameter-spec details { font-size: 12px; }
 .parameter-cell { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
