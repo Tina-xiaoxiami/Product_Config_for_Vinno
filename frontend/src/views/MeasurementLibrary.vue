@@ -33,9 +33,9 @@
                 <template v-if="query.trim()">精确 {{ exactCount }} 条，部分命中 {{ visibleRows.length - exactCount }} 条 · </template>
                 {{ counts.measurements }} 个测量 Id，{{ counts.calculations }} 个计算 Id
               </span>
-              <el-popover trigger="click" placement="bottom-end" :width="720" popper-class="measurement-statistics-popover">
-                <template #reference><el-button size="small" text :type="library.batch.warnings.length ? 'warning' : 'info'">统计与导入核对 <el-tag v-if="library.batch.warnings.length" size="small" type="warning" class="warning-tag">{{ library.batch.warnings.length }} 项提示</el-tag></el-button></template>
-                <div class="statistics-content">
+              <el-popover v-model:visible="statisticsOpen" trigger="click" placement="bottom-end" :width="720" popper-class="measurement-statistics-popover" @show="focusStatistics">
+                <template #reference><el-button ref="statisticsButton" size="small" text :type="library.batch.warnings.length ? 'warning' : 'info'" :aria-expanded="statisticsOpen" @keydown.esc.stop.prevent="closeStatistics">统计与导入核对 <el-tag v-if="library.batch.warnings.length" size="small" type="warning" class="warning-tag">{{ library.batch.warnings.length }} 项提示</el-tag></el-button></template>
+                <div ref="statisticsPanel" class="statistics-content" tabindex="-1" @keydown.esc.stop.prevent="closeStatistics">
                   <p>当前版本：常规测量 {{ summary.common_rows }} 行，应用测量 {{ summary.application_rows }} 行，未分类 {{ summary.unclassified_rows }} 行。明细含 {{ summary.duplicate_rows }} 行完全重复记录；跨模式同 Id 按多条关系保留。</p>
                   <p>英文 UI 使用 Description，空时显示 Id；中文 UI 使用 ChineseName。英文回退 {{ summary.english_id_fallback }} 行，中文名称缺失 {{ summary.missing_chinese }} 行。</p>
                   <div v-for="group in statistics" :key="group.label" class="statistics-row"><strong>{{ group.label }}</strong><span v-for="([name, count]) in Object.entries(group.values)" :key="name" class="count-chip">{{ name || '(空白)' }} <b>{{ count }}</b></span></div>
@@ -71,7 +71,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api/index'
@@ -82,6 +82,9 @@ const library = ref({ batches: [], batch: null, entries: [] })
 const batchId = ref(null), loading = ref(false), loadError = ref('')
 const query = ref(''), kind = ref(''), scope = ref(''), resetCounter = ref(0)
 const visibleRows = ref([]), detail = ref(null)
+const statisticsOpen = ref(false), statisticsPanel = ref(null), statisticsButton = ref(null)
+function focusStatistics() { nextTick(() => statisticsPanel.value?.focus({ preventScroll: true })) }
+function closeStatistics() { statisticsOpen.value = false; nextTick(() => statisticsButton.value?.$el?.focus({ preventScroll: true })) }
 const summary = computed(() => library.value.batch?.summary || {})
 const counts = computed(() => measurementCounts(visibleRows.value))
 const exactCount = computed(() => visibleRows.value.filter(row => row.match === 'exact').length)
@@ -122,6 +125,8 @@ const rows = computed(() => filterMeasurements(library.value.entries, { q: query
   name_note: [!row.description ? '英文使用 Id' : '', !row.cn_name ? '中文名缺失' : ''].filter(Boolean).join('；')
 })))
 const tableKey = computed(() => `${batchId.value}:${kind.value}:${scope.value}:${resetCounter.value}`)
+watch(tableKey, () => { statisticsOpen.value = false })
+onDeactivated(() => { statisticsOpen.value = false })
 watch(kind, value => { if (value === 'calculation') scope.value = '' })
 watch(scope, value => { if (value) kind.value = 'measurement' })
 function clearFilters() { query.value = ''; kind.value = ''; scope.value = ''; resetCounter.value++ }
