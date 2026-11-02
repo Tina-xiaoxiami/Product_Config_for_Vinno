@@ -9,9 +9,24 @@ export function newProbeMaterialRows(probeKey, catalog) {
     const template = catalog.templates?.find(t => t.category_id === probe.category_id && t.feature_id === feature.id)
     const applications = parseProbeExcludes(template?.default_excludes)
     return {probe_model_id:probeId, variant_id:variantId||null, feature_id:feature.id,
-      defined_status:template?.default_support === 'supported' && applications.excludes.length ? 'conditional' : template?.default_support||'unsupported', defined_excludes:applications.excludes, defined_tender:applications.tender,
+      defined_status:template?.default_support === 'supported' && applications.excludes.length ? 'conditional' : template?.default_support||(probe.category_id == null ? 'pending' : 'unsupported'), defined_excludes:applications.excludes, defined_tender:applications.tender,
       current_status:'pending', current_excludes:[], current_tender:[], priority:null, notes:''}
   })
+}
+
+export function probeMaterialExists(rows, candidate, catalog) {
+  const pair = row => `${row.probe_model_id}:${row.variant_id || 0}`
+  const identities = new Set([pair(candidate)])
+  const variant = catalog.variants.find(v => v.id === candidate.variant_id)
+  for (const material of catalog.config_materials || []) {
+    const source = `${-material.config_item_id}:${-material.config_item_id}`
+    const target = pair(material)
+    if (identities.has(source) || identities.has(target) ||
+      (candidate.probe_model_id === material.probe_model_id && variant?.ipn && variant.ipn === material.ipn)) {
+      identities.add(source); identities.add(target)
+    }
+  }
+  return rows.some(row => identities.has(pair(row)))
 }
 
 export function buildProbeMatrixRows(document, catalog, results) {

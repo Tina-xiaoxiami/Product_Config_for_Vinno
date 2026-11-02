@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildProbeMatrixRows, newProbeMaterialRows, matrixColumnSegments } from '../src/utils/probeMatrix.js'
+import { buildProbeMatrixRows, newProbeMaterialRows, matrixColumnSegments, probeMaterialExists } from '../src/utils/probeMatrix.js'
 import { formatProbeSupport, parseProbeExcludes } from '../src/utils/probeSupport.js'
 
 test('probe matrix uses one material row with feature cells instead of repeated probe/function rows', () => {
@@ -50,4 +50,16 @@ test('matrix groups preserve reordered columns and fixed at parent level', () =>
   const segments=matrixColumnSegments(layout,[{id:1,group_id:1},{id:2,group_id:2},{id:3,group_id:1},{id:4,group_id:1}],[{id:1,name:'A'},{id:2,name:'B'}])
   assert.deepEqual(segments.map(s=>s.key),layout.map(c=>c.key))
   assert.deepEqual(segments.filter(s=>s.features).map(s=>s.fixed),[true,false,false,true])
+})
+
+test('configuration source material with no confirmed category keeps definitions pending', () => {
+  const rows=newProbeMaterialRows('-12:-12',{probes:[{id:-12,category_id:null}],variants:[{id:-12,probe_model_id:-12}],features:[{id:1}],templates:[]})
+  assert.equal(rows[0].defined_status,'pending')
+  assert.equal(rows[0].current_status,'pending')
+})
+
+test('manual add recognizes a source material after its master is registered', () => {
+  const catalog={variants:[{id:20,ipn:'A'}],config_materials:[{config_item_id:12,probe_model_id:2,variant_id:20,ipn:'A'}]}
+  assert.equal(probeMaterialExists([{probe_model_id:-12,variant_id:-12}],{probe_model_id:2,variant_id:20},catalog),true)
+  assert.equal(probeMaterialExists([{probe_model_id:3,variant_id:30}],{probe_model_id:2,variant_id:20},catalog),false)
 })

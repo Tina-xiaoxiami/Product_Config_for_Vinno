@@ -17,6 +17,8 @@ test('shared combination retains model differences through editing, publication 
   await create.getByRole('button', { name: '建立并核对草稿' }).click()
   await expect(create).not.toBeVisible()
   await expect(page.getByText('3 个机型', { exact: true })).toBeVisible()
+  await expect(page.getByText('2 个探头物料 · 1 个功能', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button',{name:'编辑 P2 P-2 的 造影',exact:true})).toBeVisible()
   await page.getByRole('button', { name: '编辑 P1 P-1 的 造影', exact: true }).first().click()
   const editor = page.getByRole('dialog', { name: '编辑共同总集' })
   await expect(editor.locator('.el-form-item').filter({ hasText: '定义值支持状态' }).getByRole('combobox')).toBeDisabled()

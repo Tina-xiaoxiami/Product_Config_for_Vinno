@@ -18,6 +18,7 @@
           <el-button size="small" @click="scopeVisible = true">调整子系列范围</el-button>
           <el-button size="small" @click="refreshScope">重新核对共享范围</el-button>
           <el-button size="small" @click="reloadTemplateDefinitions">刷新模板定义</el-button>
+          <el-button size="small" @click="syncMaterials">补齐机型探头</el-button>
         </div>
         <div class="toolbar">
           <el-button size="small" type="primary" :disabled="!dirty" @click="save">保存草稿</el-button>
@@ -28,6 +29,7 @@
           <el-button size="small" :disabled="dirty" @click="fileInput.click()">导入 Excel 草稿</el-button>
           <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="importFile" />
         </div>
+        <el-alert v-if="current.material_sync?.missing_count || current.material_sync?.unmapped_count" type="warning" :closable="false" class="material-sync-alert"><template #title><span v-if="current.material_sync.missing_count">机型配置中另有 {{ current.material_sync.missing_count }} 个探头物料尚未纳入总集，请点击“补齐机型探头”。</span><span v-if="current.material_sync.unmapped_count"> {{ current.material_sync.unmapped_count }} 个物料尚未准确匹配模板分类，定义保持待确认。</span><el-button v-if="current.material_sync.unmapped_count" size="small" link @click="showMaterialIssues">查看待核对物料</el-button></template></el-alert>
         <el-tabs v-model="tab"><el-tab-pane label="共同总集" name="total" /><el-tab-pane label="机型结果与差异" name="models" /><el-tab-pane label="待发布变更" name="changes" /></el-tabs>
         <template v-if="tab === 'changes'"><el-alert :title="diffLabel" type="info" :closable="false" /><p>共同总集修改不会清除已有机型差异。发布预览会列出各机型结果及主配置来源。</p>
           <pre class="changes">{{ JSON.stringify({ common: document.rows, modelDifferences: document.overrides }, null, 2) }}</pre>
@@ -104,7 +106,7 @@ import { getSubseries, checkSubmissionVersion } from '../api/data'
 import { useVersionPreflight } from '../utils/useVersionPreflight'
 import { probeRuleKey, probeStatusLabel, applyProbeRule, removeProbeRule } from '../utils/probeWorkspace'
 import * as api from '../api/probeWorkspace'
-import { newProbeMaterialRows } from '../utils/probeMatrix'
+import { newProbeMaterialRows, probeMaterialExists } from '../utils/probeMatrix'
 const copy = value => JSON.parse(JSON.stringify(value))
 const workspaces = ref([]), current = ref(null), document = ref(null), catalog = ref({ probes: [], variants: [], features: [], applications: {} }), shared = ref({ groups: [], combinations: [], catalog: [] })
 const busy = ref(false), error = ref(''), saved = ref(''), results = ref([]), diff = ref({}), tab = ref('total'), search = ref(''), differencesOnly = ref(false), resultModel = ref(null)
@@ -123,8 +125,10 @@ async function allowDiscardLocal() { if (!dirty.value) return true; try { await 
 async function openWorkspace(id) { if (!await allowDiscardLocal()) return; await run(async () => { assign(await api.getProbeWorkspace(id)); await loadResults() }) }
 async function create() { if (!await allowDiscardLocal()) return; await run(async () => { assign(await api.createProbeWorkspace({ name: createName.value, groups: selectedGroups.value, combinations: selectedCombinations.value })); createVisible.value = false; createName.value = ''; selectedGroups.value = []; selectedCombinations.value = []; await refreshList(); await loadResults() }) }
 async function closeCreate(done) { if (createName.value || selectedGroups.value.length || selectedCombinations.value.length) { try { await ElMessageBox.confirm('确定放弃新总集的范围设置？', '未保存设置') } catch { return } } createVisible.value = false; createName.value = ''; selectedGroups.value = []; selectedCombinations.value = []; done?.() }
-async function persist(refresh = false) { assign(await api.saveProbeDraft(current.value.id, { revision: current.value.revision, data: document.value, refresh_scope: refresh })); await refreshList(); await loadResults() }
+async function persist(refresh = false, syncMaterials = false) { assign(await api.saveProbeDraft(current.value.id, { revision: current.value.revision, data: document.value, refresh_scope: refresh, sync_materials: syncMaterials })); await refreshList(); await loadResults() }
 async function save() { await run(async () => { await persist(); ElMessage.success('草稿已保存，尚未发布') }) }
+async function syncMaterials() { await run(async () => { await persist(false, true); catalog.value = await api.getProbeCatalog(); ElMessage.success('已按机型配置补齐探头草稿，现有差异保留，尚未发布') }) }
+async function showMaterialIssues() { try { await ElMessageBox.alert(current.value.material_sync.unmapped_materials.map(m => `${m.name} · IPN ${m.ipn || '未登记'}`).join('\n'), '待核对模板分类的配置物料', {customClass:'probe-material-issues',confirmButtonText:'关闭'}) } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '无法显示待核对物料') } }
 async function discard() { try { await ElMessageBox.confirm('废弃整个总集的未发布草稿？已发布配置保持不变。', '废弃草稿', {type:'warning'}) } catch { return } await run(async () => { assign(await api.discardProbeDraft(current.value.id, current.value.revision)); await refreshList(); await loadResults() }) }
 const scopeVisible = ref(false), scopeGroups = ref([]), scopeCombinations = ref([])
 watch(scopeVisible, visible => { if (visible) { scopeGroups.value = [...document.value.scope.groups]; scopeCombinations.value = [...document.value.scope.combinations] } })
@@ -151,7 +155,7 @@ async function refreshScope() {
 const priorities = ['标1', '标2', '标3', '新', '新(未优化)', '新(未发放)']
 const editIsModel = ref(false), editOriginalRule = ref({}), matrixEditKeys = ref([]), editTouchedFields = ref([]), editMixedFields = ref([])
 const statuses = ['supported', 'conditional', 'unsupported', 'pending'], editing = ref(false), editRule = ref({}), editKey = ref(''), editModels = ref([]), editIsNew = ref(false), newProbe = ref(''), editBaseline = ref('')
-const probeOptions = computed(() => catalog.value.probes.flatMap(p => { const variants = catalog.value.variants.filter(v => v.probe_model_id === p.id); return (variants.length ? variants : [{ id: 0, ipn: '' }]).map(v => ({ key: `${p.id}:${v.id}`, label: `${p.name} ${v.ipn || ''}` })) }))
+const probeOptions = computed(() => catalog.value.probes.filter(p => p.selectable !== false).flatMap(p => { const variants = catalog.value.variants.filter(v => v.probe_model_id === p.id); return (variants.length ? variants : [{ id: 0, ipn: '' }]).map(v => ({ key: `${p.id}:${v.id}`, label: `${p.name} ${v.ipn || ''}` })) }))
 const appOptions = computed(() => [...new Set(Object.values(catalog.value.applications).flat())])
 const editState = () => JSON.stringify([editRule.value, editModels.value, newProbe.value, editTouchedFields.value])
 function touchEdit(field) { if (!editTouchedFields.value.includes(field)) editTouchedFields.value.push(field) }
@@ -172,7 +176,7 @@ async function removeMatrixProbe(row) {
   for (const cell of Object.values(row.cells)) for (const key of cell.keys) document.value = removeProbeRule(document.value, key)
 }
 async function closeEdit(done) { if (editState() !== editBaseline.value) { try { await ElMessageBox.confirm('放弃尚未应用的编辑？', '未保存修改') } catch { return } } editing.value = false; done?.() }
-function applyEdit() { try { if (editIsNew.value) { if (!newProbe.value) throw new Error('请选择探头物料'); const rows = newProbeMaterialRows(newProbe.value, catalog.value); if (document.value.rows.some(r => r.probe_model_id === rows[0]?.probe_model_id && r.variant_id === rows[0]?.variant_id)) throw new Error('该探头物料已经存在'); document.value.rows.push(...rows) } else { if (tab.value === 'models' && !editModels.value.length) throw new Error('请至少选择一个目标机型'); const patch = Object.fromEntries(Object.entries(editRule.value).filter(([field, value]) => { if (value === null && field !== 'priority') return false; return editTouchedFields.value.includes(field) || JSON.stringify(value) !== JSON.stringify(editOriginalRule.value[field]) })); for (const key of (matrixEditKeys.value.length ? matrixEditKeys.value : [editKey.value])) document.value = applyProbeRule(document.value, key, patch, editModels.value) } editing.value = false } catch (e) { ElMessage.error(e.message) } }
+function applyEdit() { try { if (editIsNew.value) { if (!newProbe.value) throw new Error('请选择探头物料'); const rows = newProbeMaterialRows(newProbe.value, catalog.value); if (probeMaterialExists(document.value.rows, rows[0], catalog.value)) throw new Error('该探头物料已经存在'); document.value.rows.push(...rows) } else { if (tab.value === 'models' && !editModels.value.length) throw new Error('请至少选择一个目标机型'); const patch = Object.fromEntries(Object.entries(editRule.value).filter(([field, value]) => { if (value === null && field !== 'priority') return false; return editTouchedFields.value.includes(field) || JSON.stringify(value) !== JSON.stringify(editOriginalRule.value[field]) })); for (const key of (matrixEditKeys.value.length ? matrixEditKeys.value : [editKey.value])) document.value = applyProbeRule(document.value, key, patch, editModels.value) } editing.value = false } catch (e) { ElMessage.error(e.message) } }
 async function restoreInheritance() {
   if (!editModels.value.length) { ElMessage.warning('请先选择目标机型'); return }
   try { await ElMessageBox.confirm('移除所选机型在此功能的特有差异，恢复继承共同总集？', '恢复继承') } catch { return }
@@ -222,5 +226,5 @@ onActivated(async () => {
 onUnmounted(() => {window.removeEventListener('resize',measure);window.removeEventListener('beforeunload',beforeUnload)})
 </script>
 <style scoped>
-.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}.toolbar .el-button+.el-button{margin-left:0}.scope-line{font-size:13px}.table-container{width:100%;overflow:hidden}.rule-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.rule-grid .el-select{width:100%}.changes{max-height:50vh;overflow:auto;font-size:12px}.probe-workspace :deep(.el-card__body){padding:12px}.probe-workspace p{font-size:13px;line-height:1.6;color:var(--el-text-color-secondary)}
+.material-sync-alert{margin:6px 0}.material-sync-alert :deep(.el-alert__title){display:flex;align-items:center;gap:6px;flex-wrap:wrap}:global(.probe-material-issues .el-message-box__message){white-space:pre-line}.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}.toolbar .el-button+.el-button{margin-left:0}.scope-line{font-size:13px}.table-container{width:100%;overflow:hidden}.rule-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.rule-grid .el-select{width:100%}.changes{max-height:50vh;overflow:auto;font-size:12px}.probe-workspace :deep(.el-card__body){padding:12px}.probe-workspace p{font-size:13px;line-height:1.6;color:var(--el-text-color-secondary)}
 </style>

@@ -135,3 +135,10 @@ test('restoring matrix inheritance removes selected exceptions and preserves oth
   assert.equal(document.value.overrides['2']['5:6:7'],undefined)
   assert.equal(document.value.rows[0].current_status,'supported')
 })
+
+test('material sync saves the current draft through the shared revision and scope path', async () => {
+  const calls=[]
+  const sync=handler('syncMaterials',{run:async callback=>callback(),persist:async(...args)=>calls.push(args),catalog:ref({}),api:{getProbeCatalog:async()=>({})},ElMessage:{success:()=>{}}})
+  await sync()
+  assert.deepEqual(calls,[[false,true]])
+})
