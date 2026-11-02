@@ -1,6 +1,23 @@
 import { probeRuleKey } from './probeWorkspace.js'
 import { parseProbeExcludes } from './probeSupport.js'
 
+export function probePhysicalKey(probeId, variant, variantId = 0) {
+  return JSON.stringify([probeId, ...(variant
+    ? [variant.ipn || '', variant.internal_model || '', variant.notes || ''] : ['missing', variantId || 0])])
+}
+
+export function groupProbeVariants(probeId, variants = []) {
+  const groups = new Map()
+  for (const variant of variants) {
+    const key = variant.ipn || variant.internal_model
+      ? probePhysicalKey(probeId, variant) : JSON.stringify([probeId, 'unidentified', variant.id])
+    if (!groups.has(key)) groups.set(key, { ...variant, history_ids: [] })
+    const ids = groups.get(key).history_ids
+    if (!ids.includes(variant.id)) ids.push(variant.id)
+  }
+  return [...groups.values()]
+}
+
 export function newProbeMaterialRows(probeKey, catalog) {
   const [probeId, variantId] = probeKey.split(':').map(Number)
   const probe = catalog.probes.find(p => p.id === probeId)
@@ -38,8 +55,7 @@ export function buildProbeMatrixRows(document, catalog, results) {
   for (const record of document.rows) {
     const probe = probes.get(record.probe_model_id) || {}
     const variant = variants.get(record.variant_id)
-    const physicalKey = JSON.stringify([record.probe_model_id, ...(variant
-      ? [variant.ipn || '', variant.internal_model || '', variant.notes || ''] : ['missing', record.variant_id || 0])])
+    const physicalKey = probePhysicalKey(record.probe_model_id, variant, record.variant_id)
     if (!rows.has(physicalKey)) rows.set(physicalKey, {
       key: physicalKey, probe_model_id: record.probe_model_id, variant_ids: [],
       category_id: probe.category_id, category_name: categories.get(probe.category_id)?.name || '未匹配类别',

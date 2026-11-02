@@ -796,9 +796,16 @@ class SearchIndex:
         section = None
         locator_status = 'exact' if locator and selected_row else 'unresolved' if locator else 'query'
         if not stale and source['file_format'] == 'pdf' and query:
-            from tracker.services.pdf_sections import pdf_section
-            section = pdf_section(source['path'], source['file_sha256'], source_id, query, locator) if not locator or selected_row else None
+            from tracker.services.pdf_sections import pdf_location_details
+            details = pdf_location_details(source['path'], source['file_sha256'], source_id, query, locator) if not locator or selected_row else None
+            section = details['section'] if details else None
             locator_status = section['locator_status'] if section else 'unresolved'
+            if section is None and locator and selected_row:
+                # A verified matching PDF page is still a valid location when
+                # no complete numbered section can be established. Keep TOC
+                # ambiguity unresolved rather than choosing a body section.
+                if details and details['matching_page']:
+                    locator_status = 'exact'
         elif not stale and source['file_format'] == 'docx':
             from tracker.services.release_sections import controlled_word_sections, section_for_locator
             word_sections = controlled_word_sections(

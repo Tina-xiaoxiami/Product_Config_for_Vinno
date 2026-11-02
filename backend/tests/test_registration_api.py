@@ -24,6 +24,16 @@ async def _client_for(database_path):
     from app import database
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    # Registration-import fixtures intentionally start with only the fields
+    # their parser uses. The API lifespan also reads the complete item catalog.
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(config_items)')}
+        for name, definition in [
+            ('row_index', 'INTEGER NOT NULL DEFAULT 0'), ('rd_name', 'TEXT'),
+            ('v_code', 'TEXT'), ('created_at', 'DATETIME'), ('updated_at', 'DATETIME'),
+        ]:
+            if columns and name not in columns:
+                connection.execute(f'ALTER TABLE config_items ADD COLUMN {name} {definition}')
     # This harness bypasses main's lifespan; apply the same startup upgrades.
     with patch.object(database, "engine", engine):
         await database.init_db()

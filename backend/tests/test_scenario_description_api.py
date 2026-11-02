@@ -7,7 +7,11 @@ from app.integrations.release_workbench import create_integrated_workbench, moun
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    canonical=tmp_path/'canonical.db'; sqlite3.connect(canonical).close()
+    canonical=tmp_path/'canonical.db'
+    with sqlite3.connect(canonical) as connection:
+        connection.execute('''CREATE TABLE knowledge_documents (
+            id INTEGER PRIMARY KEY, title TEXT, document_type TEXT, file_path TEXT,
+            version TEXT, market TEXT, product_series TEXT, sha256 TEXT, source_status TEXT)''')
     wb=create_integrated_workbench({'TESTING':True,'DATABASE_PATH':tmp_path/'tracker.db','PRODUCT_CONFIG_DATABASE':canonical,'RELEASE_NOTE_ROOT':None,'CONTROLLED_MATERIALS_ROOT':None,'TRAINING_ROOT':None,'SOURCE_ROOTS':[],'CONTROLLED_EXTRACTION_ROOTS':[],'WORKBENCH_HOME':False})
     host=FastAPI();mount_release_workbench(host,wb)
     def forbidden(*a,**k):raise AssertionError('model must never run')

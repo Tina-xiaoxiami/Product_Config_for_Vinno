@@ -205,3 +205,35 @@ def test_partial_review_schema_is_rejected_before_import(tmp_path):
         import_knowledge_sources(database, root)
     with sqlite3.connect(database) as connection:
         assert connection.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0] == 0
+
+
+def test_rescanning_changed_archived_source_does_not_reactivate_it(tmp_path):
+    root = tmp_path / 'source'
+    source = _write(root, '注册/国内/长沙变更/注册变更-20260615.pdf', b'first')
+    database = tmp_path / 'knowledge.db'
+    _create_legacy_database(database)
+    migrate_feature_identity_database(database)
+    import_knowledge_sources(database, root)
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE knowledge_documents SET source_status='archived'")
+    source.write_bytes(b'changed')
+    assert import_knowledge_sources(database, root)['updated'] == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('SELECT source_status FROM knowledge_documents').fetchone() == ('archived',)
+
+
+def test_source_rescan_reuses_content_identity_and_reports_filename_conflict(tmp_path):
+    relative = '注册/国内/长沙变更/注册变更-20260615.pdf'
+    original = _write(tmp_path / 'original', relative, b'same-file')
+    _write(tmp_path / 'copy', relative, original.read_bytes())
+    database = tmp_path / 'knowledge.db'
+    _create_legacy_database(database)
+    migrate_feature_identity_database(database)
+    import_knowledge_sources(database, tmp_path / 'original')
+    copied = import_knowledge_sources(database, tmp_path / 'copy')
+    assert copied['inserted'] == 0 and copied['duplicate_content'] == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0] == 1
+    _write(tmp_path / 'conflict', relative, b'different-file')
+    conflict = import_knowledge_sources(database, tmp_path / 'conflict')
+    assert conflict['inserted'] == 0 and conflict['name_conflict'] == 1

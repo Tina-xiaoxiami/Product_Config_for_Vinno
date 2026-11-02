@@ -187,6 +187,27 @@ def discover_controlled_product_materials(
     return sorted(materials, key=lambda material: str(material.path))
 
 
+def document_identity_indexes(rows):
+    """Use one physical-path/content/name identity rule for material importers."""
+    return (
+        {str(Path(row['file_path']).expanduser().resolve()): row for row in rows},
+        {str(row['sha256']): row for row in rows if row['sha256']},
+        {(str(row['document_type']), str(row['file_name'])): row for row in rows},
+    )
+
+
+def match_document_identity(path, digest, document_type, indexes):
+    by_path, by_hash, by_name = indexes
+    resolved = Path(path).expanduser().resolve()
+    if str(resolved) in by_path:
+        return 'same_path', by_path[str(resolved)]
+    if digest in by_hash:
+        return 'duplicate_content', by_hash[digest]
+    if (document_type, resolved.name) in by_name:
+        return 'name_conflict', by_name[(document_type, resolved.name)]
+    return 'ready', None
+
+
 def import_controlled_product_materials(
     database_path: str | Path,
     controlled_root: str | Path,
@@ -219,32 +240,21 @@ def import_controlled_product_materials(
             ORDER BY id
             """
         ).fetchall()
-        by_path = {str(Path(row["file_path"]).expanduser().resolve()): row for row in rows}
-        by_hash: dict[str, sqlite3.Row] = {
-            str(row["sha256"]): row for row in rows if row["sha256"]
-        }
-        by_name = {
-            (str(row["document_type"]), str(row["file_name"])): row for row in rows
-        }
+        indexes = document_identity_indexes(rows)
+        by_path, by_hash, by_name = indexes
 
         for material in materials:
             path_text = str(material.path)
-            existing = by_path.get(path_text)
-            if existing is not None:
+            status, existing = match_document_identity(material.path, material.sha256, material.document_type, indexes)
+            if status == 'same_path':
                 status = (
                     "unchanged"
                     if str(existing["sha256"] or "") == material.sha256
                     else "name_conflict"
                 )
                 document_id = int(existing["id"])
-            elif material.sha256 in by_hash:
-                status = "duplicate_content"
-                document_id = int(by_hash[material.sha256]["id"])
-            elif (material.document_type, material.path.name) in by_name:
-                status = "name_conflict"
-                document_id = int(
-                    by_name[(material.document_type, material.path.name)]["id"]
-                )
+            elif existing is not None:
+                document_id = int(existing['id'])
             else:
                 status = "ready"
                 document_id = None
@@ -275,6 +285,7 @@ def import_controlled_product_materials(
                         material.sha256,
                     ),
                 )
+                assert cursor.lastrowid is not None
                 document_id = int(cursor.lastrowid)
                 status = "inserted"
                 counts["inserted"] += 1

@@ -62,9 +62,11 @@
                       :key="v.id"
                       size="small"
                       type="info"
+                      :title="[v.notes, v.history_ids.length > 1 ? `${v.history_ids.length} 条相同物料历史记录` : ''].filter(Boolean).join(' · ')"
                       style="margin:2px 4px 2px 0"
                     >
                       {{ v.internal_model }}<template v-if="v.ipn"> / {{ v.ipn }}</template>
+                      <small v-if="v.history_ids.length > 1"> · 历史 {{ v.history_ids.length }}</small>
                     </el-tag>
                   </div>
                 </template>
@@ -184,6 +186,7 @@ import { getProbeCategories, createProbeCategory, updateProbeCategory, deletePro
 import api from '../api/index'
 import { useRouter } from 'vue-router'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
+import { groupProbeVariants } from '../utils/probeMatrix'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
 const router = useRouter()
@@ -210,7 +213,7 @@ const loadData = async () => {
     const nextCategories = catRes.items || []
     const nextMap = {}
     for (const model of modelRes.items || []) {
-      const row = { ...model, _appCount: model.application_count || 0, _variants: model.variant_items || [] }
+      const row = { ...model, _appCount: model.application_count || 0, _variants: groupProbeVariants(model.id, model.variant_items) }
       if (!nextMap[model.category_id]) nextMap[model.category_id] = []
       nextMap[model.category_id].push(row)
     }

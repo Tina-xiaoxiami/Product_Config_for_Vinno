@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime
 from functools import partial
 from hashlib import sha256
 import os
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Callable
 
@@ -22,13 +24,17 @@ from tracker.services.release_sections import (
 )
 from tracker.services.product_strategy import ProductStrategyReader, ProductStrategySourceUnavailable
 from tracker.services.search_index import (
-    SearchIndex, SourceChangedDuringExtraction, extract_file, file_sha256, file_snapshot,
+    FileSnapshot, SearchIndex, SourceChangedDuringExtraction, extract_file, file_sha256, file_snapshot,
 )
 from tracker.services.search_sources import STRUCTURED_SOURCE_TYPES, search_structured_sources
 from tracker.services.document_scopes import matches_model_scope, normalize_model_scope, DOCUMENT_CATEGORIES
 from tracker.services.section_cache import section_cache
 from tracker.services.release_section_groups import assign_release_section_groups
 from tracker.services.document_evidence import latest_extraction_review_hashes
+from tracker.services.canonical_documents import (
+    CanonicalCatalogUnavailable, document_metadata, is_retired, normalized_path,
+    project_records, read_catalog,
+)
 
 
 SEARCHABLE_SUFFIXES = {".docx", ".pdf", ".xlsx", ".xls", ".pptx", ".md", ".txt", ".png", ".jpg", ".jpeg", ".zip"}
@@ -68,13 +74,18 @@ def _controlled_records(
     database: Database, materials_root: str | Path | None,
     controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     records = []
     extraction_roots = tuple(controlled_extraction_roots)
     evidence_counts = database.count_document_version_evidence()
     extraction_review_hashes = _latest_extraction_review_hashes(database)
     for document in database.list_documents():
+        if is_retired(document.get("status")):
+            continue
         for version in database.list_document_versions(document["id"]):
+            if is_retired(version.get("status")):
+                continue
             current = version["id"] == document["current_version_id"]
             verification = "unverified"
             market_label = {"domestic": "国内", "overseas": "海外"}.get(
@@ -117,7 +128,49 @@ def _controlled_records(
                         if field == "path_docx" else str(version["sha256"] or "")
                     ),
                 })
-    return records
+    return project_records(records, canonical_database,
+                           (materials_root, *extraction_roots, *historical_roots), _registered_file_access)
+
+
+def _controlled_snapshot(database, materials_root, extraction_roots, historical_roots, canonical_database):
+    try:
+        return _controlled_records(database, materials_root, extraction_roots, historical_roots, canonical_database), ""
+    except CanonicalCatalogUnavailable as error:
+        return [], str(error)
+
+
+def _physical_records(records, index):
+    unique, priorities = {}, {}
+    for record in records:
+        metadata = index.source_metadata(record['source_id'])
+        key = normalized_path(record['path'])
+        priority = (bool(metadata and metadata['status'] == 'indexed'),
+                    record['source_id'].startswith('canonical:'), bool(record['is_current']))
+        if key not in unique or priority > priorities[key]:
+            unique[key], priorities[key] = record, priority
+    return list(unique.values())
+
+
+def _deduplicate_controlled_results(results, index):
+    unique, output = {}, []
+    for result in results:
+        if result['source_type'] != 'controlled':
+            output.append(result)
+            continue
+        metadata = index.source_metadata(result['preview_id'])
+        key = ((normalized_path(metadata['path']), metadata['file_sha256'])
+               if metadata else (result['preview_id'], ''))
+        previous = unique.get(key)
+        if previous is None:
+            unique[key] = result
+            result['source_aliases'] = result.get('source_aliases', [result['preview_id']])
+            output.append(result)
+        else:
+            previous['source_aliases'] = list(dict.fromkeys(previous.get('source_aliases', [])
+                + result.get('source_aliases', [result['preview_id']])))
+            previous['matched_versions'] = sorted(set(previous.get('matched_versions', []))
+                | set(result.get('matched_versions', [])))
+    return output
 
 
 def _latest_extraction_review_hashes(database: Database) -> dict[str, str]:
@@ -145,8 +198,9 @@ def _controlled_candidates(
     database: Database, materials_root: str | Path | None,
     controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    return [item for item in _controlled_records(database, materials_root, controlled_extraction_roots, historical_roots)
+    return [item for item in _controlled_records(database, materials_root, controlled_extraction_roots, historical_roots, canonical_database)
             if item["access_status"] == "accessible"]
 
 
@@ -204,6 +258,31 @@ def _training_candidates(training_root: str | Path | None) -> list[dict[str, Any
     return candidates
 
 
+def _cached_file_chunks(index: SearchIndex, snapshot: FileSnapshot) -> list[dict[str, str]] | None:
+    """Reuse complete extraction bytes for an alias; previews intentionally truncate."""
+    try:
+        with index.maintenance_lock, closing(sqlite3.connect(index.path.resolve().as_uri() + '?mode=ro', uri=True)) as connection:
+            connection.execute('BEGIN')
+            source = connection.execute(
+                "SELECT source_id, chunk_count, has_text_content FROM search_sources "
+                "WHERE path=? AND file_sha256=? AND status='indexed' ORDER BY source_id LIMIT 1",
+                (str(snapshot.path), snapshot.digest),
+            ).fetchone()
+            if source is None:
+                return None
+            if not source[2]:
+                return []
+            rows = connection.execute(
+                'SELECT locator, content FROM search_fts WHERE source_id=? ORDER BY rowid', (source[0],),
+            ).fetchall()
+            if len(rows) != source[1]:
+                return None
+            return [{'locator': row[0], 'text': row[1]} for row in rows]
+    except (OSError, sqlite3.Error):
+        # This optional derived cache can miss; the ordinary extractor still reports errors.
+        return None
+
+
 def refresh_search_index(
     database: Database,
     index: SearchIndex,
@@ -212,6 +291,7 @@ def refresh_search_index(
     training_root: str | Path | None,
     controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
     retry_failed: bool = False,
 ) -> dict[str, Any]:
     """Incrementally index registered controlled files and files under the training root."""
@@ -221,6 +301,7 @@ def refresh_search_index(
             database, index, materials_root=materials_root, training_root=training_root,
             controlled_extraction_roots=tuple(controlled_extraction_roots),
             retry_failed=retry_failed, historical_roots=tuple(historical_roots),
+            canonical_database=canonical_database,
         )
 
 
@@ -228,10 +309,12 @@ def _refresh_search_index(
     database: Database, index: SearchIndex, *, materials_root: str | Path | None,
     training_root: str | Path | None, controlled_extraction_roots: Iterable[str | Path],
     retry_failed: bool, historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
 ) -> dict[str, Any]:
     controlled_available = any(_root_is_available(root) for root in (materials_root, *controlled_extraction_roots, *historical_roots))
     training_available = _root_is_available(training_root)
-    controlled_records = _controlled_records(database, materials_root, controlled_extraction_roots, historical_roots)
+    controlled_records, catalog_error = _controlled_snapshot(database, materials_root, controlled_extraction_roots, historical_roots, canonical_database)
+    controlled_available = controlled_available and not catalog_error
     controlled_candidates = [item for item in controlled_records if item["access_status"] == "accessible"]
     training_candidates = _training_candidates(training_root) if training_available else []
     candidates = controlled_candidates + training_candidates
@@ -259,7 +342,9 @@ def _refresh_search_index(
         try:
             existed = previous is not None
             before = file_snapshot(path)
-            chunks = extract_file(path)
+            chunks = _cached_file_chunks(index, before)
+            if chunks is None:
+                chunks = extract_file(path)
             index.replace_source(
                 source_id=source_id,
                 source_type=candidate["source_type"],
@@ -287,7 +372,8 @@ def _refresh_search_index(
     # Roots and registrations may change while files are being parsed.
     controlled_available = any(_root_is_available(root) for root in (materials_root, *controlled_extraction_roots, *historical_roots))
     training_available = _root_is_available(training_root)
-    controlled_records = _controlled_records(database, materials_root, controlled_extraction_roots, historical_roots)
+    controlled_records, catalog_error = _controlled_snapshot(database, materials_root, controlled_extraction_roots, historical_roots, canonical_database)
+    controlled_available = controlled_available and not catalog_error
     training_candidates = _training_candidates(training_root) if training_available else []
     if controlled_available:
         for record in controlled_records:
@@ -304,6 +390,8 @@ def _refresh_search_index(
     if not controlled_available:
         index.mark_source_type_unavailable("controlled")
         source_errors["controlled"] = "受控资料目录未配置或当前不可访问；已隐藏旧索引，恢复目录后可刷新。"
+    if catalog_error:
+        source_errors["controlled"] = catalog_error
     if not training_available:
         index.mark_source_type_unavailable("training")
         source_errors["training"] = "培训资料目录未配置或当前不可访问；已隐藏旧索引，恢复目录后可刷新。"
@@ -316,6 +404,7 @@ def _refresh_search_index(
         "coverage": search_source_coverage(
             database, index, materials_root=materials_root, training_root=training_root,
             controlled_extraction_roots=controlled_extraction_roots, historical_roots=historical_roots,
+            canonical_database=canonical_database,
         ),
     }
 
@@ -328,18 +417,23 @@ def sync_search_roots_and_metadata(
     training_root: str | Path | None,
     controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
 ) -> dict[str, str]:
     """Sync current controlled metadata and hide indexed results if a source root is unavailable."""
     extraction_roots = tuple(controlled_extraction_roots)
     controlled_available = any(_root_is_available(root) for root in (materials_root, *extraction_roots, *historical_roots))
     training_available = _root_is_available(training_root)
-    records = _controlled_records(database, materials_root, extraction_roots, historical_roots) if controlled_available else []
+    records, catalog_error = _controlled_snapshot(database, materials_root, extraction_roots, historical_roots, canonical_database)
+    controlled_available = controlled_available and not catalog_error
     training_candidates = _training_candidates(training_root) if training_available else []
     with index.maintenance_lock:
-        return _sync_search_roots_and_metadata(
+        unavailable = _sync_search_roots_and_metadata(
             index, controlled_available=controlled_available, records=records,
             training_available=training_available, training_candidates=training_candidates,
         )
+        if catalog_error:
+            unavailable["controlled"] = catalog_error
+        return unavailable
 
 
 def _sync_search_roots_and_metadata(
@@ -389,10 +483,11 @@ def resolve_source_candidate(
     training_root: str | Path | None,
     controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
+    canonical_database: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """Resolve an opaque index ID through live configured roots and current DB rows."""
-    if source_id.startswith("controlled:"):
-        candidates = _controlled_candidates(database, materials_root, controlled_extraction_roots, historical_roots)
+    if source_id.startswith(("controlled:", "canonical:")):
+        candidates = _controlled_candidates(database, materials_root, controlled_extraction_roots, historical_roots, canonical_database)
     elif source_id.startswith("training:"):
         candidates = _training_candidates(training_root)
     else:
@@ -403,9 +498,10 @@ def resolve_source_candidate(
 def controlled_source_candidates(database: Database, *, materials_root: str | Path | None,
                                  training_root: str | Path | None = None,
                                  controlled_extraction_roots: Iterable[str | Path] = (),
-                                 historical_roots: Iterable[str | Path] = ()) -> dict[str, dict[str, Any]]:
+                                 historical_roots: Iterable[str | Path] = (),
+                                 canonical_database: str | Path | None = None) -> dict[str, dict[str, Any]]:
     """Resolve one current allowlist snapshot for a batch of controlled previews."""
-    return {item['source_id']: item for item in _controlled_candidates(database, materials_root, controlled_extraction_roots, historical_roots)}
+    return {item['source_id']: item for item in _controlled_candidates(database, materials_root, controlled_extraction_roots, historical_roots, canonical_database)}
 
 
 _COVERAGE_ACTIONS = {
@@ -473,10 +569,11 @@ def search_source_coverage(
     training_root: str | Path | None, controlled_extraction_roots: Iterable[str | Path] = (),
     historical_roots: Iterable[str | Path] = (),
     include_versions: bool = False,
+    canonical_database: str | Path | None = None,
 ) -> dict[str, Any]:
     """Describe actual registered-file coverage with repairable titles, never paths."""
     extraction_roots = tuple(controlled_extraction_roots)
-    records = _controlled_records(database, materials_root, extraction_roots, historical_roots)
+    records, catalog_error = _controlled_snapshot(database, materials_root, extraction_roots, historical_roots, canonical_database)
     training_candidates = _training_candidates(training_root)
     controlled_root_available = _root_is_available(materials_root)
     extraction_roots_available = sum(_root_is_available(root) for root in extraction_roots)
@@ -484,7 +581,11 @@ def search_source_coverage(
     with index.maintenance_lock:
         index.status()
         version_labels = index.version_labels() if include_versions else {}
-        controlled = _source_coverage(records, index, version_labels)
+        controlled = _source_coverage(_physical_records(records, index), index, version_labels)
+        if canonical_database is not None:
+            controlled["catalog_available"] = not bool(catalog_error)
+            if catalog_error:
+                controlled["catalog_error"] = catalog_error
         controlled["root_available"] = controlled_root_available
         controlled["extraction_roots_configured"] = len(extraction_roots)
         controlled["extraction_roots_available"] = extraction_roots_available
@@ -585,7 +686,7 @@ def _strategy_results(
     model_filter: str = "",
     market: str = "",
 ) -> tuple[list[dict[str, Any]], str | None]:
-    results = []
+    results: list[dict[str, Any]] = []
     try:
         if market and market != "domestic":
             return results, "当前接入的正式配置数据仅覆盖国内版。"
@@ -657,6 +758,7 @@ def _search_exact(
     version_to: str = "",
     family_query: str = "",
     selected_versions: tuple[str, ...] = (),
+    canonical_database: str | Path | None = None,
 ) -> dict[str, Any]:
     needle = query.strip()
     if not needle:
@@ -683,7 +785,15 @@ def _search_exact(
         source: message for source, message in unavailable.items() if source in selected_sources
     }
 
-    release_data = {"results": []}
+    canonical = {}
+    if canonical_database is not None:
+        try:
+            canonical = read_catalog(canonical_database)
+        except CanonicalCatalogUnavailable as catalog_error:
+            unavailable = {**unavailable, "controlled": str(catalog_error)}
+            source_errors["controlled"] = str(catalog_error)
+    canonical_ids = {str(row['id']): (path, row) for path, row in canonical.items()}
+    release_data: dict[str, Any] = {"results": []}
     if "release" in selected_sources:
         project_names = {project["id"]: project["name"] for project in database.list_projects()}
         project_filter = project_id if scope == "current" else None
@@ -790,6 +900,9 @@ def _search_exact(
         )["total"]
 
     results = [item for group in live_groups.values() for item in group] + structured["results"]
+    tracker_versions = {version['id']: (document, version)
+                        for document in database.list_documents()
+                        for version in database.list_document_versions(document['id'])}
     historical_versions = {version["id"] for document in database.list_documents()
                            if document["doc_type"] == "历史补充资料"
                            for version in database.list_document_versions(document["id"])}
@@ -800,9 +913,36 @@ def _search_exact(
                                current_only=current_only, model=model, market=market, limit=count, text_cache=text_cache,
                                version_from=version_from, version_to=version_to, selected_versions=selected_versions, family_query=family_query)
         for item in indexed["results"]:
-            extra = {}
+            extra: dict[str, Any] = {}
             if source_type == "controlled":
-                extra["document_version_id"] = int(item["source_id"].split(":")[1])
+                metadata = index.source_metadata(item['source_id'])
+                registered = canonical.get(normalized_path(metadata['path'])) if metadata else None
+                if registered is not None and registered['source_status'] != 'active':
+                    continue
+                parts = item['source_id'].split(':')
+                if parts[0] == 'canonical':
+                    registration = canonical_ids.get(parts[1])
+                    if (registration is None or not metadata
+                            or registration[0] != normalized_path(metadata['path'])
+                            or registration[1]['source_status'] != 'active'):
+                        continue
+                    registered = registration[1]
+                else:
+                    version_id = int(parts[1])
+                    historical = tracker_versions.get(version_id)
+                    if not historical or is_retired(historical[0]['status']) or is_retired(historical[1]['status']):
+                        continue
+                    registered_files = [canonical.get(normalized_path(historical[1][field]))
+                                        for field in ('path_pdf', 'path_docx') if historical[1].get(field)]
+                    if any(row is not None and row['source_status'] != 'active' for row in registered_files):
+                        continue
+                    extra['document_version_id'] = version_id
+                    extra['document_metadata'] = {key: historical[0].get(key, '')
+                                                  for key in ('title', 'doc_type', 'model_scope')}
+                if registered is not None:
+                    extra['canonical_document_id'] = registered['id']
+                    if parts[0] == 'canonical':
+                        extra['document_metadata'] = document_metadata(registered)
             results.append(_result(source_type=source_type,
                 source_label=("历史补充资料" if extra.get("document_version_id") in historical_versions else "受控资料") if source_type == "controlled" else "培训资料",
                 title=item["title"], scope=item["scope"], verification=item["verification"],
@@ -822,6 +962,7 @@ def _search_exact(
                 needle.casefold() not in title, title, item["source_type"], str(item.get("preview_id") or item["locator"]))
 
     results.sort(key=relevance)
+    results = _deduplicate_controlled_results(results, index)
     total = len(results)
     source_counts = {source: sum(item["source_type"] == source for item in results) for source in sorted(selected_sources)}
     return {
@@ -888,6 +1029,7 @@ def unified_search(
     source_group: str = 'all', release_category: str = 'all', whitepaper_model: str = '',
     prewarm: Callable[[list[tuple[str, str, str]]], None] | None = None,
     chapter_candidate: Callable[[str], dict[str, Any] | None] | None = None,
+    canonical_database: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run explicit queries through the same adapters; related hits stay separate clues."""
     groups = {'all', 'release_note', 'whitepaper', 'other'}
@@ -913,7 +1055,8 @@ def unified_search(
                 project_id=project_id, scope=scope, verification=verification,
                 current_only=current_only, model=model, market=market, country=country,
                 unavailable_sources=unavailable_sources, version_from=version_from, version_to=version_to,
-                family_query=needle if task == 'family' else '', selected_versions=selected_versions)
+                family_query=needle if task == 'family' else '', selected_versions=selected_versions,
+                canonical_database=canonical_database)
     payload = run_query(query=needle, sources=effective_sources or version_sources)
     results = payload['results'] if effective_sources else []
     for item in results:
@@ -950,6 +1093,8 @@ def unified_search(
     if task == 'earliest':
         results.sort(key=lambda row: (row['match_kind'] != 'direct', row['source_type'] != 'release',
                                      row.get('project_id', 0), version_key(row.get('version') or '99999.0.0')))
+    if canonical_database is not None:
+        results = _deduplicate_controlled_results(results, index)
     # Classify actual registered sources before pagination; do not infer types from titles.
     document_info = {version['id']: document
                      for document in database.list_documents()
@@ -958,7 +1103,7 @@ def unified_search(
     source_cache: dict[int, Any] = {}
     for item in results:
         kind = item['source_type']
-        doc_type = document_info.get(item.get('document_version_id'), {}).get('doc_type', '')
+        doc_type = (item.get('document_metadata') or document_info.get(item.get('document_version_id'), {})).get('doc_type', '')
         item['source_group'] = ('release_note' if kind == 'release' and item.get('evidence_kind') != 'current_description'
                                 or kind == 'controlled' and doc_type == '发布记录'
                                 else 'whitepaper' if kind == 'controlled' and doc_type == '白皮书' else 'other')
@@ -1030,7 +1175,7 @@ def unified_search(
     for item in results:
         if item['source_group'] != 'whitepaper':
             continue
-        labels = _whitepaper_model_labels(document_info.get(item.get('document_version_id'), {}))
+        labels = _whitepaper_model_labels(item.get('document_metadata') or document_info.get(item.get('document_version_id'), {}))
         whitepaper_memberships[id(item)] = {key for key, _, _ in labels}
         seen_labels: set[str] = set()
         for model_key, label, basis in labels:

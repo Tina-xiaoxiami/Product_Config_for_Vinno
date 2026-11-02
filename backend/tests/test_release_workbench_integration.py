@@ -15,7 +15,10 @@ from app.integrations.release_workbench import (
 
 def _workbench(tmp_path: Path):
     canonical_database = tmp_path / "product_config.db"
-    sqlite3.connect(canonical_database).close()
+    with sqlite3.connect(canonical_database) as connection:
+        connection.execute('''CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id INTEGER PRIMARY KEY, title TEXT, document_type TEXT, file_path TEXT,
+            version TEXT, market TEXT, product_series TEXT, sha256 TEXT, source_status TEXT)''')
     return create_integrated_workbench(
         {
             "TESTING": True,

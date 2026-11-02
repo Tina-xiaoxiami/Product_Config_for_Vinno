@@ -7,19 +7,29 @@ import re
 from pypdf import PdfReader
 from tracker.services.search_index import file_snapshot
 from tracker.services.section_cache import file_cache_identity, section_cache
+from tracker.services.search_intent import family_mentions
 
 _HEADING = re.compile(r'^\s*(\d+(?:\.\d+)+)\.?\s+(.+?)\s*$')
 _TOC = re.compile(r'(?:\.{3,}|…{2,}|·{3,}|\s{3,})\s*\d+\s*$')
 
 
+def is_pdf_toc_entry(line: str) -> bool:
+    return bool(_TOC.search(line))
+
+
 def pdf_section(path, expected_sha: str, source_id: str, query: str, locator: str = '', *, reference: str = '') -> dict | None:
+    details = pdf_location_details(path, expected_sha, source_id, query, locator, reference=reference)
+    return details['section'] if details else None
+
+
+def pdf_location_details(path, expected_sha: str, source_id: str, query: str, locator: str = '', *, reference: str = '') -> dict | None:
     if not query:
         return None
     try:
         identity = file_cache_identity(path)
     except (OSError, RuntimeError):
         return None
-    key = ('pdf', source_id, expected_sha, query, locator, reference, identity)
+    key = ('pdf_location', source_id, expected_sha, query, locator, reference, identity)
     with section_cache.singleflight(key):
         return _cached_pdf_section(path, expected_sha, source_id, query, locator, identity, key, reference)
 
@@ -31,7 +41,7 @@ def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity,
         generation = section_cache.generation()
         cached = section_cache.get(key)
         if cached is not None and file_cache_identity(path) == identity:
-            return cached['section']
+            return cached
         before = file_snapshot(path)
         if before.digest != expected_sha:
             return None
@@ -44,20 +54,25 @@ def _cached_pdf_section(path, expected_sha, source_id, query, locator, identity,
     except Exception:
         return None
     result = _parsed_pdf_section(reader, lines, source_id, query, locator, reference)
+    page = re.fullmatch(r'第 (\d+) 页(?: · \d+)?', locator or '')
+    matching_lines = [line for number, line in lines
+                      if page and number == int(page[1]) and family_mentions(line, query)]
+    details = {'section': result, 'matching_page': bool(matching_lines)
+               and not any(is_pdf_toc_entry(line) for line in matching_lines)}
     try:
         if file_cache_identity(path) != identity:
             return None
-        section_cache.put(key, {'section': result}, generation)
+        section_cache.put(key, details, generation)
     except (OSError, RuntimeError):
         return None
-    return result
+    return details
 
 
 def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str, reference: str = '') -> dict | None:
     headings = []
     for index, (page_no, line) in enumerate(lines):
         match = _HEADING.match(line)
-        if not match or _TOC.search(line):
+        if not match or is_pdf_toc_entry(line):
             continue
         number, title = match.groups()
         headings.append((index, page_no, number, title))
@@ -105,7 +120,7 @@ def _parsed_pdf_section(reader, lines, source_id: str, query: str, locator: str,
             return None
         else:
             toc_numbers = {match.group(1) for page, line in lines if page == requested_page
-                           and query.casefold() in line.casefold() and _TOC.search(line)
+                           and query.casefold() in line.casefold() and is_pdf_toc_entry(line)
                            if (match := _HEADING.match(line))}
             if len(toc_numbers) != 1:
                 return None

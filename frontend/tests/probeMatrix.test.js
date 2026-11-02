@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildProbeMatrixRows, newProbeMaterialRows, matrixColumnSegments, probeMaterialExists } from '../src/utils/probeMatrix.js'
+import { buildProbeMatrixRows, newProbeMaterialRows, matrixColumnSegments, probeMaterialExists, groupProbeVariants } from '../src/utils/probeMatrix.js'
 import { formatProbeSupport, parseProbeExcludes } from '../src/utils/probeSupport.js'
 
 test('probe matrix uses one material row with feature cells instead of repeated probe/function rows', () => {
@@ -41,6 +41,22 @@ test('identical material duplicates share one visible row while conflicting valu
   assert.equal(rows.length,1)
   assert.deepEqual(rows[0].cells[2].keys,['1:1:2','1:2:2'])
   assert.equal(rows[0].cells[2].current_status,'mixed')
+})
+
+test('probe catalogs group identical physical variants without merging different notes or unidentified records', () => {
+  const input = [
+    { id: 1, ipn: 'A', internal_model: 'P', notes: '' },
+    { id: 2, ipn: 'A', internal_model: 'P', notes: '' },
+    { id: 3, ipn: 'A', internal_model: 'P', notes: 'different scope' },
+    { id: 4 }, { id: 5 }
+  ]
+  const rows = groupProbeVariants(1, input)
+  assert.equal(rows.length, 4)
+  assert.deepEqual(rows[0].history_ids, [1, 2])
+  assert.equal(rows[1].notes, 'different scope')
+  assert.deepEqual(rows.slice(2).map(row => row.history_ids), [[4], [5]])
+  assert.equal(input.length, 5)
+  assert.equal(input[0].history_ids, undefined)
 })
 
 test('new material fills every template feature and leaves current values pending', () => {

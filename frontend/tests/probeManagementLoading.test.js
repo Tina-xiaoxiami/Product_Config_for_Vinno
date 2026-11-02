@@ -2,11 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
+import { groupProbeVariants } from '../src/utils/probeMatrix.js'
 const read = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
 const ref = value => ({ value })
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 function probeLoader(getProbeModels) {
-  const context = { loading: ref(false), categories: ref([]), modelMap: ref({}), selectedCategory: ref(null), getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getProbeModels, ElMessage: { error() {} } }
+  const context = { loading: ref(false), categories: ref([]), modelMap: ref({}), selectedCategory: ref(null), getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getProbeModels, groupProbeVariants, ElMessage: { error() {} } }
   const source = read('ProbeModelsView')
   const code = source.slice(source.indexOf('let dataLoadRequest ='), source.indexOf('const currentModels ='))
   return { ...context, ...new Function(...Object.keys(context), code + '\nreturn { loadData }')(...Object.values(context)) }
@@ -19,7 +20,7 @@ test('probe first load includes details and selects a category without an applic
   await app.loadData()
   assert.equal(app.selectedCategory.value.id, 1)
   assert.equal(app.modelMap.value[1][0]._appCount, 2)
-  assert.deepEqual(app.modelMap.value[1][0]._variants, [{ id: 9 }])
+  assert.deepEqual(app.modelMap.value[1][0]._variants, [{ id: 9, history_ids: [9] }])
   assert.equal(app.loading.value, false)
 })
 test('late probe refresh cannot replace a newer successful refresh', async () => {

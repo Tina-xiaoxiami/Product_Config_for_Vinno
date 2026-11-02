@@ -321,6 +321,47 @@ def test_pdf_non_toc_page_never_redirects_to_another_section(tmp_path):
     assert valid['section']['locator'] == '第 2 页' and valid['locator_status'] == 'exact'
 
 
+def test_pdf_matching_page_remains_available_without_a_numbered_complete_section(tmp_path):
+    path = tmp_path / 'release.pdf'
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(40, 700, '1.14.65 Release Note')
+    pdf.drawString(40, 680, 'VINNO Technology')
+    pdf.save()
+    index = SearchIndex(tmp_path / 'index.db')
+    index.replace_source(source_id='canonical:91:file', source_type='controlled', title='Release Note', path=path,
+                         scope='VINNO 6', verification='unverified', is_current=True, chunks=extract_file(path))
+    preview = index.preview('canonical:91:file', locator='第 1 页', query='1.14.65')
+    assert preview['section'] is None
+    assert preview['locator_status'] == 'exact'
+    assert '未能核实完整章节' in preview['notice']
+    assert preview['chunks'][0]['locator'] == '第 1 页'
+    missing = index.preview('canonical:91:file', locator='第 99 页', query='1.14.65')
+    assert missing['locator_status'] == 'unresolved'
+
+
+def test_pdf_fallback_does_not_treat_raw_space_separated_toc_as_a_verified_page(tmp_path):
+    path = tmp_path / 'toc.pdf'
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(40, 700, '5.63 Needle    3'); pdf.save()
+    index = SearchIndex(tmp_path / 'index.db')
+    index.replace_source(source_id='canonical:1:file', source_type='controlled', title='TOC', path=path,
+                         scope='V10', verification='unverified', is_current=True, chunks=extract_file(path))
+    assert index.preview('canonical:1:file', locator='第 1 页', query='Needle')['locator_status'] == 'unresolved'
+
+
+def test_pdf_page_verification_is_independent_of_preview_hit_limit(tmp_path):
+    path = tmp_path / 'release.pdf'
+    pdf = canvas.Canvas(str(path))
+    for _ in range(2):
+        pdf.drawString(40, 700, '1.14.65 Release Note'); pdf.showPage()
+    pdf.save()
+    index = SearchIndex(tmp_path / 'index.db')
+    index.replace_source(source_id='canonical:1:file', source_type='controlled', title='Release', path=path,
+                         scope='V10', verification='unverified', is_current=True, chunks=extract_file(path))
+    preview = index.preview('canonical:1:file', locator='第 2 页', query='1.14.65', limit=1)
+    assert preview['locator_status'] == 'exact' and preview['section'] is None
+
+
 def test_earliest_only_uses_visible_source_and_category(monkeypatch):
     monkeypatch.setattr(search_module, 'release_evidence', lambda *args, **kwargs: None)
     class DB:

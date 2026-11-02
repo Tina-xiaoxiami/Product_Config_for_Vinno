@@ -43,6 +43,7 @@ from tracker.services.workbench import (
     training_assets,
 )
 from tracker.services.search_index import SearchIndex
+from tracker.services.canonical_documents import CanonicalCatalogUnavailable, read_catalog
 from tracker.services.personal_workspace import PersonalWorkspace
 from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
@@ -168,6 +169,11 @@ def static_asset_version(static_folder: str | None) -> str:
 def create_app(config: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
 
+    @app.errorhandler(CanonicalCatalogUnavailable)
+    def canonical_catalog_unavailable(error):
+        return failure("source_unavailable", str(error), 503)
+
+
     @app.context_processor
     def _inject_static_version() -> dict[str, str]:
         return {"static_version": static_asset_version(app.static_folder)}
@@ -217,7 +223,8 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
         return {"materials_root": app.config.get("CONTROLLED_MATERIALS_ROOT"),
                 "training_root": app.config.get("TRAINING_ROOT"),
                 "controlled_extraction_roots": app.config.get("CONTROLLED_EXTRACTION_ROOTS", []),
-                "historical_roots": historical_roots()}
+                "historical_roots": historical_roots(),
+                "canonical_database": app.config.get("PRODUCT_CONFIG_DATABASE") if app.config.get("INTEGRATED_MODE") else None}
 
     def historical_roots() -> list[str]:
         return [str(root) for root in [app.config.get("RELEASE_NOTE_ROOT"),
@@ -456,6 +463,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 search_index,
                 product_strategy_reader,
                 query=request.args.get("q", ""),
+                canonical_database=search_roots()["canonical_database"],
                 sources=sources,
                 project_id=requested_project_id(),
                 scope=request.args.get("scope", "current"),
@@ -508,18 +516,31 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             latest_versions[document['id']] = max((tuple(map(int, label.split('.'))) for label in labels if label), default=None)
             for version in versions:
                 document_versions[version['id']] = document
+        canonical_documents = {row['id']: row for row in read_catalog(search_roots()['canonical_database']).values()}
         def search_page(page, model):
             page_result = unified_search(database, search_index, product_strategy_reader, query=query,
                 sources={"release", "controlled"}, project_id=project, scope="current",
                 source_group="whitepaper", whitepaper_model=model, page=page, page_size=100,
+                canonical_database=search_roots()["canonical_database"],
                 unavailable_sources=unavailable,
                 chapter_candidate=lambda source_id: resolve_source_candidate(database, source_id, **search_roots()))
+            current_results = []
             for item in page_result['results']:
-                document = document_versions.get(item.get('document_version_id'))
-                if document:
-                    item['_scenario_document_id'] = str(document['id'])
-                    item['_scenario_document_label'] = document['title']
-            page_result['results'] = [item for item in page_result['results'] if (doc := document_versions.get(item.get('document_version_id'))) and latest_versions.get(doc['id']) is not None and re.fullmatch(r'\d+(?:\.\d+)+', item.get('version') or '') and tuple(map(int, item['version'].split('.'))) == latest_versions[doc['id']]]
+                canonical = canonical_documents.get(item.get('canonical_document_id'))
+                document = canonical or document_versions.get(item.get('document_version_id'))
+                if not document:
+                    continue
+                item['_scenario_document_id'] = ('canonical:' if canonical else '') + str(document['id'])
+                item['_scenario_document_label'] = document['title']
+                version = item.get('version') or ''
+                if canonical:
+                    latest = located_version('', str(canonical.get('version') or ''))
+                    expected = tuple(map(int, latest.split('.'))) if latest else None
+                else:
+                    expected = latest_versions.get(document['id'])
+                if expected is not None and re.fullmatch(r'\d+(?:\.\d+)+', version) and tuple(map(int, version.split('.'))) == expected:
+                    current_results.append(item)
+            page_result['results'] = current_results
             return page_result
         def preview_section(source_id, locator, needle):
             candidate = resolve_source_candidate(database, source_id, **search_roots())
