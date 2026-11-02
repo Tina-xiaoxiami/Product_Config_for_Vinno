@@ -97,3 +97,9 @@ test('changing selection invalidates obsolete errors and save-in-progress cannot
   responses[0]({ id: 1 })
   await saving
 })
+
+test('topic creation only requires business field labels and units, not internal identifiers', () => {
+  const payload = parameterTopicPayload({ name:'电池',question:'容量？',aliases:'',fields:[{key:'',label:'容量',unit:'mAh',type:'number'},{key:'',label:'能量',unit:'Wh',type:'number'}] })
+  assert.ok(payload.fields.every(field => /^[a-z][a-z0-9_]*$/.test(field.key)))
+  assert.equal(new Set(payload.fields.map(field => field.key)).size,2)
+})
