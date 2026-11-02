@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.services.knowledge_qa_snapshot import (
-    KnowledgeQaSnapshotError, export_knowledge_qa_snapshot, restore_knowledge_qa_snapshot,
+    KnowledgeQaSnapshotError, export_knowledge_qa_snapshot, restore_knowledge_qa_snapshot, _snapshot_hash,
 )
 from app.services.knowledge_question_seed import SeedQuestionSpec, seed_pending_questions
 from app.services.knowledge_scope import scope_key
@@ -77,3 +77,19 @@ async def test_legacy_seed_is_not_covered_by_scoped_answers_with_the_same_wordin
         assert report["items"][0]["action"] == "would_insert"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("invalid", [
+    {"country": "DE"}, {"product_model_id": True}, {"software_version": "1.14.XX"},
+])
+def test_restore_rejects_invalid_canonical_scope_before_writing(tmp_path, invalid):
+    source, target = tmp_path / "source.db", tmp_path / "target.db"
+    _create(source, populated=True)
+    _create(target)
+    snapshot = export_knowledge_qa_snapshot(source)
+    snapshot["questions"][0]["scope"].update(invalid)
+    snapshot["snapshot_sha256"] = _snapshot_hash(snapshot)
+    before = target.read_bytes()
+    with pytest.raises(KnowledgeQaSnapshotError, match="范围|机型"):
+        restore_knowledge_qa_snapshot(target, snapshot, apply=True)
+    assert target.read_bytes() == before

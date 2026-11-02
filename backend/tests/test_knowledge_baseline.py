@@ -294,3 +294,14 @@ def test_cli_main_reports_success_and_actionable_errors_without_creating_sources
     assert main() == 1
     assert "登记原件" in capsys.readouterr().err
     assert not (tmp_path / "missing.pdf").exists()
+
+
+def test_baseline_recognizes_scope_key_and_keeps_legacy_rows_explicit(knowledge_source):
+    from app.services.knowledge_scope_migration import migrate_knowledge_scopes
+
+    database, _ = knowledge_source
+    migrate_knowledge_scopes(database, apply=True)
+    knowledge = build_knowledge_baseline(database)["sources"]["knowledge"]
+    assert knowledge["question_scope_columns"] == ["scope_key"]
+    assert knowledge["legacy_question_count"] == 4
+    assert "structured_question_scope_missing" not in {item["code"] for item in knowledge["findings"]}
