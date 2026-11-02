@@ -427,7 +427,7 @@ onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invali
 .model-results { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .model-table-area { flex: 1; min-height: 180px; }
 .model-toolbar { display: flex; gap: 16px; min-height: 32px; flex-shrink: 0; margin-bottom: 12px; align-items: center; font-size: 13px; }
-.model-search { width: 360px; max-width: 45%; }
+.model-search { width: 320px; max-width: 45%; }
 .model-toolbar > .el-button { margin-left: auto; }
 .model-result-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--el-text-color-primary); font-weight: 500; }
 .model-result-count { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 400; }

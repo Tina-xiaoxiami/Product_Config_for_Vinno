@@ -75,6 +75,10 @@ test('measurement controls stay compact and the table fills remaining height thr
   const versionBox = await version.boundingBox()
   expect(Math.abs(searchBox.y - versionBox.y), 'search and version share the first row').toBeLessThan(4)
   expect(searchBox.x).toBeLessThan(versionBox.x)
+  expect((await page.locator('.search-input > .el-input__wrapper').boundingBox()).height).toBe(32)
+  expect((await page.locator('.batch-select .el-select__wrapper').boundingBox()).height).toBe(32)
+  expect((await page.getByRole('button', { name: '导入人用中文表', exact: true }).boundingBox()).height).toBe(32)
+  expect((await page.getByRole('button', { name: '筛选中文 UI 名称', exact: true }).boundingBox()).height).toBe(24)
 
   async function expectFilledTable() {
     const table = await page.locator('.measurement-library .el-table').boundingBox()

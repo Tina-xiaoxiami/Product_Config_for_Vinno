@@ -11,6 +11,8 @@ test('master data navigation groups measurement and keeps edited imports on thei
   await expect(navigation.getByRole('tab', { name: '测量库', exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: '导入人用中文表', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '导入人用测量库' })).toHaveCSS('--el-color-primary', '#2563c9')
+  const versionField = page.getByRole('dialog', { name: '导入人用测量库' }).getByLabel('来源版本')
+  expect((await versionField.locator('..').boundingBox()).height).toBe(36)
   await page.getByRole('dialog', { name: '导入人用测量库' }).getByLabel('来源版本').fill('尚未导入')
   const goingBack = page.goBack()
   const warning = page.getByRole('dialog', { name: '尚未导入', exact: true })
@@ -48,6 +50,17 @@ test('workspace frames share typography and surfaces across modules without page
     await expect(page.locator('.system-workspace > .el-container > .el-main')).toHaveCSS('background-color', 'rgb(238, 243, 249)')
     await expect(page.locator('.workspace-content')).toBeVisible()
     await page.waitForLoadState('networkidle')
+    const controlSizes = await page.locator('.workspace-content').evaluate(root => {
+      const visible = element => element.getClientRects().length && element.getBoundingClientRect().height > 0
+      const selectors = [
+        '.el-input--small > .el-input__wrapper', '.el-select--small .el-select__wrapper',
+        '.el-button--small:not(.is-text):not(.is-link):not(.is-circle)'
+      ]
+      return selectors.flatMap(selector => [...root.querySelectorAll(selector)].filter(visible).map(element => ({
+        selector, height: element.getBoundingClientRect().height
+      })))
+    })
+    for (const control of controlSizes) expect(control.height, `${path}: ${control.selector}`).toBeGreaterThanOrEqual(32)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
     expect(overflow, path).toBe(false)
     if (path === 'models') {
