@@ -303,7 +303,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         raise ReleaseHistoryError('请补齐国家、市场、完整机型和目标软件版本')
     topic = _topic(query, scope)
     available = await _ready(session)
-    coverage: dict[str, Any] = {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []}
+    coverage: dict[str, Any] = {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': [],
+        'completeness': 'unverified', 'coverage_message': '仅覆盖已登记且本次已检索的资料；未做来源目录完整性检查。'}
     result: dict[str, Any] = {'available': available, 'assessment': 'unavailable', 'conclusion': '历史版本追溯尚未初始化',
               'scope': scope, 'query': query, 'coverage': coverage, 'chains': [], 'events': [],
               'source_documents': [], 'confirmation_items': []}
@@ -488,5 +489,6 @@ async def history_for_question(session: AsyncSession, query: str, scope: dict) -
     except ReleaseHistoryError as error:
         return {'available': await _ready(session), 'assessment': 'needs_clarification',
                 'conclusion': str(error), 'scope': scope, 'query': query,
-                'coverage': {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': []},
+                'coverage': {'document_count': 0, 'versions': [], 'excluded_documents': [], 'unresolved_documents': [], 'gaps': [],
+                    'completeness': 'unverified', 'coverage_message': '仅覆盖已登记且本次已检索的资料；未做来源目录完整性检查。'},
                 'chains': [], 'events': []}

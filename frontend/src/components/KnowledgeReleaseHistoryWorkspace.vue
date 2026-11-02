@@ -1,6 +1,6 @@
 <template>
   <section class="history-workspace" data-testid="history-workspace">
-    <div class="history-heading"><div><h3>历史Release Note追溯</h3><p>按明确适用的版本链检索新增、变化与限制，保留原文；未检索到不等于不支持。</p></div><el-button size="small" @click="openBindings">维护资料适用范围</el-button></div>
+    <div class="history-heading"><div><h3>历史Release Note追溯</h3><p>按明确适用的版本链检索新增、变化与限制，保留原文；未检索到不等于不支持。</p></div><div class="history-heading-actions"><el-button size="small" :loading="coverageState.loading" @click="runCoverage">检查资料覆盖</el-button><el-button size="small" @click="openBindings">维护资料适用范围</el-button></div></div>
     <div class="history-controls">
       <el-input v-model="form.query" size="small" placeholder="主题，如：针增益调节" aria-label="历史追溯主题" @input="invalidateTrace" />
       <el-select v-model="form.market" size="small" placeholder="市场" aria-label="历史追溯市场" @change="form.product_model_id = null; invalidateTrace()"><el-option label="国内" value="domestic" /><el-option label="海外" value="overseas" /></el-select>
@@ -11,7 +11,8 @@
       <el-button size="small" :disabled="!currentScope" @click="useCurrentScope">使用问答查询范围</el-button><el-button size="small" type="primary" :loading="loading" @click="runTrace">追溯历史</el-button>
     </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
-    <KnowledgeHistoryTrace :trace="result" />
+    <KnowledgeReleaseCoverage :report="coverageState.report" :loading="coverageState.loading" :error="coverageState.error" :scope-notice="coverageState.scopeNotice" @retry="runCoverage" />
+    <KnowledgeHistoryTrace :trace="result" :coverage-report="coverageState.report" />
     <el-dialog v-model="bindingVisible" title="资料适用范围" width="min(940px, calc(100vw - 32px))" :before-close="closeBindings">
       <p>根据资料中的适用说明绑定机型与版本链；不同硬件平台分别命名。国家、市场不能仅按资料语言判断。</p>
       <el-alert v-if="bindingError" type="error" :title="bindingError" :closable="false" />
@@ -33,26 +34,33 @@
   </section>
 </template>
 <script setup>
-import { reactive, ref } from 'vue'
+import { onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import KnowledgeHistoryTrace from './KnowledgeHistoryTrace.vue'
+import KnowledgeReleaseCoverage from './KnowledgeReleaseCoverage.vue'
 import { historyTracePayload } from '../utils/knowledgeReleaseHistory'
-import { traceReleaseHistory, getReleaseHistoryDocuments, getReleaseHistoryBindings, saveReleaseHistoryBindings, deactivateReleaseHistoryBinding } from '../api/knowledgeReleaseHistory'
+import { createCoverageState, createCoverageWorkspace } from '../utils/knowledgeReleaseCoverage'
+import { traceReleaseHistory, checkReleaseCoverage, getReleaseHistoryDocuments, getReleaseHistoryBindings, saveReleaseHistoryBindings, deactivateReleaseHistoryBinding } from '../api/knowledgeReleaseHistory'
 const props = defineProps({ models: { type: Array, default: () => [] }, currentScope: { type: Object, default: null }, query: { type: String, default: '' } })
 const form = reactive({ query: '', country: '', market: '', product_model_id: null, software_version: '', release_line: '' })
 const result = ref(null), loading = ref(false), error = ref('')
+const coverageState = reactive(createCoverageState())
+const coverageWorkspace = createCoverageWorkspace({ checkReleaseCoverage }, coverageState)
+const runCoverage = () => coverageWorkspace.check(form)
 let traceRequestId = 0
-const invalidateTrace = () => { traceRequestId += 1; result.value = null; loading.value = false; error.value = '' }
+const invalidateTrace = () => { traceRequestId += 1; result.value = null; loading.value = false; error.value = ''; coverageWorkspace.invalidate() }
 const runTrace = async () => {
   const payload = historyTracePayload(form)
   if (!payload) { error.value = '请填写主题、市场、完整机型和目标软件版本'; return }
   const requestId = ++traceRequestId
   const fingerprint = JSON.stringify(payload)
   result.value = null; error.value = ''; loading.value = true
+  void runCoverage()
   try { const data = await traceReleaseHistory(payload); if (requestId === traceRequestId && fingerprint === JSON.stringify(historyTracePayload(form))) result.value = data }
   catch (failure) { if (requestId === traceRequestId) error.value = failure?.response?.data?.detail || '历史追溯失败，请重试' }
   finally { if (requestId === traceRequestId) loading.value = false }
 }
+onBeforeUnmount(() => { traceRequestId += 1; coverageWorkspace.dispose() })
 const useCurrentScope = () => { if (props.currentScope) { Object.assign(form, props.currentScope, { query: props.query || form.query }); invalidateTrace() } }
 const filteredModels = market => props.models.filter(model => !market || model.series_name?.endsWith(market === 'domestic' ? '-China' : '-Oversea'))
 const bindingVisible = ref(false), documents = ref([]), bindings = ref([]), bindingError = ref(''), bindingsLoading = ref(false), savingBinding = ref(false), bindingBaseline = ref('')
@@ -125,5 +133,5 @@ const deactivateBinding = async row => {
 }
 </script>
 <style scoped>
-.history-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }.history-heading h3 { margin: 0; }.history-heading p { color: var(--el-text-color-secondary); }.history-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }.history-controls .el-input,.history-controls .el-select { width: 190px; }.binding-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 14px; }.binding-grid .el-select { width: 100%; }.binding-existing { max-height: 230px; overflow: auto; }.binding-existing ul { padding: 0; list-style: none; }.binding-existing li { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--el-border-color-lighter); padding: 8px 0; }.binding-existing small { display: block; color: var(--el-text-color-secondary); }@media(max-width:650px) { .binding-grid { grid-template-columns: 1fr; } }
+.history-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }.history-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }.history-heading-actions .el-button+.el-button { margin-left: 0; }.history-heading h3 { margin: 0; }.history-heading p { color: var(--el-text-color-secondary); }.history-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }.history-controls .el-input,.history-controls .el-select { width: 190px; }.binding-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 14px; }.binding-grid .el-select { width: 100%; }.binding-existing { max-height: 230px; overflow: auto; }.binding-existing ul { padding: 0; list-style: none; }.binding-existing li { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--el-border-color-lighter); padding: 8px 0; }.binding-existing small { display: block; color: var(--el-text-color-secondary); }@media(max-width:650px) { .binding-grid { grid-template-columns: 1fr; } }
 </style>

@@ -3,6 +3,7 @@
     <div class="trace-heading"><strong>{{ historyAssessmentLabel(trace.assessment) }}</strong><small>资料证据 · 尚未发布为正式答案</small></div>
     <p>{{ trace.conclusion }}</p>
     <p class="coverage">已按原文和登记关系检索 {{ trace.coverage?.document_count || 0 }} 份资料；版本：{{ trace.coverage?.versions?.join('、') || '暂无' }}</p>
+    <p class="warning" data-testid="history-coverage-boundary">{{ coverageTraceBoundary(trace, coverageReport) }}</p>
     <p v-for="gap in trace.coverage?.gaps || []" :key="String(gap)" class="warning">{{ text(gap) }}</p>
     <section v-if="Array.isArray(trace.confirmation_items)" class="trace-confirmations" data-testid="history-confirmation-items">
       <strong>需要补充确认的信息：{{ trace.confirmation_items.length }}项</strong>
@@ -52,7 +53,8 @@
 import { computed } from 'vue'
 import { sourceApplicabilityDisplay, confirmationQuestion } from '../utils/knowledgeSourceApplicability'
 import { historyAssessmentLabel } from '../utils/knowledgeReleaseHistory'
-const props = defineProps({ trace: { type: Object, default: null } })
+import { coverageTraceBoundary } from '../utils/knowledgeReleaseCoverage'
+const props = defineProps({ trace: { type: Object, default: null }, coverageReport: { type: Object, default: null } })
 const sourceDocuments = computed(() => (props.trace?.source_documents || []).map(sourceApplicabilityDisplay))
 const changeLabel = value => ({ added: '新增记录', optimized: '优化记录', removed: '移除记录', changed: '变化记录', fixed: '修复记录', narrative: '相关描述' }[value] || value || '相关描述')
 const text = value => typeof value === 'string' ? value : value.reason || value.message || '资料覆盖待核实'
