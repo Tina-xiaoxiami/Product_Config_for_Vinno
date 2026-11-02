@@ -319,3 +319,28 @@ async def test_country_conflict_blocks_unique_alias_and_ipn_filtered_matches(dat
         assert explicit["status"] == "answered"
         assert explicit["question_id"] == german
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_country", [None, "DE"])
+async def test_merge_cannot_bypass_alias_ownership_in_overlapping_scope(database, target_country):
+    client, engine = await _client_for(database)
+    target_scope = {**NEUTRAL, "country": target_country}
+    other_scope = {**NEUTRAL, "country": "DE" if target_country is None else None}
+    source_text = "数据导出格式怎么设置？"
+    async with client:
+        target = await ask(client, scope=target_scope)
+        assert (await publish(client, target["question_id"])).status_code == 200
+        source = await ask(client, source_text, target_scope)
+        assert source["status"] == "pending"
+        owner = await ask(client, source_text, other_scope)
+        assert owner["status"] == "pending"
+        assert (await publish(client, owner["question_id"], "独立的数据导出答案")).status_code == 200
+        before = database.read_bytes()
+        refused_publish = await publish(client, target["question_id"], aliases=[source_text])
+        assert refused_publish.status_code == 422, refused_publish.text
+        refused_merge = await client.post(
+            f"/api/knowledge/questions/{source['question_id']}/merge/{target['question_id']}")
+        assert refused_merge.status_code == 422, refused_merge.text
+    await engine.dispose()
+    assert database.read_bytes() == before
