@@ -10,6 +10,7 @@ test('master data navigation groups measurement and keeps edited imports on thei
   await expect(group.getByRole('menuitem', { name: '测量库', exact: true })).toBeVisible()
   await expect(navigation.getByRole('tab', { name: '测量库', exact: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: '导入人用中文表', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '导入人用测量库' })).toHaveCSS('--el-color-primary', '#2563c9')
   await page.getByRole('dialog', { name: '导入人用测量库' }).getByLabel('来源版本').fill('尚未导入')
   const goingBack = page.goBack()
   const warning = page.getByRole('dialog', { name: '尚未导入', exact: true })
