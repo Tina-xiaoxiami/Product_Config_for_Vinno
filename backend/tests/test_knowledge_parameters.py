@@ -168,3 +168,71 @@ async def test_legacy_database_is_readable_but_write_unavailable(tmp_path):
     async with client_for(tmp_path, tables=False) as (client, _):
         assert (await client.get('/api/knowledge/parameter-topics')).json() == {'available': False, 'items': [], 'total': 0}
         assert (await client.post('/api/knowledge/parameter-topics', json=TOPIC)).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_snapshot_options_match_preview_identities_and_reject_duplicate_raw_ids(tmp_path):
+    async with client_for(tmp_path) as (client, factory):
+        topic, _ = await seed(client)
+        options = await client.get('/api/knowledge/parameter-snapshots/1')
+        assert options.status_code == 200
+        assert options.json()['models'] == [{'id': 1, 'name': 'VINNO 6'}, {'id': 2, 'name': 'VINNO 6EXP'}]
+        assert options.json()['series_id'] == 1
+        async with factory() as db:
+            source = json.loads((await db.execute(text('SELECT snapshot_data FROM config_versions WHERE id=1'))).scalar_one())
+            source['models'].append(dict(source['models'][0]))
+            await db.execute(text('UPDATE config_versions SET snapshot_data=:snapshot WHERE id=1'), {'snapshot': json.dumps(source)})
+            await db.commit()
+        response = await client.get('/api/knowledge/parameter-snapshots/1')
+        assert response.status_code == 422
+        preview = await client.post(f"/api/knowledge/parameter-topics/{topic['id']}/preview", json={'config_version_id': 1, 'model_ids': [1]})
+        assert preview.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_spec_can_be_disabled_after_its_current_ipn_becomes_ambiguous(tmp_path):
+    async with client_for(tmp_path) as (client, factory):
+        topic, first = await seed(client)
+        async with factory() as db:
+            db.add(ConfigItem(id=12, row_index=3, ipn='1000101', zh_desc='重复主数据'))
+            await db.commit()
+        response = await client.put(f"/api/knowledge/parameter-topics/{topic['id']}/specs/{first['id']}", json=spec(is_active=False, expected_revision=1))
+        assert response.status_code == 200
+        assert response.json()['is_active'] is False and response.json()['identity_issue']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('selection', ['', 'N/A', '?'])
+async def test_missing_or_unknown_selection_never_uses_rd_value_as_a_formal_answer(tmp_path, selection):
+    source = {'models': [{'id': 1, 'name': 'VINNO 6'}], 'items': [
+        {'id': 10, 'ipn': '1000101', 'values': {'1': {'selection_config': selection, 'current_config': 'X'}}}]}
+    async with client_for(tmp_path, snapshot=source) as (client, _):
+        topic, _ = await seed(client)
+        result = (await client.post(f"/api/knowledge/parameter-topics/{topic['id']}/preview", json={'config_version_id': 1, 'model_ids': [1]})).json()
+        assert result['rows'][0]['status'] == 'needs_review'
+        assert result['rows'][0]['matches'][0]['current_config_note'] == 'X'
+        assert not result['rows'][0]['matches'][0]['usable']
+        assert '5000 mAh' not in result['answer_text']
+
+
+@pytest.mark.asyncio
+async def test_topic_validation_and_missing_resources_are_explicit(tmp_path):
+    async with client_for(tmp_path) as (client, _):
+        for patch in [{'name': ' '}, {'fields': [TOPIC['fields'][0], TOPIC['fields'][0]]}, {'fields': [{**TOPIC['fields'][0], 'unit': ''}]}]:
+            assert (await client.post('/api/knowledge/parameter-topics', json={**TOPIC, **patch})).status_code == 422
+        topic, first = await seed(client)
+        assert (await client.post('/api/knowledge/parameter-topics', json=TOPIC)).status_code == 409
+        assert (await client.get('/api/knowledge/parameter-topics/999/specs')).status_code == 404
+        assert (await client.get('/api/knowledge/parameter-snapshots/999')).status_code == 404
+        assert (await client.put(f"/api/knowledge/parameter-topics/{topic['id']}/specs/999", json=spec(expected_revision=1, is_active=False))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_text_fields_preserve_explicit_values_without_unit_conversion(tmp_path):
+    async with client_for(tmp_path) as (client, _):
+        payload = {'name': '电池材料', 'question': '电池材料是什么？', 'fields': [{'key': 'material', 'label': '材料', 'unit': '', 'type': 'text'}]}
+        topic = (await client.post('/api/knowledge/parameter-topics', json=payload)).json()
+        response = await client.post(f"/api/knowledge/parameter-topics/{topic['id']}/specs", json=spec(values={'material': '合成材料名称'}))
+        assert response.status_code == 200
+        invalid = await client.post(f"/api/knowledge/parameter-topics/{topic['id']}/specs", json=spec('1000102', values={'material': 1}))
+        assert invalid.status_code == 422
