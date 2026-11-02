@@ -69,3 +69,27 @@ test('a failed applicability save retains the draft and the reviewer identity', 
   assert.equal(context.bindingBaseline.value, 'original')
   assert.equal(context.savingBinding.value, false)
 })
+
+test('all registered release documents are selectable beyond the first page', async () => {
+  const source = readFileSync(new URL('../src/components/KnowledgeReleaseHistoryWorkspace.vue', import.meta.url), 'utf8')
+  const context = { bindingForm: {}, emptyBinding: () => ({}), bindingBaseline: { value: '' }, bindingVisible: { value: false }, bindingError: { value: '' }, documents: { value: [] }, bindings: { value: [] }, bindingsLoading: { value: false },
+    getReleaseHistoryBindings: async () => ({ items: [] }), getReleaseHistoryDocuments: async params => ({ items: Array.from({ length: params.skip ? 1 : 200 }, (_,i) => ({ id: (params.skip || 0) + i + 1 })), total: 201 }) }
+  const start = source.indexOf('const refreshBindings ='), end = source.indexOf('\nconst closeBindings',start)
+  const open = new Function(...Object.keys(context), `let bindingSession = 0; ${source.slice(start,end)}; return openBindings`)(...Object.values(context))
+  await open()
+  assert.equal(context.documents.value.length, 201)
+  assert.equal(context.documents.value[200].id, 201)
+})
+
+test('a refresh failure after a committed save is reported as saved and can be retried', async () => {
+  const source = readFileSync(new URL('../src/components/KnowledgeReleaseHistoryWorkspace.vue', import.meta.url), 'utf8')
+  let saved = 0
+  const context = { bindingForm: { document_ids:[1],product_model_ids:[9],country:'CN',market:'domestic',release_line:'V6',conditions:'',evidence_reference:'封面',confirmed_by:'用户' }, savingBinding:{value:false},bindingError:{value:''},bindingBaseline:{value:'original'},
+    saveReleaseHistoryBindings: async () => { saved += 1 }, invalidateTrace() {}, refreshBindings: async () => { throw new Error('offline') }, ElMessage:{ success() {} } }
+  const start = source.indexOf('const saveBindings ='), end = source.indexOf('\nconst deactivateBinding',start)
+  const save = new Function(...Object.keys(context), `const bindingSession = 1; ${source.slice(start,end)}; return saveBindings`)(...Object.values(context))
+  await save()
+  assert.equal(saved, 1)
+  assert.match(context.bindingError.value, /已保存.*刷新/)
+  assert.doesNotMatch(context.bindingError.value, /保存失败/)
+})
