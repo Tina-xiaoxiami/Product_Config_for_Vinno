@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 
 test('imports human measurements, searches both UI names and filters modes and applications', async ({ page }) => {
   page.setDefaultTimeout(10000)
@@ -56,4 +57,48 @@ test('imports human measurements, searches both UI names and filters modes and a
   await search.fill('no-such-measurement')
   await expect(page.getByText('当前条件未命中', { exact: true })).toBeVisible()
   expect(errors).toEqual([])
+})
+
+test('measurement controls stay compact and the table fills remaining height through resize', async ({ page }, testInfo) => {
+  page.setDefaultTimeout(10000)
+  const buffer = await readFile(fileURLToPath(new URL('./fixtures/measurement-layout.xlsx', import.meta.url)))
+  const imported = await page.request.post('/api/measurements/import', { multipart: {
+    version: 'layout-check', file: { name: 'measurement-layout.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer }
+  } })
+  expect(imported.ok()).toBe(true)
+  await page.setViewportSize({ width: 1800, height: 1000 })
+  await page.goto('/measurements')
+  await expect(page.getByText('87 / 87 条', { exact: true })).toBeVisible()
+  const search = page.getByPlaceholder('查找 Id、英文 UI 或中文 UI 名称')
+  const version = page.getByRole('combobox', { name: '测量库版本' })
+  const searchBox = await search.boundingBox()
+  const versionBox = await version.boundingBox()
+  expect(Math.abs(searchBox.y - versionBox.y), 'search and version share the first row').toBeLessThan(4)
+  expect(searchBox.x).toBeLessThan(versionBox.x)
+
+  async function expectFilledTable() {
+    const table = await page.locator('.measurement-library .el-table').boundingBox()
+    const content = await page.locator('.workspace-content').boundingBox()
+    const pagination = await page.locator('.measurement-library .el-pagination').boundingBox()
+    expect(table.height).toBeGreaterThan(200)
+    expect(pagination.y + pagination.height).toBeLessThanOrEqual(content.y + content.height)
+    expect(content.y + content.height - pagination.y - pagination.height, 'bottom whitespace stays within panel padding').toBeLessThan(30)
+  }
+  await expectFilledTable()
+  const statistics = page.getByRole('button', { name: /统计与导入核对/ })
+  const scope = page.getByRole('radiogroup', { name: '测量分类' })
+  const statisticsBox = await statistics.boundingBox()
+  const scopeBox = await scope.boundingBox()
+  expect(Math.abs(statisticsBox.y - scopeBox.y), 'statistics share the classification row').toBeLessThan(8)
+  await statistics.click()
+  await expect(page.getByText('计算启用状态', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expectFilledTable()
+  await page.screenshot({ path: testInfo.outputPath('measurement-compact-wide.png') })
+  await page.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(page.getByRole('cell', { name: '测量 79', exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 1000, height: 760 })
+  await expect.poll(async () => (await page.locator('.measurement-library .el-table').boundingBox()).height).toBeGreaterThan(200)
+  await expectFilledTable()
+  await page.screenshot({ path: testInfo.outputPath('measurement-compact-narrow.png') })
 })
