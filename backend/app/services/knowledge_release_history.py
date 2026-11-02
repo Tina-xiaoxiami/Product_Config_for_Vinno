@@ -278,7 +278,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         return result
     documents = {row['id']: row for row in await _documents(session)}
     bindings = (await session.execute(text('''SELECT * FROM knowledge_release_bindings WHERE is_active=1
-        AND product_model_id=:model AND country=:country AND market=:market'''),
+        AND product_model_id=:model AND (:country IS NULL OR country=:country) AND market=:market'''),
         {'model': scope['product_model_id'], 'country': scope['country'], 'market': scope['market']})).mappings().all()
     chunks_by_document: dict[int, list[dict]] = {}
     if documents:
@@ -288,7 +288,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         for row in rows:
             chunks_by_document.setdefault(row['document_id'], []).append(dict(row))
     selected = set()
-    chains: dict[str, dict] = {}
+    chains: dict[tuple[str, str], dict] = {}
     for binding in bindings:
         document = documents.get(binding['document_id'])
         reasons = []
@@ -305,12 +305,13 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         if release_line and binding['release_line'] != release_line:
             reasons.append('其他版本分支')
         if reasons:
-            coverage['excluded_documents'].append({'document_id': binding['document_id'], 'reasons': reasons})
+            coverage['excluded_documents'].append({'document_id': binding['document_id'], 'country': binding['country'], 'release_line': binding['release_line'], 'reasons': reasons})
             continue
         assert document is not None
         selected.add(document['id'])
-        chain = chains.setdefault(binding['release_line'], {'release_line': binding['release_line'], 'documents': [], 'events': [], 'conditions': [], 'detected_conditions': []})
-        chain['documents'].append({'document_id': document['id'], 'title': document['title'], 'version': document['version'], 'preview_url': f"/api/knowledge/documents/{document['id']}/preview"})
+        chain_key = (binding['country'], binding['release_line'])
+        chain = chains.setdefault(chain_key, {'country': binding['country'], 'market': binding['market'], 'release_line': binding['release_line'], 'documents': [], 'events': [], 'conditions': [], 'detected_conditions': []})
+        chain['documents'].append({'document_id': document['id'], 'country': binding['country'], 'market': binding['market'], 'title': document['title'], 'version': document['version'], 'preview_url': f"/api/knowledge/documents/{document['id']}/preview"})
         if binding['conditions'] and binding['conditions'] not in chain['conditions']:
             chain['conditions'].append(binding['conditions'])
         detected = _document_conditions(document, chunks_by_document.get(document['id'], []))
@@ -318,12 +319,12 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         event_conditions = '\n'.join([binding['conditions'], *(item['excerpt'] for item in detected)]).strip()
         events = _events(document, chunks_by_document.get(document['id'], []), topic, event_conditions)
         # Cumulative documents must not introduce a later section into an earlier target.
-        chain['events'].extend(event for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
+        chain['events'].extend({**event, 'country': binding['country'], 'market': binding['market']} for event in events if event['event_version'] is None or version_sort_key(event['event_version']) <= version_sort_key(scope['software_version']))
     # Related documents without a trusted applicability bridge remain visible as unresolved candidates.
     for document in documents.values():
         if document['id'] in selected or not _explicit_model(document, scope):
             continue
-        if document['country'] and document['country'] != scope['country']:
+        if scope['country'] is not None and document['country'] and document['country'] != scope['country']:
             continue
         if document['market'] not in (None, '', 'unspecified', scope['market']):
             continue
@@ -336,7 +337,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         if document['market'] in (None, '', 'unspecified'):
             reasons.append('市场范围未确认')
         reasons.append('缺少当前范围有效的人工适用关系')
-        coverage['unresolved_documents'].append({'document_id': document['id'], 'title': document['title'], 'version': document['version'],
+        coverage['unresolved_documents'].append({'document_id': document['id'], 'country': document['country'], 'market': document['market'], 'title': document['title'], 'version': document['version'],
             'reasons': reasons, 'preview_url': f"/api/knowledge/documents/{document['id']}/preview",
             'detected_conditions': [] if quality_reasons else _document_conditions(document, chunks_by_document.get(document['id'], [])),
             'candidate_events': [] if quality_reasons else _events(document, chunks_by_document.get(document['id'], []), topic)})
@@ -347,6 +348,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         all_events.extend({**event, 'release_line': chain['release_line']} for event in chain['events'])
     coverage['document_count'] = len(selected)
     coverage['versions'] = sorted({documents[id]['version'] for id in selected}, key=version_sort_key)
+    if scope['country'] is None:
+        coverage['gaps'].append('本次未指定国家，按资料来源国家分别追溯；不能将某国记录推广为其他国家的支持结论')
     if scope['software_version'] not in coverage['versions']:
         coverage['gaps'].append('未登记目标版本的明确适用Release Note；不能据历史记录直接保证当前版本能力')
     result.update(chains=list(chains.values()), events=all_events)
@@ -358,8 +361,8 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     elif any({'added', 'removed'}.issubset({event['change_type'] for event in chain['events'] if event['event_version'] == version})
              for chain in chains.values() for version in {event['event_version'] for event in chain['events']}):
         result.update(assessment='conflicting_evidence', conclusion='同一版本分支与版本出现相反的新增/移除记录，需核对原文后才能判断。')
-    elif len(chains) > 1 or any(chain['conditions'] or chain['detected_conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
-        result.update(assessment='conditional_evidence', conclusion='找到相关版本记录，但存在版本分支、硬件/升级限制或语义待核实；各分支分别展示，不直接继承为目标版本支持结论。')
+    elif scope['country'] is None or len(chains) > 1 or any(chain['conditions'] or chain['detected_conditions'] for chain in chains.values()) or any(event['event_version'] is None or event['change_type'] in ('restricted', 'unknown') for event in all_events):
+        result.update(assessment='conditional_evidence', conclusion='找到相关版本记录，但存在国家适用范围、版本分支、硬件/升级限制或语义待核实；各国家与分支分别展示，不直接继承为目标版本支持结论。')
     else:
         result.update(assessment='evidence_found', conclusion='找到该子能力的历史版本原文记录；以下为资料证据，尚未自动发布正式答案。')
     return result
