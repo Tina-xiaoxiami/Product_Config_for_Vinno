@@ -213,3 +213,45 @@ async def test_explicit_ipn_disambiguates_same_current_name_and_never_selects_co
     await engine.dispose()
     assert explicit['status'] == 'answered' and explicit['question_id'] == qid
     assert wrong['status'] == 'pending'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('prefix',['新增','并非','不是','建议','仅新增','请确保','尚未支持'])
+async def test_narrative_prefix_remains_intact_when_name_is_bound_by_the_question(tmp_path, prefix):
+    path = tmp_path / 'qa.db'; _database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.execute('UPDATE knowledge_answers SET answer_text=? WHERE id=1', (f'结论：{prefix}胸膜自动识别（IPN 6000317）为选配。',))
+    client, engine = await _client_for(path)
+    async with client:
+        result = (await client.get('/api/knowledge/questions/1')).json()
+    await engine.dispose()
+    assert result['answer']['display_answer_text'] == f'结论：{prefix}胸膜自动测量（IPN 6000317）为选配。'
+
+
+@pytest.mark.asyncio
+async def test_two_primary_links_do_not_become_unique_after_dropping_invalid_ipn(tmp_path):
+    path = tmp_path / 'features.db'; _create_knowledge_database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.execute("INSERT INTO config_items VALUES(500,'6000294','Other','Duplicate','Other')")
+        c.execute("INSERT INTO feature_config_item_links(feature_id,config_item_id,relation_type,source,review_status) VALUES(7,96,'primary','test','approved')")
+    client, engine = await feature_client(path)
+    async with client:
+        result = (await client.get('/api/knowledge/features/7')).json()
+    await engine.dispose()
+    assert result['display_cn_name'] is None
+
+
+@pytest.mark.asyncio
+async def test_seed_current_name_reuses_projected_legacy_question_without_a_duplicate(tmp_path):
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from app.services.knowledge_question_seed import seed_pending_questions, SeedQuestionSpec
+    path = tmp_path / 'qa.db'; _database(path)
+    engine = create_async_engine(f'sqlite+aiosqlite:///{path}')
+    before = path.read_bytes()
+    async with async_sessionmaker(engine)() as session:
+        result = await seed_pending_questions(session, [SeedQuestionSpec(category='配置',question='Elastic imaging压力式弹性成像如何配置？')], apply=False)
+    await engine.dispose()
+    assert result['summary']['covered'] == 1
+    assert result['items'][0]['published_similarity'] == 1.0
+    assert result['items'][0]['question_id'] == 5
+    assert path.read_bytes() == before
