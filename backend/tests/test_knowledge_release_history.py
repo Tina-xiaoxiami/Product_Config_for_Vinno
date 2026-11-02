@@ -172,3 +172,121 @@ async def test_generic_pending_question_does_not_fail_because_history_topic_is_n
         assert response.status_code == 200, response.text
         assert response.json()['status'] == 'pending'
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('override', [
+    {'confirmed_by': '  '}, {'evidence_reference': ' '}, {'release_line': ' '},
+    {'document_ids': [999]}, {'product_model_ids': [999]}, {'country': 'US'},
+    {'document_ids': [4]},
+])
+async def test_invalid_or_conflicting_binding_is_rejected_without_partial_records(database, override):
+    client, engine = await _client(database)
+    async with client:
+        payload = {'document_ids': [1], 'product_model_ids': [901], 'country': 'CN', 'market': 'domestic',
+                   'release_line': 'V6-main', 'evidence_reference': 'explicit record', 'confirmed_by': 'reviewer', **override}
+        response = await client.post('/api/knowledge/release-history/bindings', json=payload)
+        assert response.status_code == 422, response.text
+    await engine.dispose()
+    with closing(sqlite3.connect(database)) as c:
+        assert c.execute('SELECT COUNT(*) FROM knowledge_release_bindings').fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_binding_is_atomic_idempotent_and_can_be_deactivated_with_revision(database):
+    client, engine = await _client(database)
+    async with client:
+        invalid = await client.post('/api/knowledge/release-history/bindings', json={
+            'document_ids': [1, 999], 'product_model_ids': [901], 'country': 'CN', 'market': 'domestic',
+            'release_line': 'V6-main', 'evidence_reference': 'record', 'confirmed_by': 'reviewer'})
+        assert invalid.status_code == 422
+        assert (await client.get('/api/knowledge/release-history/bindings')).json()['items'] == []
+        first = (await _bind(client, (1,)))[0]
+        again = (await _bind(client, (1,)))[0]
+        assert first['id'] == again['id']
+        conflict = await client.post('/api/knowledge/release-history/bindings', json={
+            'document_ids': [1], 'product_model_ids': [901], 'country': 'CN', 'market': 'domestic',
+            'release_line': 'V6-main', 'conditions': 'new hardware only', 'evidence_reference': 'different', 'confirmed_by': 'reviewer'})
+        assert conflict.status_code == 409
+        stale = await client.delete(f"/api/knowledge/release-history/bindings/{first['id']}", params={'expected_revision': 2})
+        assert stale.status_code == 409
+        removed = await client.delete(f"/api/knowledge/release-history/bindings/{first['id']}", params={'expected_revision': 1})
+        assert removed.status_code == 200
+        assert (await client.get('/api/knowledge/release-history/bindings')).json()['items'] == []
+        assert len((await client.get('/api/knowledge/release-history/bindings', params={'include_inactive': True})).json()['items']) == 1
+        replacement = (await _bind(client, (1,)))[0]
+        assert replacement['id'] != first['id']
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_conditions_and_separate_release_lines_are_visible_without_inheriting_support(database):
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,), conditions='VLucid+硬件平台；不能升级旧机器')
+        await _bind(client, (2,), release_line='legacy-platform')
+        result = await _trace(client)
+        assert result['assessment'] == 'conditional_evidence'
+        assert len(result['chains']) == 2
+        selected = await _trace(client, release_line='legacy-platform')
+        assert selected['assessment'] == 'no_record'
+        assert selected['events'] == []
+        docs = await client.get('/api/knowledge/release-history/documents')
+        assert docs.status_code == 200
+        assert docs.json()['total'] == 4
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['file', 'metadata', 'extraction', 'model'])
+async def test_stale_sources_or_model_identity_cannot_continue_as_applicable_evidence(database, change):
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (1,))
+        with closing(sqlite3.connect(database)) as c, c:
+            if change == 'file':
+                (database.parent / 'source-1.pdf').write_bytes(b'externally changed')
+            elif change == 'metadata':
+                c.execute("UPDATE knowledge_documents SET product_series='other' WHERE id=1")
+            elif change == 'extraction':
+                c.execute("UPDATE knowledge_document_extractions SET source_sha256='stale' WHERE document_id=1")
+            else:
+                c.execute("UPDATE product_models SET name='VINNO 6PRO' WHERE id=901")
+        result = await _trace(client)
+        assert result['events'] == []
+        assert result['coverage']['document_count'] == 0
+        assert result['coverage']['excluded_documents']
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cumulative_note_events_use_section_versions_and_unknown_section_requires_review(database):
+    _document(database, 2, '1.14.61', '新增针增益调节，但所属章节待核对。\nRelease Note 1.14.20\n新增针增益调节。\nRelease Note 1.14.40\n优化针增益调节。')
+    client, engine = await _client(database)
+    async with client:
+        await _bind(client, (2,))
+        result = await _trace(client)
+        assert {event['event_version'] for event in result['events']} == {None, '1.14.20', '1.14.40'}
+        assert result['assessment'] == 'conditional_evidence'
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_uninitialized_history_does_not_break_legacy_questions_and_direct_invalid_scope_is_rejected(database):
+    client, engine = await _client(database)
+    with closing(sqlite3.connect(database)) as c, c:
+        c.execute('DROP TABLE knowledge_release_bindings')
+    async with client:
+        result = await _trace(client)
+        assert result['available'] is False
+        assert (await client.get('/api/knowledge/release-history/bindings')).json()['available'] is False
+        binding = await client.post('/api/knowledge/release-history/bindings', json={
+            'document_ids': [1], 'product_model_ids': [901], 'country': 'CN', 'market': 'domestic',
+            'release_line': 'V6', 'evidence_reference': 'record', 'confirmed_by': 'reviewer'})
+        assert binding.status_code == 503
+        invalid = await client.post('/api/knowledge/release-history/trace', json={'query': '针增益调节', 'scope': {**SCOPE, 'country': 'US'}})
+        assert invalid.status_code == 422
+        ask = await client.post('/api/knowledge/questions/ask', json={'question': '针增益调节？', 'scope': SCOPE})
+        assert ask.status_code == 200
+        assert ask.json()['history_trace']['available'] is False
+    await engine.dispose()
