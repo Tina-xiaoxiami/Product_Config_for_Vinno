@@ -1574,7 +1574,7 @@ const saveAnswer = async () => {
     if (dialogSession === answerDialogSessionId && knowledgeScopePayload(qaScope) && savedScope === knowledgeScopeFingerprint(knowledgeScopePayload(qaScope))) {
       qaStatus.value = 'answered'
       qaResult.value = {
-        status: 'answered', question_id: saved.id, question: saved.question_text,
+        status: 'answered', question_id: saved.id, question: saved.question_text, display_question_text: saved.display_question_text,
         match_type: 'exact', similarity: 1, answer: saved.answer, scope: saved.scope
       }
     }
