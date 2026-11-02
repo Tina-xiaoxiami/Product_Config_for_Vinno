@@ -13,7 +13,7 @@ from app.services.knowledge_names import KnowledgeNameContext, load_name_context
 
 from app.services.knowledge_scope import (
     KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
-    missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
+    compatible_scope_keys, missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
     scope_schema_ready, stored_scope,
 )
 
@@ -197,10 +197,12 @@ async def get_question(session: AsyncSession, question_id: int, *, name_context:
 
 
 async def _published_candidates(session: AsyncSession, query_scope_key: str) -> list[dict]:
+    keys = await compatible_scope_keys(session, stored_scope(query_scope_key))
     result = await session.execute(
         text(
             """
             SELECT question.id AS question_id,
+                   question.scope_key,
                    question.question_text,
                    question.normalized_question,
                    answer.answer_text,
@@ -213,7 +215,7 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
             WHERE question.status = 'answered'
-              AND question.scope_key = :scope_key
+              AND question.scope_key IN :scope_keys
               AND NOT EXISTS (
                   SELECT 1 FROM knowledge_answer_citations citation
                   JOIN knowledge_documents document ON document.id = citation.document_id
@@ -221,8 +223,8 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
               )
             ORDER BY question.id, phrasing.id
             """
-        ),
-        {"scope_key": query_scope_key},
+        ).bindparams(bindparam("scope_keys", expanding=True)),
+        {"scope_keys": keys},
     )
     return [dict(row._mapping) for row in result]
 
@@ -269,7 +271,9 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     best_ties: set[int] = set()
     best_score = 0.0
     best_exact = False
-    for candidate in ([] if ambiguous_name else await _published_candidates(session, query_scope_key)):
+    candidates = [] if ambiguous_name else await _published_candidates(session, query_scope_key)
+    matched_records = {int(candidate["question_id"]): candidate for candidate in candidates}
+    for candidate in candidates:
         candidate_ipns = name_context.explicit_ipns(candidate['answer_text'])
         candidate_question_ipns = name_context.explicit_ipns(candidate['question_text']) or name_context.named_ipns(candidate['question_text'])
         if query_ipns and candidate_ipns and not query_ipns.intersection(candidate_ipns):
@@ -303,8 +307,20 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
                 best_ties.add(int(candidate['question_id']))
 
     if len(best_ties) > 1:
-        best_question_id = None
+        identities = {(matched_records[question_id]["normalized_question"], matched_records[question_id]["answer_text"])
+                      for question_id in best_ties}
+        best_question_id = min(best_ties, key=lambda question_id: (
+            stored_scope(matched_records[question_id]["scope_key"])["country"] is not None, question_id
+        )) if len(identities) == 1 else None
+    if resolved_scope["country"] is None and best_question_id is not None:
+        selected = matched_records[best_question_id]
+        # A unique alias or IPN match cannot hide a conflicting country sibling.
+        if any(candidate["normalized_question"] == selected["normalized_question"]
+               and candidate["answer_text"] != selected["answer_text"]
+               for candidate in matched_records.values()):
+            best_question_id = None
     if best_question_id is not None and best_score >= SIMILARITY_THRESHOLD:
+        matched_key = matched_records[best_question_id]["scope_key"]
         await session.execute(
             text(
                 """
@@ -327,7 +343,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
                     LIMIT 1
                     """
                 ),
-                {"normalized": normalized, "scope_key": query_scope_key},
+                {"normalized": normalized, "scope_key": matched_key},
             )
             if collision.one_or_none() is None:
                 await session.execute(
@@ -342,7 +358,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
                         "question_id": best_question_id,
                         "text": cleaned,
                         "normalized": normalized,
-                        "scope_key": query_scope_key,
+                        "scope_key": matched_key,
                     },
                 )
         await session.commit()
@@ -370,6 +386,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
             "answer": item["answer"],
             "candidates": [],
             "scope": resolved_scope,
+            "matched_scope": item["scope"],
         }
 
     question_id = await ensure_question(session, cleaned, query_scope_key, count_ask=True)
@@ -415,6 +432,8 @@ async def list_questions(
         "limit": limit,
         "scope_key": scope_key(resolved_scope),
     }
+    if resolved_scope:
+        params["scope_keys"] = await compatible_scope_keys(session, resolved_scope)
     name_context = await load_name_context(session)
     matched_ids = []
     if cleaned_query:
@@ -434,14 +453,12 @@ async def list_questions(
     filters = f"""
         (:status IS NULL OR q.status = :status)
         AND ({"q.id IN :matched_ids" if cleaned_query else "1"})
-        AND ({"1" if evidence_review and not scope else scope_column + " = :scope_key"})
+        AND ({"1" if evidence_review and not scope else scope_column + (" IN :scope_keys" if resolved_scope else " = :scope_key")})
     """
     if evidence_review:
         from app.services.knowledge_answer_review import evidence_review_filter
         filters += " AND " + await evidence_review_filter(session, evidence_review)
-    total_result = await session.execute(
-        (text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}").bindparams(bindparam('matched_ids', expanding=True)) if cleaned_query else text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}")), params
-    )
+    total_statement = text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}")
     rows_statement = text(
             f"""
             SELECT q.id FROM knowledge_questions q
@@ -452,10 +469,45 @@ async def list_questions(
             """
         )
     if cleaned_query:
+        total_statement = total_statement.bindparams(bindparam('matched_ids', expanding=True))
         rows_statement = rows_statement.bindparams(bindparam('matched_ids', expanding=True))
+    if resolved_scope:
+        total_statement = total_statement.bindparams(bindparam('scope_keys', expanding=True))
+        rows_statement = rows_statement.bindparams(bindparam('scope_keys', expanding=True))
+    total_result = await session.execute(total_statement, params)
     rows_result = await session.execute(rows_statement, params)
     items = [await get_question(session, int(row.id), name_context=name_context) for row in rows_result]
     return items, int(total_result.scalar_one())
+
+
+async def validate_publication_scope(
+    session: AsyncSession, *, scope: dict, question_text: str, answer_text: str,
+    alias_questions: list[str], question_id: int | None = None,
+) -> None:
+    """Keep canonical answers and wording owners consistent across overlapping scopes."""
+    keys = await compatible_scope_keys(session, scope, overlap=True)
+    normalized = normalize_question(question_text)
+    wording = {normalized, *(normalize_question(alias) for alias in alias_questions
+                              if len(normalize_question(alias)) >= 2)}
+    if question_id is not None:
+        observed = await session.execute(text(
+            "SELECT normalized_phrasing FROM knowledge_question_phrasings "
+            "WHERE question_id=:id AND phrasing_type='observed'"
+        ), {"id": question_id})
+        wording.update(row.normalized_phrasing for row in observed)
+    owners = await session.execute(text("""
+        SELECT q.normalized_question,a.answer_text,a.review_status,p.normalized_phrasing
+        FROM knowledge_questions q
+        LEFT JOIN knowledge_answers a ON a.question_id=q.id
+        LEFT JOIN knowledge_question_phrasings p ON p.question_id=q.id
+        WHERE q.scope_key IN :keys AND q.id != :id
+    """).bindparams(bindparam("keys", expanding=True)), {"keys": keys, "id": question_id or -1})
+    for owner in owners:
+        same_question = owner.normalized_question == normalized
+        if same_question and owner.review_status == "published" and owner.answer_text != answer_text.strip():
+            raise KnowledgeQaError("适用范围内已有不同的已发布答案，请先核对或修订")
+        if not same_question and (owner.normalized_question in wording or owner.normalized_phrasing in wording):
+            raise KnowledgeQaError("相似问法已归属于其他问题")
 
 
 async def publish_answer(
@@ -488,22 +540,9 @@ async def publish_answer(
         seen.add(normalized_alias)
         unique_aliases.append((cleaned_alias, normalized_alias))
 
-    for _, normalized_alias in unique_aliases:
-        collision_result = await session.execute(
-            text(
-                """
-                SELECT id FROM knowledge_questions
-                WHERE normalized_question = :normalized AND id != :question_id AND scope_key = :scope_key
-                UNION ALL
-                SELECT question_id AS id FROM knowledge_question_phrasings
-                WHERE normalized_phrasing = :normalized AND question_id != :question_id AND scope_key = :scope_key
-                LIMIT 1
-                """
-            ),
-            {"normalized": normalized_alias, "question_id": question_id, "scope_key": query_scope_key},
-        )
-        if collision_result.one_or_none() is not None:
-            raise KnowledgeQaError("相似问法已归属于其他问题")
+    await validate_publication_scope(session, scope=question["scope"], question_id=question_id,
+        question_text=question["question_text"], answer_text=cleaned_answer,
+        alias_questions=[alias for alias, _ in unique_aliases])
 
     resolved_citations: list[dict] = []
     if citations and not await document_model_identity_unique(session, question["scope"]):
@@ -522,7 +561,7 @@ async def publish_answer(
         if document is None:
             raise KnowledgeQaError(f"引用资料不存在：{citation['document_id']}")
         if not document_matches_scope(document._mapping, question["scope"]):
-            raise KnowledgeQaError("引用资料尚未明确关联此机型、国家及软件版本，请先核实适用范围")
+            raise KnowledgeQaError("引用资料尚未明确关联此市场、机型及软件版本，请先核实适用范围")
         resolved_citations.append({**citation, "sort_order": index})
 
     answer_result = await session.execute(
@@ -734,6 +773,9 @@ async def merge_question(
     variants = [(source.question_text, source.normalized_question)] + [
         (row.phrasing_text, row.normalized_phrasing) for row in aliases_result
     ]
+    target_scope = stored_scope(target.scope_key)
+    overlap_keys = (await compatible_scope_keys(session, target_scope, overlap=True)
+                    if target_scope else [target.scope_key])
     unique_variants: list[tuple[str, str]] = []
     seen = {target.normalized_question}
     for text_value, normalized_value in variants:
@@ -745,21 +787,21 @@ async def merge_question(
                 """
                 SELECT id FROM knowledge_questions
                 WHERE normalized_question = :normalized
-                  AND scope_key = :scope_key
+                  AND scope_key IN :scope_keys
                   AND id NOT IN (:source_question_id, :target_question_id)
                 UNION ALL
                 SELECT question_id AS id FROM knowledge_question_phrasings
                 WHERE normalized_phrasing = :normalized
-                  AND scope_key = :scope_key
+                  AND scope_key IN :scope_keys
                   AND question_id NOT IN (:source_question_id, :target_question_id)
                 LIMIT 1
                 """
-            ),
+            ).bindparams(bindparam("scope_keys", expanding=True)),
             {
                 "normalized": normalized_value,
                 "source_question_id": source_question_id,
                 "target_question_id": target_question_id,
-                "scope_key": target.scope_key,
+                "scope_keys": overlap_keys,
             },
         )
         if collision_result.one_or_none() is not None:

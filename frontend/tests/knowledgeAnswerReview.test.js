@@ -27,6 +27,14 @@ test('confirming query scopes requires a specific complete scope while defer req
     product_model_ids: [1, 2], software_version: '1.14.80', version_applicability: 'specific' }), '')
 })
 
+test('confirming a query scope needs no country and cannot carry over a historical country filter', () => {
+  const review = { ...form(), action: 'confirm_scope', market: 'domestic', product_model_ids: [901],
+    software_version: '1.14.80', version_applicability: 'specific' }
+  assert.equal(answerReviewError(review), '')
+  assert.equal(answerReviewPayload(question, { ...review, country: 'CN' }).country, null)
+  assert.equal(answerReviewPayload(question, { ...review, action: 'record_reference', country: 'CN' }).country, 'CN')
+})
+
 test('answer review status and stable table columns preserve full-answer access', () => {
   assert.match(answerReviewLabel(question), /待核对/)
   assert.match(answerReviewLabel({ evidence_review: { status: 'reviewed' } }), /已核对/)
@@ -61,10 +69,20 @@ function dialogActions(submit, confirm = async () => {}) {
   }
   const start = source.indexOf('const open = value =>')
   const end = source.indexOf('\nconst openCitation', start)
-  const actions = new Function(...Object.keys(context), `let sessionId = 0; ${source.slice(start, end)}; return { open, save, requestClose }`)(...Object.values(context))
+  const actions = new Function(...Object.keys(context), `let sessionId = 0; ${source.slice(start, end)}; return { open, save, requestClose, useCurrentScope }`)(...Object.values(context))
   actions.open({ ...question, answer: { version: 1, answer_text: 'Original full answer', change_note: 'Existing owner confirmation' }, evidence_review: { ...question.evidence_review, available: true } })
   return { ...actions, context, events }
 }
+
+test('using the current query scope preserves an optional source country in a reference review', () => {
+  const editor = dialogActions(async () => ({}))
+  editor.context.form.country = 'DE'
+  editor.context.props.currentScope = { market: 'overseas', product_model_id: 901, software_version: '1.51.90' }
+  editor.useCurrentScope()
+  assert.equal(editor.context.form.country, 'DE')
+  assert.equal(editor.context.form.market, 'overseas')
+  assert.deepEqual(editor.context.form.product_model_ids, [901])
+})
 
 test('failed review submission retains text, actor and the open editor', async () => {
   const editor = dialogActions(async () => { throw { response: { data: { detail: 'Answer changed, reload before confirming' } } } })

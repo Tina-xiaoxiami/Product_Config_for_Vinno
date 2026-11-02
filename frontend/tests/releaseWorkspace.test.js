@@ -108,12 +108,9 @@ test('switching outer views preserves the child project and selected release sta
   }])
 })
 
-test('knowledge hub links to release source search and dev server proxies the mounted module', () => {
-  const knowledge = read('../src/views/KnowledgeHub.vue')
+test('dev server proxies the mounted release module', () => {
   const vite = read('../vite.config.js')
 
-  assert.match(knowledge, /to="\/release\?tab=search"/)
-  assert.match(knowledge, />\s*搜索发布资料\s*</)
   assert.match(vite, /'\/release-workbench'/)
   assert.match(vite, /target:\s*'http:\/\/127\.0\.0\.1:8086'/)
 })

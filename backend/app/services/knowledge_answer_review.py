@@ -148,7 +148,9 @@ async def _append(session: AsyncSession, source, values: dict, request_hash: str
 
 
 async def review_answer(session: AsyncSession, question_id: int, **payload) -> dict | None:
-    from app.services.knowledge_qa import get_question, ensure_question, normalize_question, publish_answer
+    from app.services.knowledge_qa import (
+        KnowledgeQaError, get_question, ensure_question, publish_answer, validate_publication_scope,
+    )
 
     if not await _prepare(session):
         raise KnowledgeAnswerReviewUnavailable("答案核对记录表尚未初始化，请更新服务后重试")
@@ -184,17 +186,16 @@ async def review_answer(session: AsyncSession, question_id: int, **payload) -> d
                 scope = await resolve_query_scope(session, {"country": values["country"], "market": values["market"],
                     "product_model_id": model_id, "software_version": values["software_version"]})
                 if scope is None:
-                    raise KnowledgeAnswerReviewError("请补齐国家、市场、完整机型和软件版本")
+                    raise KnowledgeAnswerReviewError("请补齐市场、完整机型和软件版本")
                 scopes.append(scope)
             for scope in scopes:
                 key = scope_key(scope)
-                normalized = normalize_question(question["question_text"])
-                collision = (await session.execute(text(
-                    "SELECT 1 FROM knowledge_question_phrasings WHERE scope_key=:scope AND normalized_phrasing=:normalized "
-                    "AND question_id NOT IN (SELECT id FROM knowledge_questions WHERE scope_key=:scope AND normalized_question=:normalized)"
-                ), {"scope": key, "normalized": normalized})).first()
-                if collision:
-                    raise KnowledgeAnswerReviewConflict("该范围中的问法已属于其他问题，请先核对或修订")
+                try:
+                    await validate_publication_scope(session, scope=scope,
+                        question_text=question["question_text"], answer_text=question["answer"]["answer_text"],
+                        alias_questions=question["alias_questions"])
+                except KnowledgeQaError as exc:
+                    raise KnowledgeAnswerReviewConflict(str(exc)) from exc
                 target_id = await ensure_question(session, question["question_text"], key, count_ask=False)
                 target = await get_question(session, target_id)
                 if target["answer"]:

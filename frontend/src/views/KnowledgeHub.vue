@@ -1,21 +1,8 @@
 <template>
   <div class="knowledge-page">
-    <header class="knowledge-header">
-      <div>
-        <p class="master-data-note">
-          主数据由基础数据统一维护：
-          <router-link to="/feature-manage">功能管理</router-link>
-          <span>·</span>
-          <router-link to="/registration-manage">注册管理</router-link>
-          <span>·</span>
-          <router-link to="/release?tab=search">搜索发布资料</router-link>
-        </p>
-      </div>
-      <el-tag v-if="stats" :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
-        {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
-      </el-tag>
-    </header>
-
+    <el-tag v-if="stats" class="knowledge-status" size="small" :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
+      {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
+    </el-tag>
     <el-tabs v-model="activeTab" class="knowledge-tabs">
       <el-tab-pane label="问答查询" name="qa">
         <section class="qa-ask-panel">
@@ -31,13 +18,12 @@
               <el-option label="国内" value="domestic" />
               <el-option label="海外" value="overseas" />
             </el-select>
-            <el-input v-model="qaScope.country" size="small" aria-label="查询国家代码" placeholder="国家代码 CN / DE" maxlength="2" @input="onQaScopeInput" @change="loadQaQuestions" />
             <el-select v-model="qaScope.product_model_id" size="small" aria-label="查询完整机型" placeholder="完整机型" filterable clearable :loading="qaModelsLoading" @change="onQaScopeChange">
               <el-option v-for="model in qaAvailableModels" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" />
             </el-select>
             <el-input v-model="qaScope.software_version" size="small" aria-label="查询软件版本" placeholder="软件版本，如 1.14.80" maxlength="80" @input="onQaScopeInput" @change="loadQaQuestions" />
           </div>
-          <p class="qa-scope-note">{{ knowledgeScopePayload(qaScope) ? knowledgeScopeLabel({ ...knowledgeScopePayload(qaScope), model_name: qaModels.find(model => model.id === qaScope.product_model_id)?.name }) : '请明确国家、市场、完整机型和软件版本；历史答案不会自动套用到所选范围。' }}</p>
+          <p class="qa-scope-note">{{ knowledgeScopePayload(qaScope) ? knowledgeScopeLabel({ ...knowledgeScopePayload(qaScope), model_name: qaModels.find(model => model.id === qaScope.product_model_id)?.name }) : '请明确市场、完整机型和软件版本；历史答案不会自动套用到所选范围。' }}</p>
           <el-alert v-if="qaModelsError" type="error" :closable="false" title="机型目录加载失败，请重试后查询">
             <el-button link @click="loadQaModels">重新加载</el-button>
           </el-alert>
@@ -81,6 +67,7 @@
             <p class="qa-answer-text">{{ answerDisplayText(qaResult.answer) }}</p>
             <div class="answer-meta">
               <span>版本 v{{ qaResult.answer.version }}</span>
+              <span v-if="qaResult.matched_scope?.country">答案来源国家 {{ qaResult.matched_scope.country }}</span>
               <span v-if="qaResult.answer.change_note">{{ qaResult.answer.change_note }}</span>
             </div>
             <div class="citation-section">
@@ -102,7 +89,7 @@
             </div>
           </template>
           <template v-else-if="qaResult.status === 'needs_clarification'">
-            <p class="qa-pending-text">请补齐国家、市场、完整机型和软件版本后重新查询；本次未创建问题或计入询问次数。</p>
+            <p class="qa-pending-text">请补齐市场、完整机型和软件版本后重新查询；本次未创建问题或计入询问次数。</p>
           </template>
           <template v-else>
             <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
@@ -142,20 +129,15 @@
             <el-button data-testid="qa-needs-review" size="small" :type="qaQueueMode === 'review' && qaEvidenceFilter === 'needs_review' ? 'primary' : 'default'" @click="showPendingAnswerReviews">待核对<span v-if="qaReviewCount !== null"> {{ qaReviewCount }}</span></el-button>
             <span>{{ qaQueueMode === 'review' ? '跨范围维护；逐项查看原答案、已有确认记录与本次核对结论。' : qaQueueMode === 'legacy' ? '保留原问题、答案与历史记录，核实范围后再用于正式查询。' : knowledgeScopePayload(qaScope) ? '仅列出当前范围的问题。' : '补齐查询范围后显示对应问题。' }}</span>
           </div>
-          <div class="queue-heading">
-            <div>
-              <h3>{{ qaQueueMode === 'review' ? '答案核对' : qaStatus === 'pending' ? '待确认问题' : '已发布问答' }} <small class="qa-total">{{ qaTotal }} 条</small></h3>
-              <p>{{ qaQueueMode === 'review' ? '缺文档引文不等于答案错误；已有确认说明会一并展示。' : qaStatus === 'pending' ? '优先处理被重复询问次数较多的问题。' : '列表显示答案摘要，点“全文”阅读完整答案。' }}</p>
-            </div>
-            <el-radio-group v-if="qaQueueMode !== 'review'" v-model="qaStatus" size="small" @change="searchQaQuestions">
+          <div class="qa-table-toolbar">
+            <el-radio-group v-if="qaQueueMode !== 'review'" v-model="qaStatus" size="small" aria-label="问答发布状态" @change="searchQaQuestions">
               <el-radio-button value="pending">待确认</el-radio-button>
               <el-radio-button value="answered">已发布</el-radio-button>
             </el-radio-group>
-          </div>
-          <div class="qa-table-toolbar">
             <el-input v-model="qaSearch" size="small" clearable placeholder="搜索问题" aria-label="搜索问答问题" @keyup.enter="searchQaQuestions" @clear="searchQaQuestions" />
             <el-button size="small" @click="searchQaQuestions">查询</el-button>
             <el-button v-if="qaSearch || qaEvidenceFilter !== 'all'" size="small" @click="clearQaFilters">清除筛选</el-button>
+            <span class="qa-total">共 {{ qaTotal }} 条</span>
             <TableColumnSettings :model-value="qaColumnLayout" :defaults="QA_COLUMNS" @update:model-value="applyQaColumnLayout" />
           </div>
           <div ref="qaTableArea" class="qa-table-area">
@@ -911,7 +893,7 @@ const previewUrl = ref('')
 const previewTitle = ref('')
 
 const qaQuestion = ref('')
-const qaScope = reactive({ country: '', market: '', product_model_id: null, software_version: '' })
+const qaScope = reactive({ market: '', product_model_id: null, software_version: '' })
 const qaModels = ref([])
 const qaModelsLoading = ref(false)
 const qaModelsError = ref(false)
@@ -1442,7 +1424,7 @@ const askQuestion = async () => {
   }
   const scope = knowledgeScopePayload(qaScope)
   if (!scope) {
-    ElMessage.warning('请补齐国家、市场、完整机型和软件版本')
+    ElMessage.warning('请补齐市场、完整机型和软件版本')
     return
   }
   const requestId = ++qaAskRequestId
@@ -1653,6 +1635,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-table-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
 .qa-table-toolbar > .el-input { max-width: 300px; min-width: 160px; flex: 1; }
 .qa-table-toolbar > .el-button + .el-button { margin-left: 0; }
+.qa-table-toolbar .qa-total { margin-left: auto; white-space: nowrap; }
 .qa-table-area { width: 100%; min-width: 0; overflow: hidden; }
 .qa-answer-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; overflow-wrap: anywhere; margin: 0; line-height: 1.55; }
 .qa-expanded-answer { padding: 10px 18px 16px; }
@@ -1669,26 +1652,21 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-pagination { margin-top: 10px; justify-content: flex-end; }
 .qa-scope-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .qa-scope-controls > * { flex: 1 1 160px; min-width: 140px; }
-.qa-scope-controls > :nth-child(3) { flex-grow: 2; }
+.qa-scope-controls > :nth-child(2) { flex-grow: 2; }
 .qa-scope-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
 .qa-queue-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .qa-queue-scope > span { color: #64748b; font-size: 12px; }
-.knowledge-page { max-width: 1180px; margin: 0 auto; }
-.knowledge-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
-.knowledge-header h2 { margin: 0 0 6px; font-size: 22px; color: #1f2937; }
-.knowledge-header p { margin: 0; color: #475569; font-size: 13px; }
-.knowledge-header .master-data-note { margin-top: 6px; font-size: 12px; }
-.knowledge-header :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
-.master-data-note a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
-.master-data-note span { margin: 0 5px; color: #94a3b8; }
+.knowledge-page { position: relative; max-width: 1180px; margin: 0 auto; }
+.knowledge-status { position: absolute; top: 10px; right: 14px; z-index: 1; }
+.knowledge-tabs :deep(.el-tabs__header) { padding-right: 140px; }
 .knowledge-tabs { background: #fff; border-radius: 12px; padding: 0 18px 18px; border: 1px solid #e5e7eb; }
 .knowledge-tabs :deep(.el-tabs__item) { color: #475569; }
 .knowledge-tabs :deep(.el-tabs__item.is-active) { color: #1d4ed8; }
 .qa-ask-panel { margin: 12px 0 14px; padding: 18px; border: 1px solid #bfdbfe; border-radius: 10px; background: linear-gradient(135deg, #eff6ff, #fff); }
-.qa-ask-heading, .queue-heading, .qa-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.qa-ask-heading, .qa-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .qa-ask-heading { margin-bottom: 12px; }
-.qa-ask-heading h3, .queue-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
-.qa-ask-heading p, .queue-heading p { margin: 5px 0 0; color: #475569; font-size: 12px; }
+.qa-ask-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
+.qa-ask-heading p { margin: 5px 0 0; color: #475569; font-size: 12px; }
 .qa-ask-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: #64748b; font-size: 11px; }
 .qa-ask-panel :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
 .qa-ask-panel :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
@@ -1713,7 +1691,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .citation-link { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 4px 12px; width: 100%; padding: 9px 11px; border: 1px solid #dbeafe; border-radius: 7px; background: #fff; color: #1d4ed8; text-align: left; cursor: pointer; }
 .citation-link small { grid-column: 1 / -1; color: #64748b; }
 .qa-queue { margin-top: 16px; }
-.queue-heading { align-items: center; margin-bottom: 11px; }
 .qa-queue :deep(.el-radio-button__inner) { color: #475569; }
 .qa-queue :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
 .qa-queue :deep(.el-table .cell), .qa-queue :deep(.el-table__empty-text) { color: #334155; }
@@ -1824,6 +1801,5 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
   .registration-intro, .registration-group-header { flex-direction: column; }
   .feature-card { gap: 6px 12px; }
   .feature-row-main { flex-wrap: wrap; row-gap: 4px; }
-  .knowledge-header { flex-direction: column; gap: 10px; }
 }
 </style>
