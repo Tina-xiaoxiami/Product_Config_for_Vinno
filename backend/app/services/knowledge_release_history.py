@@ -313,6 +313,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     facts_by_document = {id: extract_source_applicability(document, chunks_by_document.get(id, []))
                          for id, document in documents.items()}
     selected = set()
+    source_excluded_ids: set[int] = set()
     chains: dict[tuple[str, str], dict] = {}
     for binding in bindings:
         original = documents.get(binding['document_id'])
@@ -320,12 +321,18 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         if original is not None and facts_by_document[original['id']]['version']:
             document = {**original, 'version': facts_by_document[original['id']]['version']['value']}
         reasons = []
+        binding_source_refs = []
         if document is None:
             reasons.append('原Release Note索引不存在')
         else:
             reasons.extend(await _quality(document))
             source_facts = facts_by_document[document['id']]
-            if source_facts['models'] and not model_facts(source_facts, scope['model_name'])['applicable']:
+            scoped_source = model_facts(source_facts, scope['model_name'])
+            if not reasons and scoped_source['explicitly_excluded']:
+                binding_source_refs = scoped_source['exclusion_evidence']
+                reasons.extend('原文明确排除当前机型：' + item['excerpt'] for item in binding_source_refs)
+                source_excluded_ids.add(document['id'])
+            elif not reasons and source_facts['models'] and not scoped_source['applicable']:
                 reasons.append('原文适用型号或版本与当前范围冲突，人工关系不能扩大原文')
             if binding['document_fingerprint'] != _fingerprint(original):
                 reasons.append('适用关系对应的资料内容或元数据已变化')
@@ -336,7 +343,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         if release_line and binding['release_line'] != release_line:
             reasons.append('其他版本分支')
         if reasons:
-            coverage['excluded_documents'].append({'document_id': binding['document_id'], 'country': binding['country'], 'release_line': binding['release_line'], 'reasons': reasons})
+            coverage['excluded_documents'].append({'document_id': binding['document_id'], 'title': document['title'] if document else None, 'country': binding['country'], 'release_line': binding['release_line'], 'reasons': reasons, 'evidence_refs': binding_source_refs})
             continue
         assert document is not None
         selected.add(document['id'])
@@ -369,6 +376,13 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
         if original['market'] not in (None, '', 'unspecified', scope['market']):
             continue
         if version_sort_key(document['version']) > version_sort_key(scope['software_version']):
+            continue
+        if scoped['explicitly_excluded']:
+            if id not in source_excluded_ids:
+                coverage['excluded_documents'].append({'document_id': id, 'title': document['title'],
+                    'reasons': ['原文明确排除当前机型：' + item['excerpt'] for item in scoped['exclusion_evidence']],
+                    'evidence_refs': scoped['exclusion_evidence']})
+            source_excluded_ids.add(id)
             continue
         if facts['issues']:
             if not release_line or id in selected:
@@ -407,7 +421,7 @@ async def trace_release_history(session: AsyncSession, query: str, supplied_scop
     # Documents without sufficient source facts or a valid manual supplement remain unresolved.
 
     for document in documents.values():
-        if document['id'] in selected or not _explicit_model(document, scope):
+        if document['id'] in selected or document['id'] in source_excluded_ids or not _explicit_model(document, scope):
             continue
         if scope['country'] is not None and document['country'] and document['country'] != scope['country']:
             continue

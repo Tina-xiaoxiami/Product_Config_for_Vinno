@@ -125,6 +125,18 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
             positive = bool(re.search(r'适用于|适用型号|首次发放.*包括|新增.*机型', sentence)) and not re.search(r'^(?:与|对比|相比)', sentence)
             if positive and not re.search(r'不适用|未适用|不支持.*(?:升级|型号)', sentence):
                 declare(names, 'series' if re.search(r'V\d+(?:PRO|EXP)?系列', sentence, re.I) else 'exact', ref)
+            whole_exclusion = re.match(r'^(?:本|该|此)(?:软件)?版本(?:明确)?(?:不适用于?|不支持)(.+)$', sentence)
+            if whole_exclusion:
+                target_text = whole_exclusion[1]
+                excluded_names = _models(target_text)
+                remainder = _SHORT.sub('', _MODEL.sub('', target_text))
+                remainder = re.sub(r'机型|型号|系列|机器|和|与|及|、|,|/|\s', '', remainder)
+                if excluded_names and not remainder:
+                    row = {'kind': 'not_applicable_to_version', 'applies_to': excluded_names,
+                        'excluded_v_codes': [], 'v_codes_by_model': {}, **ref}
+                    result['restrictions'].append(row)
+                    fact('restrictions', '本版本明确不适用型号', '、'.join(excluded_names) + '：' + sentence, ref)
+                    continue
             explicit_subject = re.search(r'针对(.+?)(?:来说|此次|本次|，|,)', sentence)
             if explicit_subject:
                 names = _models(explicit_subject[1])
@@ -171,8 +183,10 @@ def extract_source_applicability(document: dict, chunks: list[dict]) -> dict:
 def model_facts(facts: dict, model_name: str) -> dict:
     name = canonical_model(model_name)
     matching = [row for row in facts['models'] if row['name'] == name]
-    result: dict[str, Any] = {'applicable': bool(matching) and facts['status'] == 'extracted',
-              'models': matching, 'profiles': [], 'upgrades': [], 'restrictions': []}
+    exclusions = [row for row in facts['restrictions'] if row['kind'] == 'not_applicable_to_version' and name in row['applies_to']]
+    result: dict[str, Any] = {'applicable': bool(matching) and facts['status'] == 'extracted' and not exclusions,
+              'models': matching, 'profiles': [], 'upgrades': [], 'restrictions': [],
+              'explicitly_excluded': bool(exclusions), 'exclusion_evidence': exclusions}
     for field in ('profiles', 'upgrades', 'restrictions'):
         for row in facts[field]:
             if name not in row['applies_to']:
