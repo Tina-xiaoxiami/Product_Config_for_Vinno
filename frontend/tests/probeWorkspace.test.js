@@ -79,7 +79,7 @@ test('refreshing shared scope discards local edits, reloads revision and removes
 test('editing only a model note keeps inherited support sparse and follows later total changes', () => {
   const document = ref(fixture())
   const apply = handler('applyEdit', {
-    editIsNew: ref(false), tab: ref('models'), editModels: ref([1]),
+    editTouchedFields: ref([]), matrixEditKeys: ref([]), editIsNew: ref(false), tab: ref('models'), editModels: ref([1]),
     editRule: ref({ current_status: 'supported', notes: 'model note' }),
     editOriginalRule: ref({ current_status: 'supported', notes: '' }),
     document, editKey: ref('5:6:7'), applyProbeRule, editing: ref(true),
@@ -102,7 +102,7 @@ test('an unchanged model edit does not create an empty exception or a fake draft
 test('a model edit with no target cannot modify the shared total', () => {
   const baseline = fixture(), document = ref(copy(baseline)), messages = []
   const apply = handler('applyEdit', {
-    editIsNew: ref(false), tab: ref('models'), editModels: ref([]),
+    editTouchedFields: ref([]), matrixEditKeys: ref([]), editIsNew: ref(false), tab: ref('models'), editModels: ref([]),
     document, editing: ref(true), ElMessage: { error: message => messages.push(message) },
   })
   apply()
@@ -119,4 +119,19 @@ test('confirming route leave discards local changes so cached reactivation can l
   })
   assert.equal(await leave(), true)
   assert.equal(document.value.rows[0].notes, 'saved')
+})
+
+test('mixed matrix edit can unify to the first value without overwriting unrelated differences', () => {
+  const document=ref({scope:{model_ids:[1]},rows:[{probe_model_id:1,variant_id:1,feature_id:2,current_status:'supported',notes:'first'},{probe_model_id:1,variant_id:2,feature_id:2,current_status:'unsupported',notes:'second'}],overrides:{}})
+  const apply=handler('applyEdit', {editTouchedFields:ref(['current_status']),matrixEditKeys:ref(['1:1:2','1:2:2']),editIsNew:ref(false),tab:ref('total'),editModels:ref([]),editRule:ref({current_status:'supported',notes:'first'}),editOriginalRule:ref({current_status:null,notes:'first'}),document,editKey:ref('1:1:2'),applyProbeRule,editing:ref(true),ElMessage:{error:error=>assert.fail(error)}})
+  apply()
+  assert.deepEqual(document.value.rows.map(r=>r.current_status),['supported','supported'])
+  assert.deepEqual(document.value.rows.map(r=>r.notes),['first','second'])
+})
+test('restoring matrix inheritance removes selected exceptions and preserves other models', async () => {
+  const document=ref(fixture())
+  const restore=handler('restoreInheritance',{document,copy,editModels:ref([2]),matrixEditKeys:ref(['5:6:7']),editing:ref(true),ElMessageBox:{confirm:async()=>{}},ElMessage:{warning:message=>assert.fail(message)}})
+  await restore()
+  assert.equal(document.value.overrides['2']['5:6:7'],undefined)
+  assert.equal(document.value.rows[0].current_status,'supported')
 })

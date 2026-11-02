@@ -17,11 +17,10 @@ test('shared combination retains model differences through editing, publication 
   await create.getByRole('button', { name: '建立并核对草稿' }).click()
   await expect(create).not.toBeVisible()
   await expect(page.getByText('3 个机型', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '编辑总集', exact: true }).first().click()
+  await page.getByRole('button', { name: '编辑 P1 P-1 的 造影', exact: true }).first().click()
   const editor = page.getByRole('dialog', { name: '编辑共同总集' })
-  for (const label of ['定义值支持状态', '现状值支持状态']) {
-    await chooseSelect(editor.locator('.el-form-item').filter({ hasText: label }).locator('.el-select'), '支持')
-  }
+  await expect(editor.locator('.el-form-item').filter({ hasText: '定义值支持状态' }).getByRole('combobox')).toBeDisabled()
+  await chooseSelect(editor.locator('.el-form-item').filter({ hasText: '现状值支持状态' }).locator('.el-select'), '支持')
   await editor.getByRole('button', { name: '应用到待保存草稿' }).click()
   await page.getByRole('button', { name: '保存草稿', exact: true }).click()
   await expect(page.getByRole('button', { name: '发布预览', exact: true })).toBeEnabled()
@@ -48,7 +47,7 @@ test('shared combination retains model differences through editing, publication 
   await expect(page.getByText(/已恢复为草稿/)).toBeVisible()
   await page.getByRole('button', { name: '返回配置', exact: true }).click()
   await expect(page.getByText('待发布草稿', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '编辑总集', exact: true }).first().click()
+  await page.getByRole('button', { name: '编辑 P1 P-1 的 造影', exact: true }).first().click()
   await editor.locator('textarea').fill('第二版共同说明')
   await editor.getByRole('button', { name: '应用到待保存草稿' }).click()
   await page.getByRole('button', { name: '保存草稿', exact: true }).click()

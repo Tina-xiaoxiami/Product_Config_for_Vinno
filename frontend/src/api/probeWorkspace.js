@@ -3,7 +3,7 @@ const base = '/probes/workspaces'
 export const listProbeWorkspaces = () => api.get(base)
 export const getProbeCatalog = () => api.get(`${base}/catalog`)
 export const createProbeWorkspace = data => api.post(base, data)
-export const getProbeWorkspace = id => api.get(`${base}/${id}`)
+export const getProbeWorkspace = (id, refreshTemplate = false) => api.get(`${base}/${id}`, { params: { refresh_template: refreshTemplate } })
 export const saveProbeDraft = (id, data) => api.put(`${base}/${id}/draft`, data)
 export const discardProbeDraft = (id, revision) => api.post(`${base}/${id}/discard`, { revision })
 export const getProbeResults = id => api.get(`${base}/${id}/results`)

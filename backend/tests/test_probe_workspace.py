@@ -102,7 +102,8 @@ async def test_draft_isolated_model_results_and_atomic_shared_publication(tmp_pa
         result = await client.get(f"/api/probes/workspaces/{d['id']}/results")
         assert result.status_code == 200, result.text
         by_model = {r['model_id']: r for r in result.json()['results']}
-        assert by_model[10]['defined_status'] == 'supported'
+        # No committed template entry: definition matches the template's dash.
+        assert by_model[10]['defined_status'] == 'unsupported'
         assert by_model[11]['defined_status'] == 'not_applicable'
         assert by_model[20]['current_status'] == 'conditional'
         assert by_model[20]['current_excludes'] == ['心脏']
