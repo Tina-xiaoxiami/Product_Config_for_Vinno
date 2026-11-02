@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import {
   coverageRequestPayload, coverageAssessment, coverageItems, coverageScopeNotice,
   createCoverageState, createCoverageWorkspace, coverageStatusLabel, coverageTraceBoundary,
-  registeredPreviewUrl
+  registeredPreviewUrl, coverageBoundaryLabel, coverageRootLabel
 } from '../src/utils/knowledgeReleaseCoverage.js'
 
 const form = () => ({ query: '针增益', market: 'domestic', country: ' cn ', product_model_id: 9, software_version: ' 1.14.81 ', release_line: '', path: '/untrusted/path' })
@@ -51,6 +51,10 @@ test('status labels keep unrecognized scope and unsupported formats explicit', (
   assert.match(coverageStatusLabel('range', 'after_target'), /晚于目标/)
   assert.match(coverageStatusLabel('language', 'unknown'), /未识别/)
   assert.match(coverageStatusLabel('extraction', null), /未识别/)
+  assert.match(coverageBoundaryLabel('configured_directories_and_registered_release_notes'), /已配置来源目录.*已登记.*不代表全部历史齐全/)
+  assert.equal(coverageRootLabel('SOURCE_ROOTS'), '补充来源目录')
+  assert.equal(coverageRootLabel('CONTROLLED_EXTRACTION_ROOTS'), '已配置正文来源目录')
+  assert.equal(coverageRootLabel('RELEASE_NOTE_ROOT'), '发布记录来源目录')
 })
 
 test('previews are only registered document URLs, never source paths or arbitrary links', () => {
