@@ -364,7 +364,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
             "status": "answered",
             "question_id": best_question_id,
             "question": item["question_text"],
-            "display_question": item["display_question_text"],
+            "display_question": (item or {}).get("display_question_text"),
             "match_type": "exact" if best_exact else "similar",
             "similarity": best_score,
             "answer": item["answer"],
