@@ -34,7 +34,7 @@ async def build_series_snapshot(db: AsyncSession, series_id: int) -> dict:
         (
             await db.execute(
                 select(ProductModel)
-                .where(ProductModel.series_id == series_id, active_model_filter())
+                .where(ProductModel.series_id == series_id, active_model_filter(include_disabled=True))
                 .order_by(ProductModel.sort_order, ProductModel.id)
             )
         )
@@ -275,7 +275,7 @@ async def restore_series_snapshot(db: AsyncSession, series_id: int, snapshot: di
             await db.execute(
                 select(ProductModel).where(
                     ProductModel.series_id == series_id,
-                    active_model_filter(),
+                    active_model_filter(include_disabled=True),
                 )
             )
         )

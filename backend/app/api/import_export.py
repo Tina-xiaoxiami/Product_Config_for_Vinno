@@ -1840,7 +1840,7 @@ async def _working_import_state(db: AsyncSession) -> dict:
         .join(ConfigItem, ConfigValue.item_id == ConfigItem.id)
         .join(ProductModel, ConfigValue.model_id == ProductModel.id)
         .join(ProductSeries, ProductModel.series_id == ProductSeries.id)
-        .where(active_model_filter())
+        .where(active_model_filter(include_disabled=True))
     )
     pairs = {}
     for value, item, model, series in rows:
