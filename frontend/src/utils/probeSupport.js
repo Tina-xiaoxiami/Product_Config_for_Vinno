@@ -17,9 +17,11 @@ export function formatProbeSupport({ status, apps = [], excludes = [], tender = 
   if (status === 'mixed') return '存在差异'
   if (status === 'not_applicable') return '不适用'
   if (!status || status === 'unsupported') return '—'
-  if (!apps.length) return status === 'supported' ? 'ALL' : '△'
   const excluded = excludes.flatMap(expandCombinedName)
   const tenderApps = tender.flatMap(expandCombinedName)
+  const unknown = excluded.filter(name => !apps.includes(name))
+  if (unknown.length) return '待核对排除: ' + [...new Set(unknown)].join(', ')
+  if (!apps.length) return status === 'supported' ? 'ALL' : '△'
   const supported = apps.filter(name => !excluded.includes(name) && !tenderApps.includes(name))
   if (status === 'conditional' && tenderApps.length) {
     return [...(supported.length ? ['支:' + supported.join(',')] : []), '招:' + tenderApps.join(',')].join(' | ')

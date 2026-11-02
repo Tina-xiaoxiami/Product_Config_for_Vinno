@@ -94,6 +94,8 @@
                       ><div class="cell-apps" :class="{ 'is-all': isAllApps(cat.id, f.id) }">{{ getCellDisplay(cat.id, f.id) }}</div></div>
                     </template>
                     <div>
+                      <el-alert v-if="popUnknownExcludes.length" type="warning" :closable="false" :title="`旧排除名称无法对应：${popUnknownExcludes.join('、')}。请核对当前应用后保存。`" />
+                      <el-checkbox v-if="popUnknownExcludes.length" v-model="popReplaceUnknown" size="small">以本次所选应用替换旧排除名称</el-checkbox>
                       <div v-if="popoverKey && (popOldStatus !== popStatus)" style="font-size:11px;color:#e6a23c;margin-bottom:6px;padding:4px 8px;background:#fdf6ec;border-radius:4px">
                         修改: {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popOldStatus] || popOldStatus }} → {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popStatus] || popStatus }}
                       </div>
@@ -166,7 +168,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onActivated } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
 import api from '../api/index'
@@ -404,11 +407,18 @@ const popSupportedReg = ref([])
 const popSupportedPoc = ref([])
 const popSpecialTender = ref(false)
 const popCatApps = ref({ regular: [], poc: [] })
+const popReplaceUnknown = ref(false)
+const popUnknownExcludes = computed(() => {
+  const names = [...popCatApps.value.regular, ...popCatApps.value.poc].map(app => app.name)
+  return popExcludes.value.filter(name => !names.includes(name))
+})
 const pendingExcludes = reactive({})
 
 const openPopover = (catId, featId) => {
   const key = `${catId}_${featId}`
   popoverKey.value = key
+  popReplaceUnknown.value = false
+  popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
   // Record old values for diff
   popOldStatus.value = tplMap.value[key]?.default_support || 'unsupported'
   const cur = key in pendingChanges ? pendingChanges[key] : (tplMap.value[key]?.default_support || 'unsupported')
@@ -435,6 +445,8 @@ const openPopover = (catId, featId) => {
       }
     } catch { ex = [] }
   }
+  ex = ex.flatMap(expandCombinedName)
+  tender = tender.flatMap(expandCombinedName)
   popSpecialTender.value = tender.includes('__特殊应用__') || false
   if (cur === 'unsupported' || !allNames.length) {
     popSupportedReg.value = []
@@ -447,8 +459,6 @@ const openPopover = (catId, featId) => {
     popSupportedPoc.value = pocNames.filter(n => !exSet.has(n) && !tender.includes(n))
   }
   popExcludes.value = (ex || []).filter(Boolean)
-  // Sync apps for this category
-  popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
 }
 
 // Per-group computed
@@ -496,7 +506,10 @@ const applyPopover = () => {
   // Compute excludes and tender
   const allNames = [...popCatApps.value.regular.map(a => a.name), ...popCatApps.value.poc.map(a => a.name)]
   const supportedSet = new Set([...(popSupportedReg.value || []), ...(popSupportedPoc.value || [])])
-  const excludes = allNames.filter(n => !supportedSet.has(n))
+  const excludes = [...new Set([
+    ...(popReplaceUnknown.value ? [] : popUnknownExcludes.value),
+    ...allNames.filter(n => !supportedSet.has(n))
+  ])]
   const tender = popSpecialTender.value ? ['__特殊应用__'] : []
   pendingExcludes[key] = { excludes: excludes.length ? excludes : [], tender }
   popoverKey.value = ''
@@ -530,15 +543,7 @@ const rollback = async (row) => {
 }
 
 const refreshData = () => Promise.all([loadData(), loadDrafts()])
-onMounted(refreshData)
-let templateHasActivated = false
-onActivated(() => {
-  if (!templateHasActivated) {
-    templateHasActivated = true
-    return
-  }
-  if (!editMode.value) return refreshData()
-})
+useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value })
 </script>
 
 <style scoped>

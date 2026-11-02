@@ -879,6 +879,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { releaseVersionPayload, releaseVersionChanged } from '../utils/releaseVersionEdit.js'
 import {
@@ -1641,10 +1642,8 @@ const exportIntroduction = () => {
   )
 }
 
-onMounted(async () => {
-  await loadOverview()
-  await loadVersions()
-  await loadTemplates()
+useWorkspaceRefresh(() => Promise.all([loadOverview(), loadVersions(), loadTemplates()]), {
+  canRefresh: () => !editDialogVisible.value && !introDirty.value && !introBusy.value && !templateDialogVisible.value
 })
 </script>
 

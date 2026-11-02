@@ -62,13 +62,13 @@ test('returning to cached configuration refreshes enabled models after pending s
   const code = config.slice(config.lastIndexOf('onActivated('), config.lastIndexOf('</script>'))
   let activate
   const calls = [], configReady = ref(false), loading = ref(false), allModelsMap = ref(new Map())
-  new Function('onActivated', 'configReady', 'loading', 'waitForDraftSaves', 'loadModels', 'loadModelCombinations', 'allModelsMap', code)(
+  new Function('onActivated', 'configReady', 'loading', 'waitForDraftSaves', 'loadSeries', 'loadModelCombinations', 'allModelsMap', code)(
     callback => { activate = callback }, configReady, loading,
-    async () => calls.push('saves'), async () => calls.push('models'), async () => calls.push('groups'), allModelsMap)
+    async () => calls.push('saves'), async options => { assert.equal(options.restoreSelection, false); calls.push('catalog') }, async () => calls.push('groups'), allModelsMap)
   await activate()
   assert.deepEqual(calls, [])
   configReady.value = true
   allModelsMap.value.set(84, { id: 84 })
   await activate()
-  assert.deepEqual(calls, ['saves', 'models', 'groups'])
+  assert.deepEqual(calls, ['saves', 'catalog', 'groups'])
 })

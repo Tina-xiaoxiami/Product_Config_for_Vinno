@@ -113,11 +113,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, rollbackVersion, updateVersion, deleteVersion } from '../api/data'
 import { formatTime } from '../utils/modelHelpers'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 
 // 路由
 const router = useRouter()
@@ -136,6 +137,7 @@ const currentVersion = ref(null)
 const versionDetail = ref(null)
 
 let versionLoadRequest = 0
+let seriesLoadRequest = 0
 
 // 编辑版本对话框
 const editDialogVisible = ref(false)
@@ -148,12 +150,21 @@ const editVersionForm = ref({
 
 // 加载产品系列
 const loadSeries = async () => {
+  const request = ++seriesLoadRequest
   try {
     const res = await getSeriesList()
+    if (request !== seriesLoadRequest) return
     seriesList.value = res.items || []
-    if (seriesList.value.length > 0) {
-      selectedSeries.value = seriesList.value[0].id
+    if (!seriesList.value.some(series => series.id === selectedSeries.value)) {
+      selectedSeries.value = seriesList.value[0]?.id ?? null
+      currentPage.value = 1
+    }
+    if (selectedSeries.value !== null) {
       await loadVersions()
+    } else {
+      ++versionLoadRequest
+      versions.value = []
+      total.value = 0
     }
   } catch (error) {
     console.error('加载产品系列失败:', error)
@@ -321,9 +332,8 @@ const saveVersionEdit = async () => {
   }
 }
 
-onMounted(() => {
-  loadSeries()
-})
+useWorkspaceRefresh(loadSeries, { canRefresh: () => !editDialogVisible.value })
+onDeactivated(() => { ++seriesLoadRequest; ++versionLoadRequest })
 </script>
 
 <style scoped>

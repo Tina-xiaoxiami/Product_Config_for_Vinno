@@ -1988,6 +1988,7 @@ async def preview_import_batch(
     """
     if not files:
         raise HTTPException(status_code=400, detail="请至少选择一个 Excel 文件")
+    owns_transaction = not db.in_transaction()
     transaction = await db.begin_nested()
     try:
         initial = await _working_import_state(db)
@@ -2008,8 +2009,12 @@ async def preview_import_batch(
         return {"files": previews, "impact": _import_impact(initial, current, all_touched)}
     finally:
         # Covers validation errors, unexpected errors and task cancellation.
-        # Never commit/release the preview savepoint or roll back the caller.
+        # Never commit the preview or roll back a caller-owned outer transaction.
         await transaction.rollback()
+        if owns_transaction:
+            # ROLLBACK TO SAVEPOINT alone retains SQLite's writer lock until the
+            # outer transaction ends, even though the preview changes are gone.
+            await db.rollback()
 
 
 @router.post("/preview")

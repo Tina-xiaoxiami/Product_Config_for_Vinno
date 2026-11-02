@@ -406,7 +406,8 @@
 <script setup>
 import FeatureNameReviewDialog from '../components/FeatureNameReviewDialog.vue'
 
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
@@ -572,7 +573,7 @@ const handleDeleteGroup = async (row) => {
     await ElMessageBox.confirm(`确认删除功能组"${row.name}"？<p style="color:#e6a23c;font-size:12px;margin:4px 0 0">将同时删除组内所有功能。</p>`, '确认删除', { type: 'warning', dangerouslyUseHTMLString: true })
     await deleteFeatureGroup(row.id)
     ElMessage.success('删除成功')
-    await loadData()
+    await Promise.all([loadData(), loadFeatureNameStandardFlags({ force: true })])
   } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
 }
 
@@ -647,7 +648,7 @@ const saveFeature = async () => {
     }
     ElMessage.success('保存成功')
     showFeatureForm.value = false
-    await loadData()
+    await Promise.all([loadData(), loadFeatureNameStandardFlags({ force: true })])
   } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 const handleDeleteFeature = async (row) => {
@@ -655,7 +656,7 @@ const handleDeleteFeature = async (row) => {
     await ElMessageBox.confirm(`确认删除功能"${row.name}"？`, '确认删除', { type: 'warning' })
     await deleteFeature(row.id)
     ElMessage.success('删除成功')
-    await loadData()
+    await Promise.all([loadData(), loadFeatureNameStandardFlags({ force: true })])
   } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
 }
 
@@ -719,7 +720,7 @@ const handleApplyImport = async () => {
     ElMessage.success(`导入完成：新增 ${s.create} 项、更新 ${s.update} 项、跳过 ${s.unchanged} 项`)
     showImportDialog.value = false
     importReport.value = null
-    await loadData()
+    await Promise.all([loadData(), loadFeatureNameStandardFlags({ force: true })])
   } catch (e) {
     const detail = e?.response?.data?.detail
     if (detail && typeof detail === 'object') {
@@ -792,10 +793,7 @@ const handleImportStandard = async (file) => {
   } finally { importingStandard.value = false }
 }
 
-onMounted(() => {
-  loadData()
-  loadFeatureNameStandardFlags()
-})
+useWorkspaceRefresh(() => Promise.all([loadData(), loadFeatureNameStandardFlags({ force: true })]))
 </script>
 
 <style scoped>

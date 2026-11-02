@@ -51,7 +51,7 @@ test('Config refresh rejects stale memberships without resetting selected models
   assert.equal(allModelsMap.value, previous)
   assert.doesNotMatch(block, /selectedModels\.value\s*=|loadData\(/)
   assert.match(source, /path: '\/models', query: \{ editSubseries: '1' \}/)
-  assert.match(source, /onActivated\(async \(\) => \{[\s\S]*await loadModels\(\)[\s\S]*await loadModelCombinations\(\)/)
+  assert.match(source, /onActivated\(async \(\) => \{[\s\S]*await loadSeries\(\{ restoreSelection: false \}\)[\s\S]*await loadModelCombinations\(\)/)
 })
 
 test('editor query is consumed once and cannot open after leaving cached Models', async () => {

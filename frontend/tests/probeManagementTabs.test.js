@@ -9,17 +9,18 @@ test('all management deep links share one sidebar selection and other pages reta
   for (const path of ['/template-features', '/probe-models', '/applications', '/feature-manage']) assert.equal(probeManagementMenuPath(path), '/template-features')
   for (const path of ['/config', '/knowledge', '/probe-config', '/feature-manage-extra']) assert.equal(probeManagementMenuPath(path), path)
 })
-test('template return refreshes supporting data while retaining edits and skipping duplicate initial load', async () => {
-  let activated, loads = 0, drafts = 0
+test('template return uses the shared source refresh while retaining edits', async () => {
+  let refresh, canRefresh, loads = 0, drafts = 0
   const editMode = { value: false }
-  const code = template.slice(template.indexOf('let templateHasActivated ='), template.indexOf('</script>'))
-  new Function('onActivated', 'editMode', 'refreshData', code)(callback => { activated = callback }, editMode, async () => { loads++; drafts++ })
-  await activated(); assert.equal(loads, 0)
-  await activated(); assert.equal(loads, 1)
+  const code = template.slice(template.indexOf('useWorkspaceRefresh(refreshData'), template.indexOf('</script>'))
+  new Function('useWorkspaceRefresh', 'editMode', 'refreshData', code)((callback, options) => {
+    refresh = callback; canRefresh = options.canRefresh
+  }, editMode, async () => { loads++; drafts++ })
+  if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = true
-  await activated(); assert.equal(loads, 1)
+  if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = false
-  await activated(); assert.equal(drafts, 2)
+  if (canRefresh()) await refresh(); assert.equal(drafts, 2)
 })
 test('tabs only commit selection when route navigation succeeds', async () => {
   let failed = false, throws = false, errors = 0
@@ -37,4 +38,51 @@ test('tabs only commit selection when route navigation succeeds', async () => {
   assert.equal(await change('/probe-models'), false)
   assert.equal(errors, 1)
   assert.deepEqual(routes, ['/applications', '/feature-manage', '/probe-models'])
+})
+
+test('template editor initializes selections from the opened category, including combined exclusions', async () => {
+  const { expandCombinedName } = await import('../src/utils/probeSupport.js')
+  const ref = value => ({ value })
+  const context = {
+    popoverKey: ref(''), popOldStatus: ref(''), popStatus: ref('supported'), popExcludes: ref([]),
+    popSupportedReg: ref([]), popSupportedPoc: ref([]), popSpecialTender: ref(false),
+    popReplaceUnknown: ref(false),
+    popCatApps: ref({ regular: [{ name: 'Previous category' }], poc: [] }), pendingChanges: {}, pendingExcludes: {},
+    tplMap: ref({ '2_9': { default_support: 'supported', default_excludes: '["早\\\\中\\\\晚孕"]' } }),
+    categoryAppsMap: ref({ 2: { regular: ['早孕', '中孕', '晚孕', '胎心'].map(name => ({ name })), poc: [{ name: '急诊' }] } }),
+    expandCombinedName
+  }
+  const block = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
+  const open = new Function(...Object.keys(context), `${block}; return openPopover`)(...Object.values(context))
+  open(2, 9)
+  assert.deepEqual(context.popSupportedReg.value, ['胎心'])
+  assert.deepEqual(context.popSupportedPoc.value, ['急诊'])
+  assert.deepEqual(context.popExcludes.value, ['早孕', '中孕', '晚孕'])
+})
+
+test('opening and applying a template retains unresolved exclusions until explicitly replaced', async () => {
+  const { expandCombinedName } = await import('../src/utils/probeSupport.js')
+  const ref = value => ({ value })
+  const context = {
+    popoverKey: ref(''), popOldStatus: ref(''), popStatus: ref('supported'), popExcludes: ref([]),
+    popSupportedReg: ref([]), popSupportedPoc: ref([]), popSpecialTender: ref(false), popReplaceUnknown: ref(false),
+    popCatApps: ref({ regular: [], poc: [] }), pendingChanges: {}, pendingExcludes: {},
+    tplMap: ref({ '2_9': { default_support: 'supported', default_excludes: '["早","中","晚孕","胎心"]' } }),
+    categoryAppsMap: ref({ 2: { regular: ['早孕', '中孕', '晚孕', '胎心'].map(name => ({ name })), poc: [] } }),
+    expandCombinedName
+  }
+  context.popUnknownExcludes = { get value() {
+    const names = [...context.popCatApps.value.regular, ...context.popCatApps.value.poc].map(app => app.name)
+    return context.popExcludes.value.filter(name => !names.includes(name))
+  } }
+  const openBlock = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
+  const applyBlock = template.slice(template.indexOf('const applyPopover ='), template.indexOf('const saveChanges ='))
+  const actions = new Function(...Object.keys(context), `${openBlock};${applyBlock};return {openPopover,applyPopover}`)(...Object.values(context))
+  actions.openPopover(2, 9); actions.applyPopover()
+  assert.deepEqual(context.pendingExcludes['2_9'].excludes, ['早', '中', '晚孕', '胎心'])
+  actions.openPopover(2, 9)
+  assert.equal(context.popReplaceUnknown.value, false)
+  context.popSupportedReg.value = ['早孕']; context.popReplaceUnknown.value = true
+  actions.applyPopover()
+  assert.deepEqual(context.pendingExcludes['2_9'].excludes, ['中孕', '晚孕', '胎心'])
 })

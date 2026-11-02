@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 import json
@@ -77,6 +77,20 @@ async def get_config_rows(
 
     # 构建查询
     query = select(ConfigItem)
+    if not include_empty:
+        # Apply the same visible-series/nonempty scope before both counting and
+        # slicing pages. Draft views can still request the complete directory.
+        nonempty_values = or_(*[
+            func.trim(func.coalesce(getattr(ConfigValue, field), ""), " \t\n\r\v\f").notin_(
+                ["", "None", "null", "N/A", "-"]
+            )
+            for field in ("final_config", "current_config", "selection_config", "rd_status")
+        ])
+        query = query.where(select(ConfigValue.id).where(
+            ConfigValue.item_id == ConfigItem.id,
+            ConfigValue.model_id.in_(model_ids),
+            nonempty_values,
+        ).exists())
 
     # 分类筛选
     if category_list:
@@ -92,22 +106,12 @@ async def get_config_rows(
         )
 
     # 获取总数（在分页前）
-    count_query = select(func.count()).select_from(ConfigItem)
-    if category_list:
-        count_query = count_query.where(ConfigItem.category.in_(category_list))
-    if search:
-        count_query = count_query.where(
-            (ConfigItem.rd_name.contains(search)) |
-            (ConfigItem.ipn.contains(search)) |
-            (ConfigItem.v_code.contains(search)) |
-            (ConfigItem.zh_desc.contains(search)) |
-            (ConfigItem.en_desc.contains(search))
-        )
+    count_query = select(func.count()).select_from(query.subquery())
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
     # 分页查询
-    query = query.order_by(ConfigItem.row_index).offset(skip).limit(limit)
+    query = query.order_by(ConfigItem.row_index, ConfigItem.id).offset(skip).limit(limit)
     result = await db.execute(query)
     items = result.scalars().all()
 
@@ -138,24 +142,6 @@ async def get_config_rows(
     rows = []
     for item in items:
         item_values = value_map.get(item.id, {})
-
-        # 检查是否所有配置值都为空
-        has_non_empty_value = False
-        for model_id in model_ids:
-            if model_id in item_values:
-                v = item_values[model_id]
-                # 检查四个字段是否有非空值
-                for field in ['final_config', 'current_config', 'selection_config', 'rd_status']:
-                    field_value = v.get(field)
-                    if field_value and str(field_value).strip() not in ['', 'None', 'null', 'N/A', '-']:
-                        has_non_empty_value = True
-                        break
-                if has_non_empty_value:
-                    break
-
-        # 如果所有配置值都为空，则跳过该行（除非指定了 include_empty）
-        if not has_non_empty_value and not include_empty:
-            continue
 
         rows.append({
             "id": item.id,
@@ -280,25 +266,8 @@ async def update_config_value(
     rd_status: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """更新配置值"""
-    result = await db.execute(select(ConfigValue).where(ConfigValue.id == value_id))
-    value = result.scalar_one_or_none()
-
-    if not value:
-        raise HTTPException(status_code=404, detail="配置值不存在")
-
-    if current_config is not None:
-        value.current_config = current_config
-    if final_config is not None:
-        value.final_config = final_config
-    if selection_config is not None:
-        value.selection_config = selection_config
-    if rd_status is not None:
-        value.rd_status = rd_status
-
-    await db.commit()
-    await db.refresh(value)
-    return value
+    """Retain the old URL without allowing unversioned configuration writes."""
+    raise HTTPException(409, "请在配置管理中保存草稿并提交版本；旧直接写入入口已停用")
 
 
 @router.post("/batch-update")
@@ -306,53 +275,8 @@ async def batch_update_config_values(
     data: BatchUpdateRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    批量更新配置值
-
-    Args:
-        data: BatchUpdateRequest
-            - item_ids: 配置项ID列表
-            - model_ids: 型号ID列表（可选，不传则更新所有型号）
-            - field_name: 字段名（current_config/final_config/selection_config/rd_status）
-            - value: 新值
-
-    Returns:
-        更新的记录数
-    """
-    # 验证字段名
-    valid_fields = ["current_config", "final_config", "selection_config", "rd_status"]
-    if data.field_name not in valid_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"无效的字段名，必须是: {', '.join(valid_fields)}"
-        )
-
-    # 获取所有相关的配置值
-    query = select(ConfigValue).where(ConfigValue.item_id.in_(data.item_ids))
-
-    if data.model_ids:
-        query = query.where(ConfigValue.model_id.in_(data.model_ids))
-
-    result = await db.execute(query)
-    values = result.scalars().all()
-
-    if not values:
-        raise HTTPException(status_code=404, detail="未找到匹配的配置值")
-
-    # 批量更新
-    updated_count = 0
-    for v in values:
-        setattr(v, data.field_name, data.value)
-        updated_count += 1
-
-    await db.commit()
-
-    return {
-        "message": "批量更新成功",
-        "updated_count": updated_count,
-        "item_count": len(data.item_ids),
-        "model_count": len(data.model_ids) if data.model_ids else "全部"
-    }
+    """The draft/version workflow is the shared writer for batch changes too."""
+    raise HTTPException(409, "请在配置管理中保存草稿并提交版本；旧直接写入入口已停用")
 
 
 @router.post("/compare/export")

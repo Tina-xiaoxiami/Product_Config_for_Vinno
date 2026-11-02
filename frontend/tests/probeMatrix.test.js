@@ -27,6 +27,14 @@ test('matrix and template share ALL, supported/excluded and tender formatting', 
   assert.deepEqual(parseProbeExcludes('{"excludes":["心脏"],"tender":["特殊应用"]}'), {excludes:['心脏'],tender:['特殊应用']})
 })
 
+test('unmatched historical exclusions stay visible rather than implying support', () => {
+  assert.equal(formatProbeSupport({ status: 'supported', apps: [], excludes: ['早'] }), '待核对排除: 早')
+  assert.equal(formatProbeSupport({ status: 'conditional', apps: ['早孕', '中孕', '晚孕', '胎心'],
+    excludes: ['早', '中', '晚孕', '胎心'], mode: 'supported' }), '待核对排除: 早, 中')
+  assert.equal(formatProbeSupport({ status: 'conditional', apps: ['早孕', '中孕', '晚孕', '胎心'],
+    excludes: ['早\\中\\晚孕'], mode: 'supported' }), '胎心')
+})
+
 test('identical material duplicates share one visible row while conflicting values stay marked', () => {
   const document = {rows:[{probe_model_id:1,variant_id:1,feature_id:2,current_status:'supported'},{probe_model_id:1,variant_id:2,feature_id:2,current_status:'unsupported'}]}
   const rows = buildProbeMatrixRows(document,{probes:[{id:1,name:'P'}],variants:[{id:1,ipn:'A',internal_model:'P'},{id:2,ipn:'A',internal_model:'P'}]})

@@ -133,12 +133,13 @@ class ProductStrategyReader:
     def list_models(self) -> dict[str, Any]:
         """列出国内 V10 可选机型，供查询页做机型下拉；只读直连，不读快照。"""
         with closing(self._connect()) as connection:
+            visibility = self._model_visibility(connection)
             rows = connection.execute(
-                """
+                f"""
                 SELECT m.id, m.name
                 FROM product_models m
                 JOIN product_series s ON s.id = m.series_id
-                WHERE s.name = ?
+                WHERE s.name = ? AND {visibility}
                 ORDER BY m.id
                 """,
                 (DOMESTIC_V10_SERIES,),
@@ -156,17 +157,30 @@ class ProductStrategyReader:
         }
 
     @staticmethod
+    def _model_visibility(connection: sqlite3.Connection) -> str:
+        """Match the main catalog, including installations predating enablement."""
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(product_models)")}
+        conditions = []
+        if "status" in columns:
+            conditions.append("(m.status IS NULL OR m.status != '已合并')")
+        if "is_enabled" in columns:
+            conditions.append("m.is_enabled = 1")
+        return " AND ".join(conditions) or "1 = 1"
+
+    @staticmethod
     def _find_source_models(
         connection: sqlite3.Connection,
         model_names: tuple[str, ...],
     ) -> list[dict[str, Any]]:
         placeholders = ", ".join("?" for _ in model_names)
+        visibility = ProductStrategyReader._model_visibility(connection)
         rows = connection.execute(
             f"""
             SELECT m.id, m.name
             FROM product_models m
             JOIN product_series s ON s.id = m.series_id
             WHERE s.name = ?
+              AND {visibility}
               AND m.name COLLATE NOCASE IN ({placeholders})
             ORDER BY m.id
             """,

@@ -10,7 +10,10 @@ from app.database import get_db
 from app.models import ProductSeries, ProductModel
 from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate, ProductModelEnabledUpdate
 
-from app.services.model_identity import active_model_filter, model_identity_metadata
+from app.services.model_identity import (
+    active_model_filter, model_identity_metadata, rename_model, validate_manual_model_name,
+)
+from app.services.write_serialization import serialize_catalog_write
 
 from app.services.whitepaper_subseries import (
     read_subseries, get_subseries_editor, save_subseries_editor,
@@ -159,14 +162,19 @@ async def create_model(
     db: AsyncSession = Depends(get_db)
 ):
     """创建产品型号"""
+    await serialize_catalog_write(db, "product_models")
     # 检查系列是否存在
     result = await db.execute(select(ProductSeries).where(ProductSeries.id == data.series_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="产品系列不存在")
 
+    try:
+        name = await validate_manual_model_name(db, data.series_id, data.name)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     model = ProductModel(
         series_id=data.series_id,
-        name=data.name,
+        name=name,
         description=data.description,
         status=data.status or "生产中",
         column_start=data.column_start,
@@ -186,14 +194,19 @@ async def update_model(
     db: AsyncSession = Depends(get_db)
 ):
     """更新产品型号"""
-    result = await db.execute(select(ProductModel).where(ProductModel.id == model_id))
+    await serialize_catalog_write(db, "product_models")
+    result = await db.execute(select(ProductModel).where(ProductModel.id == model_id).execution_options(populate_existing=True))
     model = result.scalar_one_or_none()
 
     if not model:
         raise HTTPException(status_code=404, detail="产品型号不存在")
 
     if data.name is not None:
-        model.name = data.name
+        try:
+            name = await validate_manual_model_name(db, model.series_id, data.name, model)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await rename_model(db, model, name)
     if data.description is not None:
         model.description = data.description
     if data.status is not None:

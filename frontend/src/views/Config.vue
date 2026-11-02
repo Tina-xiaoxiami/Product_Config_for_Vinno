@@ -2454,7 +2454,7 @@ const getBatchEditOptions = () => {
 
 // 加载产品系列
 let seriesLoadRequest = 0
-const loadSeries = async () => {
+const loadSeries = async ({ restoreSelection = true } = {}) => {
   const request = ++seriesLoadRequest
   const isCurrent = () => request === seriesLoadRequest
   modelLoadRequest++
@@ -2466,28 +2466,23 @@ const loadSeries = async () => {
     seriesList.value = res.items || []
 
     if (seriesList.value.length > 0) {
-      // 尝试从 localStorage 恢复上次的系列选择
-      const saved = localStorage.getItem(SERIES_SELECTION_KEY)
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved)
-          const validIds = parsed.selected_ids.filter(id =>
-            seriesList.value.some(s => s.id === id)
-          )
-          if (validIds.length > 0) {
+      if (!restoreSelection) {
+        selectedSeries.value = selectedSeries.value.filter(id => seriesList.value.some(series => series.id === id))
+      } else {
+        // 仅初次加载恢复保存的选择，返回页面保留当前选择。
+        const saved = localStorage.getItem(SERIES_SELECTION_KEY)
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved)
+            const validIds = parsed.selected_ids.filter(id => seriesList.value.some(s => s.id === id))
             selectedSeries.value = validIds
-          } else {
+          } catch {
             selectedSeries.value = []
           }
-        } catch {
-          // JSON 解析失败，保持空选择
+        } else {
           selectedSeries.value = []
         }
-      } else {
-        // 没有保存的选择，默认不选任何系列
-        selectedSeries.value = []
       }
-
     } else {
       selectedSeries.value = []
       allModelsMap.value.clear()
@@ -4972,7 +4967,7 @@ onMounted(() => {
 onActivated(async () => {
   if (!configReady.value || loading.value) return
   await waitForDraftSaves()
-  await loadModels()
+  await loadSeries({ restoreSelection: false })
   await loadModelCombinations()
 })
 </script>

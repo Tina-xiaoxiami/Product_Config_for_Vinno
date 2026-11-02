@@ -2,18 +2,20 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func
 import io
 from datetime import datetime
 from urllib.parse import quote
 from app.database import get_db
-from app.models.probe import ProbeModel, ProbeModelVariant, ProbeModelApp, Application, ProbeCategory
+from app.models.probe import ProbeModel, ProbeModelVariant, ProbeCategory
 from app.models.config import ConfigItem
 from app.schemas.probe import (
     ProbeModelCreate, ProbeModelUpdate,
     ProbeModelResponse, ProbeModelListResponse,
     ProbeModelVariantResponse,
 )
+
+from app.services.probe_applications import model_application_counts, model_applications
 
 router = APIRouter()
 
@@ -37,13 +39,7 @@ async def list_models(
     response = ProbeModelListResponse(items=items, total=total)
     if include_details and items:
         model_ids = [item.id for item in items]
-        counts = await db.execute(
-            select(ProbeModelApp.probe_model_id, func.count(ProbeModelApp.id))
-            .join(Application, ProbeModelApp.application_id == Application.id)
-            .where(ProbeModelApp.probe_model_id.in_(model_ids))
-            .group_by(ProbeModelApp.probe_model_id)
-        )
-        count_map = dict(counts.all())
+        count_map = await model_application_counts(db, {item.category_id for item in items})
         variants = await db.execute(
             select(ProbeModelVariant)
             .where(ProbeModelVariant.probe_model_id.in_(model_ids))
@@ -55,7 +51,7 @@ async def list_models(
                 ProbeModelVariantResponse.model_validate(variant)
             )
         for item in response.items:
-            item.application_count = count_map.get(item.id, 0)
+            item.application_count = count_map.get(item.category_id, 0)
             item.variant_items = variant_map.get(item.id, [])
     return response
 
@@ -97,25 +93,12 @@ async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{model_id}/apps")
 async def get_model_apps(model_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(ProbeModelApp, Application)
-        .join(Application, ProbeModelApp.application_id == Application.id)
-        .where(ProbeModelApp.probe_model_id == model_id)
-        .order_by(Application.sort_order)
-    )
-    return [{"id": app.id, "name": app.name} for _, app in result.all()]
+    return await model_applications(db, model_id)
 
 
 @router.post("/{model_id}/apps")
 async def set_model_apps(model_id: int, data: dict, db: AsyncSession = Depends(get_db)):
-    """设置探头型号支持的应用列表 { app_ids: [1,2,3] }"""
-    # Delete existing
-    await db.execute(delete(ProbeModelApp).where(ProbeModelApp.probe_model_id == model_id))
-    # Add new
-    for aid in data.get("app_ids", []):
-        db.add(ProbeModelApp(probe_model_id=model_id, application_id=aid))
-    await db.commit()
-    return {"message": f"已设置 {len(data.get('app_ids', []))} 个应用"}
+    raise HTTPException(409, "探头应用统一按类别维护，请到应用管理选择该探头类别；旧型号应用记录仅保留历史。")
 
 
 # ===== Variant Excel Export/Import =====

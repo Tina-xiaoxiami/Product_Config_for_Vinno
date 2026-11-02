@@ -730,6 +730,7 @@ import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHist
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import { questionDisplayText, answerDisplayText, featureDisplayName } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { useRoute, useRouter } from 'vue-router'
 import { catalogCoverageLabel, catalogCoverageType } from '../utils/featureCatalog'
@@ -1482,14 +1483,11 @@ const useCandidate = (candidate) => {
   ElMessage.success('已加入答案草稿，请核对并完善表述')
 }
 
+useWorkspaceRefresh(() => Promise.all([
+  loadQaModels(), loadQaQuestions(), loadFeatureCoverage(), loadFeatures(),
+  loadDocuments(), loadRegistrationModels(), loadQaReviewCount()
+]), { canRefresh: () => !answerDialogVisible.value && !answerSaving.value })
 onMounted(() => {
-  loadQaModels()
-  loadQaQuestions()
-  loadFeatureCoverage()
-  loadFeatures()
-  loadDocuments()
-  loadRegistrationModels()
-  loadQaReviewCount()
   window.addEventListener('resize', updateQaTableHeight)
   nextTick(() => { updateQaTableHeight(); qaResizeObserver = new ResizeObserver(updateQaTableHeight); if (qaTableArea.value) qaResizeObserver.observe(qaTableArea.value.parentElement) })
 })

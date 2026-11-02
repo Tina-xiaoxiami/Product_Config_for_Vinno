@@ -10,9 +10,9 @@
       </template>
       <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
       <template v-if="editMode">
-        <el-button size="small" @click="cancelEdit">撤销</el-button>
+        <el-button size="small" @click="cancelEdit" :disabled="submitting">撤销</el-button>
         <el-button size="small" type="primary" @click="submitChanges" :loading="submitting">提交并创建版本</el-button>
-        <el-button size="small" type="danger" @click="discardChanges">废弃全部</el-button>
+        <el-button size="small" type="danger" @click="discardChanges" :disabled="submitting">废弃全部</el-button>
       </template>
     </ProbeManagementActions>
     <div class="panel-layout">
@@ -55,7 +55,7 @@
               <div v-if="regularApps.length" class="app-list">
                 <div v-for="app in regularApps" :key="app.id" class="app-tag">
                   <span>{{ app.name }}<em v-if="app.en_name" class="en-name">{{ app.en_name }}</em></span>
-                  <el-button v-if="editMode" size="small" text type="danger" @click="stageRemove(app, 'regular')">移除</el-button>
+                  <el-button v-if="editMode" size="small" text type="danger" :disabled="submitting" @click="stageRemove(app, 'regular')">移除</el-button>
                 </div>
               </div>
               <el-empty v-else description="暂无常规应用" :image-size="40" />
@@ -70,7 +70,7 @@
               <div v-if="pocApps.length" class="app-list">
                 <div v-for="app in pocApps" :key="app.id" class="app-tag poc">
                   <span>{{ app.name }}<em v-if="app.en_name" class="en-name">{{ app.en_name }}</em></span>
-                  <el-button v-if="editMode" size="small" text type="danger" @click="stageRemove(app, 'poc')">移除</el-button>
+                  <el-button v-if="editMode" size="small" text type="danger" :disabled="submitting" @click="stageRemove(app, 'poc')">移除</el-button>
                 </div>
               </div>
               <el-empty v-else description="暂无 POC 应用" :image-size="40" />
@@ -87,14 +87,14 @@
                   <el-radio value="regular">常规</el-radio>
                   <el-radio value="poc">POC</el-radio>
                 </el-radio-group>
-                <el-button size="small" type="primary" @click="stageAdd" :disabled="!addAppId">{{ editMode ? '暂存' : '添加' }}</el-button>
+                <el-button size="small" type="primary" @click="stageAdd" :disabled="!addAppId || submitting">{{ editMode ? '暂存' : '添加' }}</el-button>
               </div>
               <!-- Pending changes for current category -->
               <div v-if="editMode && pendingForCurrentCat.length" class="pending-list">
                 <div class="pending-title">待提交变更：</div>
                 <div v-for="ch in pendingForCurrentCat" :key="ch.key" class="pending-item" :class="ch.action">
                   <span>{{ ch.action === 'add' ? '+' : '-' }} {{ ch.appName }}（{{ ch.probeType === 'regular' ? '常规' : 'POC' }}）</span>
-                  <el-button size="small" text @click="undoPending(ch.key)">撤销</el-button>
+                  <el-button size="small" text :disabled="submitting" @click="undoPending(ch.key)">撤销</el-button>
                 </div>
               </div>
             </div>
@@ -171,13 +171,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getProbeCategories, getApplications, createApplication, deleteApplication } from '../api/data'
 import api from '../api/index'
+import { useRoute } from 'vue-router'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
+const route = useRoute()
 const loading = ref(false)
 const categories = ref([])
 const selectedCategory = ref(null)
@@ -272,9 +275,12 @@ const loadCategories = async () => {
   try {
     const res = await getProbeCategories({ limit: 200 })
     categories.value = res.items || []
-    if (!selectedCategory.value && categories.value.length) {
-      selectCategory(categories.value[0])
-    }
+    const requested = Number(route.query.category_id)
+    const selected = categories.value.find(cat => cat.id === requested)
+      || categories.value.find(cat => cat.id === selectedCategory.value?.id)
+      || categories.value[0]
+    selectedCategory.value = selected || null
+    if (selected) await selectCategory(selected)
   } catch { ElMessage.error('加载探头类别失败') } finally { loading.value = false }
 }
 
@@ -299,25 +305,30 @@ const loadAvailableApps = async (catId) => {
 
 // ========= Edit mode =========
 const enterEditMode = () => {
+  if (submitting.value) return
   editMode.value = true
   Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
 }
 
 const cancelEdit = () => {
+  if (submitting.value) return
   editMode.value = false
   Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
 }
 
 const discardChanges = () => {
+  if (submitting.value) return
   Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
   editMode.value = false
   ElMessage.success('已废弃所有变更')
 }
 
 const stageAdd = () => {
+  if (submitting.value) return
   if (!addAppId.value || !selectedCategory.value) return
   const app = availableApps.value.find(a => a.id === addAppId.value)
   if (!app) return
+  editMode.value = true
   const key = `${selectedCategory.value.id}_${app.id}_${addAppType.value}`
   // If there's a pending remove for this same combo, just remove the pending
   if (pendingChanges[key]?.action === 'remove') {
@@ -329,6 +340,7 @@ const stageAdd = () => {
 }
 
 const stageRemove = (app, probeType) => {
+  if (submitting.value) return
   if (!selectedCategory.value) return
   const key = `${selectedCategory.value.id}_${app.id}_${probeType}`
   // If there's a pending add for this same combo, just remove the pending
@@ -340,46 +352,30 @@ const stageRemove = (app, probeType) => {
 }
 
 const undoPending = (key) => {
+  if (submitting.value) return
   delete pendingChanges[key]
 }
 
 const submitChanges = async () => {
-  const entries = Object.entries(pendingChanges)
+  if (submitting.value) return
+  const entries = Object.values(pendingChanges)
   if (!entries.length) return ElMessage.warning('没有待提交的变更')
   submitting.value = true
-  let ok = 0; let fail = 0
   try {
-    for (const [, ch] of entries) {
-      try {
-        if (ch.action === 'add') {
-          await api.post(`/probe-categories/${ch.catId}/apps`, {
-            application_id: ch.appId,
-            probe_type: ch.probeType
-          })
-        } else {
-          await api.delete(`/probe-categories/${ch.catId}/apps/${ch.appId}?probe_type=${ch.probeType}`)
-        }
-        ok++
-      } catch { fail++ }
-    }
-    if (ok > 0) {
-      ElMessage.success(`提交完成：${ok} 项成功${fail ? `，${fail} 项失败` : ''}`)
-      // Create an application version snapshot
-      try {
-        await api.post('/applications/version', { version_number: `v${Date.now()}`, description: '应用关联变更' })
-      } catch {}
-    } else {
-      ElMessage.error('全部提交失败')
-    }
-    Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
+    await api.post('/applications/associations/batch', {
+      changes: entries.map(ch => ({ action: ch.action, category_id: ch.catId, application_id: ch.appId, probe_type: ch.probeType })),
+      version_number: `v${Date.now()}`,
+      description: '应用关联变更'
+    })
+    Object.keys(pendingChanges).forEach(key => delete pendingChanges[key])
     editMode.value = false
-    if (selectedCategory.value) {
-      await loadCategoryApps(selectedCategory.value.id)
-      await loadAvailableApps(selectedCategory.value.id)
-    }
-    await updateCounts()
-    await loadAllApps()
-  } catch { ElMessage.error('提交失败') } finally { submitting.value = false }
+    ElMessage.success(`已提交 ${entries.length} 项变更并创建版本`)
+    await refreshData()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '提交失败，编辑内容已保留，请重试')
+  } finally {
+    submitting.value = false
+  }
 }
 
 // ========= CRUD for app definitions =========
@@ -426,7 +422,7 @@ const deleteApp = async (row) => {
       await loadAvailableApps(selectedCategory.value.id)
     }
     await updateCounts()
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+  } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.detail || '删除失败') }
 }
 
 const loadAllApps = async () => {
@@ -448,14 +444,15 @@ const rollback = async (row) => {
     await api.post(`/applications/rollback/${row.id}`)
     ElMessage.success('回滚成功')
     await loadVersions()
+    await refreshData()
   } catch { ElMessage.error('回滚失败') }
 }
 
-onMounted(async () => {
+const refreshData = async () => {
   await loadCategories()
-  await updateCounts()
-  await loadAllApps()
-})
+  await Promise.all([updateCounts(), loadAllApps()])
+}
+useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !pendingCount.value && !submitting.value && !dialogVisible.value })
 </script>
 
 <style scoped>

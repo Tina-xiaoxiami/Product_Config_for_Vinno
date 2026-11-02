@@ -78,7 +78,7 @@
               <el-table-column label="操作" width="300" fixed="right">
                 <template #default="{ row: m }">
                   <el-button size="small" text @click="openVariantDialog(m)">变体</el-button>
-                  <el-button size="small" text @click="openAppDialog(m)">应用</el-button>
+                  <el-button size="small" text @click="openAppDialog(m)">类别应用</el-button>
                   <el-button size="small" text @click="handleEditModel(m, selectedCategory.id)">编辑</el-button>
                   <el-button size="small" text type="danger" @click="handleDeleteModel(m)">删除</el-button>
                 </template>
@@ -122,18 +122,6 @@
       <template #footer>
         <el-button @click="modelDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveModel" :loading="saving">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- Application Assignment Dialog -->
-    <el-dialog v-model="appDialogVisible" title="管理探头应用" width="500px">
-      <div class="dialog-info">探头型号：<strong>{{ appTarget?.model_number }}</strong></div>
-      <el-checkbox-group v-model="selectedAppIds" style="margin-top:12px">
-        <el-checkbox v-for="a in allApps" :key="a.id" :label="a.id" :value="a.id">{{ a.name }}</el-checkbox>
-      </el-checkbox-group>
-      <template #footer>
-        <el-button @click="appDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveApps" :loading="appSaving">保存</el-button>
       </template>
     </el-dialog>
 
@@ -189,13 +177,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, FolderOpened } from '@element-plus/icons-vue'
-import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, getApplications, getProbeModelApps, setProbeModelApps, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
+import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
 import api from '../api/index'
+import { useRouter } from 'vue-router'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
+const router = useRouter()
 const loading = ref(false)
 const categories = ref([])
 const modelMap = ref({})
@@ -290,27 +281,8 @@ const handleDeleteModel = async (row) => {
   } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
 }
 
-// App management
-const allApps = ref([]); const appDialogVisible = ref(false); const appTarget = ref(null)
-const selectedAppIds = ref([]); const appSaving = ref(false)
-
-const openAppDialog = async (m) => {
-  try {
-    const [apps, catalog] = await Promise.all([
-      getProbeModelApps(m.id),
-      getApplications({ limit: 500 })
-    ])
-    appTarget.value = m
-    allApps.value = catalog.items || []
-    selectedAppIds.value = (apps || []).map(a => a.id)
-    appDialogVisible.value = true
-  } catch { ElMessage.error('加载探头应用失败') }
-}
-const saveApps = async () => {
-  appSaving.value = true
-  try { await setProbeModelApps(appTarget.value.id, selectedAppIds.value); ElMessage.success('保存成功'); appDialogVisible.value = false; await loadData() }
-  catch { ElMessage.error('保存失败') } finally { appSaving.value = false }
-}
+// Applications are maintained once per category, including regular and POC tracks.
+const openAppDialog = (model) => router.push({ path: '/applications', query: { category_id: model.category_id } })
 
 // Variant management
 const variantDialogVisible = ref(false); const variantTarget = ref(null)
@@ -392,7 +364,7 @@ const importAllVariants = async (file) => {
   } catch { ElMessage.error('导入失败') }
 }
 
-onMounted(loadData)
+useWorkspaceRefresh(loadData, { canRefresh: () => !catDialogVisible.value && !modelDialogVisible.value && !variantDialogVisible.value })
 </script>
 
 <style scoped>

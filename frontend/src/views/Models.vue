@@ -274,9 +274,12 @@ const form = reactive({
   sort_order: 0
 })
 
+let seriesLoadRequest = 0
 const loadSeries = async () => {
+  const request = ++seriesLoadRequest
   try {
     const res = await getSeriesList()
+    if (request !== seriesLoadRequest || !pageActive) return
     seriesList.value = res.items || []
     await loadData()
   } catch (error) {
@@ -401,8 +404,8 @@ const handleToggleEnabled = async (row) => {
 
 let initialized = false
 onMounted(async () => { await loadSeries(); initialized = true; openRequestedEditor() })
-onActivated(() => { pageActive = true; if (initialized) { loadData(); openRequestedEditor() } })
-onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invalidate(); ++loadRequest; loading.value = false })
+onActivated(() => { pageActive = true; if (initialized) { loadSeries(); openRequestedEditor() } })
+onDeactivated(() => { clearModelDrag(); pageActive = false; editorRequest.invalidate(); ++loadRequest; ++seriesLoadRequest; loading.value = false })
 </script>
 
 <style scoped>

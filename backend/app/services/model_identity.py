@@ -1,13 +1,14 @@
 """Stable source identities and historical aliases for imported product models."""
 from copy import deepcopy
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product_model import ProductModel, ProductModelIdentity
 from app.models.draft import ConfigDraft, DraftBatch
+from app.services.write_serialization import serialize_catalog_write
 
 MERGED_STATUS = "已合并"
 
@@ -36,7 +37,7 @@ async def identity_records(db: AsyncSession, series_id: int | None = None):
     exists = await connection.run_sync(lambda conn: inspect(conn).has_table(ProductModelIdentity.__tablename__))
     if not exists:
         return []  # Legacy databases/tests without this additive table.
-    query = select(ProductModelIdentity, ProductModel).join(ProductModel, ProductModel.id == ProductModelIdentity.model_id)
+    query = select(ProductModelIdentity, ProductModel).join(ProductModel, ProductModel.id == ProductModelIdentity.model_id).execution_options(populate_existing=True)
     if series_id is not None:
         query = query.where(ProductModelIdentity.series_id == series_id)
     return list((await db.execute(query)).all())
@@ -80,7 +81,43 @@ async def resolve_import_model_readonly(db: AsyncSession, series_id: int, raw: s
     return model
 
 
+async def validate_manual_model_name(
+    db: AsyncSession, series_id: int, raw: str, model: ProductModel | None = None,
+) -> str:
+    """Manual edits obey the same primary-name and alias ownership as import."""
+    name, source_uuid = parse_model_header(raw)
+    if source_uuid is not None:
+        raise ValueError("请仅填写机型名称，源编号由导入身份维护")
+    records = await identity_records(db, series_id)
+    identity = next((record for record, owner in records if model and owner.id == model.id), None)
+    header = f"{name}//{identity.source_uuid}" if identity else name
+    _, _, owner, _ = await inspect_import_model(db, series_id, header)
+    if owner is not None and (model is None or owner.id != model.id):
+        raise ValueError(f"机型名称 {name} 已被现有主名或曾用名占用")
+    return name
+
+
+async def rename_model(db: AsyncSession, model: ProductModel, name: str) -> None:
+    """Retain aliases for both imported identities and older manual models."""
+    if model.name == name:
+        return
+    records = await identity_records(db, model.series_id)
+    identity = next((record for record, owner in records if owner.id == model.id), None)
+    if identity is None:
+        identity = ProductModelIdentity(
+            series_id=model.series_id, model_id=model.id, source_uuid=str(uuid4()),
+            aliases_json="[]", historical_ids_json="[]",
+        )
+        db.add(identity)
+    identity.aliases_json = json.dumps(
+        list(dict.fromkeys([*json.loads(identity.aliases_json), model.name, name])),
+        ensure_ascii=False,
+    )
+    model.name = name
+
+
 async def resolve_import_model(db: AsyncSession, series_id: int, raw: str, start: int, end: int, order: int) -> ProductModel:
+    await serialize_catalog_write(db, "product_models")
     name, source_uuid, model, identity = await inspect_import_model(db, series_id, raw)
     if model is None:
         model = ProductModel(series_id=series_id, name=name, sort_order=order)
@@ -101,6 +138,7 @@ async def resolve_import_model(db: AsyncSession, series_id: int, raw: str, start
 
 async def register_existing_identity(db: AsyncSession, series_id: int, source_uuid: str, current_name: str, previous_names: list[str]) -> dict:
     """Bind names verified from same-UUID workbooks; retain retired rows for history."""
+    await serialize_catalog_write(db, "product_models")
     source_uuid = str(UUID(source_uuid))
     names = list(dict.fromkeys([*previous_names, current_name]))
     candidates = (await db.execute(select(ProductModel).where(ProductModel.series_id == series_id, ProductModel.name.in_(names)))).scalars().all()
