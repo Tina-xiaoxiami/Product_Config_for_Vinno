@@ -356,4 +356,6 @@ async def restore_series_snapshot(db: AsyncSession, series_id: int, snapshot: di
             restored_count += 1
 
     await db.flush()
+    from app.services.feature_catalog import sync_optional_feature_catalog
+    await sync_optional_feature_catalog(db)
     return restored_count

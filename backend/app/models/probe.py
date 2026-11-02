@@ -87,6 +87,7 @@ class Feature(Base):
     primary_cn_name = Column(Text, nullable=True)
     primary_en_name = Column(Text, nullable=True)
     identity_status = Column(String(30), nullable=False, default="pending")
+    probe_matrix_enabled = Column(Boolean, nullable=False, default=True, server_default="1")
     sort_order = Column(Integer, default=0)
     # relationships
     group = relationship("FeatureGroup", back_populates="features")

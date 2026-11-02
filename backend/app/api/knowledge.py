@@ -319,6 +319,12 @@ async def knowledge_question_candidates(
     return KnowledgeCandidateEvidenceList(items=items)
 
 
+@router.get("/feature-coverage")
+async def feature_coverage(db: AsyncSession = Depends(get_db)):
+    from app.services.feature_catalog import feature_catalog_coverage
+    return await feature_catalog_coverage(db)
+
+
 @router.get("/features", response_model=FeatureKnowledgeList)
 async def list_knowledge_features(
     q: str | None = Query(None, max_length=200),

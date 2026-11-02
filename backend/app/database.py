@@ -48,6 +48,12 @@ async def init_db():
                 await conn.execute(text(
                     "ALTER TABLE product_models ADD COLUMN is_enabled BOOLEAN NOT NULL DEFAULT 1"
                 ))
+            feature_columns = await conn.run_sync(
+                lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("features")}
+                if inspect(sync_conn).has_table("features") else set()
+            )
+            if feature_columns and "probe_matrix_enabled" not in feature_columns:
+                await conn.execute(text("ALTER TABLE features ADD COLUMN probe_matrix_enabled BOOLEAN NOT NULL DEFAULT 1"))
             await conn.run_sync(Base.metadata.create_all)
             from app.models.draft import DRAFT_BUSINESS_KEY_INDEX
 
@@ -60,3 +66,7 @@ async def init_db():
             "scripts/migrate_draft_integrity.py --database <明确数据库路径> 检查；"
             "确认仅有完全相同重复后再加 --apply。"
         ) from error
+    from app.services.feature_catalog import sync_optional_feature_catalog
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await sync_optional_feature_catalog(session)
+        await session.commit()

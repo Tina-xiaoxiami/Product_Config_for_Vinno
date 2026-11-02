@@ -163,6 +163,7 @@ export const getModelGroups = () => api.get('/model-groups')
 export const getKnowledgeFeatures = (params) => api.get('/knowledge/features', { params })
 export const getKnowledgeFeature = (id) => api.get(`/knowledge/features/${id}`)
 export const getKnowledgeStats = () => api.get('/knowledge/stats')
+export const getKnowledgeFeatureCoverage = () => api.get('/knowledge/feature-coverage')
 export const getKnowledgeDocuments = (params) => api.get('/knowledge/documents', { params })
 export const getKnowledgeDocumentPreviewUrl = (id) => `/api/knowledge/documents/${id}/preview`
 export const extractKnowledgeDocument = (id, force = false) =>

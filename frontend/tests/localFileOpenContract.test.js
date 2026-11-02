@@ -8,7 +8,7 @@ const read = relativePath => readFileSync(new URL(relativePath, import.meta.url)
 
 test('controlled originals can be opened on the local machine', () => {
   const registrationView = read('../src/views/RegistrationManage.vue')
-  const knowledgeView = read('../src/views/KnowledgeHub.vue')
+  const knowledgeView = read('../src/components/KnowledgeDocumentsWorkspace.vue')
   const api = read('../src/api/data.js')
 
   // 注册资料包原件：预览弹窗内提供「本机打开 / 在访达中显示」
