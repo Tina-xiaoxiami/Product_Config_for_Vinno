@@ -139,3 +139,42 @@ async def test_body_version_is_used_when_registration_version_is_missing(databas
         assert result['coverage']['versions'] == ['1.14.40']
         assert result['source_documents'][0]['source_applicability']['version']['value'] == '1.14.40'
     await engine.dispose()
+
+
+def test_device_questions_are_decisions_not_any_documentation_query_about_upgrades():
+    from app.services.knowledge_release_applicability import device_confirmation
+    facts = extract(LUCID, '1.14.61')
+    rows = [{'document': {'id':500,'version':'1.14.61'},'facts':facts}]
+    assert device_confirmation('V6软件版本有哪些升级路径？', rows, 'VINNO 6') == []
+    decision = device_confirmation('这台旧V6能升级吗？', rows, 'VINNO 6')
+    assert len(decision) == 1 and decision[0]['field'] == 'device_hardware'
+    assert any('已发货' in option for option in decision[0]['options'])
+
+
+@pytest.mark.asyncio
+async def test_events_keep_their_own_model_subject_including_contrasting_actions(database):
+    _document(database, 1, '1.14.65', '1.14.65(VINNO 3/5/6 系列)\nRelease Note\nV3新增针增益调节。', country=None, market='unspecified')
+    client, engine = await _client(database)
+    async with client:
+        only_other = await _trace(client)
+        assert only_other['assessment'] == 'no_record' and not only_other['events']
+        _document(database, 1, '1.14.65', '1.14.65(VINNO 3/5/6 系列)\nRelease Note\nV3取消针增益调节，但V6新增针增益调节。', country=None, market='unspecified')
+        contrast = await _trace(client)
+        assert len(contrast['events']) == 1
+        assert contrast['events'][0]['change_type'] == 'added'
+        assert 'V3' not in contrast['events'][0]['excerpt']
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_cached_cover_cannot_generate_a_business_version_confirmation(database):
+    _document(database, 1, '1.14.65', LUCID, country=None, market='unspecified')
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute("UPDATE knowledge_document_extractions SET status='stale' WHERE document_id=1")
+    client, engine = await _client(database)
+    async with client:
+        result = await _trace(client)
+        assert result['confirmation_items'] == []
+        assert result['source_documents'] == []
+        assert result['coverage']['unresolved_documents']
+    await engine.dispose()
