@@ -198,3 +198,27 @@ async def test_extraction_roots_are_original_sources_not_controlled_copies(datab
         assert any(issue['code']=='uncontrolled' for issue in item['issues'])
         assert item['is_gap']
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_target_model_source_conflict_is_unresolved_gap_not_other_model(database, tmp_path, monkeypatch):
+    controlled = tmp_path / 'controlled'
+    configure(monkeypatch, tmp_path, RELEASE_NOTE_ROOT=None, CONTROLLED_MATERIALS_ROOT=str(controlled))
+    _document(database, 10, '1.14.65', '1.14.61(VINNO6)\n1.14.65(VINNO6)')
+    with closing(sqlite3.connect(database)) as connection, connection:
+        original = Path(connection.execute('SELECT file_path FROM knowledge_documents WHERE id=10').fetchone()[0])
+        controlled_file = write(controlled, '发布记录/Release Note.pdf', original.read_bytes())
+        connection.execute('UPDATE knowledge_documents SET file_path=? WHERE id=10', (str(controlled_file),))
+        connection.execute('DELETE FROM knowledge_document_chunks WHERE document_id!=10')
+        connection.execute('DELETE FROM knowledge_document_extractions WHERE document_id!=10')
+        connection.execute('DELETE FROM knowledge_documents WHERE id!=10')
+    client, engine = await _client(database)
+    async with client:
+        report = (await client.post('/api/knowledge/release-history/coverage', json={'scope': SCOPE})).json()
+        item = report['items'][0]
+        assert item['applicability_status']=='unrecognized'
+        assert item['is_gap']
+        assert any(issue['code']=='source_fact_conflict' for issue in item['issues'])
+        assert report['completeness']=='gaps_found'
+        assert report['totals']['ready']==0 and report['totals']['gaps']==1 and report['totals']['unresolved']==1
+    await engine.dispose()
