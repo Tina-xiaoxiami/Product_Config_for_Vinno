@@ -1251,6 +1251,8 @@ async def _execute_import(
 
             all_touched_pairs.update(touched_pair_ids)
 
+        from app.services.feature_catalog import sync_optional_feature_catalog
+        await sync_optional_feature_catalog(db)
         if commit:
             await db.commit()
         else:

@@ -1,4 +1,5 @@
 """产品探头-功能配置 API"""
+from app.services.feature_catalog import probe_matrix_scope
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -252,6 +253,7 @@ async def get_series_matrix(
     feat_result = await db.execute(
         select(Feature, FeatureGroup)
         .join(FeatureGroup, Feature.group_id == FeatureGroup.id)
+        .where(probe_matrix_scope())
         .order_by(FeatureGroup.sort_order, Feature.sort_order))
     features = [{"id": f.Feature.id, "name": f.Feature.name, "ipn": f.Feature.ipn,
                   "group_id": f.Feature.group_id, "group_name": f.FeatureGroup.name}
@@ -634,6 +636,7 @@ async def get_config(product_model_id: int, db: AsyncSession = Depends(get_db)):
     feat_result = await db.execute(
         select(Feature, FeatureGroup)
         .join(FeatureGroup, Feature.group_id == FeatureGroup.id)
+        .where(probe_matrix_scope())
         .order_by(FeatureGroup.sort_order, Feature.sort_order)
     )
     features_data = feat_result.all()
@@ -751,7 +754,7 @@ async def init_config(
     tpl_map = {(t.category_id, t.feature_id): t for t in templates}
 
     # 获取所有功能
-    feat_result = await db.execute(select(Feature))
+    feat_result = await db.execute(select(Feature).where(probe_matrix_scope()))
     all_features = feat_result.scalars().all()
 
     created = 0
@@ -1040,7 +1043,7 @@ async def batch_set_status(
     if not probe_id: raise HTTPException(status_code=400, detail="缺少probe_model_id")
 
     model_ids = await _expand_to_group(db, [product_model_id])
-    feat_result = await db.execute(select(Feature))
+    feat_result = await db.execute(select(Feature).where(probe_matrix_scope()))
     features = feat_result.scalars().all()
     def_stat = data.get("defined_status", "unsupported")
     cur_stat = data.get("current_status", def_stat)
@@ -1116,7 +1119,7 @@ async def batch_from_template(product_model_id: int, data: dict, db: AsyncSessio
     tpl_map = {t.feature_id: t for t in tpl_r.scalars().all()}
 
     model_ids = await _expand_to_group(db, [product_model_id])
-    feat_result = await db.execute(select(Feature))
+    feat_result = await db.execute(select(Feature).where(probe_matrix_scope()))
     count = 0
     for mid in model_ids:
       for feat in feat_result.scalars().all():

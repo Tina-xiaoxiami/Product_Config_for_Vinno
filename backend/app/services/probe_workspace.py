@@ -70,9 +70,10 @@ async def shared_scope(db, groups, combinations):
 
 
 async def catalog(db):
+    from app.services.feature_catalog import probe_matrix_scope
     probes = list((await db.scalars(select(ProbeModel).order_by(ProbeModel.id))).all())
     variants = list((await db.scalars(select(ProbeModelVariant).order_by(ProbeModelVariant.id))).all())
-    features = list((await db.scalars(select(Feature).order_by(Feature.sort_order, Feature.id))).all())
+    features = list((await db.scalars(select(Feature).where(probe_matrix_scope()).order_by(Feature.sort_order, Feature.id))).all())
     links = (await db.execute(select(CategoryApplication.category_id, Application.name).join(Application))).all()
     typed_links = (await db.execute(select(CategoryApplication.category_id, CategoryApplication.probe_type, Application.name).join(Application).order_by(Application.sort_order, Application.id))).all()
     templates = list((await db.scalars(select(TemplateFeature).order_by(TemplateFeature.category_id, TemplateFeature.feature_id))).all())
@@ -91,7 +92,7 @@ async def catalog(db):
         'variants': [{'id': v.id, 'probe_model_id': v.probe_model_id, 'ipn': v.ipn, 'internal_model': v.internal_model, 'notes': v.notes} for v in variants],
         'features': [{'id': f.id, 'name': f.name, 'ipn': f.ipn, 'config_item_id': f.config_item_id, 'group_id': f.group_id, 'sort_order': f.sort_order} for f in features],
         'categories': [{'id': c.id, 'name': c.name, 'sort_order': c.sort_order} for c in (await db.scalars(select(ProbeCategory).order_by(ProbeCategory.sort_order, ProbeCategory.id))).all()],
-        'feature_groups': [{'id': g.id, 'name': g.name} for g in (await db.scalars(select(FeatureGroup).order_by(FeatureGroup.sort_order, FeatureGroup.id))).all()],
+        'feature_groups': [{'id': g.id, 'name': g.name} for g in (await db.scalars(select(FeatureGroup).where(FeatureGroup.id.in_({f.group_id for f in features})).order_by(FeatureGroup.sort_order, FeatureGroup.id))).all()],
         'category_apps': {str(p.category_id): {kind: [r.name for r in typed_links if r.category_id == p.category_id and r.probe_type == kind] for kind in ('regular', 'poc')} for p in probes},
         'templates': template_rows,
         'template_version': {'id': version.id, 'number': version.version_number} if version else None,

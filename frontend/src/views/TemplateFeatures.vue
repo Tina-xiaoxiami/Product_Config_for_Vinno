@@ -283,7 +283,7 @@ const loadData = async () => {
   const request = ++templateLoadRequest
   loading.value = true
   try {
-    const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500 }), getFeatureGroups()])
+    const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500, probe_matrix_only: true }), getFeatureGroups()])
     const nextCategories = catRes.items || []
     const details = await Promise.all(nextCategories.map(async cat => {
       const [templates, apps] = await Promise.all([
@@ -299,7 +299,8 @@ const loadData = async () => {
     if (request !== templateLoadRequest) return
     categories.value = nextCategories
     features.value = featRes.items || []
-    featureGroups.value = grpRes.items || []
+    const probeGroupIds = new Set(features.value.map(feature => feature.group_id))
+    featureGroups.value = (grpRes.items || []).filter(group => probeGroupIds.has(group.id))
     tplMap.value = allTpl; categoryAppsMap.value = allCatApps
   } catch {
     if (request === templateLoadRequest) ElMessage.error('加载失败')

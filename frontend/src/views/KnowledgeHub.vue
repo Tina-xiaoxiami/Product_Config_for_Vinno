@@ -1,9 +1,6 @@
 <template>
   <div class="knowledge-page">
-    <el-tag v-if="stats" class="knowledge-status" size="small" :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
-      {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
-    </el-tag>
-    <el-tabs v-model="activeTab" class="knowledge-tabs">
+    <el-tabs v-model="activeTab" class="knowledge-tabs" :before-leave="beforeKnowledgeTabLeave">
       <el-tab-pane label="问答查询" name="qa">
         <section class="qa-ask-panel">
           <div class="qa-ask-heading">
@@ -186,6 +183,27 @@
       <el-tab-pane label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
       <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace /></el-tab-pane>
       <el-tab-pane label="功能主数据" name="features">
+        <section class="catalog-coverage" v-loading="coverageLoading" data-testid="knowledge-feature-coverage">
+          <el-alert v-if="coverageLoadError" type="error" :closable="false" show-icon>
+            <template #title>配置覆盖加载失败。<el-button link type="primary" @click="loadFeatureCoverage">重试</el-button></template>
+          </el-alert>
+          <template v-else-if="coverage">
+            <el-tag size="small" :type="catalogCoverageType(coverage)" effect="plain">{{ catalogCoverageLabel(coverage) }}</el-tag>
+            <span>源配置项 {{ coverage.configured_items }} · IPN {{ coverage.configured_ipns }}</span>
+            <span>目录身份 {{ coverage.catalog_identities }}</span>
+            <span>缺中文 {{ coverage.missing_cn_names }} · 缺英文 {{ coverage.missing_en_names }}</span>
+            <details v-if="coverage.unlinked_count" class="catalog-unlinked">
+              <summary>未关联 {{ coverage.unlinked_count }} 项</summary>
+              <ul>
+                <li v-for="item in coverage.unlinked_items" :key="item.config_item_id">
+                  <strong>{{ item.cn_name || item.en_name || '未命名配置项' }}</strong>
+                  <span>{{ item.en_name }}</span>
+                  <span>IPN {{ item.ipn || '空缺' }} · V 代码 {{ item.v_code || '空缺' }} · {{ item.reason }}</span>
+                </li>
+              </ul>
+            </details>
+          </template>
+        </section>
         <section class="toolbar">
           <el-input
             v-model="featureQuery"
@@ -206,6 +224,7 @@
             <el-option label="自动匹配" value="auto_matched" />
             <el-option label="人工确认" value="confirmed" />
             <el-option label="关系型功能" value="related" />
+            <el-option label="待确认" value="pending" />
           </el-select>
           <el-select
             v-model="missingName"
@@ -215,8 +234,8 @@
             placeholder="全部主名称"
             @change="searchFeatures"
           >
-            <el-option label="缺中文主名" value="cn" />
-            <el-option label="缺英文主名" value="en" />
+            <el-option label="缺中文" value="cn" />
+            <el-option label="缺英文" value="en" />
           </el-select>
           <el-popover
             v-model:visible="columnSettingsVisible"
@@ -611,97 +630,10 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="原始资料" name="documents">
-        <section class="toolbar document-toolbar">
-          <el-input
-            v-model="documentQuery"
-            clearable
-            placeholder="搜索资料名、版本或产品"
-            :prefix-icon="Search"
-            @keyup.enter="searchDocuments"
-            @clear="searchDocuments"
-          />
-          <el-select v-model="documentType" clearable placeholder="全部资料类型" @change="searchDocuments">
-            <el-option label="注册证/注册变更" value="registration_certificate" />
-            <el-option label="注册差异表" value="registration_difference" />
-            <el-option label="产品说明书" value="manual" />
-            <el-option label="产品白皮书" value="whitepaper" />
-            <el-option label="Release Note" value="release_note" />
-          </el-select>
-          <el-button type="primary" :icon="Search" @click="searchDocuments">查询</el-button>
-        </section>
-
-        <div data-testid="knowledge-document-list" class="document-list" v-loading="documentLoading">
-          <article v-for="document in documents" :key="document.id" class="document-card">
-            <div class="document-icon"><el-icon><Document /></el-icon></div>
-            <div class="document-info">
-              <div class="document-title-row">
-                <h3>{{ document.title }}</h3>
-                <el-tag size="small" effect="plain">{{ documentTypeLabel(document.document_type) }}</el-tag>
-              </div>
-              <p>{{ document.file_name }}</p>
-              <div class="document-meta">
-                <span v-if="document.product_series">{{ document.product_series }}</span>
-                <span v-if="document.version">版本 {{ document.version }}</span>
-                <span>{{ formatFileSize(document.file_size) }}</span>
-                <span :class="document.available ? 'available' : 'unavailable'">
-                  {{ document.available ? '原文已同步' : '原文未同步' }}
-                </span>
-              </div>
-            </div>
-            <div class="document-actions">
-              <el-tag
-                v-if="document.extraction_status === 'completed'"
-                type="success"
-                size="small"
-                effect="plain"
-              >
-                正文已提取 · {{ document.chunk_count }}片段
-              </el-tag>
-              <el-button
-                :loading="Boolean(extractionLoading[document.id])"
-                :disabled="!document.available"
-                @click="extractDocument(document)"
-              >
-                {{ document.extraction_status === 'completed' ? '重新提取' : '提取正文' }}
-              </el-button>
-              <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
-                {{ canInline(document) ? '预览' : '打开原文' }}
-              </el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="!document.available"
-                @click="openDocumentLocally(document, 'reveal')"
-              >
-                在访达中显示
-              </el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="!document.available"
-                @click="openDocumentLocally(document, 'open')"
-              >
-                本机打开
-              </el-button>
-              <el-button link type="danger" @click="archiveDocument(document)">归档</el-button>
-            </div>
-          </article>
-          <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
-        </div>
+      <el-tab-pane label="资料管理" name="documents">
+        <el-button link type="primary" @click="openDocumentManagement">打开资料管理</el-button>
       </el-tab-pane>
     </el-tabs>
-
-    <el-dialog
-      v-model="previewVisible"
-      data-testid="document-preview-dialog"
-      :title="previewTitle"
-      width="88%"
-      top="4vh"
-      destroy-on-close
-    >
-      <iframe v-if="previewVisible" :src="previewUrl" class="preview-frame" :title="previewTitle" />
-    </el-dialog>
 
     <el-dialog
       v-model="answerDialogVisible"
@@ -797,24 +729,23 @@ import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import { questionDisplayText, answerDisplayText, featureDisplayName } from '../utils/knowledgeNames'
-import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Document, Filter, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { catalogCoverageLabel, catalogCoverageType } from '../utils/featureCatalog'
+import { ElMessage } from 'element-plus'
+import { Delete, Filter, Link, Operation, Plus, Search, View } from '@element-plus/icons-vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
 import KnowledgeAnswerReviewDialog from '../components/KnowledgeAnswerReviewDialog.vue'
 import { QA_COLUMNS, answerReviewLabel } from '../utils/knowledgeAnswerReview'
 import { loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import {
   askKnowledgeQuestion,
-  extractKnowledgeDocument,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeDocumentPreviewUrl,
-  openKnowledgeDocumentLocally,
-  archiveKnowledgeDocument,
   getKnowledgeFeatures,
-  getKnowledgeStats,
+  getKnowledgeFeatureCoverage,
   getKnowledgeQuestions,
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
@@ -824,8 +755,25 @@ import {
   getSeriesList
 } from '../api/data'
 
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref('qa')
-const stats = ref(null)
+const openDocumentManagement = () => router.push({ path: '/release', query: { tab: 'documents' } })
+const beforeKnowledgeTabLeave = (nextTab) => {
+  if (nextTab !== 'documents') return true
+  openDocumentManagement()
+  return false
+}
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'documents') {
+    router.replace({ path: '/release', query: { tab: 'documents' } })
+  } else if (['qa', 'history', 'parameters', 'features', 'registration'].includes(tab)) {
+    activeTab.value = tab
+  }
+}, { immediate: true })
+const coverage = ref(null)
+const coverageLoading = ref(false)
+const coverageLoadError = ref(false)
 
 const featureQuery = ref('')
 const identityStatus = ref('')
@@ -872,11 +820,7 @@ const resetColumnSettings = () => {
   }
 }
 
-const documentQuery = ref('')
-const documentType = ref('')
-const documentLoading = ref(false)
 const documents = ref([])
-const extractionLoading = ref({})
 
 const registrationModels = ref([])
 const selectedProductModelId = ref(null)
@@ -887,10 +831,6 @@ const registrationLoading = ref(false)
 const registrationGroups = ref([])
 const registrationProductModelName = ref('')
 const registrationLimit = 200
-
-const previewVisible = ref(false)
-const previewUrl = ref('')
-const previewTitle = ref('')
 
 const qaQuestion = ref('')
 const qaScope = reactive({ market: '', product_model_id: null, software_version: '' })
@@ -979,14 +919,6 @@ const relationLabel = (relation) => ({
   related: '相关功能',
   version_variant: '版本 IPN'
 }[relation] || relation)
-
-const documentTypeLabel = (type) => ({
-  registration_certificate: '注册证/变更',
-  registration_difference: '注册差异表',
-  manual: '产品说明书',
-  whitepaper: '产品白皮书',
-  release_note: 'Release Note'
-}[type] || type)
 
 const registrationModelLabel = (model) => {
   if (model.registration_count > 1) {
@@ -1226,19 +1158,21 @@ const aliasesByLanguage = (feature, language) => (feature.names || []).filter(
 const relationNote = (feature) => (feature.ipns || []).some(entry => entry.relation_type === 'version_variant')
   ? '版本关系：保留各组 IPN 独立身份，当前名称作为关系入口。'
   : '关联功能：保留关联 IPN 的独立身份，当前名称作为查询入口。'
-const canInline = (document) => document.mime_type === 'application/pdf' || document.mime_type?.startsWith('image/')
-const formatFileSize = (size) => {
-  if (!size) return '0 KB'
-  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
-  return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
-
-const loadStats = async () => {
+let coverageRequestId = 0
+const loadFeatureCoverage = async () => {
+  const requestId = ++coverageRequestId
+  coverageLoading.value = true
+  coverageLoadError.value = false
   try {
-    stats.value = await getKnowledgeStats()
+    const result = await getKnowledgeFeatureCoverage()
+    if (requestId === coverageRequestId) coverage.value = result
   } catch {
-    stats.value = null
-    ElMessage.error('待确认功能数量加载失败')
+    if (requestId === coverageRequestId) {
+      coverage.value = null
+      coverageLoadError.value = true
+    }
+  } finally {
+    if (requestId === coverageRequestId) coverageLoading.value = false
   }
 }
 
@@ -1280,46 +1214,15 @@ const onFeaturePageSizeChange = () => {
   loadFeatures()
 }
 
-// 归档：退役一份受控资料。原件文件不动（受控目录由人工管理），
-// 但派生数据要被清除，且不再参与列表与检索。
-const archiveDocument = async (document) => {
-  try {
-    await ElMessageBox.confirm(
-      `归档后「${document.title}」不再出现在资料列表与问答检索中，已提取的正文片段会被清除；受控目录里的原件文件不会被删除。`,
-      '归档资料',
-      { type: 'warning', confirmButtonText: '归档', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  try {
-    const result = await archiveKnowledgeDocument(document.id)
-    ElMessage.success(
-      `已归档「${document.title}」，清除正文片段 ${result.removed_chunks} 条`
-    )
-    await loadDocuments()
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '归档失败')
-  }
-}
-
+// 问答引用选择器沿用受控资料来源；资料管理统一由发布工作区提供。
 const loadDocuments = async () => {
-  documentLoading.value = true
   try {
-    const result = await getKnowledgeDocuments({
-      q: documentQuery.value || undefined,
-      document_type: documentType.value || undefined,
-      limit: 100
-    })
+    const result = await getKnowledgeDocuments({ limit: 200 })
     documents.value = result.items || []
   } catch {
-    ElMessage.error('原始资料加载失败')
-  } finally {
-    documentLoading.value = false
+    ElMessage.error('引用资料加载失败')
   }
 }
-
-const searchDocuments = () => loadDocuments()
 
 const loadRegistrationModels = async () => {
   try {
@@ -1369,31 +1272,6 @@ const loadRegistrationProbes = async () => {
 
 const searchRegistrationProbes = () => {
   loadRegistrationProbes()
-}
-
-const previewDocument = (document) => {
-  const url = getKnowledgeDocumentPreviewUrl(document.id)
-  if (!canInline(document)) {
-    window.open(url, '_blank', 'noopener')
-    return
-  }
-  previewTitle.value = document.title
-  previewUrl.value = url
-  previewVisible.value = true
-}
-
-// 后端就跑在本机，因此可直接调用系统默认程序打开原件（仅本机请求有效）。
-const openDocumentLocally = async (document, mode) => {
-  try {
-    const result = await openKnowledgeDocumentLocally(document.id, mode)
-    ElMessage.success(
-      mode === 'reveal'
-        ? `已在访达中定位 ${result.file_name}`
-        : `已在本机打开 ${result.file_name}`
-    )
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '本机打开失败')
-  }
 }
 
 let qaAskRequestId = 0
@@ -1604,23 +1482,10 @@ const useCandidate = (candidate) => {
   ElMessage.success('已加入答案草稿，请核对并完善表述')
 }
 
-const extractDocument = async (document) => {
-  extractionLoading.value = { ...extractionLoading.value, [document.id]: true }
-  try {
-    const result = await extractKnowledgeDocument(document.id, document.extraction_status === 'completed')
-    ElMessage.success(`正文提取完成：${result.chunk_count} 个片段`)
-    await loadDocuments()
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '正文提取失败')
-  } finally {
-    extractionLoading.value = { ...extractionLoading.value, [document.id]: false }
-  }
-}
-
 onMounted(() => {
   loadQaModels()
   loadQaQuestions()
-  loadStats()
+  loadFeatureCoverage()
   loadFeatures()
   loadDocuments()
   loadRegistrationModels()
@@ -1656,9 +1521,14 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-scope-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
 .qa-queue-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .qa-queue-scope > span { color: #64748b; font-size: 12px; }
+.catalog-coverage { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; min-height: 28px; margin: 10px 0; color: #64748b; font-size: 12px; }
+.catalog-coverage > .el-alert { width: auto; padding: 6px 10px; }
+.catalog-unlinked { flex-basis: 100%; }
+.catalog-unlinked summary { cursor: pointer; color: #92400e; }
+.catalog-unlinked ul { max-height: 260px; overflow: auto; margin: 8px 0; padding-left: 20px; }
+.catalog-unlinked li { margin: 5px 0; overflow-wrap: anywhere; }
+.catalog-unlinked li span { margin-left: 8px; }
 .knowledge-page { position: relative; max-width: 1180px; margin: 0 auto; }
-.knowledge-status { position: absolute; top: 10px; right: 14px; z-index: 1; }
-.knowledge-tabs :deep(.el-tabs__header) { padding-right: 140px; }
 .knowledge-tabs { background: #fff; border-radius: 12px; padding: 0 18px 18px; border: 1px solid #e5e7eb; }
 .knowledge-tabs :deep(.el-tabs__item) { color: #475569; }
 .knowledge-tabs :deep(.el-tabs__item.is-active) { color: #1d4ed8; }
@@ -1703,7 +1573,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .dialog-candidate-card > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dialog-candidate-card span { color: #92400e; font-size: 11px; }
 .dialog-candidate-card p { max-height: 120px; margin: 7px 0; overflow: auto; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
-.document-actions { display: flex; align-items: center; gap: 8px; }
 .el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
 .toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 150px 150px auto auto; gap: 10px; margin: 10px 0 16px; }
 .feature-list { max-height: calc(100vh - 400px); min-height: 220px; overflow-y: auto; padding-right: 4px; }
@@ -1714,14 +1583,13 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .column-settings-list.single-column { grid-template-columns: 1fr; }
 .column-settings-note { margin: 0; color: #6b7280; font-size: 12px; line-height: 1.5; }
 .column-settings-list :deep(.el-checkbox) { margin-right: 0; }
-.feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
-.feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; background: #fff; }
-.feature-card:hover, .document-card:hover { border-color: #bfdbfe; box-shadow: 0 3px 14px rgba(30, 64, 175, 0.06); }
-.document-card { padding: 15px 16px; }
+.feature-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
+.feature-card { border: 1px solid #e5e7eb; border-radius: 9px; background: #fff; }
+.feature-card:hover { border-color: #bfdbfe; box-shadow: 0 3px 14px rgba(30, 64, 175, 0.06); }
 .feature-card { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; padding: 9px 16px; }
 .feature-row-main { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.feature-title-row, .document-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
-.feature-card h3, .document-card h3 { margin: 0; font-size: 15px; color: #1f2937; }
+.feature-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
+.feature-card h3 { margin: 0; font-size: 15px; color: #1f2937; }
 .feature-row-main .english-name { margin: 0; color: #6b7280; font-size: 12px; white-space: nowrap; }
 .group-name { color: #6b7280; background: #f3f4f6; border-radius: 12px; padding: 3px 9px; font-size: 12px; white-space: nowrap; }
 .feature-row-ipn { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
@@ -1734,13 +1602,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .alias-list { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .empty-text { color: #9ca3af; font-size: 12px; }
 .relation-note { display: inline-flex; align-items: center; gap: 6px; color: #92400e; font-size: 12px; white-space: nowrap; }
-.document-card { display: flex; align-items: center; gap: 14px; }
-.document-icon { width: 42px; height: 42px; border-radius: 9px; display: grid; place-items: center; background: #eff6ff; color: #2563eb; font-size: 20px; }
-.document-info { flex: 1; min-width: 0; }
-.document-info p { margin: 4px 0 0; color: #6b7280; font-size: 12px; }
-.document-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: #6b7280; font-size: 11px; }
-.available { color: #15803d; }
-.unavailable { color: #b91c1c; }
 .registration-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin: 12px 0; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 9px; background: #f8fbff; }
 .registration-title-row { display: flex; align-items: center; gap: 9px; }
 .registration-title-row h3 { margin: 0; color: #1f2937; font-size: 15px; }
@@ -1793,7 +1654,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .registration-table :deep(.el-tag--info.el-tag--dark) { background: #475569; border-color: #475569; }
 .config-note { margin-top: 4px; color: #b45309; font-size: 11px; line-height: 1.45; }
 .conflict-tag { display: block; width: fit-content; margin-top: 4px; }
-.preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
 @media (max-width: 850px) {
   .toolbar, .registration-toolbar { grid-template-columns: 1fr; }

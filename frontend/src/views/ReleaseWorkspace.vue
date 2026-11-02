@@ -8,8 +8,9 @@
       <a v-if="isWorkbenchTab(activeTab)" :href="standaloneUrl(activeTab)" class="standalone-link" target="_blank" rel="noopener noreferrer">独立窗口 ↗</a>
     </header>
     <details v-if="activeTab !== 'search'" class="workspace-management-tools" :open="activeTab !== 'review'">
-      <summary>版本记录与维护工具</summary>
+      <summary>资料与版本管理</summary>
     <el-tabs v-model="activeTab" :before-leave="beforeWorkspaceTabLeave" class="workspace-tabs workspace-management-tabs">
+      <el-tab-pane label="原始资料" name="documents" />
       <el-tab-pane label="文件同步" name="review" />
       <el-tab-pane label="发布版本" name="releases" />
       <el-tab-pane label="发布对比" name="compare" />
@@ -62,6 +63,10 @@
       </div>
     </section>
 
+    <section v-if="documentsMounted" v-show="activeTab === 'documents'" class="workspace-body native-release-pane document-management-pane">
+      <KnowledgeDocumentsWorkspace :active="activeTab === 'documents'" />
+    </section>
+
     <section
       v-if="nativeReleaseMounted"
       v-show="activeTab === 'feature-versions'"
@@ -78,6 +83,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { Loading } from '@element-plus/icons-vue'
 
 import FeatureRelease from './FeatureRelease.vue'
+import KnowledgeDocumentsWorkspace from '../components/KnowledgeDocumentsWorkspace.vue'
 import {
   RELEASE_WORKBENCH_VIEWS,
   isWorkbenchNavigationMessage,
@@ -92,12 +98,13 @@ const router = useRouter()
 
 const isWorkbenchTab = tab => RELEASE_WORKBENCH_VIEWS.includes(tab)
 const activeTab = ref(normalizeReleaseTab(route.query.tab))
-const lastManagementTab = ref(activeTab.value === 'search' ? 'review' : activeTab.value)
+const lastManagementTab = ref(activeTab.value === 'search' ? 'documents' : activeTab.value)
 const workspaceMode = computed({
   get: () => activeTab.value === 'search' ? 'query' : 'manage',
   set: mode => { activeTab.value = mode === 'query' ? 'search' : lastManagementTab.value }
 })
 const nativeReleaseMounted = ref(activeTab.value === 'feature-versions')
+const documentsMounted = ref(activeTab.value === 'documents')
 const initialWorkbenchView = isWorkbenchTab(activeTab.value) ? activeTab.value : 'search'
 const lastWorkbenchView = ref(initialWorkbenchView)
 const workbenchFrame = ref(null)
@@ -185,7 +192,7 @@ function handleWorkbenchMessage(event) {
     } catch { /* Ignore invalid or untrusted locations. */ }
     return
   }
-  if (activeTab.value !== 'feature-versions' && isWorkbenchNavigationMessage(event, window.location.origin)) activeTab.value = event.data.view
+  if (isWorkbenchTab(activeTab.value) && isWorkbenchNavigationMessage(event, window.location.origin)) activeTab.value = event.data.view
 }
 
 watch(() => route.query.tab, value => {
@@ -201,6 +208,7 @@ watch(activeTab, tab => {
     nextTick(() => postWorkbenchActivation(tab))
   }
   if (tab === 'feature-versions') nativeReleaseMounted.value = true
+  if (tab === 'documents') documentsMounted.value = true
   const routeTab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
   if (routeTab !== tab) {
     router.replace({ query: { ...route.query, tab } })

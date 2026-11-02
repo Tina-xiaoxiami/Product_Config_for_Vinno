@@ -53,7 +53,9 @@ test('template categories start independent detail requests together and preserv
   const pending = deferred(), calls = [], errors = []
   const previous = { old: true }
   const context = { loading: ref(false), categories: ref([]), features: ref([]), featureGroups: ref([]), tplMap: ref(previous), categoryAppsMap: ref(previous),
-    getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getFeatures: async () => ({ items: [] }), getFeatureGroups: async () => ({ items: [] }),
+    getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }),
+    getFeatures: async params => { assert.equal(params.probe_matrix_only, true); return { items: [{ id: 9, group_id: 1 }] } },
+    getFeatureGroups: async () => ({ items: [{ id: 1, name: '探头功能' }, { id: 2, name: '配置功能（未分类）' }] }),
     getTemplateFeatures: id => { calls.push(`template-${id}`); return pending.promise }, api: { get: url => { calls.push(url); return Promise.resolve({ regular: [], poc: [] }) } }, ElMessage: { error: message => errors.push(message) }
   }
   const source = read('TemplateFeatures'), code = source.slice(source.indexOf('let templateLoadRequest ='), source.indexOf('const getCellClass ='))
@@ -62,6 +64,7 @@ test('template categories start independent detail requests together and preserv
   assert.equal(calls.length, 4)
   pending.resolve([{ feature_id: 9, default_support: 'supported' }]); await work
   assert.equal(context.tplMap.value['2_9'].default_support, 'supported')
+  assert.deepEqual(context.featureGroups.value, [{ id: 1, name: '探头功能' }])
   const goodMap = context.tplMap.value
   context.api.get = async () => { throw new Error('offline') }
   await loadData()

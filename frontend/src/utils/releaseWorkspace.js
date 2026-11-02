@@ -1,5 +1,6 @@
 export const RELEASE_WORKSPACE_TABS = [
   'search',
+  'documents',
   'review',
   'releases',
   'compare',
@@ -7,7 +8,7 @@ export const RELEASE_WORKSPACE_TABS = [
 ]
 
 export const RELEASE_WORKBENCH_VIEWS = RELEASE_WORKSPACE_TABS.filter(
-  tab => tab !== 'feature-versions'
+  tab => !['feature-versions', 'documents'].includes(tab)
 )
 
 export function normalizeReleaseTab(value) {
