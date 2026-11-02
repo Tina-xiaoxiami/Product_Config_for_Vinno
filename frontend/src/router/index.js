@@ -6,6 +6,12 @@ const routes = [
     component: () => import('../views/Layout.vue'),
     children: [
       {
+        path: 'measurements',
+        name: 'MeasurementLibrary',
+        component: () => import('../views/MeasurementLibrary.vue'),
+        meta: { title: '测量库' }
+      },
+      {
         path: '',
         redirect: '/config'
       },

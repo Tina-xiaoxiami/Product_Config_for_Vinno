@@ -1,7 +1,6 @@
 """Measurement library endpoints; imports create immutable source snapshots."""
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.concurrency import run_in_threadpool
 
 from app.database import get_db
 from app.services.measurements import MAX_UPLOAD_BYTES, MeasurementImportError, import_measurements, measurement_library

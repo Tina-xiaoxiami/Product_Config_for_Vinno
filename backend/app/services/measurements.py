@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.models.measurement import MeasurementBatch, MeasurementEntry
 
@@ -142,7 +143,7 @@ async def import_measurements(db: AsyncSession, content: bytes, source_file: str
     version = version.strip()
     if not version or len(version) > 80:
         raise MeasurementImportError("请填写不超过 80 字的来源版本")
-    parsed = parse_measurement_workbook(content)
+    parsed = await run_in_threadpool(parse_measurement_workbook, content)
     digest = hashlib.sha256(content).hexdigest()
     lookup = select(MeasurementBatch).where(MeasurementBatch.sha256 == digest, MeasurementBatch.version == version)
     existing = (await db.execute(lookup)).scalar_one_or_none()
