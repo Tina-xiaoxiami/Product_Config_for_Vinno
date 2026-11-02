@@ -98,3 +98,21 @@ V5/6 series (original version 1.14.X): Supports patch & OS upgrade (If you do no
     assert upgrade['methods'] == ['patch','OS']
     assert upgrade['method'] is None
     assert upgrade['from_version'] == '1.14.X'
+
+
+def test_upgrade_paragraphs_do_not_lend_a_source_version_to_a_different_model():
+    content = '''1.14.80 (VINNO10/6/5 series)
+Release Note
+This version is a consolidated V Series release, supporting VLucid+ platform V5, V6, and V10 series products.
+V5/6 series (original version 1.14.X): Supports patch & OS upgrade (If you do not
+need to support the Slovak input method, you can choose the patch upgrade)
+V10 series: Supports patch & OS upgrade (If you do not need to support new printers,
+Bluetooth, and the Slovak input method, you can choose the patch upgrade)'''
+    result = facts(content, '1.14.80')
+    six = model_facts(result,'VINNO 6')['upgrades']
+    ten = model_facts(result,'VINNO 10')['upgrades']
+    assert six[0]['from_version'] == '1.14.X' and six[0]['methods']==['patch','OS']
+    assert ten[0]['from_version'] is None and ten[0]['from_version_kind']=='not_stated'
+    assert ten[0]['methods']==['patch','OS']
+    cn_ten = model_facts(facts(CN80,'1.14.80'),'VINNO 10')['upgrades'][0]
+    assert cn_ten['methods']==['OS','patch'] and cn_ten['from_version'] is None
