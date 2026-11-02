@@ -29,7 +29,7 @@
         </el-menu>
       </el-aside>
       <el-main :class="{ 'management-workspace': isProbeManagementPage }">
-        <WorkspacePageHeader v-if="workspace && workspace.sectionId !== 'release'" :workspace="workspace" :before-leave="switchProbeManagementTab" />
+        <WorkspacePageHeader v-if="workspace && !['release', 'knowledge'].includes(workspace.sectionId)" :workspace="workspace" :before-leave="switchProbeManagementTab" />
         <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />

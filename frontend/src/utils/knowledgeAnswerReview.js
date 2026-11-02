@@ -19,9 +19,9 @@ export function answerReviewError(form) {
   if (form.action === 'defer') return String(form.note || '').trim() ? '' : '请填写暂缓理由'
   if (!String(form.evidence_reference || '').trim()) return '请填写确认记录或文档依据'
   if (form.action === 'confirm_scope' && (
-    !form.country?.trim() || !form.market || !form.product_model_ids?.length ||
+    !form.market || !form.product_model_ids?.length ||
     form.version_applicability !== 'specific' || !form.software_version?.trim()
-  )) return '请明确国家、市场、完整机型及具体软件版本范围'
+  )) return '请明确市场、完整机型及具体软件版本范围'
   return ''
 }
 
@@ -31,7 +31,7 @@ export function answerReviewPayload(question, form) {
     expected_fingerprint: question.evidence_review.fingerprint,
     expected_review_revision: question.evidence_review.review_revision,
     action: form.action,
-    country: String(form.country || '').trim().toUpperCase() || null,
+    country: form.action === 'confirm_scope' ? null : String(form.country || '').trim().toUpperCase() || null,
     market: form.market || null,
     product_model_ids: [...form.product_model_ids],
     software_version: form.version_applicability === 'specific' ? String(form.software_version || '').trim() || null : null,

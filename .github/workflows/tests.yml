@@ -95,6 +95,7 @@ jobs:
           name: workspace-ui-previews
           path: |
             frontend/test-results/workspaceLayout-*/**/*.png
+            frontend/test-results/knowledgeCompact-*/**/*.png
             frontend/test-results/measurements-*/**/measurement-compact-*.png
           if-no-files-found: ignore
 

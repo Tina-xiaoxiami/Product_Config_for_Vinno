@@ -38,8 +38,13 @@ test('workspace frames share typography and surfaces across modules without page
   ]
   for (const [path, title] of pages) {
     await page.goto(`/${path}`)
-    await expect(page.getByRole('heading', { name: title, exact: true }).first()).toBeVisible()
-    await expect(page.locator('.workspace-page-header')).toHaveCSS('border-radius', '10px')
+    if (path === 'knowledge') {
+      await expect(page.getByRole('tab', { name: '问答查询', exact: true })).toBeVisible()
+      await expect(page.locator('.workspace-page-header')).toHaveCount(0)
+    } else {
+      await expect(page.getByRole('heading', { name: title, exact: true }).first()).toBeVisible()
+      await expect(page.locator('.workspace-page-header')).toHaveCSS('border-radius', '10px')
+    }
     await expect(page.locator('.system-workspace > .el-container > .el-main')).toHaveCSS('background-color', 'rgb(238, 243, 249)')
     await expect(page.locator('.workspace-content')).toBeVisible()
     await page.waitForLoadState('networkidle')
