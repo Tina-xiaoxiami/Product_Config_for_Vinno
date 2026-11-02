@@ -194,7 +194,10 @@ def migrate_knowledge_scopes(database_path: str | Path, *, apply: bool = False) 
     database = Path(database_path).expanduser().resolve()
     if not database.is_file():
         raise KnowledgeScopeMigrationError("数据库不存在；未创建新文件")
-    connection = sqlite3.connect(database.as_uri() + ("?mode=rw" if apply else "?mode=ro"), uri=True)
+    try:
+        connection = sqlite3.connect(database.as_uri() + ("?mode=rw" if apply else "?mode=ro"), uri=True)
+    except sqlite3.Error as exc:
+        raise KnowledgeScopeMigrationError("无法打开指定数据库；未执行迁移") from exc
     backup = None
     try:
         connection.execute("PRAGMA foreign_keys=OFF" if apply else "PRAGMA query_only=ON")
