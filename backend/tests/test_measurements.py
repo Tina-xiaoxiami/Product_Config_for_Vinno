@@ -1,5 +1,7 @@
 """Measurement imports must preserve UI names, scope, evidence and history."""
 import io
+import re
+import zipfile
 
 import httpx
 import pytest
@@ -82,6 +84,31 @@ def test_wrong_sheets_and_missing_headers_rejected():
     workbook.save(buffer)
     with pytest.raises(MeasurementImportError, match="ChineseName"):
         parse_measurement_workbook(buffer.getvalue())
+
+
+def test_corrupt_worksheet_is_reported_as_an_invalid_upload():
+    original = io.BytesIO(workbook_bytes())
+    broken = io.BytesIO()
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(broken, "w") as target:
+        for name in source.namelist():
+            content = source.read(name)
+            if name == "xl/worksheets/sheet1.xml":
+                content = content.replace(b"<row r=\"2\">", b"<row invalid=>")
+            target.writestr(name, content)
+    with pytest.raises(MeasurementImportError):
+        parse_measurement_workbook(broken.getvalue())
+
+
+def test_valid_workbook_without_optional_dimensions_can_be_imported():
+    original = io.BytesIO(workbook_bytes())
+    streaming = io.BytesIO()
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(streaming, "w") as target:
+        for name in source.namelist():
+            content = source.read(name)
+            if name.startswith("xl/worksheets/"):
+                content = re.sub(rb'<dimension[^>]*/>', b'', content)
+            target.writestr(name, content)
+    assert len(parse_measurement_workbook(streaming.getvalue())["entries"]) == 7
 
 
 @pytest.mark.parametrize("value,status", [(True, "enabled"), ("true", "enabled"), (False, "disabled"), (None, "unknown")])
