@@ -71,7 +71,7 @@ async def shared_scope(db, groups, combinations):
 async def catalog(db):
     probes = list((await db.scalars(select(ProbeModel).order_by(ProbeModel.id))).all())
     variants = list((await db.scalars(select(ProbeModelVariant).order_by(ProbeModelVariant.id))).all())
-    features = list((await db.scalars(select(Feature).order_by(Feature.id))).all())
+    features = list((await db.scalars(select(Feature).order_by(Feature.sort_order, Feature.id))).all())
     links = (await db.execute(select(CategoryApplication.category_id, Application.name).join(Application))).all()
     typed_links = (await db.execute(select(CategoryApplication.category_id, CategoryApplication.probe_type, Application.name).join(Application).order_by(Application.sort_order, Application.id))).all()
     templates = list((await db.scalars(select(TemplateFeature).order_by(TemplateFeature.category_id, TemplateFeature.feature_id))).all())
