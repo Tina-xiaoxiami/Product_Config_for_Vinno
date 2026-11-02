@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test('knowledge query uses three scope fields and keeps status beside search', async ({ page }, testInfo) => {
+  page.setDefaultTimeout(10000)
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   const seriesResponse = await page.request.post('/api/series', { data: { name: 'QA-Oversea' } })
@@ -27,9 +28,9 @@ test('knowledge query uses three scope fields and keeps status beside search', a
   expect(Math.abs(statusBox.y - searchBox.y)).toBeLessThan(4)
 
   async function chooseSelect(name, option) {
-    const control = page.getByRole('combobox', { name, exact: true })
+    const control = page.locator('.qa-scope-controls .el-select').filter({ has: page.getByRole('combobox', { name, exact: true }) })
     await control.click()
-    const menu = await control.getAttribute('aria-controls')
+    const menu = await control.getByRole('combobox').getAttribute('aria-controls')
     await page.locator(`#${menu}`).getByRole('option', { name: option, exact: true }).click()
   }
   await chooseSelect('查询市场', '海外')
