@@ -125,3 +125,59 @@ async def test_feature_catalog_uses_only_unique_approved_primary_ipn_current_des
     assert item['primary_cn_name'] == '超微细血流成像'
     assert historical['total'] == 1 and rejected['total'] == 0
     assert not related['display_cn_name']
+
+
+@pytest.mark.asyncio
+async def test_approved_function_alias_searches_qa_but_pending_alias_does_not(tmp_path):
+    path = tmp_path / 'qa.db'; _database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.executescript("""
+        CREATE TABLE features(id INTEGER PRIMARY KEY,ipn TEXT);
+        CREATE TABLE feature_config_item_links(feature_id INTEGER,config_item_id INTEGER,relation_type TEXT,review_status TEXT);
+        CREATE TABLE feature_names(feature_id INTEGER,language TEXT,name TEXT,name_type TEXT,review_status TEXT);
+        INSERT INTO features VALUES(1,'6000317');
+        INSERT INTO feature_config_item_links VALUES(1,1,'primary','approved');
+        INSERT INTO feature_names VALUES(1,'cn','胸膜智能识别','alias','approved'),(1,'cn','未批准完全不同的名称','alias','pending');
+        """)
+    client, engine = await _client_for(path)
+    async with client:
+        approved = (await client.get('/api/knowledge/questions', params={'q':'胸膜智能识别'})).json()
+        pending = (await client.get('/api/knowledge/questions', params={'q':'未批准完全不同的名称'})).json()
+    await engine.dispose()
+    assert approved['total'] == 2 and pending['total'] == 0
+
+
+@pytest.mark.asyncio
+async def test_current_projection_refreshes_each_request_and_does_not_change_evidence(tmp_path):
+    path = tmp_path / 'qa.db'; _database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,excerpt) VALUES(1,1,'胸膜自动识别原文')")
+    client, engine = await _client_for(path)
+    async with client:
+        first = (await client.get('/api/knowledge/questions/1')).json()
+        with closing(sqlite3.connect(path)) as c, c:
+            c.execute("UPDATE config_items SET zh_desc='新版胸膜自动测量' WHERE id=1")
+        second = (await client.get('/api/knowledge/questions/1')).json()
+    await engine.dispose()
+    assert first['display_question_text'].startswith('胸膜自动测量')
+    assert second['display_question_text'].startswith('新版胸膜自动测量')
+    assert second['answer']['citations'][0]['excerpt'] == '胸膜自动识别原文'
+    assert second['answer']['answer_text'] == first['answer']['answer_text']
+    assert second['evidence_review']['fingerprint'] == first['evidence_review']['fingerprint']
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_current_name_does_not_select_first_of_different_ipns(tmp_path):
+    path = tmp_path / 'qa.db'; _database(path)
+    with closing(sqlite3.connect(path)) as c, c:
+        c.execute("INSERT INTO config_items VALUES(6,'6000318','OtherPleura','胸膜自动测量','Other')")
+    client, engine = await _client_for(path)
+    async with client:
+        for question, answer in [('胸膜自动识别在V10系列是标配吗？','结论：胸膜自动识别（IPN 6000317）为选配。'),
+                                 ('另一胸膜功能在V10系列是标配吗？','结论：另一胸膜功能（IPN 6000318）为标配。')]:
+            qid = (await client.post('/api/knowledge/questions/ask', json={'question':question,'scope':SCOPE})).json()['question_id']
+            saved = await client.put(f'/api/knowledge/questions/{qid}/answer', json={'answer_text':answer,'alias_questions':[],'citations':[],'change_note':'Explicit test confirmation'})
+            assert saved.status_code == 200
+        result = (await client.post('/api/knowledge/questions/ask', json={'question':'胸膜自动测量在V10系列是标配吗？','scope':SCOPE})).json()
+    await engine.dispose()
+    assert result['status'] == 'pending' and result['answer'] is None
