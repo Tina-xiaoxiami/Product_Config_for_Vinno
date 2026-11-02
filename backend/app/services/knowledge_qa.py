@@ -261,25 +261,39 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     query_scope_key = scope_key(resolved_scope)
 
     name_context = await load_name_context(session)
-    query_ipns = name_context.explicit_ipns(cleaned) or name_context.named_ipns(cleaned)
+    explicit_query_ipns = name_context.explicit_ipns(cleaned)
+    query_ipns = explicit_query_ipns or name_context.named_ipns(cleaned)
+    ambiguous_name = name_context.ambiguous_query(cleaned)
+    displayed_query, _ = name_context.project(cleaned)
     best_question_id: int | None = None
     best_ties: set[int] = set()
     best_score = 0.0
     best_exact = False
-    for candidate in await _published_candidates(session, query_scope_key):
+    for candidate in ([] if ambiguous_name else await _published_candidates(session, query_scope_key)):
         candidate_ipns = name_context.explicit_ipns(candidate['answer_text'])
+        candidate_question_ipns = name_context.explicit_ipns(candidate['question_text']) or name_context.named_ipns(candidate['question_text'])
         if query_ipns and candidate_ipns and not query_ipns.intersection(candidate_ipns):
             continue
+        if explicit_query_ipns and not explicit_query_ipns.issubset(candidate_ipns):
+            continue
+        if query_ipns and candidate_question_ipns and not query_ipns.intersection(candidate_question_ipns):
+            continue
         displayed_question, _, _ = name_context.question(candidate['question_text'], candidate['answer_text'])
+        displayed_phrasing, _, _ = name_context.question(candidate['phrasing_text'] or '', candidate['answer_text'])
         variants = [
-            (displayed_question, normalize_question(displayed_question)),            (candidate["question_text"], candidate["normalized_question"]),
+            (displayed_question, normalize_question(displayed_question)),
+            (displayed_phrasing, normalize_question(displayed_phrasing)),
+            (candidate["question_text"], candidate["normalized_question"]),
             (candidate["phrasing_text"], candidate["normalized_phrasing"]),
         ]
+        comparison_query = displayed_query
+        if explicit_query_ipns:
+            comparison_query = re.sub(r'[（(]\s*IPN\s*[:：]?\s*\d{7}\s*[）)]', '', comparison_query, flags=re.I)
         for variant_text, variant_normalized in variants:
             if not variant_text:
                 continue
             exact = normalized == variant_normalized
-            score = 1.0 if exact else question_similarity(cleaned, variant_text)
+            score = 1.0 if exact else max(question_similarity(cleaned, variant_text), question_similarity(comparison_query, variant_text))
             if score > best_score:
                 best_question_id = int(candidate["question_id"])
                 best_score = score
@@ -406,10 +420,11 @@ async def list_questions(
                    (SELECT group_concat(p.phrasing_text, CHAR(10)) FROM knowledge_question_phrasings p WHERE p.question_id=q.id) AS phrasings
             FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
         """))).mappings()
-        needle = cleaned_query.casefold()
+        displayed_query, _ = name_context.project(cleaned_query)
+        needles = {cleaned_query.casefold(), displayed_query.casefold()}
         for row in search_rows:
             displayed_question, displayed_answer, _ = name_context.question(row['question_text'], row['answer_text'] or '')
-            if any(needle in str(value or '').casefold() for value in
+            if any(needle in str(value or '').casefold() for needle in needles for value in
                    (row['question_text'], row['answer_text'], row['phrasings'], displayed_question, displayed_answer)):
                 matched_ids.append(int(row['id']))
         params['matched_ids'] = matched_ids

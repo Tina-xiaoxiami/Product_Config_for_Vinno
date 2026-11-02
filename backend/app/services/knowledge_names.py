@@ -29,7 +29,7 @@ def _anchors(value: str) -> list[tuple[str, str]]:
         else:
             fragment = re.split(r'[。；;：:\n，,]', before)[-1].strip()
             name = fragment.rsplit('不等同于', 1)[-1].strip()
-        if name and len(name) <= 80 and not re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以)', name):
+        if name and len(name) <= 80 and not re.match(r'(?:新增|增加|升级|更新|启用|禁用|该|此|本|通过|采用|推荐|可|将|已经|已|打开|关闭|具备|实现|开启|进行)', name) and not re.search(r'[？?！!]|(?:支持|包括|对应|提供|采用|属于|用于|可以)', name):
             anchors.append((name, match['ipn']))
     # Existing controlled answers also use “NAME以主IPN 1234567查询”.
     for match in re.finditer(r'([^。；;：:\n，,]+?)以主IPN\s*(\d{7})查询', value, re.I):
@@ -55,11 +55,17 @@ class KnowledgeNameContext:
     def explicit_ipns(self, value: str) -> set[str]:
         return set(_IPN.findall(value))
 
-    def named_ipns(self, value: str) -> set[str]:
+    def name_matches(self, value: str) -> list[set[str]]:
         if not self.aliases:
-            return set()
+            return []
         pattern = re.compile('|'.join(re.escape(name) for name in sorted(self.aliases, key=len, reverse=True)))
-        return {ipn for match in pattern.finditer(value) for ipn in self.aliases[match[0]]}
+        return [self.aliases[match[0]] for match in pattern.finditer(value)]
+
+    def named_ipns(self, value: str) -> set[str]:
+        return {ipn for matches in self.name_matches(value) for ipn in matches}
+
+    def ambiguous_query(self, value: str) -> bool:
+        return not self.explicit_ipns(value) and any(len(matches) > 1 for matches in self.name_matches(value))
 
     def project(self, value: str, *, explicit_ipns: set[str] | None = None) -> tuple[str, list[dict]]:
         allowed = explicit_ipns if explicit_ipns is not None else self.explicit_ipns(value)
@@ -68,10 +74,12 @@ class KnowledgeNameContext:
                     and (not allowed or next(iter(ipns)) in allowed)}
         if not eligible:
             return value, []
-        pattern = re.compile('|'.join(re.escape(name) for name in sorted(eligible, key=len, reverse=True)))
+        pattern = re.compile('|'.join(re.escape(name) for name in sorted(self.aliases, key=len, reverse=True)))
         bindings = []
         def replace(match):
             name = match[0]
+            if name not in eligible:
+                return name
             # Never rewrite the inside of a longer Latin identifier.
             if ((match.start() and name[0].isascii() and name[0].isalnum() and value[match.start()-1].isascii() and value[match.start()-1].isalnum())
                     or (match.end() < len(value) and name[-1].isascii() and name[-1].isalnum() and value[match.end()].isascii() and value[match.end()].isalnum())):
@@ -127,4 +135,18 @@ async def load_name_context(session: AsyncSession) -> KnowledgeNameContext:
                 base = re.sub(r'\s*\([^()]+\)$', '', clean_feature_name(name))
                 if base != clean_feature_name(name):
                     context.add_alias(base, ipn)
+    if {'features', 'feature_names', 'feature_config_item_links'} <= tables:
+        aliases = (await session.execute(text("""
+            SELECT f.ipn,n.name FROM features f
+            JOIN feature_names n ON n.feature_id=f.id
+            JOIN feature_config_item_links l ON l.feature_id=f.id
+            JOIN config_items c ON c.id=l.config_item_id
+            WHERE n.language='cn' AND n.review_status='approved'
+              AND l.relation_type='primary' AND l.review_status='approved'
+              AND TRIM(c.ipn)=TRIM(f.ipn)
+              AND (SELECT COUNT(*) FROM feature_config_item_links p
+                   WHERE p.feature_id=f.id AND p.relation_type='primary' AND p.review_status='approved')=1
+        """))).all()
+        for ipn, name in aliases:
+            context.add_alias(str(name), str(ipn).strip())
     return context
