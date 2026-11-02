@@ -115,8 +115,11 @@ async def test_confirm_scope_creates_independent_query_answers_without_counting_
             assert result.json()["items"][0]["answer"]["answer_text"] == "完整历史答案\n第二段原文"
         queue = await client.get("/api/knowledge/questions", params={"evidence_review": "needs_review"})
         reviewed = await client.get("/api/knowledge/questions", params={"evidence_review": "reviewed"})
+        all_questions = await client.get("/api/knowledge/questions", params={"evidence_review": "all"})
         assert queue.json()["total"] == 1
         assert reviewed.json()["total"] == 3
+        assert all_questions.status_code == 200, all_questions.text
+        assert all_questions.json()["total"] == 5
         assert (await client.post("/api/knowledge/questions/101/review", json=payload)).status_code == 200
     await engine.dispose()
     with closing(sqlite3.connect(database)) as connection:
@@ -125,10 +128,13 @@ async def test_confirm_scope_creates_independent_query_answers_without_counting_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["answer", "review", "citation"])
+@pytest.mark.parametrize("mutation", ["answer", "review", "citation", "document_scope"])
 async def test_stale_answer_citation_or_review_is_rejected(database, mutation):
     client, engine = await _client_for(database)
     async with client:
+        if mutation == "document_scope":
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO knowledge_answer_citations (answer_id,document_id,source_ref) VALUES (201,1,'p1')")
         payload = await _payload(client)
         if mutation == "review":
             assert (await client.post("/api/knowledge/questions/101/review", json={**payload, "note": "first"})).status_code == 200
@@ -136,8 +142,10 @@ async def test_stale_answer_citation_or_review_is_rejected(database, mutation):
             with closing(sqlite3.connect(database)) as connection, connection:
                 if mutation == "answer":
                     connection.execute("UPDATE knowledge_answers SET answer_text='changed without version' WHERE id=201")
-                else:
+                elif mutation == "citation":
                     connection.execute("INSERT INTO knowledge_answer_citations (answer_id,document_id,source_ref) VALUES (201,1,'p2')")
+                else:
+                    connection.execute("UPDATE knowledge_documents SET version='1.14.81' WHERE id=1")
         result = await client.post("/api/knowledge/questions/101/review", json=payload)
         assert result.status_code == 409, result.text
     await engine.dispose()
