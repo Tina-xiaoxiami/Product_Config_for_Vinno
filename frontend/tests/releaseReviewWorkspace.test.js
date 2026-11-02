@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 const source = readFileSync(new URL('../../backend/tracker/static/release-review.js', import.meta.url), 'utf8')
 const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
-const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload,releaseReviewDraftNoticeMarkup,releaseReviewDiffTokens,releaseReviewDiffMarkup,releaseReviewHistoryPair,releaseReviewBodyHistoryMarkup}`)(esc, esc,
+const helpers = new Function('escapeHtml', 'escapeAttribute', 'scenarioDocumentMarkup', 'scenarioIllustrationsMarkup', 'scenarioPreviewButton', `${source};return {releaseReviewPatch,releaseReviewWorkspaceMarkup,releaseReviewCommit,releaseReviewDraftKey,releaseReviewDraftStore,releaseReviewLeaveGuard,releaseReviewRecoverDraft,releaseReviewDecisions,releaseReviewLogMarkup,releaseReviewRestorePayload,releaseReviewDraftNoticeMarkup,releaseReviewDiffTokens,releaseReviewDiffMarkup,releaseReviewHistoryPair,releaseReviewBodyHistoryMarkup,releaseReviewHeadingText}`)(esc, esc,
   (text, additions, image) => `<section class="feature-document-section"><p>${esc(text)}</p>${image}</section>`,
   () => '<section class="feature-image-section"><p>图片</p></section>', () => '<button>原文</button>')
 
@@ -124,7 +124,7 @@ test('更新正文发送独立正文修订元信息，历史恢复显式指定bo
 })
 
 test('更新正文无实际变化时不发送保存，提示只采纳记录',async()=>{
- const state=session();state.context.result={content:'原正文'};let called=0
+ const state=session();state.context.review.heading_format='markdown-v1';state.context.result={content:'原正文'};let called=0
  const result=await helpers.releaseReviewCommit(state,'原正文',[{id:'x',action:'include'}],{isCurrent:()=>true,path:p=>p,api:async()=>{called++;return {}},accept(){}},{event_id:'x',operation:'replace',reason:''})
  assert.equal(result,null);assert.equal(called,0);assert.match(state.error,/采纳记录/)
 })
@@ -199,4 +199,24 @@ test('正文历史紧凑分区选择修订，显示当前状态，恢复使用�
  const initial=helpers.releaseReviewBodyHistoryMarkup(items,2,0)
  assert.match(initial,/初始正文，无上一版可对比/);assert.match(initial,/data-review-restore="0"/)
  items[1].restorable=false;assert.match(helpers.releaseReviewBodyHistoryMarkup(items,2,4),/data-review-restore="4" disabled/)
+})
+
+test('旧标题只在兼容适配时统一成显式标记，新格式删除标记后保持普通段落',()=>{
+ const old='新增功能\n临床意义：\n文字\n## 已有自定义\n效果图示：'
+ const converted=helpers.releaseReviewHeadingText(old,'legacy')
+ assert.equal(converted,'## 新增功能\n## 临床意义\n文字\n## 已有自定义\n## 效果图示')
+ assert.equal(helpers.releaseReviewHeadingText(converted,'legacy'),converted)
+ assert.equal(helpers.releaseReviewHeadingText('临床意义：\n效果图示','markdown-v1'),'临床意义：\n效果图示')
+})
+
+test('旧稿删除全部标题标记后即使文本等于旧raw仍可保存显式格式，避免标题回猜',async()=>{
+ const state=session();state.context.review.heading_format='legacy';state.context.result={content:'普通首行\n说明'};let sent
+ await helpers.releaseReviewCommit(state,state.context.result.content,[],{isCurrent:()=>true,path:p=>p,api:async(p,o)=>{sent=JSON.parse(o.body);return {}},accept(){}},{operation:'edit',reason:'将标题改为普通段落'})
+ assert.equal(sent.content,'普通首行\n说明');assert.equal(sent.heading_format,'markdown-v1')
+})
+
+test('仅标题格式变化的修订明确说明格式差别，不误报正文没有变化',()=>{
+ const items=[{revision:2,body_revision:1,heading_format:'markdown-v1',content:'普通首行',source_fingerprint:'same',restorable:true,body_change:{before:'普通首行',after:'普通首行'}},{revision:0,body_revision:0,heading_format:'legacy',content:'普通首行',source_fingerprint:'same',restorable:true}]
+ const html=helpers.releaseReviewBodyHistoryMarkup(items,1,2)
+ assert.match(html,/旧稿兼容格式 → 显式 ## 标题/);assert.doesNotMatch(html,/正文没有变化/)
 })

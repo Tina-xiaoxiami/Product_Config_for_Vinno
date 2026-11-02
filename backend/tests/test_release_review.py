@@ -359,3 +359,90 @@ def test_legacy_body_association_requires_unique_include_and_same_sources(databa
     history = list_release_review_history(database, raw, 1, 'VATT')['history'][0]
     assert history['body_change']['source_version'] is None
     assert 'event_id' not in history['body_change']
+
+
+def test_heading_format_only_changes_with_real_body_save_and_is_not_source_identity(database):
+    raw = answer()
+    initial = decorate_release_review(database, raw, 1, 'VATT')
+    assert initial['review']['heading_format'] == 'legacy'
+    no_change = save_release_review(database, raw, 1, 'VATT', '', {**payload(initial, initial['content']), 'heading_format': 'markdown-v1'})
+    assert no_change['review']['heading_format'] == 'legacy'
+    assert no_change['review']['body_revision'] == 0
+    saved = save_release_review(database, raw, 1, 'VATT', '', {**payload(no_change, '## 功能说明\n完整正文'), 'heading_format': 'markdown-v1'})
+    assert saved['review']['heading_format'] == 'markdown-v1'
+    assert saved['review']['body_revision'] == 1
+    assert saved['review']['source_fingerprint'] == initial['review']['source_fingerprint']
+    assert decorate_release_review(database, raw, 1, 'VATT')['review']['heading_format'] == 'markdown-v1'
+    changed_by_old_client = save_release_review(database, raw, 1, 'VATT', '', payload(saved, saved['content'] + '\n另一段'))
+    assert changed_by_old_client['review']['heading_format'] == 'markdown-v1'
+    assert changed_by_old_client['review']['body_revision'] == 2
+    history = list_release_review_history(database, raw, 1, 'VATT')['history']
+    assert [row['heading_format'] for row in history] == ['markdown-v1', 'markdown-v1', 'legacy']
+    assert [row['revision'] for row in history] == [3, 2, 0]
+
+
+def test_log_actions_preserve_format_and_body_restore_inherits_own_format(database):
+    raw = answer()
+    initial = decorate_release_review(database, raw, 1, 'VATT')
+    event_id = initial['unresolved_changes'][0]['id']
+    adopted_legacy = save_release_review(database, raw, 1, 'VATT', '', {**payload(initial, initial['content'], [{'id': event_id, 'action': 'adopt'}]), 'heading_format': 'markdown-v1'})
+    assert adopted_legacy['review']['heading_format'] == 'legacy'
+    saved = save_release_review(database, raw, 1, 'VATT', '', {**payload(adopted_legacy, '## 说明\n新正文', adopted_legacy['review']['decisions']), 'heading_format': 'markdown-v1'})
+    ignored = save_release_review(database, raw, 1, 'VATT', '', payload(saved, saved['content'], [{'id': event_id, 'action': 'ignore'}]))
+    undone = restore_release_review(database, raw, 1, 'VATT', '', {**payload(ignored), 'restore_revision': 0, 'kind': 'log'})
+    assert undone['review']['heading_format'] == 'markdown-v1'
+    assert undone['review']['body_revision'] == 1
+    restored_legacy = restore_release_review(database, raw, 1, 'VATT', '', {**payload(undone), 'restore_revision': 0, 'kind': 'body'})
+    assert restored_legacy['review']['heading_format'] == 'legacy'
+    restored_markdown = restore_release_review(database, raw, 1, 'VATT', '', {**payload(restored_legacy), 'restore_revision': 2, 'kind': 'body'})
+    assert restored_markdown['review']['heading_format'] == 'markdown-v1'
+    assert restored_markdown['content'] == saved['content']
+    assert all('heading_format' in row for row in list_release_review_history(database, raw, 1, 'VATT', kind='log')['history'])
+
+
+@pytest.mark.parametrize('heading_format', [None, '', 'html', 'legacy', [], {}])
+def test_invalid_heading_format_does_not_write(database, heading_format):
+    initial = decorate_release_review(database, answer(), 1, 'VATT')
+    with pytest.raises(ValueError, match='标题格式无效'):
+        save_release_review(database, answer(), 1, 'VATT', '', {**payload(initial), 'heading_format': heading_format})
+    assert decorate_release_review(database, answer(), 1, 'VATT')['review']['revision'] == 0
+
+
+def test_restoring_format_without_text_change_creates_body_revision(database):
+    raw = answer()
+    initial = decorate_release_review(database, raw, 1, 'VATT')
+    marked = save_release_review(database, raw, 1, 'VATT', '', {**payload(initial, '## 功能说明\n新正文'), 'heading_format': 'markdown-v1'})
+    same_text_as_baseline = save_release_review(database, raw, 1, 'VATT', '', payload(marked, raw['baseline']['content']))
+    assert same_text_as_baseline['review']['heading_format'] == 'markdown-v1'
+    restored = restore_release_review(database, raw, 1, 'VATT', '', {**payload(same_text_as_baseline), 'restore_revision': 0, 'kind': 'body'})
+    assert restored['content'] == raw['baseline']['content']
+    assert restored['review']['heading_format'] == 'legacy'
+    assert same_text_as_baseline['review']['body_revision'] == 2
+    assert restored['review']['body_revision'] == 3
+    assert [row['revision'] for row in list_release_review_history(database, raw, 1, 'VATT')['history']] == [3, 2, 1, 0]
+
+
+def test_explicit_format_edit_with_same_legacy_text_is_saved_as_body_revision(database):
+    raw = answer()
+    initial = decorate_release_review(database, raw, 1, 'VATT')
+    saved = save_release_review(database, raw, 1, 'VATT', '', {**payload(initial, initial['content']),
+        'heading_format': 'markdown-v1', 'body_change': {'operation': 'edit', 'reason': '移除全部标题标记'}})
+    assert saved['content'] == initial['content']
+    assert saved['review']['heading_format'] == 'markdown-v1'
+    assert saved['review']['body_revision'] == 1
+    assert saved['review']['log_revision'] == 0
+    assert saved['review']['source_fingerprint'] == initial['review']['source_fingerprint']
+    history = list_release_review_history(database, raw, 1, 'VATT')['history']
+    assert [row['revision'] for row in history] == [1, 0]
+    assert history[0]['body_change']['before'] == history[0]['body_change']['after'] == initial['content']
+    assert history[0]['heading_format'] == 'markdown-v1'
+
+
+def test_log_operation_cannot_smuggle_format_edit_through_body_change(database):
+    raw = answer()
+    initial = decorate_release_review(database, raw, 1, 'VATT')
+    identity = initial['unresolved_changes'][0]['id']
+    with pytest.raises(ValueError, match='不能同时改写正文'):
+        save_release_review(database, raw, 1, 'VATT', '', {**payload(initial, initial['content'], [{'id': identity, 'action': 'adopt'}]),
+            'heading_format': 'markdown-v1', 'body_change': {'operation': 'edit'}})
+    assert decorate_release_review(database, raw, 1, 'VATT')['review']['revision'] == 0

@@ -3787,11 +3787,10 @@ function scenarioFeatureMarkup(data, query) {
 }
 
 function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
-  const headings = /^(临床意义|功能描述|功能说明|参数|测量结果|操作步骤|效果图示|适用范围|兼容性说明)[：:]?$/;
   const lines = String(text || '').split(/\r?\n/);
   const groups = [{title: '', lines: []}];
   for (const line of lines) {
-    const heading = line.trim().match(headings) || line.trim().match(/^##\s+(.+?)\s*$/);
+    const heading = line.trim().match(/^##\s+(.+?)\s*$/);
     if (heading) groups.push({title: heading[1], lines: []});
     else groups[groups.length - 1].lines.push(line);
   }
@@ -3800,10 +3799,9 @@ function scenarioDocumentMarkup(text, additions = [], imageMarkup = '') {
     let body;
     if (group.title === '操作步骤') body = `<ol class="feature-steps">${content.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ol>`;
     else if (group.title === '参数') body = `<ul class="feature-parameters">${content.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`;
-    else body = content.map((line, index) => {
+    else body = content.map(line => {
       const scope = line.match(/^(适用探头\/应用|适用探头|适用机型|适用应用)[：:](.*)$/);
       if (scope) return `<p class="feature-scope" data-release-review-text="${escapeAttribute(line)}"><strong>${escapeHtml(scope[1])}</strong><span>${escapeHtml(scope[2])}</span></p>`;
-      if (!group.title && index === 0 && line.length < 120) return `<h4 class="feature-document-title">${escapeHtml(line)}</h4>`;
       return `<p>${escapeHtml(line)}</p>`;
     }).join('');
     if (group.title === '效果图示' && imageMarkup) { body = imageMarkup + body; imageMarkup = ''; }

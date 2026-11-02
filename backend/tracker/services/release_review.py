@@ -148,7 +148,8 @@ def _history_states(rows, answer, fingerprint):
                                  'event_id': included[0]['id'], 'source_version': event.get('version')}
         states.append({'row': row, 'saved': saved, 'content': content, 'migration_notice': notice, 'legacy_body_change': legacy_change,
                        'body_changed': body_changed, 'log_changed': log_changed,
-                       'body_revision': body_revision, 'log_revision': log_revision})
+                       'body_revision': body_revision, 'log_revision': log_revision,
+                       'heading_format': saved.get('heading_format', 'legacy')})
         previous_content, previous_decisions = content, decisions
     return states
 
@@ -176,6 +177,7 @@ def decorate_release_review(database, answer, project_id, query, target=''):
     output['unresolved_changes'] = [event for identity, event in events.items() if (identity in pending_ids or identity in recheck_ids) and identity not in by_id]
     output['resolved_changes'] = [{**event, 'review_action': by_id[identity]} for identity, event in events.items() if identity in by_id]
     output['review'] = {'revision': rows[-1]['revision'] if rows else 0, 'source_fingerprint': fingerprint,
+        'heading_format': latest['heading_format'] if latest else 'legacy',
         'body_revision': latest['body_revision'] if latest else 0, 'log_revision': latest['log_revision'] if latest else 0,
         'content': latest['content'] if latest else None, 'decisions': decisions, 'stale_decisions': stale_decisions,
         'stale': bool(rows and rows[-1]['source_fingerprint'] != fingerprint), 'context': context,
@@ -204,6 +206,8 @@ def _append(database, answer, project_id, query, target, payload, *, restore=Fal
         raise ValueError('当前没有可人工核对的Release Note完整基线。')
     if not isinstance(payload, dict) or type(payload.get('revision')) is not int or payload['revision'] < 0:
         raise ValueError('修订号无效。')
+    if 'heading_format' in payload and payload['heading_format'] != 'markdown-v1':
+        raise ValueError('正文标题格式无效，仅支持markdown-v1。')
     if payload.get('source_fingerprint') != fingerprint:
         raise ReviewConflict('Release Note来源已变化，请重新查询后核对。')
     with database.transaction() as connection:
@@ -214,10 +218,13 @@ def _append(database, answer, project_id, query, target, payload, *, restore=Fal
         states = _history_states(rows, answer, fingerprint)
         latest = states[-1] if states else None
         previous = latest['content'] if latest else answer['baseline']['content']
+        heading_format = latest['heading_format'] if latest else 'legacy'
+        previous_heading_format = heading_format
         current_decisions, stale_decisions = _valid_decisions(latest['saved'] if latest else None, fingerprint, events)
         content, decisions = previous, current_decisions
         body_change = payload.get('body_change', {})
         changed = []
+        removed = set()
         if (not isinstance(body_change, dict) or set(body_change) - {'event_id', 'operation', 'reason'}
                 or any(not isinstance(value, str) or len(value) > 2000 for value in body_change.values())):
             raise ValueError('正文修订说明无效。')
@@ -231,6 +238,7 @@ def _append(database, answer, project_id, query, target, payload, *, restore=Fal
                 raise ValueError('待恢复的修订不存在。')
             if kind == 'body':
                 content = old['content'] if old else answer['baseline']['content']
+                heading_format = old['heading_format'] if old else 'legacy'
                 body_change = {'operation': 'restore', 'reason': f'恢复正文修订 {revision}', 'restore_revision': revision}
             else:
                 snapshot = {**old['saved'], 'stale_decisions': []} if old else None
@@ -242,16 +250,19 @@ def _append(database, answer, project_id, query, target, payload, *, restore=Fal
             previous_actions = {item['id']: item['action'] for item in current_decisions}
             changed = [item for item in decisions if previous_actions.get(item['id']) != item['action']]
             removed = set(previous_actions) - {item['id'] for item in decisions}
-            if content != previous and (changed or removed) and not any(item['action'] == 'include' for item in changed):
-                raise ValueError('采纳或忽略更新日志不能同时改写正文，请使用正文编辑或采纳并修改正文。')
-            if any(item['action'] == 'include' for item in changed) and content == previous:
-                raise ValueError('采纳并修改正文必须包含实际正文修订；仅采纳日志请使用adopt。')
         content, decisions = _validate_content_decisions(content, decisions, events)
         if body_change.get('event_id') and body_change['event_id'] not in events:
             raise ValueError('正文修订关联的变更记录无效。')
         if any(not isinstance(value, str) for field, value in body_change.items() if field in ('event_id', 'operation', 'reason')):
             raise ValueError('正文修订说明必须为文本。')
-        body_changed = content != previous
+        if not restore and 'heading_format' in payload and (content != previous or bool(body_change)):
+            heading_format = payload['heading_format']
+        body_changed = content != previous or heading_format != previous_heading_format
+        if not restore:
+            if body_changed and (changed or removed) and not any(item['action'] == 'include' for item in changed):
+                raise ValueError('采纳或忽略更新日志不能同时改写正文，请使用正文编辑或采纳并修改正文。')
+            if any(item['action'] == 'include' for item in changed) and not body_changed:
+                raise ValueError('采纳并修改正文必须包含实际正文修订；仅采纳日志请使用adopt。')
         log_changed = {item['id']: item['action'] for item in decisions} != {item['id']: item['action'] for item in current_decisions}
         if body_changed:
             included = [item for item in changed if item['action'] == 'include']
@@ -261,7 +272,7 @@ def _append(database, answer, project_id, query, target, payload, *, restore=Fal
             body_change = {'operation': 'edit', 'reason': '手工修订正文', **body_change, 'source_version': event.get('version')}
         body_revision = (latest['body_revision'] if latest else 0) + int(body_changed)
         log_revision = (latest['log_revision'] if latest else 0) + int(log_changed)
-        packed = _json({'schema': _NAMESPACE, 'schema_version': 2, 'context': context, 'content': content,
+        packed = _json({'schema': _NAMESPACE, 'schema_version': 2, 'context': context, 'content': content, 'heading_format': heading_format,
             'decisions': [{**item, 'event_fingerprint': _event_fingerprint(events[item['id']])} for item in decisions],
             'stale_decisions': stale_decisions, 'body_revision': body_revision, 'log_revision': log_revision,
             'body_changed': body_changed, 'log_changed': log_changed,
@@ -292,11 +303,11 @@ def list_release_review_history(database, answer, project_id, query, target='', 
         if change.get('event_id') in events:
             change = {**change, 'source_version': events[change['event_id']].get('version')}
         history.append({'revision': item['row']['revision'], 'body_revision': item['body_revision'], 'log_revision': item['log_revision'],
-            'kind': kind, 'created_at': item['row']['created_at'], 'source_fingerprint': item['row']['source_fingerprint'],
+            'kind': kind, 'heading_format': item['heading_format'], 'created_at': item['row']['created_at'], 'source_fingerprint': item['row']['source_fingerprint'],
             'content': item['content'], 'decisions': decisions, 'stale_decisions': invalid,
             'body_change': change, 'restorable': bool(answer.get('baseline')) and (kind == 'body' or not invalid_restore)})
     return {'context': context, 'source_fingerprint': fingerprint, 'kind': kind, 'history': history + [
-        {'revision': 0, 'body_revision': 0, 'log_revision': 0, 'kind': kind, 'created_at': '', 'source_fingerprint': fingerprint,
+        {'revision': 0, 'body_revision': 0, 'log_revision': 0, 'kind': kind, 'heading_format': 'legacy', 'created_at': '', 'source_fingerprint': fingerprint,
          'content': (answer.get('baseline') or {}).get('content', ''), 'decisions': [], 'body_change': {}, 'restorable': bool(answer.get('baseline'))}]}
 
 

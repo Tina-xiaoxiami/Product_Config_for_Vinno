@@ -50,3 +50,27 @@ def test_adopt_only_changes_log_and_body_restore_preserves_it(review_client):
     restored=data(client.post(BASE+'/scenario/review/restore?project_id=1',json={**body,'revision':1,'restore_revision':0,'kind':'body'}))
     assert restored['review']['decisions']==adopted['review']['decisions']
     assert restored['review']['body_revision']==0
+
+def test_explicit_markdown_heading_format_save_history_and_validation(review_client):
+    client,_=review_client
+    first=data(client.get(BASE+'/scenario?project_id=1&task=feature&q=VATT'))
+    assert first['review']['heading_format']=='legacy'
+    body={'q':'VATT','target':'','revision':0,'source_fingerprint':first['review']['source_fingerprint'],
+          'content':'## 功能说明\n明确正文','decisions':[],'heading_format':'markdown-v1'}
+    saved=data(client.put(BASE+'/scenario/review?project_id=1',json=body))
+    assert saved['review']['heading_format']=='markdown-v1'
+    history=data(client.get(BASE+'/scenario/review-history?project_id=1&q=VATT'))['history']
+    assert [row['heading_format'] for row in history]==['markdown-v1','legacy']
+    invalid=client.put(BASE+'/scenario/review?project_id=1',json={**body,'revision':1,'heading_format':{}})
+    assert invalid.status_code==400
+
+def test_same_text_explicit_markdown_edit_creates_body_history(review_client):
+    client,_=review_client
+    first=data(client.get(BASE+'/scenario?project_id=1&task=feature&q=VATT'))
+    body={'q':'VATT','target':'','revision':0,'source_fingerprint':first['review']['source_fingerprint'],
+          'content':first['content'],'decisions':[],'heading_format':'markdown-v1','body_change':{'operation':'edit','reason':'取消所有标题'}}
+    saved=data(client.put(BASE+'/scenario/review?project_id=1',json=body))
+    assert saved['content']==first['content']
+    assert saved['review']['heading_format']=='markdown-v1'
+    assert saved['review']['body_revision']==1
+    assert [row['revision'] for row in data(client.get(BASE+'/scenario/review-history?project_id=1&q=VATT'))['history']]==[1,0]
