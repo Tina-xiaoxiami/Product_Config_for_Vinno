@@ -356,3 +356,34 @@ async def test_disabled_models_remain_in_shared_definitions_but_are_excluded_fro
         assert data['scope']['excluded_model_ids'] == [11]
         assert '11' not in data['overrides']
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_disabling_and_reenabling_a_probe_member_preserves_its_specific_rules(tmp_path, monkeypatch):
+    from app.models import ProductModel
+    client, sessions, engine, _ = await harness(tmp_path, monkeypatch)
+    async with client:
+        d = await create(client)
+        doc = edited(d)
+        doc['overrides']['10'] = {'1:1:1': {'current_status': 'conditional', 'current_excludes': ['心脏'], 'notes': '保留机型差异'}}
+        d = await save(client, d, doc)
+        path = f"/api/probes/workspaces/{d['id']}"
+        async with sessions() as db:
+            model = await db.get(ProductModel, 10); model.is_enabled = False; await db.commit()
+        r = await client.put(path + '/draft', json={'revision': d['revision'], 'data': d['data'], 'refresh_scope': True})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d['data']['overrides']['10']['1:1:1']['notes'] == '保留机型差异'
+        p = (await client.post(path + '/preview', json={'version_number': '1.0.0'})).json()
+        assert all(row['model_id'] != 10 for row in p['results'])
+        assert (await client.post(path + '/publish', json={'version_number': '1.0.0', 'signature': p['signature']})).status_code == 200
+        async with sessions() as db:
+            model = await db.get(ProductModel, 10); model.is_enabled = True; await db.commit()
+        d = (await client.get(path)).json()
+        r = await client.put(path + '/draft', json={'revision': d['revision'], 'data': d['data'], 'refresh_scope': True})
+        assert r.status_code == 200, r.text
+        result = (await client.get(path + '/results')).json()['results']
+        restored = next(row for row in result if row['model_id'] == 10)
+        assert restored['current_status'] == 'conditional'
+        assert restored['notes'] == '保留机型差异'
+    await engine.dispose()
