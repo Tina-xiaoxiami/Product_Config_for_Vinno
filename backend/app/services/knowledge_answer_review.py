@@ -80,7 +80,8 @@ async def evidence_review_summary(session: AsyncSession, question_id: int) -> di
             latest["product_model_ids"] = json.loads(latest.pop("model_ids_json"))
             latest["target_question_ids"] = json.loads(latest.pop("target_question_ids_json"))
     current = bool(source and latest and latest["source_fingerprint"] == source["fingerprint"])
-    reviewed = bool(current and latest and latest["action"] in {"record_reference", "confirm_scope"})
+    reviewed = bool(source and source["review_status"] == "published" and current and latest and
+                    latest["action"] in {"record_reference", "confirm_scope"})
     needs_review = bool(source and source["review_status"] == "published" and not reviewed and
                         (source["citation_count"] == 0 or (current and latest and latest["action"] == "defer")))
     return {
@@ -161,6 +162,8 @@ async def review_answer(session: AsyncSession, question_id: int, **payload) -> d
         if question is None or source is None:
             await session.rollback()
             return None
+        if source["review_status"] != "published":
+            raise KnowledgeAnswerReviewConflict("原答案已失效或需要重新审核，请先修订并发布后再核对")
         summary = question["evidence_review"]
         if (source["version"] != values["expected_answer_version"] or
                 source["fingerprint"] != values["expected_fingerprint"]):
