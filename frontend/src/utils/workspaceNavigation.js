@@ -21,10 +21,9 @@ export const WORKSPACE_SECTIONS = [
 
 const PAGE_DESCRIPTIONS = {
   '/models': '统一维护产品型号、系列分组和注册映射，供配置与产品资料共同引用。',
-  '/template-features': '按探头类别维护功能支持模板，草稿核对后统一提交版本。',
+  '/template-features': '从配置功能库选择功能、设置共用分类和探头支持，核对草稿后统一提交版本。',
   '/probe-models': '按类别管理探头型号、变体和应用关系。',
   '/applications': '维护应用名称及各探头类别下的常规、POC 应用范围。',
-  '/feature-manage': '维护功能组、双语主名称、曾用名和 IPN 关系。',
   '/registration-manage': '统一管理注册证、差异表和资料版本，供知识库与产品策略查询引用。',
   '/measurements': '按 Id 或中英文 UI 名称查找测量与计算项，筛选适用模式和应用。',
   '/config': '按系列和机型查看配置，集中维护草稿、核对变更并发布版本。',
@@ -41,7 +40,8 @@ export function workspaceForPath(path) {
   const parentPath = probeManagementMenuPath(path)
   const section = WORKSPACE_SECTIONS.find(item => item.path === parentPath || item.tabs?.some(tab => tab.path === parentPath))
   if (!section) return null
-  const page = PROBE_MANAGEMENT_TABS.find(tab => tab.path === path) || section.tabs?.find(tab => tab.path === parentPath) || section
+  const pagePath = path === '/feature-manage' ? parentPath : path
+  const page = PROBE_MANAGEMENT_TABS.find(tab => tab.path === pagePath) || section.tabs?.find(tab => tab.path === parentPath) || section
   return {
     sectionId: section.id, groupTitle: section.label, sidebarGroup: section.menuId || null,
     title: page.label, description: PAGE_DESCRIPTIONS[path] || PAGE_DESCRIPTIONS[parentPath],

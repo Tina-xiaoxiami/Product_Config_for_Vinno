@@ -5,7 +5,7 @@ import { PROBE_MANAGEMENT_TABS, probeManagementMenuPath } from '../src/utils/pro
 const template = readFileSync(new URL('../src/views/TemplateFeatures.vue', import.meta.url), 'utf8')
 const layout = readFileSync(new URL('../src/views/Layout.vue', import.meta.url), 'utf8')
 test('all management deep links share one sidebar selection and other pages retain theirs', () => {
-  assert.deepEqual(PROBE_MANAGEMENT_TABS.map(tab => tab.label), ['模板管理', '探头管理', '应用管理', '功能管理'])
+  assert.deepEqual(PROBE_MANAGEMENT_TABS.map(tab => tab.label), ['模板管理', '探头管理', '应用管理'])
   for (const path of ['/template-features', '/probe-models', '/applications', '/feature-manage']) assert.equal(probeManagementMenuPath(path), '/template-features')
   for (const path of ['/config', '/knowledge', '/probe-config', '/feature-manage-extra']) assert.equal(probeManagementMenuPath(path), path)
 })

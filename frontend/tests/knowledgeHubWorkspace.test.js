@@ -23,7 +23,7 @@ test('retired knowledge deep links navigate to their canonical management pages'
   const { change, activeTab, calls } = tabNavigation()
   for (const tab of ['features', 'registration', 'documents']) change(tab)
   assert.deepEqual(calls, [
-    { path: '/feature-manage' }, { path: '/registration-manage' },
+    { path: '/template-features' }, { path: '/registration-manage' },
     { path: '/release', query: { tab: 'documents' } }
   ])
   assert.equal(activeTab.value, 'qa')

@@ -304,7 +304,7 @@ const router = useRouter()
 const activeTab = ref('qa')
 watch(() => route.query.tab, (tab) => {
   if (tab === 'features') {
-    router.replace({ path: '/feature-manage' })
+    router.replace({ path: '/template-features' })
   } else if (tab === 'registration') {
     router.replace({ path: '/registration-manage' })
   } else if (tab === 'documents') {
