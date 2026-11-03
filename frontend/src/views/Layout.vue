@@ -22,14 +22,14 @@
           <template v-for="section in WORKSPACE_SECTIONS" :key="section.id">
             <el-sub-menu v-if="section.tabs" :index="section.menuId">
               <template #title><el-icon><component :is="sectionIcons[section.icon]" /></el-icon><span>{{ section.label }}</span></template>
-              <el-menu-item v-for="tab in section.tabs" :key="tab.path" :index="tab.path"><span>{{ tab.label }}</span></el-menu-item>
+              <el-menu-item v-for="tab in section.tabs" :key="tab.path" :index="tab.path" :aria-current="probeManagementMenuPath($route.path) === tab.path ? 'page' : undefined"><span>{{ tab.label }}</span></el-menu-item>
             </el-sub-menu>
-            <el-menu-item v-else :index="section.path"><el-icon><component :is="sectionIcons[section.icon]" /></el-icon><template #title>{{ section.label }}</template></el-menu-item>
+            <el-menu-item v-else :index="section.path" :aria-current="probeManagementMenuPath($route.path) === section.path ? 'page' : undefined"><el-icon><component :is="sectionIcons[section.icon]" /></el-icon><template #title>{{ section.label }}</template></el-menu-item>
           </template>
         </el-menu>
       </el-aside>
       <el-main :class="{ 'management-workspace': isProbeManagementPage }">
-        <WorkspacePageHeader v-if="workspace && !['release', 'knowledge'].includes(workspace.sectionId)" :workspace="workspace" :before-leave="switchProbeManagementTab" />
+        <WorkspacePageHeader v-if="workspace && !['release', 'knowledge'].includes(workspace.sectionId)" :workspace="workspace" />
         <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />

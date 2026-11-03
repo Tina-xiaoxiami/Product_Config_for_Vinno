@@ -3,12 +3,13 @@ import { test, expect } from '@playwright/test'
 test('master data navigation groups measurement and keeps edited imports on their page', async ({ page }) => {
   page.setDefaultTimeout(10000)
   await page.goto('/models')
-  const navigation = page.getByRole('navigation', { name: '基础数据管理模块导航' })
-  await navigation.getByRole('tab', { name: '测量库', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '测量库', exact: true })).toBeVisible()
   const group = page.getByRole('menuitem', { name: /^基础数据管理/ })
-  await expect(group.getByRole('menuitem', { name: '测量库', exact: true })).toBeVisible()
-  await expect(navigation.getByRole('tab', { name: '测量库', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const measurementLink = group.getByRole('menuitem', { name: '测量库', exact: true })
+  await expect(group.getByRole('menuitem', { name: '产品型号', exact: true })).toHaveAttribute('aria-current', 'page')
+  await measurementLink.click()
+  await expect(page.getByRole('heading', { name: '测量库', exact: true })).toBeVisible()
+  await expect(measurementLink).toBeVisible()
+  await expect(measurementLink).toHaveAttribute('aria-current', 'page')
   await page.getByRole('button', { name: '导入人用中文表', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '导入人用测量库' })).toHaveCSS('--el-color-primary', '#2563c9')
   const versionField = page.getByRole('dialog', { name: '导入人用测量库' }).getByLabel('来源版本')
@@ -19,10 +20,10 @@ test('master data navigation groups measurement and keeps edited imports on thei
   await warning.getByRole('button', { name: '继续导入', exact: true }).click()
   await goingBack
   await expect(page).toHaveURL(/\/measurements$/)
-  await expect(navigation.getByRole('tab', { name: '测量库', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(measurementLink).toHaveAttribute('aria-current', 'page')
   await page.getByRole('dialog', { name: '导入人用测量库' }).getByRole('button', { name: '取消', exact: true }).click()
   await warning.getByRole('button', { name: '放弃', exact: true }).click()
-  await navigation.getByRole('tab', { name: '产品型号', exact: true }).click()
+  await group.getByRole('menuitem', { name: '产品型号', exact: true }).click()
   await expect(page.getByRole('heading', { name: '产品型号', exact: true })).toBeVisible()
 })
 
@@ -46,9 +47,11 @@ test('workspace frames share typography and surfaces across modules without page
     } else {
       await expect(page.getByRole('heading', { name: title, exact: true }).first()).toBeVisible()
       await expect(page.locator('.workspace-page-header')).toHaveCSS('border-radius', '10px')
+      expect((await page.locator('.workspace-page-header').boundingBox()).height).toBeLessThan(80)
     }
     await expect(page.locator('.system-workspace > .el-container > .el-main')).toHaveCSS('background-color', 'rgb(238, 243, 249)')
     await expect(page.locator('.workspace-content')).toBeVisible()
+    await expect(page.locator('.workspace-module-navigation')).toHaveCount(0)
     await page.waitForLoadState('networkidle')
     const controlSizes = await page.locator('.workspace-content').evaluate(root => {
       const visible = element => element.getClientRects().length && element.getBoundingClientRect().height > 0
