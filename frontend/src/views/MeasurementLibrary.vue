@@ -2,11 +2,14 @@
   <section class="measurement-library" v-loading="loading">
     <div class="toolbar measurement-main-toolbar">
       <div v-if="library.batch" class="query-controls">
-        <el-input v-model="query" placeholder="查找 Id、英文 UI 或中文 UI 名称" clearable size="small" class="search-input" />
-        <el-button size="small" @click="clearFilters">清除查询条件</el-button>
-        <el-radio-group v-model="scope" size="small" aria-label="测量分类" class="measurement-classification">
-          <el-radio-button v-for="option in scopeOptions" :key="option.value" :value="option.value" :title="`${option.label} · ${facets.scopes[option.countKey]} 条`">{{ option.label }}</el-radio-button>
-        </el-radio-group>
+        <el-input v-model="query" placeholder="查找 Id、英文 UI 或中文 UI 名称" :prefix-icon="Search" clearable size="small" class="search-input" />
+        <el-button class="query-reset" size="small" @click="clearFilters">清除查询条件</el-button>
+        <div class="classification-filter">
+          <span class="filter-group-label">分类</span>
+          <el-radio-group v-model="scope" size="small" aria-label="测量分类" class="measurement-classification measurement-segments scope-segments">
+            <el-radio-button v-for="option in scopeOptions" :key="option.value" :value="option.value" :title="`${option.label} · ${facets.scopes[option.countKey]} 条`">{{ option.label }}</el-radio-button>
+          </el-radio-group>
+        </div>
       </div>
       <div class="source-controls">
         <el-select v-if="library.batches.length" v-model="batchId" aria-label="测量库版本" size="small" class="batch-select" @change="loadLibrary">
@@ -54,11 +57,11 @@
             <div class="measurement-table-context">
               <div class="measurement-secondary-controls">
                 <span class="secondary-label">记录类型</span>
-                <el-radio-group v-model="kind" size="small" aria-label="记录类型">
+                <el-radio-group v-model="kind" size="small" aria-label="记录类型" class="measurement-segments type-segments">
                   <el-radio-button value="">全部</el-radio-button><el-radio-button value="measurement">测量项</el-radio-button><el-radio-button value="calculation">计算项</el-radio-button>
                 </el-radio-group>
               </div>
-              <el-checkbox v-model="includePending" size="small">包含待核对建议</el-checkbox>
+              <el-checkbox v-model="includePending" class="pending-toggle" :class="{ 'is-included': includePending }" size="small">包含待核对建议</el-checkbox>
               <span class="result-line" aria-live="polite">
                 <template v-if="query.trim()">精确 {{ exactCount }} 条，部分命中 {{ visibleRows.length - exactCount }} 条 · </template>
                 {{ counts.measurements }} 个测量 Id，{{ counts.calculations }} 个计算 Id
@@ -110,6 +113,7 @@
 import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import api from '../api/index'
 import ProbeDataTable from '../components/ProbeDataTable.vue'
 import { filterMeasurements, measurementCounts, measurementFacets, projectMeasurementRow } from '../utils/measurementLibrary'
@@ -233,8 +237,20 @@ onBeforeUnmount(() => { requestId++ })
 </script>
 
 <style scoped>
-.measurement-library{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.batch-select{width:330px;max-width:100%}.search-input{width:320px;max-width:100%}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
-.measurement-classification{flex-shrink:0}
+.measurement-library{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.batch-select{width:330px;max-width:100%}.search-input{width:440px;max-width:100%;--workspace-control-height:38px;--workspace-control-font-size:14px}.query-reset{--workspace-control-height:38px}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
+.classification-filter{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+.filter-group-label{font-size:12px;font-weight:600;color:var(--el-color-primary-dark-2)}
+.measurement-segments{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--el-border-color-light);border-radius:9px;background:var(--el-fill-color-light)}
+.measurement-segments :deep(.el-radio-button .el-radio-button__inner){height:28px;padding:0 12px;border:0;border-radius:6px;background:transparent;box-shadow:none;color:var(--el-text-color-regular);transition:background-color .15s,color .15s}
+.measurement-segments :deep(.el-radio-button:not(.is-active) .el-radio-button__inner:hover){background:var(--el-fill-color)}
+.measurement-segments :deep(.el-radio-button.is-active .el-radio-button__inner){background:var(--el-color-primary);color:var(--el-color-white);font-weight:600;box-shadow:0 1px 3px #1d4f9a20}
+.measurement-segments :deep(.el-radio-button__original-radio:focus-visible + .el-radio-button__inner){outline:2px solid var(--el-color-primary-light-3);outline-offset:1px}
+.scope-segments{background:var(--el-color-primary-light-9);border-color:var(--el-color-primary-light-7)}
+.type-segments :deep(.el-radio-button.is-active .el-radio-button__inner){background:var(--el-color-primary-light-8);color:var(--el-color-primary-dark-2);box-shadow:0 1px 3px #1d4f9a12}
+.pending-toggle.el-checkbox{box-sizing:border-box;height:36px;margin-right:0;padding:0 10px;border:1px solid var(--el-border-color-light);border-radius:8px;background:var(--el-bg-color);transition:background-color .15s,border-color .15s}
+.pending-toggle.is-included{border-color:var(--el-color-primary-light-7);background:var(--el-color-primary-light-9)}
+.pending-toggle :deep(.el-checkbox__label){font-size:12px}
+.pending-toggle:has(input:focus-visible){outline:2px solid var(--el-color-primary-light-3);outline-offset:1px}
 .measurement-browser{display:grid;grid-template-columns:440px minmax(0,1fr);gap:14px;flex:1;min-height:0;margin-top:10px}
 .measurement-filter-sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr) auto;gap:8px 10px;min-height:0}
 .filter-navigation{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--el-border-color);border-radius:8px;overflow:hidden;background:var(--el-bg-color)}
@@ -262,7 +278,7 @@ onBeforeUnmount(() => { requestId++ })
 .measurement-secondary-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .secondary-label{font-size:12px;color:var(--el-text-color-secondary);white-space:nowrap}
 :global(.measurement-statistics-popover){max-width:calc(100vw - 24px);box-sizing:border-box}
-@media(max-width:1100px){.query-controls{flex:1 1 100%}.source-controls{flex-wrap:wrap}.search-input{width:300px}.result-line{margin-left:0}}
+@media(max-width:1100px){.query-controls{flex:1 1 100%}.source-controls{flex-wrap:wrap}.result-line{margin-left:0}}
 @media(max-width:1100px) and (min-width:901px){.measurement-browser{grid-template-columns:340px minmax(0,1fr);gap:10px}}
 @media(max-width:900px){.measurement-browser{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(260px,1fr)}.measurement-filter-sidebar{height:240px}.table-region{min-height:260px}}
 </style>
