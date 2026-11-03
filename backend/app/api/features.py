@@ -1,5 +1,5 @@
 """功能组和功能 API"""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db
@@ -17,15 +17,6 @@ from app.services.feature_master_data import (
 )
 
 router = APIRouter()
-
-
-@router.get("/whitepaper-library")
-async def whitepaper_library(feature_id: int | None = Query(None, gt=0), db: AsyncSession = Depends(get_db)):
-    from app.services.whitepaper_feature_library import feature_whitepaper_library, WhitepaperFeatureNotFound
-    try:
-        return await feature_whitepaper_library(db, feature_id)
-    except WhitepaperFeatureNotFound as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
 
 # ===== Feature Groups =====
 
