@@ -1,5 +1,17 @@
 export const REVIEW_CATEGORIES = ['Common', 'ABD', 'CARD', 'GYN', 'OB', 'VAS']
 export const REVIEW_MODES = ['Tissue', 'Flow', 'TissueTM', 'Doppler', 'EI', 'PWVTM', 'STRAINRATETM', 'VShear', 'pVShear', 'URM', 'VATT', 'SMF']
+export const REVIEW_RELATIONS = [
+  { value: 'input', label: '候选输入' },
+  { value: 'alternative', label: '可能替代输入' },
+  { value: 'context', label: '分类上下文' },
+  { value: 'unresolved', label: '待核对关联' }
+]
+export function reviewStatusLabel(status) {
+  return { pending: '待人工核对', proposed: '候选建议', unresolved: '待补依据', confirmed: '已确认', rejected: '已拒绝', deferred: '已暂缓', revoked: '已撤销确认', stale_source: '原始资料已变化', needs_review: '待人工核对', available: '可核对', unreviewed: '尚未核对' }[status] || '状态待核对'
+}
+export function reviewCategoryLabel(category) {
+  return { Common: '通用', ABD: '腹部', CARD: '心脏', GYN: '妇科', OB: '产科', VAS: '血管' }[category] || category
+}
 const clone = value => JSON.parse(JSON.stringify(value))
 const text = value => typeof value === 'string' ? value.trim() : ''
 
@@ -43,7 +55,7 @@ export function visibleDependencyOptions(options, query, selectedKeys = [], limi
 
 export function cloneReviewPayload(detail) {
   const payload = clone(detail?.enrichment?.candidate?.payload || {})
-  return { ...payload, categories: payload.categories || [], modes: payload.modes || [], input_terms: payload.input_terms || [], formula_reference: payload.formula_reference || '', sources: payload.sources || [], uncertainties: payload.uncertainties || [], research_status: payload.research_status || 'unresolved' }
+  return { ...payload, categories: payload.categories || [], modes: payload.modes || [], input_terms: (payload.input_terms || []).map(term => ({ ...term, relation_kind: term.relation_kind || 'input' })), formula_reference: payload.formula_reference || '', sources: payload.sources || [], uncertainties: payload.uncertainties || [], research_status: payload.research_status || 'unresolved' }
 }
 
 export function reviewSnapshot(value) {
@@ -53,6 +65,7 @@ export function reviewSnapshot(value) {
 }
 
 export function validateReviewForm(form, action, detail) {
+  if (detail?.enrichment?.status === 'stale_source') return '原始资料已变化，请等待更新后的候选资料再核对'
   if (!['confirm', 'reject', 'defer', 'revoke'].includes(action)) return '请选择有效的核对操作'
   if (!text(form.confirmed_by)) return '请填写本次核对人'
   if (action !== 'confirm') return text(form.note) ? '' : '请填写处理说明或理由'
@@ -62,6 +75,8 @@ export function validateReviewForm(form, action, detail) {
   if (payload.research_status !== 'proposed') return '待补依据的研究状态不能直接确认，请补充依据后明确改为候选建议'
   if (detail?.enrichment?.candidate?.payload?.research_status === 'unresolved' && !text(form.note)) return '请填写待补依据项转为可确认建议的说明'
   if (!Array.isArray(payload.sources) || !payload.sources.length || payload.sources.some(source => !safeSourceUrl(source.url) || !text(source.title) || !text(source.locator) || !Array.isArray(source.supports) || !source.supports.some(text))) return '请补全至少一条有效来源（HTTP(S)链接、标题、定位和支持内容）'
+  if (!Array.isArray(payload.input_terms)) return '请核对输入术语与候选依赖'
+  if (payload.input_terms.some(term => !REVIEW_RELATIONS.some(option => option.value === term.relation_kind))) return '请核对术语关联类型'
   if (!Array.isArray(payload.input_terms) || payload.input_terms.some(term => !text(term.term) || !Array.isArray(term.possible_dependencies) || term.possible_dependencies.some(dependency => !parseDependencyKey(dependencyKey(dependency))))) return '请核对输入术语与候选依赖'
   return ''
 }
