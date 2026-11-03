@@ -118,7 +118,7 @@ export function createTemplateCatalogEditor({ state, getContext, save, refresh, 
         if (!current(token)) return false
         savedPayload = payload; state.saved = true; baseline = JSON.stringify(state.form)
         await refreshSaved(token)
-        return true
+        return current(token)
       } catch (failure) {
         if (current(token)) state.error = `草稿保存失败：${failureMessage(failure)}`
         return false
