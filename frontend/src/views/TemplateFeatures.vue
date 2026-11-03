@@ -432,7 +432,6 @@ const refreshCatalogPreview = async payload => {
     selectedGroupIds.value = [...selectedGroupIds.value, payload.group_id]
   }
   featureSearch.value = ''
-  ElMessage.success('已定位待提交预览，提交模板版本后生效')
 }
 
 const popoverKey = ref(''); const popStatus = ref('unsupported'); const popExcludes = ref([])
