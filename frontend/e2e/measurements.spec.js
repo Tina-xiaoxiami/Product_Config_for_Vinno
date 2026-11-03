@@ -42,7 +42,7 @@ test('imports human measurements, searches both UI names and filters modes and a
   await page.getByRole('button', { name: '筛选模式', exact: true }).click()
   await popover.getByRole('button', { name: '清空搜索结果' }).click()
   await choose(popover.getByRole('checkbox', { name: 'Doppler', exact: true }))
-  await page.getByRole('heading', { name: '测量库', exact: true }).click()
+  await page.locator('.measurement-library .source-line').click()
   await expect(page.getByText('1 / 3 条', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '筛选模式', exact: true }).click()
   await page.getByRole('button', { name: '清除筛选', exact: true }).click()

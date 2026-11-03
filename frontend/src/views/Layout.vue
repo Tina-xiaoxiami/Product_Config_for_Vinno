@@ -29,7 +29,6 @@
         </el-menu>
       </el-aside>
       <el-main :class="{ 'management-workspace': isProbeManagementPage }">
-        <WorkspacePageHeader v-if="workspace && !['release', 'knowledge'].includes(workspace.sectionId)" :workspace="workspace" />
         <nav v-show="isProbeManagementPage" class="probe-management-navigation" aria-label="探头与应用管理">
           <el-tabs :model-value="$route.path" :before-leave="switchProbeManagementTab" class="probe-management-tabs">
             <el-tab-pane v-for="tab in PROBE_MANAGEMENT_TABS" :key="tab.path" :name="tab.path" :label="tab.label" />
@@ -54,7 +53,6 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PROBE_MANAGEMENT_TABS, probeManagementMenuPath } from '../utils/probeManagementNavigation'
 import { WORKSPACE_SECTIONS, workspaceForPath } from '../utils/workspaceNavigation'
-import WorkspacePageHeader from '../components/WorkspacePageHeader.vue'
 import { ElMessage } from 'element-plus'
 import { Document, DataAnalysis, Setting, Collection, Promotion, Fold, Expand } from '@element-plus/icons-vue'
 
