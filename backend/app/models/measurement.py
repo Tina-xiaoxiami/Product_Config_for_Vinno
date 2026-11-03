@@ -35,3 +35,39 @@ class MeasurementEntry(Base):
     enabled_raw = Column(String(100), nullable=False, default="")
     source_sheet = Column(String(100), nullable=False)
     source_row = Column(Integer, nullable=False)
+
+
+class MeasurementEnrichmentCandidate(Base):
+    """Immutable public-reference proposal, bound to an exact source identity."""
+    __tablename__ = "measurement_enrichment_candidates"
+    __table_args__ = (
+        UniqueConstraint('batch_id', 'item_id', 'revision', name='uq_measurement_candidate_revision'),
+        UniqueConstraint('batch_id', 'item_id', 'fingerprint', name='uq_measurement_candidate_fingerprint'),
+    )
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey('measurement_batches.id'), nullable=False, index=True)
+    item_id = Column(Text, nullable=False)
+    revision = Column(Integer, nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    source_fingerprint = Column(String(64), nullable=False)
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class MeasurementEnrichmentReview(Base):
+    """Append-only human decisions; never change original source rows."""
+    __tablename__ = "measurement_enrichment_reviews"
+    __table_args__ = (UniqueConstraint('batch_id', 'item_id', 'review_revision', name='uq_measurement_enrichment_review_revision'),)
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey('measurement_batches.id'), nullable=False, index=True)
+    item_id = Column(Text, nullable=False)
+    candidate_id = Column(Integer, ForeignKey('measurement_enrichment_candidates.id'), nullable=False)
+    review_revision = Column(Integer, nullable=False)
+    candidate_fingerprint = Column(String(64), nullable=False)
+    source_fingerprint = Column(String(64), nullable=False)
+    request_fingerprint = Column(String(64), nullable=False)
+    action = Column(String(20), nullable=False)
+    confirmed_by = Column(Text, nullable=False)
+    note = Column(Text, nullable=False)
+    confirmed_payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
