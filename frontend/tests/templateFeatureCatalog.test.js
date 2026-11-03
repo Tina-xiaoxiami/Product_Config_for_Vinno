@@ -116,15 +116,22 @@ test('saving blocks duplicate actions and closing, and late completion after dis
 
 test('leaving during the post-save refresh cannot announce an old dialog as a new success', async () => {
   const pending = deferred(), state = createTemplateCatalogEditorState()
+  const view = readFileSync(new URL('../src/views/TemplateFeatures.vue', import.meta.url), 'utf8')
+  const start = view.indexOf('const refreshCatalogPreview ='), end = view.indexOf('\nconst popoverKey', start)
+  let messages = 0
+  const context = { selectedGroupIds: { value: [10] }, featureSearch: { value: '旧功能' },
+    loadData: () => pending.promise, ElMessage: { success() { messages++ } } }
+  const refresh = new Function(...Object.keys(context), `${view.slice(start, end)};return refreshCatalogPreview`)(...Object.values(context))
   const editor = createTemplateCatalogEditor({ state, getContext: () => ({ catalog: catalog(), categories }), save: async () => ({}),
-    refresh: () => pending.promise, confirmDiscard: async () => {} })
+    refresh, confirmDiscard: async () => {} })
   editor.open(); Object.assign(state.form, form())
   const work = editor.submit()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(state.saved, true)
-  editor.dispose(); pending.resolve()
+  editor.dispose(); pending.resolve(true)
   assert.equal(await work, false)
   assert.equal(state.visible, false)
+  assert.equal(messages, 0)
 })
 
 test('new classifications and a previous search cannot hide a successfully staged preview', async () => {
@@ -137,7 +144,7 @@ test('new classifications and a previous search cannot hide a successfully stage
   await refresh({ feature_id: 3, group_id: 20 })
   assert.deepEqual(context.selectedGroupIds.value, [10, 20])
   assert.equal(context.featureSearch.value, '')
-  assert.equal(loads, 1); assert.equal(messages, 1)
+  assert.equal(loads, 1); assert.equal(messages, 0)
   available = false; context.featureSearch.value = '保留本次筛选'
   await assert.rejects(refresh({ group_id: 30 }), /读取失败/)
   assert.deepEqual(context.selectedGroupIds.value, [10, 20])
