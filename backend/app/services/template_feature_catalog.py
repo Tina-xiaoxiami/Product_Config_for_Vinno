@@ -152,10 +152,15 @@ async def version_snapshot(db: AsyncSession) -> dict:
     await db.flush()
     templates = (await db.scalars(select(TemplateFeature).order_by(TemplateFeature.category_id, TemplateFeature.feature_id))).all()
     features = (await db.scalars(select(Feature).where(Feature.probe_matrix_enabled.is_(True)).order_by(Feature.id))).all()
-    return {'schema_version': 2,
-            'templates': [{'category_id': row.category_id, 'feature_id': row.feature_id,
-                           'default_support': row.default_support, 'default_excludes': row.default_excludes} for row in templates],
-            'features': [{'feature_id': row.id, 'group_id': row.group_id} for row in features]}
+    snapshot = {'schema_version': 2,
+                'templates': [{'category_id': row.category_id, 'feature_id': row.feature_id,
+                               'default_support': row.default_support, 'default_excludes': row.default_excludes} for row in templates],
+                'features': [{'feature_id': row.id, 'group_id': row.group_id} for row in features]}
+    try:
+        await validate_snapshot(db, json.dumps(snapshot))
+    except HTTPException as error:
+        raise HTTPException(409, '当前模板存在未入选、重复或失效的支持记录，不能创建新版本，请先核对；历史未被清除') from error
+    return snapshot
 
 
 def _positive(value: Any) -> bool:
@@ -196,6 +201,8 @@ async def validate_snapshot(db: AsyncSession, raw: str) -> tuple[list[dict], lis
                     or row['feature_id'] not in feature_ids or row['group_id'] not in group_ids or row['feature_id'] in seen_members):
                 raise ValueError
             seen_members.add(row['feature_id'])
+        if members is not None and any(row['feature_id'] not in seen_members for row in templates):
+            raise ValueError
         return templates, members
     except (ValueError, TypeError, KeyError) as error:
         raise HTTPException(422, '模板版本快照无效或引用已不存在，未执行回滚') from error
