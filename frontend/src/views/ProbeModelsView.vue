@@ -188,7 +188,7 @@ const modelColumns = [
   { key: 'variant_values', label: '内部型号 / IPN', width: 340, multiValue: true },
   { key: 'application_count', label: '应用', width: 65 },
   { key: 'sort_order', label: '排序', width: 65 }
-]
+].map(column => ({ visible: true, fixed: false, ...column }))
 
 const catDialogVisible = ref(false); const editingCatId = ref(null)
 const modelDialogVisible = ref(false); const editingModelId = ref(null); const saving = ref(false)
