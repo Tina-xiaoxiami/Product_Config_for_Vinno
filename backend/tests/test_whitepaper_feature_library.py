@@ -202,3 +202,16 @@ def test_reader_success_uses_fixed_read_endpoint_and_default_url(monkeypatch, li
     monkeypatch.setattr(bridge,'build_opener',lambda *handlers:Opener())
     assert bridge._read_library('http://127.0.0.1:43121')==library
 
+
+
+@pytest.mark.asyncio
+async def test_upstream_configuration_failure_is_unavailable_not_unlinked(tmp_path, monkeypatch, library):
+    from app.services import whitepaper_feature_library as bridge
+    library['features'][0].update(configuration_items=[], configuration_errors=['配置版本读取失败'])
+    monkeypatch.setattr(bridge,'_read_library',lambda url:library)
+    path,client,engine=await harness(tmp_path)
+    async with client:
+        result=(await client.get('/api/features/whitepaper-library')).json()
+        assert result['source']['available'] is False
+        assert result['summary']['unlinked']==0 and all(row['status']=='unavailable' for row in result['items'])
+    await engine.dispose()
