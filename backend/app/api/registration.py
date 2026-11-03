@@ -55,6 +55,7 @@ from app.schemas.registration import (
     OverseasSeriesMappingItem,
     OverseasSeriesMappingList,
 )
+from app.services.registration_file_preview import preview_certificate, preview_difference
 from app.services.registration_packages import (
     get_registration_package_version_mapping_review,
     RegistrationPackageError,
@@ -482,6 +483,27 @@ async def update_registration_package_enabled(
         )
     except RegistrationPackageError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/packages/file-preview")
+async def preview_registration_package_file(
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+):
+    if kind not in {"certificate", "difference"}:
+        raise HTTPException(status_code=400, detail="未知文件类型")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ({".pdf"} if kind == "certificate" else {".xlsx", ".xlsm"}):
+        raise HTTPException(status_code=400, detail="请选择对应格式的 PDF 或 Excel 文件")
+    try:
+        with tempfile.TemporaryDirectory(prefix="registration-preview-") as temporary:
+            path = await _save_upload(file, Path(temporary), "registration" + suffix)
+            parser = preview_certificate if kind == "certificate" else preview_difference
+            return await asyncio.to_thread(parser, path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"文件解析失败，请检查原件：{exc}") from exc
 
 
 @router.post("/packages/drafts")

@@ -266,6 +266,8 @@ export const rebuildOverseasRegistrationDraft = (snapshotId) =>
 // 放弃一版未发布的草稿：关系、审核条目与修订记录一并删除。
 export const discardOverseasRegistrationDraft = (snapshotId) =>
   api.delete(`/registrations/overseas/snapshots/${snapshotId}`)
+export const previewRegistrationPackageFile = (formData) =>
+  api.post('/registrations/packages/file-preview', formData, { timeout: 180000 })
 export const stageRegistrationPackageDraft = (formData) =>
   api.post('/registrations/packages/drafts', formData)
 export const getRegistrationPackageMappings = (versionId) =>

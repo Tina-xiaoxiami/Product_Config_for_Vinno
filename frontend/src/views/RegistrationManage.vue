@@ -954,6 +954,36 @@
         class="dialog-alert"
       />
       <el-form v-if="!draftReview" :model="packageForm" label-width="120px">
+        <div class="upload-grid">
+          <el-form-item label="注册证文件">
+            <el-upload
+              action="#"
+              :auto-upload="false"
+              :limit="1"
+              accept=".pdf,application/pdf"
+              :on-change="handleCertificateChange"
+              :on-remove="handleCertificateRemove"
+            >
+              <el-button :icon="UploadFilled">选择 PDF</el-button>
+            </el-upload>
+          </el-form-item>
+          <el-form-item label="注册差异表">
+            <el-upload
+              action="#"
+              :auto-upload="false"
+              :limit="1"
+              accept=".xlsx,.xlsm"
+              :on-change="handleDifferenceChange"
+              :on-remove="handleDifferenceRemove"
+            >
+              <el-button :icon="UploadFilled">选择 Excel</el-button>
+            </el-upload>
+          </el-form-item>
+        </div>
+        <div v-if="certificatePreviewMessage || differencePreviewMessage" class="file-preview-messages" aria-live="polite">
+          <p v-if="certificatePreviewMessage">{{ certificatePreviewMessage }}</p>
+          <p v-if="differencePreviewMessage">{{ differencePreviewMessage }}</p>
+        </div>
         <div class="form-grid">
           <el-form-item label="国家">
             <el-select v-model="packageForm.country_code" disabled>
@@ -988,32 +1018,7 @@
         <el-form-item label="更新说明">
           <el-input v-model="packageForm.change_note" type="textarea" :rows="2" />
         </el-form-item>
-        <div class="upload-grid">
-          <el-form-item label="注册证文件">
-            <el-upload
-              action="#"
-              :auto-upload="false"
-              :limit="1"
-              accept=".pdf,application/pdf"
-              :on-change="handleCertificateChange"
-              :on-remove="handleCertificateRemove"
-            >
-              <el-button :icon="UploadFilled">选择 PDF</el-button>
-            </el-upload>
-          </el-form-item>
-          <el-form-item label="注册差异表">
-            <el-upload
-              action="#"
-              :auto-upload="false"
-              :limit="1"
-              accept=".xlsx,.xlsm"
-              :on-change="handleDifferenceChange"
-              :on-remove="handleDifferenceRemove"
-            >
-              <el-button :icon="UploadFilled">选择 Excel</el-button>
-            </el-upload>
-          </el-form-item>
-        </div>
+
       </el-form>
 
       <div v-else class="mapping-review">
@@ -1104,6 +1109,7 @@ import {
   updateDataReviewItem,
   publishRegistrationPackageVersion,
   setRegistrationPackageEnabled,
+  previewRegistrationPackageFile,
   stageRegistrationPackageDraft,
   updateRegistrationPackageMappings
 } from '../api/data'
@@ -1129,6 +1135,11 @@ const packageDialogVisible = ref(false)
 const certificateFile = ref(null)
 const differenceFile = ref(null)
 const staging = ref(false)
+const certificatePreviewMessage = ref('')
+const differencePreviewMessage = ref('')
+let certificatePreviewSequence = 0
+let differencePreviewSequence = 0
+let certificateAutofill = {}
 const publishing = ref(false)
 const overseasLoading = ref(false)
 const overseasCountries = ref([])
@@ -1162,7 +1173,7 @@ const issueBatchChangedBy = ref('product_owner')
 const issueBatchChangeNote = ref('')
 const issueBatchConfirmCount = ref('')
 const draftReview = ref(null)
-const packageForm = ref({
+const newPackageForm = () => ({
   country_code: 'CN',
   unit_code: '',
   display_name: '',
@@ -1174,6 +1185,7 @@ const packageForm = ref({
   change_note: '',
   effective_date: ''
 })
+const packageForm = ref(newPackageForm())
 
 const selectedModel = computed(() => models.value.find(model => model.id === selectedModelId.value))
 const mappedProductModels = computed(() => productMappings.value
@@ -1841,29 +1853,83 @@ const handleTogglePackageEnabled = async (group) => {
 }
 
 const openPackageDialog = () => {
+  certificatePreviewSequence++
+  differencePreviewSequence++
+  certificateAutofill = {}
+  certificatePreviewMessage.value = ''
+  differencePreviewMessage.value = ''
+  packageForm.value = newPackageForm()
   certificateFile.value = null
   differenceFile.value = null
   draftReview.value = null
   packageDialogVisible.value = true
 }
 
+const clearCertificateAutofill = () => {
+  for (const [key, value] of Object.entries(certificateAutofill)) {
+    if (packageForm.value[key] === value) packageForm.value[key] = ''
+  }
+  certificateAutofill = {}
+}
+
+const previewFile = async (kind, file) => {
+  const certificate = kind === 'certificate'
+  const sequence = certificate ? ++certificatePreviewSequence : ++differencePreviewSequence
+  const message = certificate ? certificatePreviewMessage : differencePreviewMessage
+  message.value = '正在解析文件…'
+  const data = new FormData()
+  data.append('kind', kind)
+  data.append('file', file)
+  try {
+    const result = await previewRegistrationPackageFile(data)
+    if (sequence !== (certificate ? certificatePreviewSequence : differencePreviewSequence)) return
+    if (certificate) {
+      const labels = { registration_number: '注册证号', effective_date: '生效日期' }
+      const filled = []
+      for (const [key, value] of Object.entries(result.fields)) {
+        if (!packageForm.value[key]) {
+          packageForm.value[key] = value
+          certificateAutofill[key] = value
+          filled.push(`${labels[key]}（${result.evidence[key]}）`)
+        }
+      }
+      message.value = [filled.length ? `已识别${filled.join('、')}，请核对原件。` : '未自动回填字段，请核对填写。', ...result.warnings].join(' ')
+    } else {
+      message.value = `差异表已识别 ${result.model_count} 个型号、${result.probe_count} 个探头；生成草稿后请确认机型映射。`
+    }
+  } catch (error) {
+    if (sequence !== (certificate ? certificatePreviewSequence : differencePreviewSequence)) return
+    message.value = error.response?.data?.detail || '文件解析失败，请检查文件或手动填写。'
+  }
+}
+
 const handleCertificateChange = (file) => {
+  clearCertificateAutofill()
   certificateFile.value = file.raw
+  if (file.raw) previewFile('certificate', file.raw)
 }
 
 const handleCertificateRemove = () => {
+  certificatePreviewSequence++
+  clearCertificateAutofill()
   certificateFile.value = null
+  certificatePreviewMessage.value = ''
 }
 
 const handleDifferenceChange = (file) => {
   differenceFile.value = file.raw
+  if (file.raw) previewFile('difference', file.raw)
 }
 
 const handleDifferenceRemove = () => {
+  differencePreviewSequence++
   differenceFile.value = null
+  differencePreviewMessage.value = ''
 }
 
 const openDraftReview = async (group, version) => {
+  certificatePreviewSequence++
+  differencePreviewSequence++
   try {
     draftReview.value = await getRegistrationPackageMappings(version.id)
     packageForm.value.confirmed_by = group.confirmed_by || ''
@@ -1951,6 +2017,8 @@ onMounted(async () => {
 
 <style scoped>
 .registration-manage-page { max-width: 1180px; margin: 0 auto; }
+.file-preview-messages { margin: 0 0 12px 120px; color: #52657e; font-size: 12px; }
+.file-preview-messages p { margin: 4px 0; }
 .registration-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .registration-actions .el-button + .el-button { margin-left: 0; }
 .registration-source-note { color: #64748b; font-size: 12px; }
