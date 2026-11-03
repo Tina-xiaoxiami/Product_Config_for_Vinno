@@ -267,3 +267,27 @@ async def test_submit_refuses_legacy_hidden_support_without_deleting_history(tmp
         assert await db.scalar(select(func.count()).select_from(TemplateVersion))==0
         assert not (await db.get(Feature,3)).probe_matrix_enabled
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_probe_reader_uses_only_committed_members_and_identifies_v2_template_version(tmp_path,monkeypatch):
+    from test_probe_workspace import harness as probe_harness, create
+    from app.api.template_features import router
+    client,sessions,engine,_=await probe_harness(tmp_path,monkeypatch)
+    client._transport.app.include_router(router,prefix='/api/template-features')
+    async with sessions() as db:
+        db.add(Feature(id=2,group_id=1,name='配置新功能',probe_matrix_enabled=False));await db.commit()
+    async with client:
+        workspace=await create(client)
+        assert len(workspace['data']['rows'])==1
+        response=await client.post('/api/template-features/catalog-draft',json={'feature_id':2,'group_id':1,'category_ids':[1]})
+        assert response.status_code==200,response.text
+        pending=(await client.get(f"/api/probes/workspaces/{workspace['id']}?refresh_template=true")).json()
+        assert len(pending['template_data']['rows'])==1
+        assert (await client.post('/api/template-features/submit',json={'version_number':'selected-feature'})).status_code==200
+        viewed=(await client.get(f"/api/probes/workspaces/{workspace['id']}?refresh_template=true")).json()
+        assert len(viewed['data']['rows'])==1  # Read-only refresh does not materialize a workspace draft.
+        assert len(viewed['template_data']['rows'])==2
+        assert next(row for row in viewed['template_data']['rows'] if row['feature_id']==2)['defined_status']=='supported'
+        assert viewed['template_data']['template_version']['number']=='selected-feature'
+    await engine.dispose()
