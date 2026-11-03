@@ -4,12 +4,14 @@ import io
 import json
 from pathlib import Path
 import sys
+from email.message import Message
 from urllib.error import HTTPError, URLError
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('measurement_suggestions_import', ROOT / 'tools/import_measurement_suggestions.py')
+assert SPEC is not None and SPEC.loader is not None
 TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 
@@ -69,7 +71,7 @@ def test_mismatch_and_missing_file_stop_before_any_write(proposal, monkeypatch):
     assert calls == [None]
 
 
-@pytest.mark.parametrize('error', [HTTPError('http://localhost', 409, 'changed', {}, io.BytesIO(b'stale source')), URLError('offline')])
+@pytest.mark.parametrize('error', [HTTPError('http://localhost', 409, 'changed', Message(), io.BytesIO(b'stale source')), URLError('offline')])
 def test_transport_errors_are_failures_not_success(proposal, monkeypatch, error):
     _, _, file = proposal
     def request(*_): raise error
