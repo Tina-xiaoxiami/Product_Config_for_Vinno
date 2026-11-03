@@ -15,15 +15,37 @@
     </div>
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
     <template v-if="library.batch">
-      <el-alert v-if="!visibleRows.length" title="当前条件未命中" type="info" :closable="false">
-        <template #default><span>可清除筛选后在当前版本全库查找。</span><el-button size="small" link type="primary" @click="clearFilters">清除查询条件</el-button></template>
-      </el-alert>
-      <div class="table-region">
-        <div class="measurement-classification">
-          <el-radio-group v-model="scope" size="small" aria-label="测量分类">
-            <el-radio-button value="">全部分类</el-radio-button><el-radio-button value="common">常规测量</el-radio-button><el-radio-button value="application">应用测量</el-radio-button><el-radio-button value="unclassified">未分类</el-radio-button>
+      <div class="measurement-browser">
+        <aside class="measurement-filter-sidebar" aria-label="测量库筛选">
+          <div class="facet-heading"><strong>分类与应用</strong><span title="按当前查询及记录类型统计，未计入表头列筛选">记录数</span></div>
+          <el-radio-group v-model="scope" size="small" aria-label="测量分类" class="scope-options">
+            <div v-for="option in scopeOptions" :key="option.value" class="scope-branch">
+              <div class="scope-option" :class="{ active: scope === option.value }">
+                <el-radio :value="option.value">{{ option.label }}</el-radio><span class="facet-count">{{ facets.scopes[option.countKey] }}</span>
+              </div>
+              <fieldset v-if="option.value === 'application'" class="application-options">
+                <legend>具体应用 · 多选</legend>
+                <el-button size="small" text :type="!selectedApplications.length ? 'primary' : 'default'" :aria-pressed="!selectedApplications.length" @click="selectedApplications = []">不限应用</el-button>
+                <el-checkbox-group v-model="selectedApplications" aria-label="具体应用" class="facet-options" @change="selectApplication">
+                  <div v-for="application in facets.categories" :key="application.value" class="facet-option">
+                    <el-checkbox :value="application.value" :label="application.value">{{ application.value }}</el-checkbox><span class="facet-count">{{ application.count }}</span>
+                  </div>
+                </el-checkbox-group>
+              </fieldset>
+            </div>
           </el-radio-group>
-        </div>
+          <div class="facet-heading mode-heading"><strong>关联模式</strong><el-button size="small" text :type="!selectedModes.length ? 'primary' : 'default'" :aria-pressed="!selectedModes.length" @click="selectedModes = []">不限模式</el-button></div>
+          <el-checkbox-group v-model="selectedModes" aria-label="关联模式" class="facet-options">
+            <div v-for="option in facets.modes" :key="option.value" class="facet-option">
+              <el-checkbox :value="option.value" :label="option.value">{{ option.value || '未标注模式' }}</el-checkbox><span class="facet-count">{{ option.count }}</span>
+            </div>
+          </el-checkbox-group>
+          <p class="facet-hint">同组多选，应用与模式交叉筛选。未勾选表示不限；数字为列筛选前的记录数。</p>
+        </aside>
+        <div class="table-region">
+          <el-alert v-if="!visibleRows.length" title="当前条件未命中" type="info" :closable="false">
+            <template #default><span>可清除筛选后在当前版本全库查找。</span><el-button size="small" link type="primary" @click="clearFilters">清除查询条件</el-button></template>
+          </el-alert>
         <ProbeDataTable :key="tableKey" table-id="human-measurement-library" :rows="rows" :columns="columns" fill-height :page-size="50" auto-apply-filters :actions-width="150" @filtered="visibleRows = $event">
           <template #toolbar>
             <div class="measurement-table-context">
@@ -55,6 +77,7 @@
             <el-button v-if="row.enrichment?.candidate" size="small" link type="primary" @click="enrichmentReview.open(row)">核对建议</el-button>
           </template>
         </ProbeDataTable>
+        </div>
       </div>
     </template>
     <el-empty v-else-if="!loading && !loadError" description="尚未导入测量库，请导入人用中文表" />
@@ -86,12 +109,19 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api/index'
 import ProbeDataTable from '../components/ProbeDataTable.vue'
-import { filterMeasurements, measurementCounts, projectMeasurementRow } from '../utils/measurementLibrary'
+import { filterMeasurements, measurementCounts, measurementFacets, projectMeasurementRow } from '../utils/measurementLibrary'
 import MeasurementEnrichmentReviewDialog from '../components/MeasurementEnrichmentReviewDialog.vue'
 
 const library = ref({ batches: [], batch: null, entries: [] })
 const batchId = ref(null), loading = ref(false), loadError = ref('')
 const query = ref(''), kind = ref(''), scope = ref(''), resetCounter = ref(0)
+const selectedApplications = ref([]), selectedModes = ref([])
+const scopeOptions = [
+  { value: '', label: '全部分类', countKey: 'all' },
+  { value: 'common', label: '常规测量', countKey: 'common' },
+  { value: 'application', label: '应用测量', countKey: 'application' },
+  { value: 'unclassified', label: '未分类', countKey: 'unclassified' }
+]
 const includePending = ref(true), enrichmentReview = ref(null)
 const visibleRows = ref([]), detail = ref(null)
 const statisticsOpen = ref(false), statisticsPanel = ref(null), statisticsButton = ref(null)
@@ -136,7 +166,12 @@ const statistics = computed(() => [
   { label: '计算分组', values: summary.value.groups || {} },
   { label: '计算启用状态', values: Object.fromEntries(Object.entries(summary.value.enabled || {}).map(([key, value]) => [enabledLabel(key), value])) }
 ])
-const rows = computed(() => filterMeasurements(library.value.entries.map(row => projectMeasurementRow(row, includePending.value)), { q: query.value, kind: kind.value, scope: scope.value }).map(row => ({
+const projectedRows = computed(() => library.value.entries.map(row => projectMeasurementRow(row, includePending.value)))
+const sidebarFilters = computed(() => ({ q: query.value, kind: kind.value, scope: scope.value,
+  category: selectedApplications.value.length ? selectedApplications.value : null,
+  mode: selectedModes.value.length ? selectedModes.value : null }))
+const facets = computed(() => measurementFacets(projectedRows.value, sidebarFilters.value))
+const rows = computed(() => filterMeasurements(projectedRows.value, sidebarFilters.value).map(row => ({
   ...row, match_label: matchLabel(row.match),
   enabled_label: row.kind === 'calculation' ? enabledLabel(row.enabled) + (row.enabled === 'unknown' && row.enabled_raw ? ` (${row.enabled_raw})` : '') : '',
   name_note: [!row.description ? '英文使用 Id' : '', !row.cn_name ? '中文名缺失' : ''].filter(Boolean).join('；')
@@ -144,8 +179,9 @@ const rows = computed(() => filterMeasurements(library.value.entries.map(row => 
 const tableKey = computed(() => `${batchId.value}:${kind.value}:${scope.value}:${resetCounter.value}`)
 watch(tableKey, () => { statisticsOpen.value = false })
 onDeactivated(() => { statisticsOpen.value = false })
-watch(scope, () => { kind.value = '' })
-function clearFilters() { query.value = ''; kind.value = ''; scope.value = ''; resetCounter.value++ }
+watch(scope, value => { kind.value = ''; if (value !== 'application') selectedApplications.value = [] })
+function selectApplication(values) { if (values.length) scope.value = 'application' }
+function clearFilters() { query.value = ''; kind.value = ''; scope.value = ''; selectedApplications.value = []; selectedModes.value = []; resetCounter.value++ }
 let requestId = 0
 async function loadLibrary() {
   const current = ++requestId
@@ -195,7 +231,9 @@ onBeforeUnmount(() => { requestId++ })
 
 <style scoped>
 .measurement-library{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.batch-select{width:330px;max-width:100%}.search-input{width:320px;max-width:100%}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
-.measurement-classification{flex-shrink:0;margin:10px 0 4px}.measurement-secondary-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-left:10px;border-left:2px solid var(--workspace-border)}.secondary-label{font-size:12px;color:var(--el-text-color-secondary);white-space:nowrap}
+.measurement-browser{display:grid;grid-template-columns:236px minmax(0,1fr);gap:14px;flex:1;min-height:0;margin-top:10px}.measurement-filter-sidebar{min-height:0;overflow:auto;background:var(--el-fill-color-lighter);border:1px solid var(--workspace-border,var(--el-border-color));border-radius:8px;padding:10px;overscroll-behavior:contain}.facet-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;min-height:32px}.facet-heading>span{font-size:11px;color:var(--el-text-color-secondary)}.scope-options{display:flex;flex-direction:column;align-items:stretch;width:100%;gap:2px}.scope-branch{width:100%}.scope-option,.facet-option{display:flex;align-items:center;gap:6px;min-height:32px;padding:0 8px;border-radius:4px}.scope-option.active{background:var(--el-color-primary-light-9);color:var(--el-color-primary)}.scope-option :deep(.el-radio),.facet-option :deep(.el-checkbox){display:flex;flex:1;min-width:0;margin:0;height:auto;min-height:32px}.facet-option :deep(.el-checkbox__label){white-space:normal;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.facet-count{flex-shrink:0;min-width:24px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:var(--el-text-color-secondary)}.application-options{border:0;border-left:1px solid var(--el-border-color);margin:4px 0 8px 16px;padding:0 0 0 8px;min-width:0}.application-options legend{font-size:11px;color:var(--el-text-color-secondary);padding:0 4px}.application-options>.el-button{margin:2px 0}.facet-options{display:flex;flex-direction:column;gap:1px}.facet-option:has(.is-checked){background:var(--el-color-primary-light-9)}.mode-heading{border-top:1px solid var(--el-border-color);margin-top:10px;padding-top:8px}.facet-hint{margin:12px 4px 2px;font-size:11px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-secondary-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.secondary-label{font-size:12px;color:var(--el-text-color-secondary);white-space:nowrap}
 :global(.measurement-statistics-popover){max-width:calc(100vw - 24px);box-sizing:border-box}
 @media(max-width:1100px){.query-controls{flex:1 1 100%}.source-controls{flex-wrap:wrap}.search-input{width:300px}.result-line{margin-left:0}}
+@media(max-width:1100px) and (min-width:701px){.measurement-browser{grid-template-columns:200px minmax(0,1fr);gap:10px}}
+@media(max-width:700px){.measurement-browser{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(260px,1fr)}.measurement-filter-sidebar{max-height:240px}.table-region{min-height:260px}}
 </style>
