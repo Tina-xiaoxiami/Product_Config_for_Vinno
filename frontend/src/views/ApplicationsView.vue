@@ -1,12 +1,13 @@
 <template>
-  <div class="page">
-    <ProbeManagementActions path="/applications">
+  <div class="page" :class="{ embedded }">
+    <component :is="embedded ? 'div' : ProbeManagementActions" path="/applications" class="application-actions">
+      <strong v-if="embedded" class="application-title">应用范围</strong>
       <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
       <el-tag v-if="editMode" size="small" type="warning">编辑中 · {{ pendingCount }} 项</el-tag>
       <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
       <template v-if="!editMode">
-        <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
-        <el-button size="small" @click="openVersions">版本历史</el-button>
+        <el-button size="small" type="primary" @click="enterEditMode">{{ embedded ? '编辑应用' : '编辑模式' }}</el-button>
+        <el-button size="small" @click="openVersions">应用版本</el-button>
       </template>
       <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
       <template v-if="editMode">
@@ -14,10 +15,11 @@
         <el-button size="small" type="primary" @click="submitChanges" :loading="submitting">提交并创建版本</el-button>
         <el-button size="small" type="danger" @click="discardChanges" :disabled="submitting">废弃全部</el-button>
       </template>
-    </ProbeManagementActions>
+    </component>
+    <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <div class="panel-layout">
       <!-- Left: Category Panel -->
-      <div class="panel panel-left">
+      <div v-if="!embedded" class="panel panel-left">
         <div class="panel-header">
           <span class="panel-title">探头类别</span>
           <span class="count-hint"><em>常规</em> <em>POC</em></span>
@@ -46,6 +48,7 @@
       <div class="panel panel-right">
         <template v-if="selectedCategory">
           <div class="panel-body" v-loading="loadingApps">
+            <div class="app-groups">
             <!-- Regular Apps -->
             <div class="app-group">
               <div class="app-group-header">
@@ -76,11 +79,12 @@
               <el-empty v-else description="暂无 POC 应用" :image-size="40" />
             </div>
 
+            </div>
             <!-- Quick Add -->
             <div class="add-section">
               <div class="add-section-title">{{ editMode ? '暂存添加（需提交后生效）' : '添加应用到本类别' }}</div>
               <div class="add-section-row">
-                <el-select v-model="addAppId" placeholder="选择应用" filterable style="width:200px" size="small">
+                <el-select ref="addInput" v-model="addAppId" placeholder="选择应用" filterable style="width:200px" size="small">
                   <el-option v-for="a in availableApps" :key="a.id" :label="a.name" :value="a.id" />
                 </el-select>
                 <el-radio-group v-model="addAppType" size="small" style="margin:0 8px">
@@ -107,14 +111,14 @@
     </div>
 
     <!-- Create Application Dialog -->
-    <el-dialog v-model="dialogVisible" title="新增应用定义" width="450px">
+    <el-dialog v-model="dialogVisible" title="新增应用定义" width="450px" :before-close="closeAppDialog" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving">
       <el-form :model="form" label-width="70px">
         <el-form-item label="中文名"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="英文名"><el-input v-model="form.en_name" placeholder="如 Abdomen" /></el-form-item>
         <el-form-item label="排序"><el-input-number v-model="form.sort_order" :min="0" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="closeAppDialog()">取消</el-button>
         <el-button type="primary" @click="saveApp" :loading="saving">保存</el-button>
       </template>
     </el-dialog>
@@ -148,7 +152,7 @@
         </el-table-column>
         <el-table-column label="操作" width="80" align="center">
           <template #default="{ row }">
-            <el-button size="small" text type="danger" @click="deleteApp(row)">删除</el-button>
+            <el-button size="small" text type="danger" @click="deleteApp(row)" :disabled="pendingCount > 0 || submitting">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -161,7 +165,7 @@
         <el-table-column prop="created_at" label="时间" width="200" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
-            <el-button size="small" type="warning" @click="rollback(row)">回滚</el-button>
+            <el-button size="small" type="warning" @click="rollback(row)" :disabled="pendingCount > 0 || submitting">回滚</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -171,15 +175,19 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getProbeCategories, getApplications, createApplication, deleteApplication } from '../api/data'
 import api from '../api/index'
-import { useRoute } from 'vue-router'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
+import { applicationEditorState, createCategoryApplicationLoader } from '../utils/probeApplications'
+
+const props = defineProps({ embedded: Boolean, categories: { type: Array, default: () => [] }, categoryId: { type: Number, default: null } })
+const emit = defineEmits(['counts', 'changed', 'editor-state'])
 const route = useRoute()
 const loading = ref(false)
 const categories = ref([])
@@ -199,6 +207,10 @@ const availableApps = ref([])
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({ name: '', en_name: '', sort_order: 0 })
+const formBaseline = ref(JSON.stringify(form))
+const formDirty = computed(() => dialogVisible.value && JSON.stringify(form) !== formBaseline.value)
+const addInput = ref()
+const loadError = ref('')
 
 // All apps dialog
 const showAllApps = ref(false)
@@ -270,38 +282,45 @@ const filteredAllApps = computed(() => {
   })
 })
 
-const loadCategories = async () => {
+const editorState = computed(() => applicationEditorState({ pendingCount: pendingCount.value, editMode: editMode.value,
+  submitting: submitting.value, saving: saving.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value }))
+watch(editorState, value => emit('editor-state', value), { immediate: true, flush: 'sync' })
+const loadCategories = async (force = false) => {
   loading.value = true
   try {
-    const res = await getProbeCategories({ limit: 200 })
-    categories.value = res.items || []
-    const requested = Number(route.query.category_id)
-    const selected = categories.value.find(cat => cat.id === requested)
-      || categories.value.find(cat => cat.id === selectedCategory.value?.id)
-      || categories.value[0]
-    selectedCategory.value = selected || null
-    if (selected) await selectCategory(selected)
-  } catch { ElMessage.error('加载探头类别失败') } finally { loading.value = false }
+    const source = props.embedded ? props.categories : (await getProbeCategories({ limit: 200 })).items || []
+    categories.value = source
+    const requested = props.embedded ? props.categoryId : Number(route.query.category_id)
+    const selected = source.find(cat => cat.id === requested) || source.find(cat => cat.id === selectedCategory.value?.id) || source[0]
+    if (selected) await selectCategory(selected, force)
+    else { selectedCategory.value = null; categoryLoader.invalidate(); categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] }
+    return true
+  } catch { loadError.value = '加载探头类别失败，请重试'; return false }
+  finally { loading.value = false }
 }
-
-const selectCategory = async (cat) => {
-  selectedCategory.value = cat
-  await loadCategoryApps(cat.id)
-  await loadAvailableApps(cat.id)
+const categoryLoader = createCategoryApplicationLoader({
+  readApps: id => api.get(`/probe-categories/${id}/apps`),
+  readAvailable: id => api.get(`/probe-categories/${id}/available-apps`),
+  selectedId: () => selectedCategory.value?.id,
+  start: () => { loadingApps.value = true; loadError.value = ''; categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] },
+  loaded: (_id, apps, available) => { categoryApps.value = apps; availableApps.value = available },
+  failed: () => { loadError.value = '当前类别应用加载失败，请重试' },
+  finished: () => { loadingApps.value = false }
+})
+const selectCategory = async (cat, force = false) => {
+  if (!force && !editorState.value.canSwitch) return false
+  selectedCategory.value = cat; addAppId.value = null
+  return categoryLoader.load(cat.id)
 }
-
-const loadCategoryApps = async (catId) => {
-  loadingApps.value = true
-  try {
-    categoryApps.value = await api.get(`/probe-categories/${catId}/apps`)
-  } catch { categoryApps.value = { regular: [], poc: [] } } finally { loadingApps.value = false }
-}
-
-const loadAvailableApps = async (catId) => {
-  try {
-    availableApps.value = await api.get(`/probe-categories/${catId}/available-apps`)
-  } catch { availableApps.value = [] }
-}
+const loadCategoryApps = async catId => categoryLoader.load(catId)
+const loadAvailableApps = async catId => categoryLoader.load(catId)
+watch(() => [props.categoryId, props.categories], async ([id, source], previous) => {
+  if (!props.embedded) return
+  categories.value = source
+  const selected = source.find(category => category.id === id)
+  if (selected && (selected.id !== selectedCategory.value?.id || !previous)) await selectCategory(selected)
+  if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
+})
 
 // ========= Edit mode =========
 const enterEditMode = () => {
@@ -370,7 +389,8 @@ const submitChanges = async () => {
     Object.keys(pendingChanges).forEach(key => delete pendingChanges[key])
     editMode.value = false
     ElMessage.success(`已提交 ${entries.length} 项变更并创建版本`)
-    await refreshData()
+    await refreshData({ force: true })
+    emit('changed')
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '提交失败，编辑内容已保留，请重试')
   } finally {
@@ -380,7 +400,7 @@ const submitChanges = async () => {
 
 // ========= CRUD for app definitions =========
 const handleCreateApp = () => {
-  form.name = ''; form.en_name = ''; form.sort_order = 0; dialogVisible.value = true
+  form.name = ''; form.en_name = ''; form.sort_order = 0; formBaseline.value = JSON.stringify(form); dialogVisible.value = true
 }
 
 const saveApp = async () => {
@@ -395,23 +415,27 @@ const saveApp = async () => {
     }
     await updateCounts()
     await loadAllApps()
+    emit('changed')
   } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 
+let countsRequest = 0
 const updateCounts = async () => {
-  for (const cat of categories.value) {
+  const request = ++countsRequest
+  const entries = await Promise.all(categories.value.map(async cat => {
     try {
       const apps = await api.get(`/probe-categories/${cat.id}/apps`)
-      categoryAppCounts.value[cat.id] = {
-        regular: apps.regular?.length || 0,
-        poc: apps.poc?.length || 0,
-        total: (apps.regular?.length || 0) + (apps.poc?.length || 0)
-      }
-    } catch { categoryAppCounts.value[cat.id] = { regular: 0, poc: 0, total: 0 } }
-  }
+      return [cat.id, { regular: apps.regular?.length || 0, poc: apps.poc?.length || 0,
+        total: (apps.regular?.length || 0) + (apps.poc?.length || 0) }]
+    } catch { return [cat.id, categoryAppCounts.value[cat.id] || { regular: null, poc: null, total: null }] }
+  }))
+  if (request !== countsRequest) return
+  categoryAppCounts.value = Object.fromEntries(entries)
+  emit('counts', { ...categoryAppCounts.value })
 }
 
 const deleteApp = async (row) => {
+  if (pendingCount.value || submitting.value || saving.value) return ElMessage.warning('请先提交或撤销应用编辑，再删除定义')
   try {
     await ElMessageBox.confirm(`确认删除应用"${row.name}"？此操作不可恢复。`, '确认删除', { type: 'warning' })
     await deleteApplication(row.id)
@@ -422,6 +446,7 @@ const deleteApp = async (row) => {
       await loadAvailableApps(selectedCategory.value.id)
     }
     await updateCounts()
+    emit('changed')
   } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.detail || '删除失败') }
 }
 
@@ -440,19 +465,48 @@ const openVersions = async () => {
   showVersions.value = true
 }
 const rollback = async (row) => {
+  if (pendingCount.value || submitting.value || saving.value) return ElMessage.warning('请先处理应用编辑，再回滚版本')
   try {
     await api.post(`/applications/rollback/${row.id}`)
     ElMessage.success('回滚成功')
     await loadVersions()
-    await refreshData()
+    await refreshData({ force: true })
+    emit('changed')
   } catch { ElMessage.error('回滚失败') }
 }
 
-const refreshData = async () => {
-  await loadCategories()
+const refreshData = async ({ force = false } = {}) => {
+  if (!force && !editorState.value.canRefresh) return false
+  const success = await loadCategories(force)
+  if (!success) return false
   await Promise.all([updateCounts(), loadAllApps()])
+  return true
 }
-useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !pendingCount.value && !submitting.value && !dialogVisible.value })
+const closeAppDialog = async done => {
+  if (saving.value) return false
+  if (formDirty.value) {
+    try { await ElMessageBox.confirm('应用定义尚未保存，是否放弃修改？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+    catch { return false }
+  }
+  dialogVisible.value = false
+  if (typeof done === 'function') done()
+  return true
+}
+const discardLocal = () => { cancelEdit(); dialogVisible.value = false; addAppId.value = null }
+const requestLeave = async () => {
+  if (editorState.value.busy) return false
+  if (!editorState.value.hasUnsavedChanges) return true
+  try { await ElMessageBox.confirm('应用编辑尚未提交，是否放弃并离开？', '未提交的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+  catch { return false }
+  discardLocal(); return true
+}
+const focusAdd = async () => { await nextTick(); addInput.value?.focus() }
+const beforeUnload = event => { if (!props.embedded && editorState.value.protected) { event.preventDefault(); event.returnValue = '' } }
+useWorkspaceRefresh(refreshData, { canRefresh: () => editorState.value.canRefresh && (!props.embedded || props.categories.length > 0) })
+onBeforeRouteLeave(() => props.embedded ? true : requestLeave())
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { categoryLoader.dispose(); countsRequest += 1; window.removeEventListener('beforeunload', beforeUnload) })
+defineExpose({ editorState, refresh: refreshData, requestLeave, discardLocal, focusAdd })
 </script>
 
 <style scoped>
@@ -581,4 +635,20 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !pending
 .pending-item.remove { color: #dc2626 }
 
 .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; }
+.application-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.application-title { font-size: 13px; margin-right: auto; }
+.embedded { flex: none; min-height: 0; width: 100%; }
+.embedded .application-actions { margin-bottom: 6px; }
+.embedded .panel-layout { flex: none; }
+.embedded .panel-right { border: 0; }
+.embedded .panel-body { padding: 0; overflow: auto; max-height: 300px; }
+.embedded .app-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.embedded .app-group { padding: 6px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; }
+.embedded .app-group-header { margin-bottom: 4px; }
+.embedded .app-list { gap: 4px; }
+.embedded .app-tag { padding: 2px 5px; }
+.embedded .add-section { padding: 6px 0 0; }
+.embedded .add-section-title { margin-bottom: 4px; }
+.embedded .add-section-row { flex-wrap: wrap; }
+@media (max-width: 760px) { .embedded .app-groups { grid-template-columns: 1fr; } }
 </style>

@@ -6,7 +6,7 @@ const source = read('ApplicationsView')
 const ref = value => ({ value })
 function submitHarness(post) {
   const changes = { one: { action:'add', catId:1, appId:2, probeType:'poc' } }
-  const context = { pendingChanges: changes, submitting: ref(false), editMode: ref(true), api:{ post }, ElMessage:{ warning(){},success(){},error(){} }, refreshData: async()=>{} }
+  const context = { pendingChanges: changes, submitting: ref(false), editMode: ref(true), api:{ post }, ElMessage:{ warning(){},success(){},error(){} }, refreshData: async()=>{}, emit() {} }
   const block = source.slice(source.indexOf('const submitChanges ='), source.indexOf('// ========= CRUD'))
   const submit = new Function(...Object.keys(context), `${block}; return submitChanges`)(...Object.values(context))
   return { ...context, submit }
@@ -61,14 +61,16 @@ test('submitting locks draft changes and duplicate submissions until the batch c
   assert.equal(app.submitting.value, false)
 })
 
-test('model application maintenance routes to its category without obsolete assignment writes', () => {
+test('model application maintenance focuses its shared category without a second route or obsolete writes', async () => {
   const view=read('ProbeModelsView'), calls=[]
   const block=view.slice(view.indexOf('const openAppDialog ='),view.indexOf('// Variant management'))
-  const open=new Function('router',`${block}; return openAppDialog`)({push:value=>calls.push(value)})
-  open({id:9,category_id:3})
-  assert.deepEqual(calls,[{path:'/applications',query:{category_id:3}}])
+  const open=new Function('categories','selectCategory','focusApplications',`${block}; return openAppDialog`)(
+    ref([{id:3}]), category=>{calls.push(['select',category.id]);return true},async()=>calls.push(['focus']))
+  assert.equal(await open({id:9,category_id:3}),true)
+  assert.deepEqual(calls,[['select',3],['focus']])
+  assert.doesNotMatch(block,/router\.push/)
   assert.doesNotMatch(view,/setProbeModelApps|selectedAppIds/)
   assert.match(view,/useWorkspaceRefresh\(loadData/)
-  assert.match(source,/useWorkspaceRefresh\(refreshData, \{ canRefresh: \(\) => !editMode.value && !pendingCount.value/)
+  assert.match(source,/useWorkspaceRefresh\(refreshData, \{ canRefresh: \(\) => editorState.value.canRefresh/)
   assert.match(source,/Number\(route.query.category_id\)/)
 })

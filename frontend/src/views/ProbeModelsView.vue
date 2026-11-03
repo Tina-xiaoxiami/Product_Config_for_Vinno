@@ -17,6 +17,7 @@
               </el-upload>
               <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
       </template>
+      <el-button size="small" @click="refreshData">刷新</el-button>
       <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增类别</el-button>
     </ProbeManagementActions>
     <div class="panel-layout">
@@ -35,7 +36,7 @@
           >
             <div class="category-info">
               <span class="category-name">{{ cat.name }}</span>
-              <span class="category-count">{{ (modelMap[cat.id] || []).length }} 型</span>
+              <span class="category-count">{{ (modelMap[cat.id] || []).length }} 型 <span class="app-counts">常规 {{ applicationCounts[cat.id]?.regular ?? '—' }} · POC {{ applicationCounts[cat.id]?.poc ?? '—' }}</span></span>
             </div>
             <div class="category-actions" @click.stop>
               <el-button size="small" text @click="handleEditCategory(cat)">编辑</el-button>
@@ -46,55 +47,35 @@
         </div>
       </div>
 
-      <!-- Right: Models Panel -->
-      <div class="panel panel-right">
-        <div class="panel-body" v-loading="loading">
-          <template v-if="selectedCategory">
-            <el-table :data="currentModels" border stripe size="small" style="width:100%" height="100%" v-if="currentModels.length">
-              <el-table-column type="index" label="#" width="40" />
-              <el-table-column prop="model_number" label="型号" width="130" />
-              <el-table-column label="内部型号 / IPN" min-width="240">
-                <template #default="{row:m}">
-                  <div v-if="!m._variants?.length" class="no-data">无</div>
-                  <div v-else class="variant-tags">
-                    <el-tag
-                      v-for="v in m._variants"
-                      :key="v.id"
-                      size="small"
-                      type="info"
-                      :title="[v.notes, v.history_ids.length > 1 ? `${v.history_ids.length} 条相同物料历史记录` : ''].filter(Boolean).join(' · ')"
-                      style="margin:2px 4px 2px 0"
-                    >
-                      {{ v.internal_model }}<template v-if="v.ipn"> / {{ v.ipn }}</template>
-                      <small v-if="v.history_ids.length > 1"> · 历史 {{ v.history_ids.length }}</small>
-                    </el-tag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="应用" width="60" align="center">
-                <template #default="{row:m}">{{ m._appCount ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="排序" width="60" align="center">
-                <template #default="{row:m}">{{ m.sort_order ?? 0 }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="300" fixed="right">
-                <template #default="{ row: m }">
-                  <el-button size="small" text @click="openVariantDialog(m)">变体</el-button>
-                  <el-button size="small" text @click="openAppDialog(m)">类别应用</el-button>
-                  <el-button size="small" text @click="handleEditModel(m, selectedCategory.id)">编辑</el-button>
-                  <el-button size="small" text type="danger" @click="handleDeleteModel(m)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else description="该类别下暂无探头型号" :image-size="80">
-              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
-            </el-empty>
-          </template>
-          <div v-else class="placeholder-content">
-            <el-icon :size="48" color="#c0c4cc"><FolderOpened /></el-icon>
-            <p>从左侧选择一个探头类别以查看型号</p>
-          </div>
-        </div>
+      <!-- Both sections stay mounted and share the selected category. -->
+      <div class="panel panel-right unified-right">
+        <section ref="applicationsSection" class="applications-zone" aria-label="类别应用" tabindex="-1">
+          <ApplicationsView ref="applicationsPanel" embedded :categories="categories" :category-id="selectedCategory?.id"
+            @counts="applicationCounts = $event" @editor-state="applicationState = $event" @changed="onApplicationsChanged" />
+        </section>
+        <section class="models-zone" aria-label="探头型号">
+          <div class="models-heading"><strong>探头型号</strong><span>{{ currentModels.length }} 型</span></div>
+          <ProbeDataTable v-if="selectedCategory" :rows="modelRows" :columns="modelColumns" table-id="probe-applications-models"
+            fill-height :actions-width="260" auto-apply-filters>
+            <template #cell="{row, column}">
+              <div v-if="column.key === 'variant_values'" class="variant-tags">
+                <el-tag v-for="variant in row._variants" :key="variant.id" size="small" type="info"
+                  :title="[variant.notes, variant.history_ids.length > 1 ? `${variant.history_ids.length} 条相同物料历史记录` : ''].filter(Boolean).join(' · ')">
+                  {{ variant.internal_model }}<template v-if="variant.ipn"> / {{ variant.ipn }}</template>
+                  <small v-if="variant.history_ids.length > 1"> · 历史 {{ variant.history_ids.length }}</small>
+                </el-tag><span v-if="!row._variants?.length" class="no-data">无</span>
+              </div>
+              <span v-else>{{ row[column.key] ?? '—' }}</span>
+            </template>
+            <template #actions="{row}">
+              <el-button size="small" text @click="openVariantDialog(row)">变体</el-button>
+              <el-button size="small" text @click="openAppDialog(row)">类别应用</el-button>
+              <el-button size="small" text @click="handleEditModel(row, selectedCategory.id)">编辑</el-button>
+              <el-button size="small" text type="danger" @click="handleDeleteModel(row)">删除</el-button>
+            </template>
+          </ProbeDataTable>
+          <el-empty v-else description="从左侧选择探头类别" :image-size="50" />
+        </section>
       </div>
     </div>
 
@@ -179,21 +160,35 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, FolderOpened } from '@element-plus/icons-vue'
 import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
 import api from '../api/index'
-import { useRouter } from 'vue-router'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { groupProbeVariants } from '../utils/probeMatrix'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
-const router = useRouter()
+import ApplicationsView from './ApplicationsView.vue'
+import ProbeDataTable from '../components/ProbeDataTable.vue'
+import { resolveProbeCategory, applicationEditorState, probeContextBlock, probeModelRows } from '../utils/probeApplications'
+
+const route = useRoute()
 const loading = ref(false)
 const categories = ref([])
 const modelMap = ref({})
 const selectedCategory = ref(null)
+const applicationsPanel = ref(), applicationsSection = ref()
+const applicationCounts = ref({}), applicationState = ref(applicationEditorState())
+let requestedCategoryId = Number(route.query.category_id) || null
+const modelColumns = [
+  { key: 'position', label: '#', width: 42, fixed: true, filter: false },
+  { key: 'model_number', label: '型号', width: 135, fixed: true },
+  { key: 'variant_values', label: '内部型号 / IPN', width: 340, multiValue: true },
+  { key: 'application_count', label: '应用', width: 65 },
+  { key: 'sort_order', label: '排序', width: 65 }
+]
 
 const catDialogVisible = ref(false); const editingCatId = ref(null)
 const modelDialogVisible = ref(false); const editingModelId = ref(null); const saving = ref(false)
@@ -219,7 +214,8 @@ const loadData = async () => {
     }
     categories.value = nextCategories
     modelMap.value = nextMap
-    selectedCategory.value = nextCategories.find(cat => cat.id === selectedCategory.value?.id) || nextCategories[0] || null
+    selectedCategory.value = resolveProbeCategory(nextCategories, selectedCategory.value?.id, requestedCategoryId)
+    requestedCategoryId = null
   } catch {
     if (request === dataLoadRequest) ElMessage.error('加载失败')
   } finally {
@@ -232,8 +228,32 @@ const currentModels = computed(() => {
   return modelMap.value[selectedCategory.value.id] || []
 })
 
-const selectCategory = (cat) => {
+const modelRows = computed(() => probeModelRows(currentModels.value))
+const metadataOpen = () => catDialogVisible.value || modelDialogVisible.value || variantDialogVisible.value
+const selectCategory = cat => {
+  if (metadataOpen() || probeContextBlock(applicationState.value)) {
+    ElMessage.warning('请先完成当前编辑或提交，再切换探头类别'); return false
+  }
   selectedCategory.value = cat
+  return true
+}
+watch(() => route.query.category_id, value => {
+  const category = categories.value.find(row => row.id === Number(value))
+  if (category) selectCategory(category)
+  else if (!categories.value.length) requestedCategoryId = Number(value) || null
+})
+const focusApplications = async () => {
+  await nextTick()
+  applicationsSection.value?.scrollIntoView({ block: 'nearest' })
+  applicationsSection.value?.focus({ preventScroll: true })
+  await applicationsPanel.value?.focusAdd()
+}
+watch(() => route.query.focus, value => { if (value === 'applications') focusApplications() }, { immediate: true })
+const onApplicationsChanged = () => loadData()
+const refreshData = async () => {
+  if (metadataOpen() || !applicationState.value.canRefresh) { ElMessage.warning('请先提交或撤销当前编辑，再刷新'); return false }
+  await loadData()
+  return applicationsPanel.value?.refresh()
 }
 
 // Category CRUD
@@ -248,6 +268,7 @@ const saveCategory = async () => {
   } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 const handleDeleteCategory = async (row) => {
+  if (probeContextBlock(applicationState.value, true)) return ElMessage.warning('请先提交或撤销应用编辑，再删除类别')
   try {
     await ElMessageBox.confirm(`确认删除"${row.name}"及其所有型号？`, '确认', { type: 'warning' })
     await deleteProbeCategory(row.id); ElMessage.success('删除成功')
@@ -285,7 +306,12 @@ const handleDeleteModel = async (row) => {
 }
 
 // Applications are maintained once per category, including regular and POC tracks.
-const openAppDialog = (model) => router.push({ path: '/applications', query: { category_id: model.category_id } })
+const openAppDialog = async model => {
+  const category = categories.value.find(row => row.id === model.category_id)
+  if (category && !selectCategory(category)) return false
+  await focusApplications()
+  return true
+}
 
 // Variant management
 const variantDialogVisible = ref(false); const variantTarget = ref(null)
@@ -367,7 +393,25 @@ const importAllVariants = async (file) => {
   } catch { ElMessage.error('导入失败') }
 }
 
-useWorkspaceRefresh(loadData, { canRefresh: () => !catDialogVisible.value && !modelDialogVisible.value && !variantDialogVisible.value })
+const metadataBusy = () => saving.value || importing.value || populating.value
+const metadataDirty = () => catDialogVisible.value || modelDialogVisible.value || (variantDialogVisible.value && Boolean(newVariant.internal_model || newVariant.ipn || newVariant.notes))
+const requestLeave = async () => {
+  if (metadataBusy() || applicationState.value.busy) return false
+  if (metadataDirty() || applicationState.value.hasUnsavedChanges) {
+    try { await ElMessageBox.confirm('探头或应用编辑尚未保存或提交，是否放弃并离开？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+    catch { return false }
+    applicationsPanel.value?.discardLocal()
+  }
+  catDialogVisible.value = false; modelDialogVisible.value = false; variantDialogVisible.value = false
+  return true
+}
+const beforeUnload = event => {
+  if (metadataBusy() || metadataDirty() || applicationState.value.protected) { event.preventDefault(); event.returnValue = '' }
+}
+onBeforeRouteLeave(requestLeave)
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { dataLoadRequest += 1; window.removeEventListener('beforeunload', beforeUnload) })
+useWorkspaceRefresh(loadData, { canRefresh: () => !metadataOpen() && applicationState.value.canRefresh })
 </script>
 
 <style scoped>
@@ -519,4 +563,11 @@ useWorkspaceRefresh(loadData, { canRefresh: () => !catDialogVisible.value && !mo
   padding-top: 12px;
   border-top: 1px solid #e4e7ed;
 }
+.unified-right { padding: 8px; gap: 8px; }
+.applications-zone { flex-shrink: 0; min-height: 0; max-height: 45%; overflow: auto; outline: none; }
+.models-zone { flex: 1; display: flex; flex-direction: column; min-height: 160px; overflow: hidden; }
+.models-heading { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 3px; }
+.models-heading span, .app-counts { color: #909399; font-size: 11px; }
+.app-counts { white-space: nowrap; }
+@media (max-width: 760px) { .panel-left { width: 160px; min-width: 140px; }.unified-right { padding: 6px; } }
 </style>
