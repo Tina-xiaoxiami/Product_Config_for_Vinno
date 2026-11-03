@@ -319,6 +319,14 @@ watch(() => [props.categoryId, props.categories], async ([id, source], previous)
   if (!props.embedded) return
   categories.value = source
   const selected = source.find(category => category.id === id)
+  if (!selected) {
+    selectedCategory.value = null
+    categoryLoader.invalidate()
+    categoryApps.value = { regular: [], poc: [] }; availableApps.value = []; addAppId.value = null
+    loadingApps.value = false
+    if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
+    return
+  }
   if (selected && (selected.id !== selectedCategory.value?.id || !previous)) await selectCategory(selected)
   if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
 })
