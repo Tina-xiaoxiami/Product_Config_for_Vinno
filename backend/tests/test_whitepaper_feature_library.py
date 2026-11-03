@@ -1,5 +1,6 @@
 """The feature editor reads authoritative WP descriptions without copying them."""
 import copy
+from contextlib import closing
 import io
 import json
 import sqlite3
@@ -36,7 +37,7 @@ def library():
 async def harness(tmp_path):
     from app.api.features import router
     path = tmp_path / 'features.db'
-    with sqlite3.connect(path) as c:
+    with closing(sqlite3.connect(path)) as c, c:
         c.executescript('''
             CREATE TABLE features(id INTEGER PRIMARY KEY, name TEXT, primary_cn_name TEXT, primary_en_name TEXT, ipn TEXT);
             CREATE TABLE config_items(id INTEGER PRIMARY KEY,ipn TEXT);
