@@ -104,6 +104,10 @@ test('measurement controls stay compact and the table fills remaining height thr
   expect(versionBox.height).toBe(32)
   expect((await page.getByRole('button', { name: '导入人用中文表', exact: true }).boundingBox()).height).toBe(32)
   expect((await page.getByRole('button', { name: '筛选中文 UI 名称', exact: true }).boundingBox()).height).toBe(24)
+  const applicationsColumn = await page.locator('.application-filter-column').boundingBox()
+  const modesColumn = await page.locator('.mode-filter-column').boundingBox()
+  expect(Math.abs(applicationsColumn.y - modesColumn.y), 'application and mode columns start together').toBeLessThan(2)
+  expect(modesColumn.x, 'modes sit in a separate column beside applications').toBeGreaterThanOrEqual(applicationsColumn.x + applicationsColumn.width)
 
   async function expectFilledTable() {
     const table = await page.locator('.measurement-library .el-table').boundingBox()
@@ -131,9 +135,20 @@ test('measurement controls stay compact and the table fills remaining height thr
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(page.getByRole('cell', { name: '测量 79', exact: true })).toBeVisible()
   await page.setViewportSize({ width: 1000, height: 760 })
+  const narrowApplications = await page.locator('.application-filter-column').boundingBox()
+  const narrowModes = await page.locator('.mode-filter-column').boundingBox()
+  expect(narrowModes.x).toBeGreaterThanOrEqual(narrowApplications.x + narrowApplications.width)
   await expect.poll(async () => (await page.locator('.measurement-library .el-table').boundingBox()).height).toBeGreaterThan(200)
   await expectFilledTable()
   await page.screenshot({ path: testInfo.outputPath('measurement-compact-narrow.png') })
+  await page.setViewportSize({ width: 800, height: 900 })
+  const stackedApplications = await page.locator('.application-filter-column').boundingBox()
+  const stackedModes = await page.locator('.mode-filter-column').boundingBox()
+  const filterPanel = await page.locator('.measurement-filter-sidebar').boundingBox()
+  const resultsPanel = await page.locator('.measurement-library .table-region').boundingBox()
+  expect(stackedModes.x).toBeGreaterThanOrEqual(stackedApplications.x + stackedApplications.width)
+  expect(resultsPanel.y, 'small windows put the two-column filter panel above results').toBeGreaterThanOrEqual(filterPanel.y + filterPanel.height)
+  await page.screenshot({ path: testInfo.outputPath('measurement-compact-stacked.png') })
 })
 
 test('flat application and mode facets combine, keep empty choices and reset together', async ({ page }, testInfo) => {
