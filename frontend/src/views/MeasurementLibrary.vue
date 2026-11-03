@@ -4,6 +4,9 @@
       <div v-if="library.batch" class="query-controls">
         <el-input v-model="query" placeholder="查找 Id、英文 UI 或中文 UI 名称" clearable size="small" class="search-input" />
         <el-button size="small" @click="clearFilters">清除查询条件</el-button>
+        <el-radio-group v-model="scope" size="small" aria-label="测量分类" class="measurement-classification">
+          <el-radio-button v-for="option in scopeOptions" :key="option.value" :value="option.value" :title="`${option.label} · ${facets.scopes[option.countKey]} 条`">{{ option.label }}</el-radio-button>
+        </el-radio-group>
       </div>
       <div class="source-controls">
         <el-select v-if="library.batches.length" v-model="batchId" aria-label="测量库版本" size="small" class="batch-select" @change="loadLibrary">
@@ -17,33 +20,29 @@
     <template v-if="library.batch">
       <div class="measurement-browser">
         <aside class="measurement-filter-sidebar" aria-label="测量库筛选">
-          <div class="application-filter-column">
-          <div class="facet-heading"><strong>分类与应用</strong><span title="按当前查询及记录类型统计，未计入表头列筛选">记录数</span></div>
-          <el-radio-group v-model="scope" size="small" aria-label="测量分类" class="scope-options">
-            <div v-for="option in scopeOptions" :key="option.value" class="scope-branch">
-              <div class="scope-option" :class="{ active: scope === option.value }">
-                <el-radio :value="option.value">{{ option.label }}</el-radio><span class="facet-count">{{ facets.scopes[option.countKey] }}</span>
-              </div>
-              <fieldset v-if="option.value === 'application'" class="application-options">
-                <legend>具体应用 · 多选</legend>
-                <el-button size="small" text :type="!selectedApplications.length ? 'primary' : 'default'" :aria-pressed="!selectedApplications.length" @click="selectedApplications = []">不限应用</el-button>
-                <el-checkbox-group v-model="selectedApplications" aria-label="具体应用" class="facet-options" @change="selectApplication">
-                  <div v-for="application in facets.categories" :key="application.value" class="facet-option">
-                    <el-checkbox :value="application.value" :label="application.value">{{ application.value }}</el-checkbox><span class="facet-count">{{ application.count }}</span>
-                  </div>
-                </el-checkbox-group>
-              </fieldset>
+          <nav class="filter-navigation application-filter-column" aria-label="应用筛选导航">
+            <div class="facet-heading"><strong>应用</strong><span class="navigation-level">按应用查找</span></div>
+            <div class="filter-navigation-body">
+              <el-button class="navigation-all" size="small" text :type="!selectedApplications.length ? 'primary' : 'default'" :aria-pressed="!selectedApplications.length" @click="selectedApplications = []">不限应用</el-button>
+              <el-checkbox-group v-model="selectedApplications" aria-label="具体应用" class="facet-options" @change="selectApplication">
+                <div v-for="application in facets.categories" :key="application.value" class="facet-option">
+                  <el-checkbox :value="application.value" :label="application.value">{{ application.value }}</el-checkbox><span class="facet-count">{{ application.count }}</span>
+                </div>
+              </el-checkbox-group>
+              <p v-if="!facets.categories.length" class="navigation-empty">暂无具体应用</p>
             </div>
-          </el-radio-group>
-          </div>
-          <div class="mode-filter-column">
-          <div class="facet-heading mode-heading"><strong>关联模式</strong><el-button size="small" text :type="!selectedModes.length ? 'primary' : 'default'" :aria-pressed="!selectedModes.length" @click="selectedModes = []">不限模式</el-button></div>
-          <el-checkbox-group v-model="selectedModes" aria-label="关联模式" class="facet-options">
-            <div v-for="option in facets.modes" :key="option.value" class="facet-option">
-              <el-checkbox :value="option.value" :label="option.value">{{ option.value || '未标注模式' }}</el-checkbox><span class="facet-count">{{ option.count }}</span>
+          </nav>
+          <nav class="filter-navigation mode-filter-column" aria-label="模式筛选导航">
+            <div class="facet-heading"><strong>关联模式</strong><span class="navigation-level">按模式细分</span></div>
+            <div class="filter-navigation-body">
+              <el-button class="navigation-all" size="small" text :type="!selectedModes.length ? 'primary' : 'default'" :aria-pressed="!selectedModes.length" @click="selectedModes = []">不限模式</el-button>
+              <el-checkbox-group v-model="selectedModes" aria-label="关联模式" class="facet-options">
+                <div v-for="option in facets.modes" :key="option.value" class="facet-option">
+                  <el-checkbox :value="option.value" :label="option.value">{{ option.value || '未标注模式' }}</el-checkbox><span class="facet-count">{{ option.count }}</span>
+                </div>
+              </el-checkbox-group>
             </div>
-          </el-checkbox-group>
-          </div>
+          </nav>
           <p class="facet-hint">同组多选，应用与模式交叉筛选。未勾选表示不限；数字为列筛选前的记录数。</p>
         </aside>
         <div class="table-region">
@@ -235,9 +234,35 @@ onBeforeUnmount(() => { requestId++ })
 
 <style scoped>
 .measurement-library{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.batch-select{width:330px;max-width:100%}.search-input{width:320px;max-width:100%}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
-.measurement-browser{display:grid;grid-template-columns:440px minmax(0,1fr);gap:14px;flex:1;min-height:0;margin-top:10px}.measurement-filter-sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px;align-content:start;min-height:0;overflow:auto;background:var(--el-fill-color-lighter);border:1px solid var(--workspace-border,var(--el-border-color));border-radius:8px;padding:10px;overscroll-behavior:contain}.facet-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;min-height:32px}.facet-heading>span{font-size:11px;color:var(--el-text-color-secondary)}.scope-options{display:flex;flex-direction:column;align-items:stretch;width:100%;gap:2px}.scope-branch{width:100%}.scope-option,.facet-option{display:flex;align-items:center;gap:6px;min-height:32px;padding:0 8px;border-radius:4px}.scope-option.active{background:var(--el-color-primary-light-9);color:var(--el-color-primary)}.scope-option :deep(.el-radio),.facet-option :deep(.el-checkbox){display:flex;flex:1;min-width:0;margin:0;height:auto;min-height:32px}.facet-option :deep(.el-checkbox__label){white-space:normal;overflow-wrap:anywhere;font-size:13px;line-height:1.5}.facet-count{flex-shrink:0;min-width:24px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:var(--el-text-color-secondary)}.application-options{border:0;border-left:1px solid var(--el-border-color);margin:4px 0 8px 16px;padding:0 0 0 8px;min-width:0}.application-options legend{font-size:11px;color:var(--el-text-color-secondary);padding:0 4px}.application-options>.el-button{margin:2px 0}.facet-options{display:flex;flex-direction:column;gap:1px}.application-filter-column,.mode-filter-column{min-width:0}.mode-filter-column{border-left:1px solid var(--el-border-color);padding-left:10px}.facet-option:has(.is-checked){background:var(--el-color-primary-light-9)}.mode-heading{margin-bottom:2px}.facet-hint{grid-column:1/-1;margin:12px 4px 2px;font-size:11px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-secondary-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.secondary-label{font-size:12px;color:var(--el-text-color-secondary);white-space:nowrap}
+.measurement-classification{flex-shrink:0}
+.measurement-browser{display:grid;grid-template-columns:440px minmax(0,1fr);gap:14px;flex:1;min-height:0;margin-top:10px}
+.measurement-filter-sidebar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr) auto;gap:8px 10px;min-height:0}
+.filter-navigation{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--el-border-color);border-radius:8px;overflow:hidden;background:var(--el-bg-color)}
+.facet-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:42px;flex-shrink:0;padding:0 10px;border-bottom:1px solid var(--el-border-color-lighter);font-size:13px}
+.facet-heading strong{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.facet-heading strong::before{content:'';width:3px;height:14px;border-radius:2px;background:var(--el-color-primary)}
+.navigation-level{font-size:11px;color:var(--el-text-color-secondary);white-space:nowrap}
+.application-filter-column{background:var(--el-color-primary-light-9);border-color:var(--el-color-primary-light-7)}
+.application-filter-column .facet-heading{background:var(--el-color-primary-light-8);border-bottom-color:var(--el-color-primary-light-7);color:var(--el-color-primary-dark-2)}
+.mode-filter-column .facet-heading{background:var(--el-fill-color-light)}
+.mode-filter-column .facet-heading strong::before{background:var(--el-color-success)}
+.filter-navigation-body{flex:1;min-height:0;overflow:auto;padding:8px 6px;overscroll-behavior:contain}
+.navigation-all{display:flex;width:100%;justify-content:flex-start;border-radius:4px;min-height:32px;padding-left:10px;margin-bottom:4px}
+.navigation-all[aria-pressed='true']{background:var(--el-color-primary-light-8);font-weight:600}
+.facet-options{display:flex;flex-direction:column;gap:3px;padding-left:6px;border-left:1px solid var(--el-border-color)}
+.facet-option{display:flex;align-items:center;gap:6px;min-height:34px;padding:0 6px;border-left:2px solid transparent;border-radius:4px}
+.facet-option:hover{background:var(--el-fill-color-light)}
+.facet-option :deep(.el-checkbox){display:flex;flex:1;min-width:0;margin:0;height:auto;min-height:34px}
+.facet-option :deep(.el-checkbox__label){white-space:normal;overflow-wrap:anywhere;font-size:13px;line-height:1.5}
+.facet-count{flex-shrink:0;min-width:24px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:var(--el-text-color-secondary)}
+.facet-option:has(.is-checked){border-left-color:var(--el-color-primary);background:var(--el-color-primary-light-8)}
+.mode-filter-column .facet-option:has(.is-checked){border-left-color:var(--el-color-success);background:var(--el-color-success-light-9)}
+.navigation-empty,.facet-hint{font-size:11px;color:var(--el-text-color-secondary);line-height:1.7}
+.facet-hint{grid-column:1/-1;margin:0 4px}
+.measurement-secondary-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.secondary-label{font-size:12px;color:var(--el-text-color-secondary);white-space:nowrap}
 :global(.measurement-statistics-popover){max-width:calc(100vw - 24px);box-sizing:border-box}
 @media(max-width:1100px){.query-controls{flex:1 1 100%}.source-controls{flex-wrap:wrap}.search-input{width:300px}.result-line{margin-left:0}}
 @media(max-width:1100px) and (min-width:901px){.measurement-browser{grid-template-columns:340px minmax(0,1fr);gap:10px}}
-@media(max-width:900px){.measurement-browser{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(260px,1fr)}.measurement-filter-sidebar{max-height:240px}.table-region{min-height:260px}}
+@media(max-width:900px){.measurement-browser{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(260px,1fr)}.measurement-filter-sidebar{height:240px}.table-region{min-height:260px}}
 </style>
