@@ -1,6 +1,8 @@
 <template>
   <div class="page">
     <ProbeManagementActions path="/template-features">
+        <span v-if="featureCatalog" class="management-meta">功能库 {{ featureCatalog.total }} · 已入模板 {{ features.filter(feature => !feature.pending).length }}</span>
+        <el-button size="small" :disabled="loading || !!loadError || !featureCatalog" @click="openTemplateCatalog">从功能库添加</el-button>
         <template v-if="editMode">
           <el-tag size="small" type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
           <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
@@ -12,9 +14,11 @@
           <el-button size="small" @click="openVersions">版本历史</el-button>
         </template>
     </ProbeManagementActions>
+    <el-alert v-if="loadError" type="error" :closable="false" class="catalog-load-error"><template #title>{{ loadError }} <el-button link size="small" @click="refreshData">重试读取</el-button></template></el-alert>
+    <TemplateFeatureCatalogDialog ref="catalogDialog" :catalog="featureCatalog" :categories="categories" :refresh-after-save="refreshCatalogPreview" />
     <el-card shadow="never" class="template-card">
-      <div v-if="draftTotal > 0 && !editMode" class="draft-bar">
-        <span><strong>{{ draftTotal }}</strong> 条草稿待提交</span>
+      <div v-if="(draftTotal > 0 || catalogAdditionCount > 0) && !editMode" class="draft-bar">
+        <span><strong>{{ draftTotal }}</strong> 条配置草稿待提交<span v-if="catalogAdditionCount"> · 新增功能 {{ catalogAdditionCount }} 项</span></span>
         <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
         <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
       </div>
@@ -24,6 +28,7 @@
           <div class="legend">
             <span class="legend-item"><span class="dot supported"></span> 支持</span>
             <span class="legend-item"><span class="dot unsupported"></span> 不支持</span>
+            <span v-if="catalogAdditionCount" class="legend-item catalog-preview-legend">待提交预览 {{ catalogAdditionCount }} 项功能</span>
             <span v-if="editMode" class="legend-item"><span class="dot pending"></span> 待保存</span>
           </div>
           <div class="toolbar-right">
@@ -39,7 +44,7 @@
           </div>
         </div>
         <div class="filter-row">
-          <el-input v-model="featureSearch" placeholder="搜索功能名称" size="small" clearable style="width:160px" />
+          <el-input v-model="featureSearch" placeholder="搜索功能名称或IPN" size="small" clearable style="width:160px" />
           <el-checkbox v-model="selectAllGroups" :indeterminate="groupIndeterminate" size="small">全选</el-checkbox>
           <el-checkbox-group v-model="selectedGroupIds" size="small" class="group-filter-compact">
             <el-checkbox v-for="g in featureGroups" :key="g.id" :label="g.id" :value="g.id" size="small">{{ g.name }}</el-checkbox>
@@ -74,6 +79,7 @@
                   <span class="matrix-feature-header">
                     {{ f.name }}
                     <FeatureNameMark :feature-id="f.id" :name="f.name" />
+                    <small v-if="f.pending" class="catalog-preview-badge">待提交</small>
                   </span>
                 </template>
                 <template #default="{ row: cat }">
@@ -140,7 +146,7 @@
                     </div>
                   </el-popover>
                   <el-tooltip v-else :content="getCellTooltip(cat.id, f.id)" placement="top" :disabled="!getCellTooltip(cat.id, f.id)">
-                    <ProbeSupportCell :status="_getStatus(`${cat.id}_${f.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${f.id}`)" :tender="_getTender(`${cat.id}_${f.id}`)" :mode="showMode" />
+                    <ProbeSupportCell :class="{ 'catalog-preview-cell': f.pending }" :status="_getStatus(`${cat.id}_${f.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${f.id}`)" :tender="_getTender(`${cat.id}_${f.id}`)" :mode="showMode" />
                   </el-tooltip>
                 </template>
               </el-table-column>
@@ -171,7 +177,9 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
-import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
+import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
+import TemplateFeatureCatalogDialog from '../components/TemplateFeatureCatalogDialog.vue'
+import { catalogFeatureLabel, projectTemplateCatalog, catalogCellSource } from '../utils/templateFeatureCatalog'
 import api from '../api/index'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 import ProbeSupportCell from '../components/ProbeSupportCell.vue'
@@ -179,6 +187,7 @@ import { expandCombinedName, parseProbeExcludes, formatProbeSupport, probeGroupC
 
 const categories = ref([]); const features = ref([])
 const tplMap = ref({}); const loading = ref(false)
+const featureCatalog = ref(null), pendingMatrixCells = ref({}), pendingMatrixFeatureIds = ref(new Set()), catalogAdditionCount = ref(0), loadError = ref(''), catalogDialog = ref(null)
 const editMode = ref(false); const pendingChanges = reactive({})
 const categoryAppsMap = ref({})
 const showMode = ref('auto')
@@ -202,7 +211,7 @@ const searchMatchGroups = computed(() => {
   const q = featureSearch.value.toLowerCase()
   const matched = new Set()
   for (const f of features.value) {
-    if (f.name.toLowerCase().includes(q)) matched.add(f.group_id)
+    if (catalogFeatureLabel(f).toLowerCase().includes(q)) matched.add(f.group_id)
   }
   return [...matched]
 })
@@ -221,7 +230,7 @@ const filteredFeatures = computed(() => {
   }
   if (featureSearch.value) {
     const q = featureSearch.value.toLowerCase()
-    list = list.filter(f => f.name.toLowerCase().includes(q))
+    list = list.filter(f => catalogFeatureLabel(f).toLowerCase().includes(q))
   }
   return list
 })
@@ -262,7 +271,7 @@ function getExcludedList(catId, featId) {
   if (key in pendingExcludes && pendingExcludes[key]) {
     return _parseExcludes(pendingExcludes[key]).excludes
   }
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).excludes } catch { return [] }
   }
@@ -284,10 +293,13 @@ function getSupportedList(catId, featId) {
 let templateLoadRequest = 0
 const loadData = async () => {
   const request = ++templateLoadRequest
-  loading.value = true
+  loading.value = true; loadError.value = ''
   try {
-    const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500, probe_matrix_only: true }), getFeatureGroups()])
+    const [catRes, catalog, drafts] = await Promise.all([
+      getProbeCategories({ limit: 200 }), getTemplateFeatureCatalog(), api.get('/template-features/drafts')
+    ])
     const nextCategories = catRes.items || []
+    const projection = projectTemplateCatalog(catalog, drafts, nextCategories)
     const details = await Promise.all(nextCategories.map(async cat => {
       const [templates, apps] = await Promise.all([
         getTemplateFeatures(cat.id), api.get(`/probe-categories/${cat.id}/apps`)
@@ -299,25 +311,31 @@ const loadData = async () => {
       for (const t of detail.templates) allTpl[`${detail.categoryId}_${t.feature_id}`] = t
       allCatApps[detail.categoryId] = detail.apps
     }
-    if (request !== templateLoadRequest) return
-    categories.value = nextCategories
-    features.value = featRes.items || []
-    const probeGroupIds = new Set(features.value.map(feature => feature.group_id))
-    featureGroups.value = (grpRes.items || []).filter(group => probeGroupIds.has(group.id))
+    if (request !== templateLoadRequest) return false
+    categories.value = nextCategories; features.value = projection.features
+    featureGroups.value = projection.groups; featureCatalog.value = catalog
+    pendingMatrixCells.value = projection.pendingCells; pendingMatrixFeatureIds.value = projection.pendingFeatureIds
+    draftTotal.value = projection.draftTotal; catalogAdditionCount.value = projection.catalogAdditionsCount
     tplMap.value = allTpl; categoryAppsMap.value = allCatApps
-  } catch {
-    if (request === templateLoadRequest) ElMessage.error('加载失败')
+    return true
+  } catch (failure) {
+    if (request === templateLoadRequest) {
+      loadError.value = `功能库或模板数据加载失败，已保留当前矩阵。${failure?.message || '请重试'}`
+    }
+    return false
   } finally {
     if (request === templateLoadRequest) loading.value = false
   }
 }
 
+const templateCell = key => catalogCellSource(key, tplMap.value, pendingMatrixCells.value, pendingMatrixFeatureIds.value)
+
 const getCellClass = (catId, featId) => {
   const key = `${catId}_${featId}`
-  let status = tplMap.value[key]?.default_support
+  let status = templateCell(key)?.default_support
   if (key in pendingChanges) status = pendingChanges[key]
   const cls = status === 'supported' ? 'supported' : status === 'conditional' ? 'conditional' : 'unsupported'
-  return key in pendingChanges ? cls + ' is-dirty' : cls
+  return `${cls}${pendingMatrixFeatureIds.value.has(featId) ? ' is-catalog-preview' : ''}${key in pendingChanges ? ' is-dirty' : ''}`
 }
 
 const getCellIcon = (catId, featId) => {
@@ -327,7 +345,7 @@ const getCellIcon = (catId, featId) => {
     if (pendingChanges[key] === 'conditional') return '△'
     return ''
   }
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_support === 'supported') return '√'
   if (t?.default_support === 'conditional') return '△'
   return ''
@@ -336,7 +354,7 @@ const getCellIcon = (catId, featId) => {
 const isAllApps = (catId, featId) => {
   const key = `${catId}_${featId}`
   if (key in pendingChanges) return pendingChanges[key] === 'supported'
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (!t || t.default_support === 'unsupported') return false
   const excluded = getResolvedExcluded(catId, featId)
   return excluded.length === 0
@@ -344,7 +362,7 @@ const isAllApps = (catId, featId) => {
 
 function _getStatus(key) {
   if (key in pendingChanges) return pendingChanges[key]
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   return t ? t.default_support : null
 }
 
@@ -352,7 +370,7 @@ function _parseExcludes(value) { return parseProbeExcludes(value) }
 
 function _getExcludes(key) {
   if (key in pendingExcludes) return _parseExcludes(pendingExcludes[key]).excludes
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).excludes } catch {}
   }
@@ -361,7 +379,7 @@ function _getExcludes(key) {
 
 function _getTender(key) {
   if (key in pendingExcludes) return _parseExcludes(pendingExcludes[key]).tender
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).tender } catch {}
   }
@@ -374,8 +392,9 @@ const getCellDisplay = (catId, featId) => {
 }
 
 const getCellTooltip = (catId, featId) => {
+  const prefix = pendingMatrixFeatureIds.value.has(featId) ? '待提交预览，提交模板版本后生效。' : ''
   const all = getCatAllApps(catId)
-  if (!all.length) return ''
+  if (!all.length) return prefix
   const key = `${catId}_${featId}`
   const status = _getStatus(key)
   const excluded = _getExcludes(key)
@@ -385,11 +404,11 @@ const getCellTooltip = (catId, featId) => {
     const supported = all.filter(n => !new Set(excluded).has(n) && !tender.includes(n))
     if (supported.length) parts.push('支:' + supported.join(','))
     parts.push('招:' + tender.join(','))
-    return parts.join('\n')
+    return [prefix, ...parts].filter(Boolean).join('\n')
   }
-  if (!excluded.length) return ''
+  if (!excluded.length) return prefix
   const supported = all.filter(n => !new Set(excluded).has(n))
-  return `支: ${supported.join(', ')}\n除: ${excluded.join(', ')}`
+  return [prefix, `支: ${supported.join(', ')}\n除: ${excluded.join(', ')}`].filter(Boolean).join('\n')
 }
 
 // ---- edit mode ----
@@ -400,6 +419,21 @@ const cancelEdit = () => {
   Object.keys(pendingExcludes).forEach(k => delete pendingExcludes[k])
 }
 const pendingCount = computed(() => Object.keys(pendingChanges).length)
+
+const openTemplateCatalog = () => {
+  if (pendingCount.value > 0) { ElMessage.warning('请先保存草稿或取消当前单元格修改，再从功能库添加'); return false }
+  if (loading.value || loadError.value || !featureCatalog.value) { ElMessage.warning('请先完成共用功能库读取'); return false }
+  catalogDialog.value?.open()
+  return true
+}
+const refreshCatalogPreview = async payload => {
+  if (!await loadData()) throw new Error('矩阵读取失败，可重试刷新')
+  if (selectedGroupIds.value.length && !selectedGroupIds.value.includes(payload.group_id)) {
+    selectedGroupIds.value = [...selectedGroupIds.value, payload.group_id]
+  }
+  featureSearch.value = ''
+  ElMessage.success('已定位待提交预览，提交模板版本后生效')
+}
 
 const popoverKey = ref(''); const popStatus = ref('unsupported'); const popExcludes = ref([])
 const popOldStatus = ref('')
@@ -420,8 +454,8 @@ const openPopover = (catId, featId) => {
   popReplaceUnknown.value = false
   popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
   // Record old values for diff
-  popOldStatus.value = tplMap.value[key]?.default_support || 'unsupported'
-  const cur = key in pendingChanges ? pendingChanges[key] : (tplMap.value[key]?.default_support || 'unsupported')
+  popOldStatus.value = templateCell(key)?.default_support || 'unsupported'
+  const cur = key in pendingChanges ? pendingChanges[key] : (templateCell(key)?.default_support || 'unsupported')
   popStatus.value = cur
   // Compute supported apps from excludes
   const apps = categoryAppsMap.value[catId]
@@ -435,9 +469,9 @@ const openPopover = (catId, featId) => {
     } else {
       ex = Array.isArray(pe) ? pe : []
     }
-  } else if (tplMap.value[key]?.default_excludes) {
+  } else if (templateCell(key)?.default_excludes) {
     try {
-      const raw = JSON.parse(tplMap.value[key].default_excludes)
+      const raw = JSON.parse(templateCell(key).default_excludes)
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         ex = raw.excludes || []; tender = raw.tender || []
       } else {
@@ -527,23 +561,34 @@ const saveChanges = async () => {
     }
     ElMessage.success(`已保存 ${count} 条草稿，请提交后生效`)
     editMode.value = false; Object.keys(pendingChanges).forEach(k => { delete pendingChanges[k]; delete pendingExcludes[k] })
-    await loadData(); await loadDrafts()
+    if (!await loadData()) ElMessage.warning('草稿已保存，刷新失败，可点击刷新重试')
   } catch (e) { ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message)); console.error(e) }
 }
 
 // ---- draft / version ----
 const draftTotal = ref(0); const submitting = ref(false); const versions = ref([]); const showVersions = ref(false)
-const loadDrafts = async () => { try { const r = await api.get('/template-features/drafts'); draftTotal.value = r.total || 0 } catch { draftTotal.value = 0 } }
-const submitDrafts = async () => { submitting.value = true; try { await api.post('/template-features/submit'); ElMessage.success('提交成功'); await loadData(); await loadDrafts() } catch(e) { ElMessage.error('提交失败: ' + (e.response?.data?.detail || e.message)); console.error(e) } finally { submitting.value = false } }
-const discardDrafts = async () => { try { await api.post('/template-features/discard'); ElMessage.success('已废弃'); await loadData(); await loadDrafts() } catch { ElMessage.error('废弃失败') } }
+const submitDrafts = async () => {
+  submitting.value = true
+  try {
+    await api.post('/template-features/submit'); ElMessage.success('提交成功')
+    if (!await loadData()) ElMessage.warning('提交成功，刷新失败，可点击刷新重试')
+  } catch (failure) { ElMessage.error('提交失败: ' + (failure.response?.data?.detail || failure.message)) }
+  finally { submitting.value = false }
+}
+const discardDrafts = async () => {
+  try {
+    await api.post('/template-features/discard'); ElMessage.success('已废弃')
+    if (!await loadData()) ElMessage.warning('已废弃草稿，刷新失败，可点击刷新重试')
+  } catch { ElMessage.error('废弃失败') }
+}
 const loadVersions = async () => { try { versions.value = await api.get('/template-features/versions') || [] } catch { versions.value = [] } }
 const openVersions = async () => { await loadVersions(); showVersions.value = true }
 const rollback = async (row) => {
   try { await api.post(`/template-features/rollback/${row.id}`); ElMessage.success('回滚成功'); await loadData(); await loadVersions() } catch { ElMessage.error('回滚失败') }
 }
 
-const refreshData = () => Promise.all([loadData(), loadDrafts()])
-useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value })
+const refreshData = () => loadData()
+useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalogDialog.value?.isOpen })
 </script>
 
 <style scoped>
@@ -576,6 +621,10 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value })
 .cat-name { font-weight:600; white-space:nowrap }
 .cat-apps { display:flex; flex-wrap:wrap; gap:2px; max-height:80px; overflow-y:auto }
 .app-tag { margin:0; font-size:10px }
+.catalog-load-error { flex-shrink: 0; margin-bottom: 6px; }
+.catalog-preview-badge, .catalog-preview-legend { color: #92400e; font-size: 11px; }
+.catalog-preview-badge { margin-left: 4px; white-space: nowrap; }
+.catalog-preview-cell, .tpl-cell.is-catalog-preview { outline: 1px dashed #d97706; outline-offset: -1px; }
 .matrix-feature-header {
   display: inline-flex;
   align-items: center;

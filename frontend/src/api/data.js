@@ -124,6 +124,8 @@ export const getWhitepaperNameAudit = (params) => api.get('/features/standards/w
 export const getWhitepaperDocuments = () => api.get('/features/standards/whitepaper-documents')
 
 // 模板配置
+export const getTemplateFeatureCatalog = () => api.get('/template-features/catalog')
+export const saveTemplateCatalogDraft = (data) => api.post('/template-features/catalog-draft', data)
 export const getTemplateFeatures = (categoryId) => api.get('/template-features/by-category/' + categoryId)
 export const saveTemplateFeature = (data) => api.post('/template-features', data)
 export const deleteTemplateFeature = (id) => api.delete(`/template-features/${id}`)
