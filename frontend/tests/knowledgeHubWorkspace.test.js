@@ -44,7 +44,7 @@ test('source management stays available through canonical documents and QA citat
   assert.doesNotMatch(view, /beforeKnowledgeTabLeave|label="资料管理" name="documents"/)
   assert.doesNotMatch(view, /knowledge-document-list|archiveKnowledgeDocument|extractKnowledgeDocument|previewVisible/)
   assert.match(view, /v-for="document in documents"/)
-  assert.match(view, /getKnowledgeDocumentPreviewUrl/)
+  assert.match(view, /citation.preview_url/)
   assert.match(read('../src/views/ReleaseWorkspace.vue'), /KnowledgeDocumentsWorkspace/)
   assert.match(read('../src/api/data.js'), /export const getKnowledgeFeatureCoverage/)
 })

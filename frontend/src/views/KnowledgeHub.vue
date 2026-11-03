@@ -292,7 +292,6 @@ import {
   askKnowledgeQuestion,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
-  getKnowledgeDocumentPreviewUrl,
   getKnowledgeQuestions,
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,

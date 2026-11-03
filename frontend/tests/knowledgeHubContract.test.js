@@ -192,7 +192,7 @@ test('knowledge hub keeps only query, history and parameter answer workspaces', 
 test('knowledge hub still provides answer sources, publication and evidence review', () => {
   const view = read('../src/views/KnowledgeHub.vue')
   assert.match(view, /v-for="document in documents"/)
-  assert.match(view, /getKnowledgeDocumentPreviewUrl/)
+  assert.match(view, /citation.preview_url/)
   assert.match(view, /KnowledgeAnswerReviewDialog/)
   assert.match(view, /questionDisplayText\(row\)/)
   assert.match(view, /answerDisplayText\(qaResult.answer\)/)
