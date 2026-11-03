@@ -18,7 +18,7 @@ from app.models.probe import (
     ProbeConfigDraft, ProbeConfigVersion,
 )
 from app.models.feature_standard import FeatureNameStandard, FeatureNameReview
-from app.models.measurement import MeasurementBatch, MeasurementEntry
+from app.models.measurement import (MeasurementBatch, MeasurementEntry, MeasurementEnrichmentCandidate, MeasurementEnrichmentReview)
 from app.models.knowledge import (
     FeatureName,
     FeatureRelation,
@@ -85,6 +85,8 @@ __all__ = [
     "FeatureNameReview",
     "MeasurementBatch",
     "MeasurementEntry",
+    "MeasurementEnrichmentCandidate",
+    "MeasurementEnrichmentReview",
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",

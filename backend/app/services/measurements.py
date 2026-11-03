@@ -183,10 +183,13 @@ async def measurement_library(db: AsyncSession, batch_id: int | None = None) -> 
     if batch_id is not None and selected is None:
         raise KeyError(batch_id)
     entries = []
+    rows = []
     if selected:
         rows = (await db.execute(select(MeasurementEntry).where(MeasurementEntry.batch_id == selected.id).order_by(MeasurementEntry.id))).scalars().all()
         for row in rows:
             data = {column.name: getattr(row, column.name) for column in MeasurementEntry.__table__.columns}
             data["en_name"] = row.description or row.item_id
             entries.append(data)
-    return {"batches": [_batch_data(batch) for batch in batches], "batch": _batch_data(selected) if selected else None, "entries": entries}
+    from app.services.measurement_enrichment import decorate_library
+    available = await decorate_library(db, selected, rows, entries)
+    return {"batches": [_batch_data(batch) for batch in batches], "batch": _batch_data(selected) if selected else None, "entries": entries, "enrichment_available": available}
