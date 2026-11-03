@@ -203,3 +203,28 @@ async def test_cross_batch_isolation_and_changed_source_guard(api):
     assert (await client.post(url+'/review', json=review(initial))).status_code == 409
     changed = (await client.get(url)).json()
     assert (await client.post(url+'/review', json=review(changed))).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_changed_source_reads_are_explicitly_stale_and_preserve_history(api):
+    from sqlalchemy import update
+    client, engine = api
+    cid = await import_one(client)
+    url = f'/api/measurements/enrichment/{cid}'
+    initial = (await client.get(url)).json()
+    confirmed = await client.post(url+'/review', json=review(initial))
+    assert confirmed.status_code == 200
+    original_source = initial['enrichment']['source_fingerprint']
+    async with engine.begin() as conn:
+        await conn.execute(update(MeasurementEntry).where(MeasurementEntry.batch_id == 1,
+                           MeasurementEntry.item_id == 'C.(1)').values(unit='externally changed'))
+    detail = (await client.get(url)).json()
+    library = (await client.get('/api/measurements')).json()
+    state = next(row['enrichment'] for row in library['entries'] if row['item_id'] == 'C.(1)')
+    for value in (detail['enrichment'], state):
+        assert value['status'] == 'stale_source'
+        assert value['source_stale'] is True
+        assert value['candidate']['source_fingerprint'] == original_source
+        assert value['source_fingerprint'] != original_source
+        assert value['confirmed_payload'] is None
+    assert detail['history'][0]['confirmed_payload'] == payload()
