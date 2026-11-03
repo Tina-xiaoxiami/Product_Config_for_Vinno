@@ -235,3 +235,35 @@ async def test_invalid_membership_snapshot_fails_closed_before_any_delete(tmp_pa
         assert (await db.get(Feature,1)).probe_matrix_enabled
         assert await db.scalar(select(func.count()).select_from(TemplateFeature))==1
     await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_v2_cannot_restore_support_for_a_feature_absent_from_membership(tmp_path):
+    client,sessions,engine=await harness(tmp_path)
+    async with sessions() as db:
+        version=TemplateVersion(version_number='hidden-v2',snapshot_data=json.dumps({'schema_version':2,'features':[],
+            'templates':[{'category_id':1,'feature_id':1,'default_support':'supported'}]}))
+        db.add(version);await db.commit();identifier=version.id
+    async with client:
+        result=await client.post(f'/api/template-features/rollback/{identifier}')
+        assert result.status_code==422,result.text
+    async with sessions() as db:
+        assert (await db.get(Feature,1)).probe_matrix_enabled
+        assert await db.scalar(select(func.count()).select_from(TemplateFeature))==1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_submit_refuses_legacy_hidden_support_without_deleting_history(tmp_path):
+    client,sessions,engine=await harness(tmp_path)
+    async with sessions() as db:
+        db.add(TemplateFeature(category_id=1,feature_id=3,default_support='supported'));await db.commit()
+    async with client:
+        await client.post('/api/template-features/save-draft',json={'category_id':1,'feature_id':1,'new_support':'conditional'})
+        result=await client.post('/api/template-features/submit')
+        assert result.status_code==409,result.text
+        assert (await client.get('/api/template-features/drafts')).json()['total']==1
+    async with sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(TemplateFeature))==2
+        assert await db.scalar(select(func.count()).select_from(TemplateVersion))==0
+        assert not (await db.get(Feature,3)).probe_matrix_enabled
+    await engine.dispose()
