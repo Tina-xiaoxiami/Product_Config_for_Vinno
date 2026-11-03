@@ -163,7 +163,7 @@ test('flat application and mode facets combine, keep empty choices and reset tog
   await choose(modes.getByRole('checkbox', { name: 'Tissue', exact: true }), false)
   await expect(page.getByText('当前条件未命中', { exact: true })).toBeVisible()
   await expect(applications.getByRole('checkbox', { name: 'GYN', exact: true })).toBeChecked()
-  await expect(modes.getByRole('checkbox', { name: 'Tissue', exact: true })).toBeVisible()
+  await expect(modes.getByRole('checkbox', { name: 'Tissue', exact: true }).locator('..')).toBeVisible()
   await sidebar.getByRole('button', { name: '不限模式', exact: true }).click()
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('measurement-compact-sidebar.png') })
