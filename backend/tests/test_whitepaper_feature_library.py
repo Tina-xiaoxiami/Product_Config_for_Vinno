@@ -156,3 +156,49 @@ def test_reader_rejects_redirect_and_oversize(monkeypatch):
     monkeypatch.setattr(bridge,'MAX_LIBRARY_BYTES',32)
     monkeypatch.setattr(bridge,'build_opener',lambda *handlers: Opener())
     with pytest.raises(ValueError):bridge._read_library('http://127.0.0.1:43121')
+
+
+@pytest.mark.asyncio
+async def test_html_body_is_plain_text_without_loading_media_or_executable_content(tmp_path, monkeypatch, library):
+    from app.services import whitepaper_feature_library as bridge
+    record = library['features'][0]['series_description_views']['master']['zh'][-1]
+    record.update(body_format='html', body=['<p>正文 &amp; 信息</p><script>privateScript()</script><style>.hidden{}</style><div>下一段<br>第三行<img src="http://private/image"></div>'])
+    monkeypatch.setattr(bridge, '_read_library', lambda url: library)
+    path, client, engine = await harness(tmp_path)
+    async with client:
+        result=(await client.get('/api/features/whitepaper-library',params={'feature_id':1})).json()
+        body=result['items'][0]['matches'][0]['descriptions'][0]['body']
+        assert body == ['正文 & 信息','下一段','第三行']
+        assert 'private' not in json.dumps(result)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field,value', [('body','not paragraphs'),('source',[]),('revision',{}),('created_at',{'path':'private'}),('name',{})])
+async def test_bad_description_metadata_is_not_exposed_as_available(tmp_path, monkeypatch, library, field, value):
+    from app.services import whitepaper_feature_library as bridge
+    library['features'][0]['series_description_views']['master']['zh'][-1][field]=value
+    # Use a non-empty invalid value: an absent source is legitimately empty.
+    if field=='source': library['features'][0]['series_description_views']['master']['zh'][-1][field]=['private']
+    monkeypatch.setattr(bridge,'_read_library',lambda url:library)
+    path,client,engine=await harness(tmp_path)
+    async with client:
+        result=(await client.get('/api/features/whitepaper-library')).json()
+        assert result['source']['available'] is False and all(not item['matches'] for item in result['items'])
+    await engine.dispose()
+
+
+def test_reader_success_uses_fixed_read_endpoint_and_default_url(monkeypatch, library):
+    from app.services import whitepaper_feature_library as bridge
+    monkeypatch.delenv('WHITEPAPER_WORKBENCH_URL',raising=False)
+    assert bridge.workbench_url()=='http://127.0.0.1:43121'
+    monkeypatch.setenv('WHITEPAPER_WORKBENCH_URL','http://[::1]:43121/')
+    assert bridge.workbench_url()=='http://[::1]:43121'
+    class Opener:
+        def open(self,request,timeout):
+            assert request.full_url=='http://127.0.0.1:43121/api/feature-library'
+            assert timeout==6 and request.get_method()=='GET'
+            return io.BytesIO(json.dumps(library).encode())
+    monkeypatch.setattr(bridge,'build_opener',lambda *handlers:Opener())
+    assert bridge._read_library('http://127.0.0.1:43121')==library
+
