@@ -113,3 +113,18 @@ test('application definition closing has one confirmation and preserves the form
   pending.reject('cancel');assert.equal(await first,false);assert.equal(await second,false)
   assert.equal(dialogVisible.value,true);assert.equal(closingAppDialog.value,false)
 })
+
+test('removing the selected parent category clears its embedded scope without deleting pending edits', async () => {
+  const source=readView('ApplicationsView'),start=source.indexOf('watch(() => [props.categoryId, props.categories]')
+  const code=source.slice(start,source.indexOf('// ========= Edit mode',start))
+  let changed,invalidated=0
+  const props={embedded:true},categories=ref([{id:1}]),selectedCategory=ref({id:1}),categoryApps=ref({regular:[{id:5}],poc:[]}),availableApps=ref([{id:6}]),addAppId=ref(6),loadingApps=ref(true)
+  const pendingChanges={one:{catId:1,appId:5,probeType:'regular'}}
+  const context={props,categories,selectedCategory,categoryApps,availableApps,addAppId,loadingApps,pendingChanges,
+    categoryLoader:{invalidate(){invalidated++}},selectCategory:async()=>{},updateCounts:async()=>{},loadAllApps:async()=>{},watch:(_source,handler)=>{changed=handler}}
+  new Function(...Object.keys(context),code)(...Object.values(context))
+  await changed([undefined,[]],[1,[{id:1}]])
+  assert.equal(selectedCategory.value,null);assert.equal(invalidated,1);assert.equal(loadingApps.value,false)
+  assert.deepEqual(categoryApps.value,{regular:[],poc:[]});assert.deepEqual(availableApps.value,[]);assert.equal(addAppId.value,null)
+  assert.deepEqual(Object.keys(pendingChanges),['one'])
+})
