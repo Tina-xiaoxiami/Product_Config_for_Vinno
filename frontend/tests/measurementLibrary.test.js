@@ -21,7 +21,7 @@ test('searches UI names and Id, ranks exact names first and preserves symbols', 
 test('combines scopes with AND, multiple categories with OR, and keeps disabled entries', () => {
   assert.equal(filterMeasurements(rows, { scope: 'common', mode: ['Doppler'] }).length, 1)
   assert.equal(filterMeasurements(rows, { scope: 'application', category: ['GYN', 'VAS'] }).length, 1)
-  assert.equal(filterMeasurements(rows, { scope: 'unclassified' }).length, 1)
+  assert.equal(filterMeasurements(rows, { scope: 'unclassified' }).length, 2)
   assert.equal(filterMeasurements(rows, { kind: 'calculation', group: ['2D'], enabled: ['disabled'] }).length, 1)
   assert.equal(filterMeasurements(rows, { category: [] }).length, 0)
   assert.equal(filterMeasurements(rows, { category: [''] }).length, 2)

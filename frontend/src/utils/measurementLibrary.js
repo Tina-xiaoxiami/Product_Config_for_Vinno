@@ -3,7 +3,6 @@ const searchKey = value => String(value ?? '').normalize('NFKC').trim().toLocale
 const selected = (selection, values) => selection == null || selection.some(value => values.includes(value))
 
 export function measurementScope(row) {
-  if (row.kind !== 'measurement') return []
   if (!row.categories?.length) return ['unclassified']
   return [...(row.categories.includes('Common') ? ['common'] : []), ...(row.categories.some(value => value !== 'Common') ? ['application'] : [])]
 }
@@ -14,7 +13,8 @@ export function filterMeasurements(rows, filters = {}) {
     if (filters.kind && row.kind !== filters.kind) return []
     if (filters.scope && !measurementScope(row).includes(filters.scope)) return []
     for (const field of ['mode', 'group', 'unit', 'enabled']) {
-      if (!selected(filters[field], [row[field] ?? ''])) return []
+      const value = row[field]
+      if (!selected(filters[field], Array.isArray(value) ? value.length ? value : [''] : [value ?? ''])) return []
     }
     if (!selected(filters.category, row.categories?.length ? row.categories : [''])) return []
     const names = [row.item_id, row.en_name, row.cn_name].map(searchKey).filter(Boolean)
@@ -24,7 +24,10 @@ export function filterMeasurements(rows, filters = {}) {
 }
 
 export function measurementOptions(rows, field) {
-  return [...new Set(rows.flatMap(row => field === 'categories' ? row.categories?.length ? row.categories : [''] : [row[field] ?? '']))].sort()
+  return [...new Set(rows.flatMap(row => {
+    const value = row[field]
+    return Array.isArray(value) ? value.length ? value : [''] : [value ?? '']
+  }))].sort()
 }
 
 export function measurementCounts(rows) {
@@ -35,5 +38,26 @@ export function measurementCounts(rows) {
     common: rows.filter(row => measurementScope(row).includes('common')).length,
     application: rows.filter(row => measurementScope(row).includes('application')).length,
     unclassified: rows.filter(row => measurementScope(row).includes('unclassified')).length
+  }
+}
+
+export function projectMeasurementRow(row, includePending = true) {
+  const enrichment = row.enrichment
+  const confirmed = enrichment?.status === 'stale_source' ? null : enrichment?.confirmed_payload
+  const pending = includePending && ['pending', 'deferred', 'unresolved'].includes(enrichment?.status)
+    ? enrichment.candidate?.payload : null
+  const payload = confirmed || pending
+  const labels = { pending: '待核对', confirmed: '已核对', rejected: '未采用', deferred: '暂缓核对', unresolved: '待补充', stale_source: '来源已变化' }
+  const status = row.kind === 'measurement' ? '原表' : enrichment
+    ? confirmed ? enrichment.has_pending_update ? '已核对（有新建议）' : '已核对' : labels[enrichment.status] || '待补充'
+    : '未补充'
+  return {
+    ...row,
+    source_mode: row.mode ?? '',
+    source_categories: [...(row.categories || [])],
+    mode: payload ? [...payload.modes] : row.mode ?? '',
+    categories: [...(payload ? payload.categories : row.categories || [])],
+    classification_basis: payload ? confirmed ? '已核对补充' : '待核对建议' : '原表',
+    enrichment_status: status
   }
 }
