@@ -16,6 +16,7 @@ class Dependency(StrictModel):
 
 
 class InputTerm(StrictModel):
+    relation_kind: Literal['input', 'alternative', 'context', 'unresolved'] = 'input'
     term: StrictStr = Field(min_length=1)
     possible_dependencies: list[Dependency]
     uncertainty: StrictStr

@@ -35,7 +35,7 @@ async def api(tmp_path):
 
 
 def payload():
-    return dict(categories=['CARD'], modes=['Tissue'], input_terms=[dict(term='Distance', possible_dependencies=[dict(kind='measurement', item_id='A/B.')], uncertainty='Review mapping')], formula_reference='Public reference only', sources=[dict(url='https://example.org/reference', title='Reference', locator='section 1', supports=['formula_reference'])], uncertainties=['Manufacturer implementation unknown'], research_status='proposed', mapping_basis='Exact source ID reviewed')
+    return dict(categories=['CARD'], modes=['Tissue'], input_terms=[dict(term='Distance', relation_kind='input', possible_dependencies=[dict(kind='measurement', item_id='A/B.')], uncertainty='Review mapping')], formula_reference='Public reference only', sources=[dict(url='https://example.org/reference', title='Reference', locator='section 1', supports=['formula_reference'])], uncertainties=['Manufacturer implementation unknown'], research_status='proposed', mapping_basis='Exact source ID reviewed')
 
 
 def manifest(items=None):
@@ -228,3 +228,47 @@ async def test_changed_source_reads_are_explicitly_stale_and_preserve_history(ap
         assert value['source_fingerprint'] != original_source
         assert value['confirmed_payload'] is None
     assert detail['history'][0]['confirmed_payload'] == payload()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('relation_kind', ['context', 'unresolved', 'input', 'alternative'])
+async def test_term_relation_controls_numeric_cycle_edges(api, relation_kind):
+    client, _ = api
+    proposal = payload()
+    proposal['input_terms'][0].update(relation_kind=relation_kind,
+        possible_dependencies=[dict(kind='calculation', item_id='C.(1)')])
+    response = await client.post('/api/measurements/enrichment/import',
+                                json=manifest([dict(item_id='C.(1)', payload=proposal)]))
+    assert response.status_code == 200, response.text
+    cid = response.json()['candidates'][0]['id']
+    url = f'/api/measurements/enrichment/{cid}'
+    initial = (await client.get(url)).json()
+    reviewed = await client.post(url+'/review', json=review(initial))
+    assert reviewed.status_code == (200 if relation_kind in ('context', 'unresolved') else 422)
+    invalid = payload()
+    invalid['input_terms'][0].update(relation_kind=relation_kind,
+        possible_dependencies=[dict(kind='calculation', item_id='missing')])
+    assert (await client.post('/api/measurements/enrichment/import',
+            json=manifest([dict(item_id='D', payload=invalid)]))).status_code == 422
+
+
+def test_term_relation_defaults_to_input_for_legacy_candidates():
+    from app.schemas.measurement_enrichment import EnrichmentPayload
+    legacy = payload()
+    del legacy['input_terms'][0]['relation_kind']
+    assert EnrichmentPayload.model_validate(legacy).input_terms[0].relation_kind == 'input'
+
+
+@pytest.mark.asyncio
+async def test_legacy_import_without_relation_kind_defaults_to_numeric_input(api):
+    client, _ = api
+    legacy = payload()
+    del legacy['input_terms'][0]['relation_kind']
+    legacy['input_terms'][0]['possible_dependencies'] = [dict(kind='calculation', item_id='C.(1)')]
+    response = await client.post('/api/measurements/enrichment/import',
+        json=manifest([dict(item_id='C.(1)', payload=legacy)]))
+    assert response.status_code == 200
+    url = f"/api/measurements/enrichment/{response.json()['candidates'][0]['id']}"
+    initial = (await client.get(url)).json()
+    assert initial['enrichment']['candidate']['payload']['input_terms'][0]['relation_kind'] == 'input'
+    assert (await client.post(url+'/review', json=review(initial))).status_code == 422
