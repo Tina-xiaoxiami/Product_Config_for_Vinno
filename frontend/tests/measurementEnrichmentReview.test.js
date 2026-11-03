@@ -38,6 +38,22 @@ test('payload editing is isolated and preserves fields not exposed by the form',
   assert.notEqual(reviewSnapshot(form()), reviewSnapshot(edited))
 })
 
+test('reopening a confirmed candidate preserves human corrections unless a new proposal awaits review', () => {
+  const current = structuredClone(detail)
+  current.enrichment.confirmed_payload = { ...structuredClone(candidatePayload), categories: ['CARD'], modes: ['Doppler'], formula_reference: '人工修订的参考说明' }
+  current.enrichment.has_pending_update = false
+  const edited = cloneReviewPayload(current)
+  assert.deepEqual(edited.categories, ['CARD'])
+  assert.deepEqual(edited.modes, ['Doppler'])
+  assert.equal(edited.formula_reference, '人工修订的参考说明')
+  edited.formula_reference += '（补充出处）'
+  const request = buildReviewRequest(current, { payload: edited, confirmed_by: 'Reviewer', note: '补充出处' }, 'confirm')
+  assert.deepEqual(request.confirmed_payload.modes, ['Doppler'])
+  assert.equal(current.enrichment.confirmed_payload.formula_reference, '人工修订的参考说明')
+  current.enrichment.has_pending_update = true
+  assert.deepEqual(cloneReviewPayload(current).categories, candidatePayload.categories)
+})
+
 test('review validation requires human identity and reasons, and gates confirmation evidence', () => {
   assert.equal(validateReviewForm(form(), 'confirm', detail), '')
   for (const action of ['reject', 'defer', 'revoke']) assert.match(validateReviewForm(form(), action, detail), /说明|理由/)
