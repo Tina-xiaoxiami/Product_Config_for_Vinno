@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dependencyKey, parseDependencyKey, dependencyOptions, visibleDependencyOptions, safeSourceUrl, cloneReviewPayload, reviewSnapshot, validateReviewForm, buildReviewRequest } from '../src/utils/measurementEnrichmentReview.js'
+import { dependencyKey, parseDependencyKey, dependencyOptions, visibleDependencyOptions, safeSourceUrl, cloneReviewPayload, reviewSnapshot, validateReviewForm, buildReviewRequest, reviewStatusLabel, REVIEW_RELATIONS } from '../src/utils/measurementEnrichmentReview.js'
 
 const candidatePayload = { categories: ['ABD'], modes: ['VShear'], input_terms: [], formula_reference: 'Q3 − Q1', sources: [{ title: 'Guideline', url: 'https://example.org/guideline', locator: 'p. 3', supports: ['IQR'] }], uncertainties: ['待核'], research_status: 'proposed', mapping_basis: 'public_standard', vendor_extra: { preserve: true } }
 const detail = { batch_id: 7, enrichment: { candidate: { id: 42, fingerprint: 'candidate-fp', payload: candidatePayload }, source_fingerprint: 'source-fp', review_revision: 3, confirmed_payload: null } }
@@ -68,4 +68,37 @@ test('dialog protects edits, stale requests and external links while avoiding ex
   assert.match(source, /noopener noreferrer/)
   assert.match(source, /onBeforeRouteLeave/)
   assert.doesNotMatch(source, /v-html|eval\(|new Function/)
+})
+
+
+test('relation kinds distinguish numerical inputs from context and preserve legacy compatibility', () => {
+  assert.deepEqual(REVIEW_RELATIONS.map(option => option.value), ['input', 'alternative', 'context', 'unresolved'])
+  const value = structuredClone(detail)
+  value.enrichment.candidate.payload.input_terms = [
+    { term: '速度', possible_dependencies: [{ kind: 'measurement', item_id: 'SWV' }], uncertainty: '待核' },
+    { term: '检查上下文', relation_kind: 'context', possible_dependencies: [{ kind: 'measurement', item_id: 'VShear-1' }], uncertainty: '不是数值输入' }
+  ]
+  const payload = cloneReviewPayload(value)
+  assert.equal(payload.input_terms[0].relation_kind, 'input')
+  assert.equal(payload.input_terms[1].relation_kind, 'context')
+  assert.equal(value.enrichment.candidate.payload.input_terms[0].relation_kind, undefined)
+  const edited = { ...form(), payload }
+  assert.equal(validateReviewForm(edited, 'confirm', value), '')
+  edited.payload.input_terms[0].relation_kind = 'unknown'
+  assert.match(validateReviewForm(edited, 'confirm', value), /关联类型/)
+})
+
+test('stale source disables every review action and visible status codes have Chinese labels', () => {
+  const stale = structuredClone(detail); stale.enrichment.status = 'stale_source'
+  for (const action of ['confirm', 'defer', 'reject', 'revoke']) assert.match(validateReviewForm({ ...form(), note: '待更新' }, action, stale), /原始资料已变化/)
+  assert.equal(reviewStatusLabel('stale_source'), '原始资料已变化')
+  assert.equal(reviewStatusLabel('confirmed'), '已确认')
+  assert.equal(reviewStatusLabel('unresolved'), '待补依据')
+  assert.equal(reviewStatusLabel('unknown_future_code'), '状态待核对')
+  const source = readFileSync(new URL('../src/components/MeasurementEnrichmentReviewDialog.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /<pre>|JSON\.stringify\((detail|entry)/)
+  assert.match(source, /el-descriptions/)
+  assert.match(source, /term\.relation_kind/)
+  assert.match(source, /:disabled="reviewBlocked"/)
+  assert.match(source, /参考公式与依赖说明/)
 })
