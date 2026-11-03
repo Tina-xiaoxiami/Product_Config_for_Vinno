@@ -291,3 +291,24 @@ async def test_probe_reader_uses_only_committed_members_and_identifies_v2_templa
         assert next(row for row in viewed['template_data']['rows'] if row['feature_id']==2)['defined_status']=='supported'
         assert viewed['template_data']['template_version']['number']=='selected-feature'
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('difference',['membership','group'])
+async def test_probe_version_matching_uses_membership_and_group_even_when_cells_are_identical(tmp_path,difference):
+    from app.services.probe_workspace import catalog
+    client,sessions,engine=await harness(tmp_path)
+    templates=[{'category_id':1,'feature_id':1,'default_support':'supported','default_excludes':None}]
+    async with sessions() as db:
+        older=TemplateVersion(version_number='correct-members',snapshot_data=json.dumps({'schema_version':2,'templates':templates,
+            'features':[{'feature_id':1,'group_id':1}]}))
+        db.add(older);await db.flush()
+        newer_members=([{'feature_id':1,'group_id':1},{'feature_id':2,'group_id':2}] if difference=='membership'
+                       else [{'feature_id':1,'group_id':2}])
+        db.add(TemplateVersion(version_number='different-members',snapshot_data=json.dumps({'schema_version':2,'templates':templates,
+            'features':newer_members})))
+        await db.commit()
+        result=await catalog(db)
+        assert result['template_version']['number']=='correct-members'
+    await client.aclose()
+    await engine.dispose()
