@@ -1,166 +1,11 @@
 <template>
   <div class="registration-manage-page">
-    <header class="page-header">
-      <div class="header-actions">
-        <el-tag type="success" effect="plain">受控主数据</el-tag>
-        <el-button type="primary" :icon="Plus" @click="openPackageDialog">
-          新增注册资料包
-        </el-button>
-      </div>
-    </header>
-
-    <el-alert
-      title="注册红线以注册证和注册差异表的受控导入结果为准；页面不复制知识库数据。"
-      type="info"
-      :closable="false"
-      show-icon
-      class="source-alert"
-    />
-
-    <section
-      data-testid="registration-package-history"
-      class="package-history"
-      v-loading="packageLoading"
-    >
-      <div class="package-heading">
-        <div>
-          <h3>注册资料版本</h3>
-          <p>共 {{ packageGroups.length }} 个注册资料包；注册证与差异表成对留存版本。</p>
-        </div>
-        <div class="package-heading-actions">
-          <el-tag type="info" effect="plain">成对受控</el-tag>
-          <el-button text @click="historyExpanded = !historyExpanded">
-            {{ historyExpanded ? '收起版本' : '查看版本' }}
-          </el-button>
-        </div>
-      </div>
-      <div v-show="historyExpanded" class="package-list">
-        <el-empty
-          v-if="!packageLoading && packageGroups.length === 0"
-          description="暂无注册资料版本"
-          :image-size="52"
-        />
-        <article v-for="group in packageGroups" :key="group.id" class="package-card">
-        <div class="package-title">
-          <div class="package-identity">
-            <strong>{{ group.display_name }}</strong>
-            <span>
-              {{ group.country_code }} · {{ group.unit_code }} ·
-              {{ group.registration_number || '未登记注册证号' }}
-            </span>
-          </div>
-          <div class="package-state">
-            <el-tag :type="group.is_enabled ? 'success' : 'info'" effect="plain">
-              {{ group.is_enabled ? '已启用' : '未启用' }}
-            </el-tag>
-            <el-button size="small" @click="handleTogglePackageEnabled(group)">
-              {{ group.is_enabled ? '停用' : '启用' }}
-            </el-button>
-          </div>
-        </div>
-        <el-collapse>
-          <el-collapse-item
-            v-for="version in group.versions"
-            :key="version.id"
-            :name="version.id"
-          >
-            <template #title>
-              <div class="version-title">
-                <span>第 {{ version.version_no }} 版</span>
-                <el-tag
-                  :type="version.status === 'active' ? 'success' : version.status === 'draft' ? 'warning' : 'info'"
-                  size="small"
-                  effect="plain"
-                >
-                  {{ version.status === 'active' ? '正式版本' : version.status === 'draft' ? '待确认草稿' : '历史版本' }}
-                </el-tag>
-                <span class="version-counts">
-                  {{ version.model_count }} 型号 · {{ version.probe_count }} 探头 ·
-                  {{ version.matrix_count }} 关系
-                </span>
-              </div>
-            </template>
-            <div class="version-body">
-              <div class="material-actions">
-                <el-button
-                  v-if="version.status === 'draft'"
-                  type="warning"
-                  @click="openDraftReview(group, version)"
-                >
-                  继续确认并发布
-                </el-button>
-                <el-button
-                  tag="a"
-                  :href="version.certificate.preview_url"
-                  target="_blank"
-                  rel="noopener"
-                  :icon="View"
-                >
-                  {{ primaryCertificateLabel(version.certificate.title) }}
-                </el-button>
-                <el-button
-                  v-for="document in version.supporting_documents"
-                  :key="`${version.id}-${document.document_id}`"
-                  tag="a"
-                  :href="document.preview_url"
-                  target="_blank"
-                  rel="noopener"
-                  :icon="View"
-                >
-                  {{ supportingDocumentLabel(document.role) }}
-                </el-button>
-                <el-button
-                  :icon="View"
-                  @click="openArtifactPreview(version, 'difference')"
-                >
-                  查看差异表
-                </el-button>
-              </div>
-              <p class="material-versions">
-                注册证：{{ version.certificate.version || '未标版本' }}；
-                差异表：{{ version.difference.version || '未标版本' }}
-              </p>
-              <p v-if="version.supporting_documents?.length" class="material-versions">
-                共同使用：{{ version.supporting_documents.map(document => document.title).join('、') }}
-              </p>
-              <div v-if="version.diff.kind === 'baseline'" class="baseline-note">
-                基线版本：{{ version.diff.summary.models }} 个型号、
-                {{ version.diff.summary.probes }} 个探头、
-                {{ version.diff.summary.relations }} 条关系。
-              </div>
-              <div v-else class="change-summary">
-                <strong>变更摘要</strong>
-                <span>新增型号 {{ version.diff.summary.models_added }}</span>
-                <span>删除型号 {{ version.diff.summary.models_removed }}</span>
-                <span>探头 IPN 变化 {{ version.diff.summary.probe_ipn_changed }}</span>
-                <span>型号通道数变化 {{ version.diff.summary.model_channel_count_changed || 0 }}</span>
-                <span>注册状态变化 {{ version.diff.summary.registration_status_changed }}</span>
-                <span v-if="version.diff.documents?.certificate_changed">注册证文件已变化</span>
-                <span v-if="version.diff.documents?.difference_changed">注册差异表文件已变化</span>
-              </div>
-              <el-table
-                v-if="version.diff.registration_status_changes?.length"
-                :data="version.diff.registration_status_changes"
-                size="small"
-                border
-                class="change-table"
-              >
-                <el-table-column prop="model" label="型号" />
-                <el-table-column prop="probe" label="探头" />
-                <el-table-column prop="from" label="变更前" />
-                <el-table-column prop="to" label="变更后" />
-              </el-table>
-              <p v-if="version.change_note" class="change-note">
-                更新说明：{{ version.change_note }}
-              </p>
-            </div>
-          </el-collapse-item>
-        </el-collapse>
-        </article>
-      </div>
-    </section>
-
     <el-tabs v-model="registrationView" class="registration-data-tabs">
+      <div class="registration-actions">
+        <el-button type="primary" :icon="Plus" @click="openPackageDialog">新增注册资料包</el-button>
+        <el-button @click="historyExpanded = true">查看注册资料版本（{{ packageGroups.length }}）</el-button>
+        <span class="registration-source-note">注册红线以注册证和注册差异表的受控导入结果为准。</span>
+      </div>
       <el-tab-pane label="差异汇总" name="summary">
         <section
           data-testid="registration-difference-summary"
@@ -705,6 +550,146 @@
         </section>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="historyExpanded" title="注册资料版本" width="min(900px, 90vw)" append-to-body>
+    <section
+      data-testid="registration-package-history"
+      class="package-history"
+      v-loading="packageLoading"
+    >
+      <div class="package-heading">
+        <div>
+          <h3>注册资料版本</h3>
+          <p>共 {{ packageGroups.length }} 个注册资料包；注册证与差异表成对留存版本。</p>
+        </div>
+      </div>
+      <div class="package-list">
+        <el-empty
+          v-if="!packageLoading && packageGroups.length === 0"
+          description="暂无注册资料版本"
+          :image-size="52"
+        />
+        <article v-for="group in packageGroups" :key="group.id" class="package-card">
+        <div class="package-title">
+          <div class="package-identity">
+            <strong>{{ group.display_name }}</strong>
+            <span>
+              {{ group.country_code }} · {{ group.unit_code }} ·
+              {{ group.registration_number || '未登记注册证号' }}
+            </span>
+          </div>
+          <div class="package-state">
+            <el-tag :type="group.is_enabled ? 'success' : 'info'" effect="plain">
+              {{ group.is_enabled ? '已启用' : '未启用' }}
+            </el-tag>
+            <el-button size="small" @click="handleTogglePackageEnabled(group)">
+              {{ group.is_enabled ? '停用' : '启用' }}
+            </el-button>
+          </div>
+        </div>
+        <el-collapse>
+          <el-collapse-item
+            v-for="version in group.versions"
+            :key="version.id"
+            :name="version.id"
+          >
+            <template #title>
+              <div class="version-title">
+                <span>第 {{ version.version_no }} 版</span>
+                <el-tag
+                  :type="version.status === 'active' ? 'success' : version.status === 'draft' ? 'warning' : 'info'"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ version.status === 'active' ? '正式版本' : version.status === 'draft' ? '待确认草稿' : '历史版本' }}
+                </el-tag>
+                <span class="version-counts">
+                  {{ version.model_count }} 型号 · {{ version.probe_count }} 探头 ·
+                  {{ version.matrix_count }} 关系
+                </span>
+              </div>
+            </template>
+            <div class="version-body">
+              <div class="material-actions">
+                <el-button
+                  v-if="version.status === 'draft'"
+                  type="warning"
+                  @click="openDraftReview(group, version)"
+                >
+                  继续确认并发布
+                </el-button>
+                <el-button
+                  tag="a"
+                  :href="version.certificate.preview_url"
+                  target="_blank"
+                  rel="noopener"
+                  :icon="View"
+                >
+                  {{ primaryCertificateLabel(version.certificate.title) }}
+                </el-button>
+                <el-button
+                  v-for="document in version.supporting_documents"
+                  :key="`${version.id}-${document.document_id}`"
+                  tag="a"
+                  :href="document.preview_url"
+                  target="_blank"
+                  rel="noopener"
+                  :icon="View"
+                >
+                  {{ supportingDocumentLabel(document.role) }}
+                </el-button>
+                <el-button
+                  :icon="View"
+                  @click="openArtifactPreview(version, 'difference')"
+                >
+                  查看差异表
+                </el-button>
+              </div>
+              <p class="material-versions">
+                注册证：{{ version.certificate.version || '未标版本' }}；
+                差异表：{{ version.difference.version || '未标版本' }}
+              </p>
+              <p v-if="version.supporting_documents?.length" class="material-versions">
+                共同使用：{{ version.supporting_documents.map(document => document.title).join('、') }}
+              </p>
+              <div v-if="version.diff.kind === 'baseline'" class="baseline-note">
+                基线版本：{{ version.diff.summary.models }} 个型号、
+                {{ version.diff.summary.probes }} 个探头、
+                {{ version.diff.summary.relations }} 条关系。
+              </div>
+              <div v-else class="change-summary">
+                <strong>变更摘要</strong>
+                <span>新增型号 {{ version.diff.summary.models_added }}</span>
+                <span>删除型号 {{ version.diff.summary.models_removed }}</span>
+                <span>探头 IPN 变化 {{ version.diff.summary.probe_ipn_changed }}</span>
+                <span>型号通道数变化 {{ version.diff.summary.model_channel_count_changed || 0 }}</span>
+                <span>注册状态变化 {{ version.diff.summary.registration_status_changed }}</span>
+                <span v-if="version.diff.documents?.certificate_changed">注册证文件已变化</span>
+                <span v-if="version.diff.documents?.difference_changed">注册差异表文件已变化</span>
+              </div>
+              <el-table
+                v-if="version.diff.registration_status_changes?.length"
+                :data="version.diff.registration_status_changes"
+                size="small"
+                border
+                class="change-table"
+              >
+                <el-table-column prop="model" label="型号" />
+                <el-table-column prop="probe" label="探头" />
+                <el-table-column prop="from" label="变更前" />
+                <el-table-column prop="to" label="变更后" />
+              </el-table>
+              <p v-if="version.change_note" class="change-note">
+                更新说明：{{ version.change_note }}
+              </p>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+        </article>
+      </div>
+    </section>
+
+    </el-dialog>
 
     <el-dialog
       v-model="nameMappingVisible"
@@ -1966,12 +1951,11 @@ onMounted(async () => {
 
 <style scoped>
 .registration-manage-page { max-width: 1180px; margin: 0 auto; }
-.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-.header-actions { display: flex; align-items: center; gap: 10px; }
-.page-header h2 { margin: 0 0 6px; color: #1f2937; font-size: 22px; }
-.page-header p { margin: 0; color: #64748b; font-size: 13px; }
+.registration-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.registration-actions .el-button + .el-button { margin-left: 0; }
+.registration-source-note { color: #64748b; font-size: 12px; }
 .source-alert { margin-bottom: 14px; }
-.package-history { margin-bottom: 14px; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
+.package-history { max-height: 65vh; overflow: auto; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .package-heading, .package-title, .version-title, .change-summary { display: flex; align-items: center; gap: 10px; }
 .package-heading { justify-content: space-between; }
 .package-heading-actions { display: flex; align-items: center; gap: 6px; }
@@ -1991,7 +1975,7 @@ onMounted(async () => {
 .baseline-note, .change-summary { margin-top: 10px; padding: 9px 11px; border-radius: 7px; background: #f8fafc; color: #475569; font-size: 12px; }
 .change-summary { flex-wrap: wrap; }
 .change-table { margin-top: 10px; }
-.registration-data-tabs { margin-top: 4px; }
+.registration-data-tabs :deep(.el-tabs__header) { position: sticky; top: 0; z-index: 10; margin: 0 0 10px; background: var(--workspace-background, #eef3f9); }
 .difference-panel { padding: 16px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
 .artifact-preview-scroll { max-height: 62vh; overflow: auto; }
 .artifact-preview-table { border-collapse: collapse; color: #334155; font-size: 12px; }
