@@ -41,6 +41,28 @@ export function measurementCounts(rows) {
   }
 }
 
+// Facets use the full projected batch, before pagination or table-column filters.
+// Ignore a facet's own selection so multi-select siblings remain discoverable.
+export function measurementFacets(rows, filters = {}) {
+  const scopes = measurementCounts(filterMeasurements(rows, { q: filters.q, kind: filters.kind, mode: filters.mode }))
+  const countOptions = (field, candidates, selection) => {
+    const counts = new Map()
+    for (const row of candidates) {
+      const raw = row[field]
+      const values = Array.isArray(raw) ? raw.length ? raw : [''] : [raw ?? '']
+      for (const value of new Set(values)) counts.set(value, (counts.get(value) || 0) + 1)
+    }
+    return [...new Set([...measurementOptions(rows, field), ...(selection || [])])].sort()
+      .map(value => ({ value, count: counts.get(value) || 0 }))
+  }
+  return {
+    scopes: { all: scopes.rows, common: scopes.common, application: scopes.application, unclassified: scopes.unclassified },
+    categories: countOptions('categories', filterMeasurements(rows, { ...filters, scope: 'application', category: null }), filters.category)
+      .filter(option => option.value && option.value !== 'Common'),
+    modes: countOptions('mode', filterMeasurements(rows, { ...filters, mode: null }), filters.mode)
+  }
+}
+
 export function projectMeasurementRow(row, includePending = true) {
   const enrichment = row.enrichment
   const confirmed = enrichment?.status === 'stale_source' ? null : enrichment?.confirmed_payload

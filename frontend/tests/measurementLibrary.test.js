@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterMeasurements, measurementOptions, measurementCounts, projectMeasurementRow } from '../src/utils/measurementLibrary.js'
+import { filterMeasurements, measurementOptions, measurementCounts, measurementFacets, projectMeasurementRow } from '../src/utils/measurementLibrary.js'
 
 const rows = [
   { kind: 'measurement', item_id: 'Distance', en_name: 'Distance', cn_name: '距离', mode: 'Tissue', categories: ['Common'] },
@@ -30,6 +30,25 @@ test('combines scopes with AND, multiple categories with OR, and keeps disabled 
 test('options and counts use all records and distinguish IDs from mode relations', () => {
   assert.deepEqual(measurementOptions(rows, 'categories'), ['', 'ABD', 'Common', 'GYN'])
   assert.deepEqual(measurementCounts(rows), { rows: 5, measurements: 3, calculations: 1, common: 2, application: 1, unclassified: 2 })
+})
+
+test('sidebar facets count each relation once, intersect other dimensions and retain zero options', () => {
+  const source = [...rows, { kind: 'calculation', item_id: 'Multi', mode: ['Tissue', 'Tissue', 'Doppler'], categories: ['ABD', 'GYN', 'GYN'] }]
+  const snapshot = structuredClone(source)
+  const facets = measurementFacets(source, { scope: 'application', category: ['ABD', 'GYN'], mode: ['Doppler'] })
+  assert.deepEqual(facets.categories, [{ value: 'ABD', count: 1 }, { value: 'GYN', count: 1 }])
+  assert.deepEqual(facets.modes, [{ value: '', count: 0 }, { value: 'Doppler', count: 1 }, { value: 'Tissue', count: 2 }, { value: 'URM', count: 0 }])
+  assert.deepEqual(facets.scopes, { all: 2, common: 1, application: 1, unclassified: 0 })
+  assert.equal(filterMeasurements(source, { category: ['ABD', 'GYN'], mode: ['Tissue', 'Doppler'] }).length, 2)
+  assert.deepEqual(source, snapshot)
+})
+
+test('sidebar facets retain selected values after suggestions disappear and handle blank modes', () => {
+  const facets = measurementFacets(rows, { q: 'no-result', mode: ['VShear'], category: ['CARD'] })
+  assert.ok(facets.modes.some(option => option.value === 'VShear' && option.count === 0))
+  assert.ok(facets.categories.some(option => option.value === 'CARD' && option.count === 0))
+  assert.ok(facets.modes.every(option => option.count === 0))
+  assert.equal(measurementFacets(rows, { kind: 'calculation' }).modes.find(option => option.value === '').count, 1)
 })
 
 const proposal = { categories: ['CARD'], modes: ['Tissue', 'Doppler'], input_terms: [], sources: [], uncertainties: [], research_status: 'proposed' }
