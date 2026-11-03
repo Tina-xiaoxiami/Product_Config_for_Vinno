@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveProbeCategory, applicationEditorState, probeContextBlock, createCategoryApplicationLoader, probeModelRows } from '../src/utils/probeApplications.js'
+import { normalizeColumnLayout } from '../src/utils/tableColumnLayout.js'
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => { resolve=yes; reject=no }); return { promise,resolve,reject } }
 
@@ -70,6 +71,18 @@ test('one page embeds applications under the shared category and reuses the comm
 
 const readView = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url),'utf8')
 const ref = value => ({value})
+test('a fresh probe table shows every model column while retaining saved visibility choices', () => {
+  const source=readView('ProbeModelsView')
+  const code=source.slice(source.indexOf('const modelColumns ='),source.indexOf('const catDialogVisible ='))
+  const columns=new Function(`${code};return modelColumns`)()
+  const fresh=normalizeColumnLayout(columns,[])
+  assert.deepEqual(fresh.filter(column=>column.visible).map(column=>column.key),
+    ['position','model_number','variant_values','application_count','sort_order'])
+  const saved=normalizeColumnLayout(columns,[{key:'variant_values',visible:false}])
+  assert.equal(saved.find(column=>column.key==='variant_values').visible,false)
+  assert.equal(saved.find(column=>column.key==='model_number').fixed,true)
+})
+
 test('controlled category changes preserve drafts and submitting cannot switch category', async () => {
   const source=readView('ApplicationsView')
   const code=source.slice(source.indexOf('const selectCategory ='),source.indexOf('const loadCategoryApps ='))
