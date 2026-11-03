@@ -18,7 +18,7 @@ test('knowledge query uses three scope fields and keeps status beside search', a
   await expect(page.locator('.master-data-note')).toHaveCount(0)
   await expect(page.getByRole('textbox', { name: '查询国家代码' })).toHaveCount(0)
   await expect(page.locator('.queue-heading')).toHaveCount(0)
-  await expect(page.locator('.knowledge-status')).toBeVisible()
+  await expect(page.locator('.knowledge-status')).toHaveCount(0)
 
   const status = page.getByRole('radiogroup', { name: '问答发布状态' })
   const search = page.getByRole('textbox', { name: '搜索问答问题' })

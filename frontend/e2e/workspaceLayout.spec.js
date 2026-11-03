@@ -7,7 +7,8 @@ test('master data navigation groups measurement and keeps edited imports on thei
   const measurementLink = group.getByRole('menuitem', { name: '测量库', exact: true })
   await expect(group.getByRole('menuitem', { name: '产品型号', exact: true })).toHaveAttribute('aria-current', 'page')
   await measurementLink.click()
-  await expect(page.getByRole('heading', { name: '测量库', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/measurements$/)
+  await expect(page.locator('.measurement-library')).toBeVisible()
   await expect(measurementLink).toBeVisible()
   await expect(measurementLink).toHaveAttribute('aria-current', 'page')
   await page.getByRole('button', { name: '导入人用中文表', exact: true }).click()
@@ -24,7 +25,7 @@ test('master data navigation groups measurement and keeps edited imports on thei
   await page.getByRole('dialog', { name: '导入人用测量库' }).getByRole('button', { name: '取消', exact: true }).click()
   await warning.getByRole('button', { name: '放弃', exact: true }).click()
   await group.getByRole('menuitem', { name: '产品型号', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '产品型号', exact: true })).toBeVisible()
+  await expect(page.locator('.model-table-area')).toBeVisible()
 })
 
 test('workspace frames share typography and surfaces across modules without page overflow', async ({ page }, testInfo) => {
@@ -41,14 +42,8 @@ test('workspace frames share typography and surfaces across modules without page
   ]
   for (const [path, title] of pages) {
     await page.goto(`/${path}`)
-    if (path === 'knowledge') {
-      await expect(page.getByRole('tab', { name: '问答查询', exact: true })).toBeVisible()
-      await expect(page.locator('.workspace-page-header')).toHaveCount(0)
-    } else {
-      await expect(page.getByRole('heading', { name: title, exact: true }).first()).toBeVisible()
-      await expect(page.locator('.workspace-page-header')).toHaveCSS('border-radius', '10px')
-      expect((await page.locator('.workspace-page-header').boundingBox()).height).toBeLessThan(80)
-    }
+    await expect(page.locator('.workspace-page-header')).toHaveCount(0)
+    await expect(page.locator('.el-aside .el-menu-item[aria-current="page"]')).toBeVisible()
     await expect(page.locator('.system-workspace > .el-container > .el-main')).toHaveCSS('background-color', 'rgb(238, 243, 249)')
     await expect(page.locator('.workspace-content')).toBeVisible()
     await expect(page.locator('.workspace-module-navigation')).toHaveCount(0)
@@ -76,7 +71,7 @@ test('workspace frames share typography and surfaces across modules without page
   }
   await page.setViewportSize({ width: 860, height: 720 })
   await page.goto('/models')
-  await expect(page.getByRole('heading', { name: '产品型号', exact: true })).toBeVisible()
+  await expect(page.locator('.model-table-area')).toBeVisible()
   await expect(page.locator('.system-workspace > .el-container > .el-main')).toHaveCSS('padding', '8px')
   await page.getByRole('button', { name: '收起导航', exact: true }).click()
   await expect(page.getByRole('button', { name: '展开导航', exact: true })).toBeVisible()
