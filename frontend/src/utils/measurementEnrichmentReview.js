@@ -54,7 +54,9 @@ export function visibleDependencyOptions(options, query, selectedKeys = [], limi
 }
 
 export function cloneReviewPayload(detail) {
-  const payload = clone(detail?.enrichment?.candidate?.payload || {})
+  const enrichment = detail?.enrichment
+  const payload = clone(enrichment?.confirmed_payload && !enrichment.has_pending_update
+    ? enrichment.confirmed_payload : enrichment?.candidate?.payload || {})
   return { ...payload, categories: payload.categories || [], modes: payload.modes || [], input_terms: (payload.input_terms || []).map(term => ({ ...term, relation_kind: term.relation_kind || 'input' })), formula_reference: payload.formula_reference || '', sources: payload.sources || [], uncertainties: payload.uncertainties || [], research_status: payload.research_status || 'unresolved' }
 }
 
