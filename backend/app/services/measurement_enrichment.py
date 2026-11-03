@@ -174,6 +174,13 @@ async def detail(db: AsyncSession, candidate_id: int) -> dict[str, Any]:
             'enrichment_available': True, 'enrichment': state_for(batch, rows, candidates[cast(str, requested.item_id)], reviews[cast(str, requested.item_id)]), 'history': history}
 
 
+def numeric_dependencies(payload: dict[str, Any]) -> list[str]:
+    """Only numeric inputs and alternatives contribute calculation graph edges."""
+    return [dependency['item_id'] for term in payload['input_terms']
+            if term.get('relation_kind', 'input') in {'input', 'alternative'}
+            for dependency in term['possible_dependencies'] if dependency['kind'] == 'calculation']
+
+
 def validate_graph(graph: dict[str, list[str]]) -> None:
     # Iterative DFS avoids recursion limits for large imported calculation sets.
     complete: set[str] = set()
@@ -241,8 +248,8 @@ async def review_candidate(db: AsyncSession, candidate_id: int, request: Enrichm
             for item_id, item_reviews in reviews.items():
                 active = active_confirmation(item_reviews, source_fingerprint(batch, source_rows[item_id]))
                 if active:
-                    graph[item_id] = [d['item_id'] for t in cast(dict[str, Any], active.confirmed_payload)['input_terms'] for d in t['possible_dependencies'] if d['kind'] == 'calculation']
-            graph[data['item_id']] = [d['item_id'] for t in confirmed['input_terms'] for d in t['possible_dependencies'] if d['kind'] == 'calculation']
+                    graph[item_id] = numeric_dependencies(cast(dict[str, Any], active.confirmed_payload))
+            graph[data['item_id']] = numeric_dependencies(confirmed)
             validate_graph(graph)
         db.add(Review(batch_id=data['batch_id'], item_id=data['item_id'], candidate_id=candidate_id,
                       review_revision=state['review_revision']+1, candidate_fingerprint=candidate['fingerprint'],
