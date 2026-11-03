@@ -165,14 +165,14 @@ async def test_stage_invalid_references_and_enrolled_member_are_atomic(tmp_path,
 @pytest.mark.parametrize('kind',['duplicate','committed_hidden_cell','hidden_draft'])
 async def test_stage_cannot_overwrite_existing_hidden_cells_or_another_catalog_draft(tmp_path,kind):
     client,sessions,engine=await harness(tmp_path)
-    if kind=='duplicate':
-        assert (await stage(client)).status_code==200
-    else:
+    if kind!='duplicate':
         async with sessions() as db:
             db.add(TemplateFeature(category_id=1,feature_id=2,default_support='unsupported') if kind=='committed_hidden_cell'
                    else TemplateDraft(category_id=1,feature_id=2,new_support='supported'))
             await db.commit()
     async with client:
+        if kind=='duplicate':
+            assert (await stage(client)).status_code==200
         response=await stage(client)
         assert response.status_code==409,response.text
     await engine.dispose()
