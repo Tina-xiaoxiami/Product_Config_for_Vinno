@@ -67,3 +67,49 @@ test('one page embeds applications under the shared category and reuses the comm
   assert.match(table,/format\(row, column\)/)
   assert.doesNotMatch(view,/router\.push\(\{ path: '\/applications'/)
 })
+
+const readView = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url),'utf8')
+const ref = value => ({value})
+test('controlled category changes preserve drafts and submitting cannot switch category', async () => {
+  const source=readView('ApplicationsView')
+  const code=source.slice(source.indexOf('const selectCategory ='),source.indexOf('const loadCategoryApps ='))
+  const selectedCategory=ref({id:1}), addAppId=ref(2), editorState=ref(applicationEditorState({pendingCount:1,editMode:true}))
+  const pendingChanges={one:{catId:1,appId:4,probeType:'poc'}}, calls=[]
+  const select=new Function('selectedCategory','addAppId','editorState','categoryLoader','pendingChanges',`${code};return selectCategory`)(
+    selectedCategory,addAppId,editorState,{load:async id=>{calls.push(id);return true}},pendingChanges)
+  await select({id:3});assert.equal(selectedCategory.value.id,3);assert.deepEqual(Object.keys(pendingChanges),['one'])
+  editorState.value=applicationEditorState({submitting:true,pendingCount:1})
+  assert.equal(await select({id:1}),false);assert.equal(selectedCategory.value.id,3);assert.deepEqual(calls,[3])
+})
+
+test('parent refresh and destructive category actions cannot discard application edits', async () => {
+  const source=readView('ProbeModelsView'),calls=[]
+  const state=ref(applicationEditorState({pendingCount:2,editMode:true}))
+  const refreshCode=source.slice(source.indexOf('const refreshData ='),source.indexOf('// Category CRUD'))
+  const refresh=new Function('metadataOpen','applicationState','ElMessage','loadData','applicationsPanel',`${refreshCode};return refreshData`)(
+    ()=>false,state,{warning:()=>calls.push('warning')},async()=>calls.push('models'),ref({refresh:async()=>calls.push('apps')}))
+  assert.equal(await refresh(),false);assert.deepEqual(calls,['warning'])
+  const deleteCode=source.slice(source.indexOf('const handleDeleteCategory ='),source.indexOf('// Model CRUD'))
+  const remove=new Function('probeContextBlock','applicationState','ElMessage','ElMessageBox','deleteProbeCategory','selectedCategory','loadData',`${deleteCode};return handleDeleteCategory`)(
+    probeContextBlock,state,{warning:()=>calls.push('blocked')},{confirm:async()=>calls.push('confirm')},async()=>calls.push('delete'),ref({id:1}),async()=>{})
+  await remove({id:1});assert.deepEqual(calls,['warning','blocked'])
+  state.value=applicationEditorState({});await refresh();assert.deepEqual(calls,['warning','blocked','models','apps'])
+})
+
+test('application changes refresh model counts without recursively refreshing the editor', async () => {
+  const source=readView('ProbeModelsView'),calls=[]
+  const code=source.slice(source.indexOf('const onApplicationsChanged ='),source.indexOf('const refreshData ='))
+  const changed=new Function('loadData',`${code};return onApplicationsChanged`)(async()=>calls.push('models'))
+  await changed();assert.deepEqual(calls,['models']);assert.doesNotMatch(code,/applicationsPanel/)
+})
+
+test('application definition closing has one confirmation and preserves the form when cancelled', async () => {
+  const source=readView('ApplicationsView')
+  const code=source.slice(source.indexOf('const closeAppDialog ='),source.indexOf('const discardLocal ='))
+  const pending=deferred(),dialogVisible=ref(true),closingAppDialog=ref(false);let confirmations=0
+  const close=new Function('saving','formDirty','closingAppDialog','dialogVisible','ElMessageBox',`${code};return closeAppDialog`)(
+    ref(false),ref(true),closingAppDialog,dialogVisible,{confirm:()=>{confirmations++;return pending.promise}})
+  const first=close();const second=close();assert.equal(confirmations,1)
+  pending.reject('cancel');assert.equal(await first,false);assert.equal(await second,false)
+  assert.equal(dialogVisible.value,true);assert.equal(closingAppDialog.value,false)
+})
