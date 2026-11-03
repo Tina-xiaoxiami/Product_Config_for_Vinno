@@ -64,8 +64,7 @@ const routes = [
       {
         path: 'feature-manage',
         name: 'FeatureManage',
-        component: () => import('../views/FeatureManage.vue'),
-        meta: { title: '功能管理' }
+        redirect: '/template-features'
       },
       {
         path: 'registration-manage',

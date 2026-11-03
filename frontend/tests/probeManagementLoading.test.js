@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { projectTemplateCatalog, catalogCellSource } from '../src/utils/templateFeatureCatalog.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
@@ -51,18 +52,20 @@ test('switching probe categories uses loaded details without fetching again', as
   assert.equal(requests, 1)
 })
 test('template categories start independent detail requests together and preserve data on failure', async () => {
-  const pending = deferred(), calls = [], errors = []
+  const pending = deferred(), calls = []
   const previous = { old: true }
-  const context = { loading: ref(false), categories: ref([]), features: ref([]), featureGroups: ref([]), tplMap: ref(previous), categoryAppsMap: ref(previous),
+  const context = { loading: ref(false), loadError: ref(''), categories: ref([]), features: ref([]), featureGroups: ref([]), tplMap: ref(previous), categoryAppsMap: ref(previous),
+    featureCatalog: ref(null), pendingMatrixCells: ref({}), pendingMatrixFeatureIds: ref(new Set()), draftTotal: ref(0), catalogAdditionCount: ref(0), projectTemplateCatalog, catalogCellSource,
     getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }),
-    getFeatures: async params => { assert.equal(params.probe_matrix_only, true); return { items: [{ id: 9, group_id: 1 }] } },
-    getFeatureGroups: async () => ({ items: [{ id: 1, name: '探头功能' }, { id: 2, name: '配置功能（未分类）' }] }),
-    getTemplateFeatures: id => { calls.push(`template-${id}`); return pending.promise }, api: { get: url => { calls.push(url); return Promise.resolve({ regular: [], poc: [] }) } }, ElMessage: { error: message => errors.push(message) }
+    getTemplateFeatureCatalog: async () => ({ total: 2, items: [{ id: 9, group_id: 1, probe_matrix_enabled: true }, { id: 10, group_id: 2, probe_matrix_enabled: false }],
+      matrix_items: [{ id: 9, group_id: 1, probe_matrix_enabled: true }], groups: [{ id: 1, name: '探头功能' }, { id: 2, name: '配置功能（未分类）' }] }),
+    getTemplateFeatures: id => { calls.push(`template-${id}`); return pending.promise }, api: { get: url => { calls.push(url); return Promise.resolve(url === '/template-features/drafts' ? { total: 0, drafts: [], catalog_additions: [] } : { regular: [], poc: [] }) } }
   }
   const source = read('TemplateFeatures'), code = source.slice(source.indexOf('let templateLoadRequest ='), source.indexOf('const getCellClass ='))
   const loadData = new Function(...Object.keys(context), code + '\nreturn loadData')(...Object.values(context))
   const work = loadData(); await new Promise(resolve => setImmediate(resolve))
-  assert.equal(calls.length, 4)
+  assert.equal(calls.filter(call => call !== '/template-features/drafts').length, 4)
+  assert.equal(calls.filter(call => call === '/template-features/drafts').length, 1)
   pending.resolve([{ feature_id: 9, default_support: 'supported' }]); await work
   assert.equal(context.tplMap.value['2_9'].default_support, 'supported')
   assert.deepEqual(context.featureGroups.value, [{ id: 1, name: '探头功能' }])
@@ -70,7 +73,7 @@ test('template categories start independent detail requests together and preserv
   context.api.get = async () => { throw new Error('offline') }
   await loadData()
   assert.equal(context.tplMap.value, goodMap)
-  assert.deepEqual(errors, ['加载失败'])
+  assert.match(context.loadError.value, /加载失败.*保留当前矩阵/)
   assert.equal(context.loading.value, false)
 })
 test('feature groups and features load concurrently', async () => {

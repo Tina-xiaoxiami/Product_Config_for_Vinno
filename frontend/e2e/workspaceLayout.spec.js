@@ -35,7 +35,7 @@ test('workspace frames share typography and surfaces across modules without page
   await page.setViewportSize({ width: 1440, height: 960 })
   const pages = [
     ['models', '产品型号'], ['template-features', '模板管理'], ['probe-models', '探头管理'],
-    ['applications', '应用管理'], ['feature-manage', '功能管理'], ['registration-manage', '注册管理'],
+    ['applications', '应用管理'], ['feature-manage', '模板管理'], ['registration-manage', '注册管理'],
     ['measurements', '测量库'], ['config', '配置管理'], ['compare', '配置对比'],
     ['version-compare', '版本对比'], ['versions', '版本历史'],
     ['probe-config', '探头配置管理'], ['probe-versions', '版本历史'], ['knowledge', '产品知识库']

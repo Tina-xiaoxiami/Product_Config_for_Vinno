@@ -28,7 +28,7 @@ test('all current knowledge reading paths use shared name projections and revisi
   assert.match(view, /questionDisplayText\(row\)/)
   assert.match(view, /answerDisplayText\(qaResult.answer\)/)
   assert.match(view, /answerDisplayText\(row.answer\)/)
-  assert.match(view, /featureDisplayName\(feature\)/)
+  assert.doesNotMatch(view, /featureDisplayName\(feature\)/)
   assert.match(review, /questionDisplayText\(question\)/)
   assert.match(review, /answerDisplayText\(question.answer\)/)
   assert.match(review, /查看保存原文/)

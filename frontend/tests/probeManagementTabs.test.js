@@ -5,22 +5,24 @@ import { PROBE_MANAGEMENT_TABS, probeManagementMenuPath } from '../src/utils/pro
 const template = readFileSync(new URL('../src/views/TemplateFeatures.vue', import.meta.url), 'utf8')
 const layout = readFileSync(new URL('../src/views/Layout.vue', import.meta.url), 'utf8')
 test('all management deep links share one sidebar selection and other pages retain theirs', () => {
-  assert.deepEqual(PROBE_MANAGEMENT_TABS.map(tab => tab.label), ['模板管理', '探头管理', '应用管理', '功能管理'])
+  assert.deepEqual(PROBE_MANAGEMENT_TABS.map(tab => tab.label), ['模板管理', '探头管理', '应用管理'])
   for (const path of ['/template-features', '/probe-models', '/applications', '/feature-manage']) assert.equal(probeManagementMenuPath(path), '/template-features')
   for (const path of ['/config', '/knowledge', '/probe-config', '/feature-manage-extra']) assert.equal(probeManagementMenuPath(path), path)
 })
 test('template return uses the shared source refresh while retaining edits', async () => {
   let refresh, canRefresh, loads = 0, drafts = 0
-  const editMode = { value: false }
+  const editMode = { value: false }, catalogDialog = { value: { isOpen: false } }
   const code = template.slice(template.indexOf('useWorkspaceRefresh(refreshData'), template.indexOf('</script>'))
-  new Function('useWorkspaceRefresh', 'editMode', 'refreshData', code)((callback, options) => {
+  new Function('useWorkspaceRefresh', 'editMode', 'catalogDialog', 'refreshData', code)((callback, options) => {
     refresh = callback; canRefresh = options.canRefresh
-  }, editMode, async () => { loads++; drafts++ })
+  }, editMode, catalogDialog, async () => { loads++; drafts++ })
   if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = true
   if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = false
   if (canRefresh()) await refresh(); assert.equal(drafts, 2)
+  catalogDialog.value.isOpen = true
+  if (canRefresh()) await refresh(); assert.equal(loads, 2)
 })
 test('tabs only commit selection when route navigation succeeds', async () => {
   let failed = false, throws = false, errors = 0
@@ -52,6 +54,7 @@ test('template editor initializes selections from the opened category, including
     categoryAppsMap: ref({ 2: { regular: ['早孕', '中孕', '晚孕', '胎心'].map(name => ({ name })), poc: [{ name: '急诊' }] } }),
     expandCombinedName
   }
+  context.templateCell = key => context.tplMap.value[key]
   const block = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
   const open = new Function(...Object.keys(context), `${block}; return openPopover`)(...Object.values(context))
   open(2, 9)
@@ -75,6 +78,7 @@ test('opening and applying a template retains unresolved exclusions until explic
     const names = [...context.popCatApps.value.regular, ...context.popCatApps.value.poc].map(app => app.name)
     return context.popExcludes.value.filter(name => !names.includes(name))
   } }
+  context.templateCell = key => context.tplMap.value[key]
   const openBlock = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
   const applyBlock = template.slice(template.indexOf('const applyPopover ='), template.indexOf('const saveChanges ='))
   const actions = new Function(...Object.keys(context), `${openBlock};${applyBlock};return {openPopover,applyPopover}`)(...Object.values(context))

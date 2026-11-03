@@ -5,7 +5,7 @@ from sqlalchemy.exc import OperationalError
 
 
 async def serialize_catalog_write(db, table: str) -> None:
-    if table not in {'product_models', 'category_applications'}:
+    if table not in {'product_models', 'category_applications', 'features'}:
         raise ValueError('Unsupported catalog lock')
     dialect = db.get_bind().dialect.name
     # Reuse the probe publishing no-op UPDATE pattern. SQLite acquires its

@@ -212,6 +212,15 @@ class TemplateDraft(Base):
     created_at = Column(String(30), default=lambda: utcnow().isoformat())
 
 
+class TemplateCatalogDraft(Base):
+    """Staged enrollment of an existing identity into the common template matrix."""
+    __tablename__ = "template_catalog_drafts"
+    feature_id = Column(Integer, ForeignKey("features.id", ondelete="CASCADE"), primary_key=True)
+    group_id = Column(Integer, ForeignKey("feature_groups.id"), nullable=False)
+    expected_state = Column(Text, nullable=False)
+    created_at = Column(String(30), default=lambda: utcnow().isoformat())
+
+
 class TemplateVersion(Base):
     """模板版本快照"""
     __tablename__ = "template_versions"

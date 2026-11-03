@@ -3,43 +3,28 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
-const functionSource = source.slice(source.indexOf('let featureRequestId = 0'), source.indexOf('\nconst onFeaturePageSizeChange'))
 
-test('latest feature filter request owns results, total and loading state', async () => {
-  const pending = []
-  const context = {
-    featureLoading: { value: false }, featureLoadError: { value: false }, featureQuery: { value: '' }, identityStatus: { value: 'confirmed' },
-    missingName: { value: 'cn' }, featurePage: { value: 3 }, featurePageSize: { value: 50 },
-    features: { value: [] }, featureTotal: { value: 0 }, ElMessage: { error() {} },
-    getKnowledgeFeatures: params => new Promise(resolve => pending.push({ params, resolve }))
-  }
-  const { searchFeatures } = new Function(...Object.keys(context), `${functionSource}; return { searchFeatures }`)(...Object.values(context))
-  searchFeatures()
-  context.missingName.value = 'en'
-  searchFeatures()
-  assert.equal(pending[1].params.skip, 0)
-  assert.equal(pending[1].params.identity_status, 'confirmed')
-  pending[0].resolve({ items: [{ id: 1 }], total: 1 })
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(context.featureLoading.value, true)
-  pending[1].resolve({ items: [{ id: 2 }], total: 2 })
-  await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(context.features.value, [{ id: 2 }])
-  assert.equal(context.featureTotal.value, 2)
-  assert.equal(context.featureLoading.value, false)
+test('returning to the knowledge workspace refreshes query data without duplicate catalog or registration reads', async () => {
+  const start = source.indexOf('useWorkspaceRefresh(() => Promise.all([')
+  const end = source.indexOf('\nonMounted(', start)
+  const names = ['loadQaModels', 'loadQaQuestions', 'loadDocuments', 'loadQaReviewCount',
+    'loadFeatureCoverage', 'loadFeatures', 'loadRegistrationModels']
+  const calls = []
+  let refresh, options
+  const context = Object.fromEntries(names.map(name => [name, async () => calls.push(name)]))
+  new Function('useWorkspaceRefresh', 'answerDialogVisible', 'answerSaving', ...names, source.slice(start, end))(
+    (callback, settings) => { refresh = callback; options = settings }, { value: false }, { value: false }, ...Object.values(context)
+  )
+  assert.equal(options.canRefresh(), true)
+  await refresh()
+  assert.deepEqual(calls, ['loadQaModels', 'loadQaQuestions', 'loadDocuments', 'loadQaReviewCount'])
 })
 
-test('failed latest feature query clears stale results and totals', async () => {
-  const context = {
-    featureLoading: { value: false }, featureLoadError: { value: false }, featureQuery: { value: '' }, identityStatus: { value: '' },
-    missingName: { value: 'en' }, featurePage: { value: 1 }, featurePageSize: { value: 50 },
-    features: { value: [{ id: 1 }] }, featureTotal: { value: 1 }, ElMessage: { error() {} },
-    getKnowledgeFeatures: async () => { throw new Error('offline') }
-  }
-  const { loadFeatures } = new Function(...Object.keys(context), `${functionSource}; return { loadFeatures }`)(...Object.values(context))
-  await loadFeatures()
-  assert.deepEqual(context.features.value, [])
-  assert.equal(context.featureTotal.value, 0)
-  assert.equal(context.featureLoadError.value, true)
-  assert.equal(context.featureLoading.value, false)
+test('retired catalog and registration loaders are absent while the public read APIs remain available', () => {
+  assert.doesNotMatch(source, /getKnowledgeFeatures|getKnowledgeFeatureCoverage|getConfiguredRegistrationModels|getRegistrationProbes/)
+  assert.doesNotMatch(source, /const loadFeatures|const loadFeatureCoverage|const loadRegistrationModels|const loadRegistrationProbes/)
+  const api = readFileSync(new URL('../src/api/data.js', import.meta.url), 'utf8')
+  assert.match(api, /export const getKnowledgeFeatures/)
+  assert.match(api, /export const getKnowledgeFeatureCoverage/)
+  assert.match(api, /export const getRegistrationProbes/)
 })

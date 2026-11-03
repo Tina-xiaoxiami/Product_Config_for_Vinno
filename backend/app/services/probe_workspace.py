@@ -71,6 +71,7 @@ async def shared_scope(db, groups, combinations):
 
 async def catalog(db):
     from app.services.feature_catalog import probe_matrix_scope
+    from app.services.template_feature_catalog import read_template_snapshot
     probes = list((await db.scalars(select(ProbeModel).order_by(ProbeModel.id))).all())
     variants = list((await db.scalars(select(ProbeModelVariant).order_by(ProbeModelVariant.id))).all())
     features = list((await db.scalars(select(Feature).where(probe_matrix_scope()).order_by(Feature.sort_order, Feature.id))).all())
@@ -81,8 +82,10 @@ async def catalog(db):
     version = None
     for candidate in (await db.scalars(select(TemplateVersion).order_by(TemplateVersion.id.desc()))).all():
         try:
-            saved_templates = json.loads(candidate.snapshot_data)
-            if sorted(saved_templates, key=lambda t: (t['category_id'], t['feature_id'])) == template_rows:
+            saved_templates, members = read_template_snapshot(candidate.snapshot_data)
+            live_members = [{'feature_id': feature.id, 'group_id': feature.group_id} for feature in sorted(features, key=lambda feature: feature.id)]
+            membership_matches = members is None or sorted(members, key=lambda member: member['feature_id']) == live_members
+            if membership_matches and sorted(saved_templates, key=lambda t: (t['category_id'], t['feature_id'])) == template_rows:
                 version = candidate
                 break
         except (ValueError, TypeError, KeyError):
