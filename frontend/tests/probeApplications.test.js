@@ -128,3 +128,14 @@ test('removing the selected parent category clears its embedded scope without de
   assert.deepEqual(categoryApps.value,{regular:[],poc:[]});assert.deepEqual(availableApps.value,[]);assert.equal(addAppId.value,null)
   assert.deepEqual(Object.keys(pendingChanges),['one'])
 })
+
+test('renaming the current parent category updates embedded metadata without discarding drafts or reselecting', async () => {
+  const source=readView('ApplicationsView'),start=source.indexOf('watch(() => [props.categoryId, props.categories]')
+  const code=source.slice(start,source.indexOf('// ========= Edit mode',start));let changed,selections=0
+  const selectedCategory=ref({id:1,name:'Old'}),latest={id:1,name:'New'},pendingChanges={one:{catId:1}}
+  const context={props:{embedded:true},categories:ref([]),selectedCategory,pendingChanges,
+    selectCategory:async()=>{selections++},updateCounts:async()=>{},loadAllApps:async()=>{},watch:(_source,handler)=>{changed=handler}}
+  new Function(...Object.keys(context),code)(...Object.values(context))
+  await changed([1,[latest]],[1,[{id:1,name:'Old'}]])
+  assert.equal(selectedCategory.value,latest);assert.equal(selections,0);assert.ok(pendingChanges.one)
+})
