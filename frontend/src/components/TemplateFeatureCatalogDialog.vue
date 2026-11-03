@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="state.visible" title="从功能库添加" width="min(680px, calc(100vw - 32px))" append-to-body
+  <el-dialog v-model="state.visible" title="从功能库添加" width="min(680px, calc(100vw - 32px))" top="24px" class="template-feature-catalog-dialog" append-to-body
     :before-close="editor.close" :show-close="!state.saving" :close-on-click-modal="!state.saving" :close-on-press-escape="!state.saving">
     <p class="catalog-help">选择共用配置功能项，保存为待提交预览；提交模板版本后，功能分类和探头支持设置才生效。</p>
     <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
@@ -52,6 +52,9 @@ onBeforeUnmount(editor.dispose)
 defineExpose({ open: editor.open, isOpen: computed(() => state.visible) })
 </script>
 <style scoped>
+:global(.template-feature-catalog-dialog) { display: flex; flex-direction: column; max-height: calc(100vh - 48px); margin-bottom: 24px; }
+:global(.template-feature-catalog-dialog > .el-dialog__body) { min-height: 0; overflow: auto; }
+:global(.template-feature-catalog-dialog > .el-dialog__header), :global(.template-feature-catalog-dialog > .el-dialog__footer) { flex-shrink: 0; }
 .catalog-help { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; margin: 6px 0; }
 .el-select { width: 100%; }.catalog-option { display: flex; align-items: center; gap: 12px; }.catalog-option small { color: var(--el-text-color-secondary); margin-left: auto; }
 .catalog-categories { display: flex; flex-wrap: wrap; gap: 4px 14px; }.catalog-categories .el-checkbox { margin: 0; }.el-alert { margin-bottom: 10px; }
