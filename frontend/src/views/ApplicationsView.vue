@@ -328,6 +328,7 @@ watch(() => [props.categoryId, props.categories], async ([id, source], previous)
     return
   }
   if (selected && (selected.id !== selectedCategory.value?.id || !previous)) await selectCategory(selected)
+  else selectedCategory.value = selected
   if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
 })
 
