@@ -11,7 +11,7 @@
           <p v-if="autoApplyFilters" class="filter-hint">关闭浮层时自动应用选择</p>
           <div class="filter-tools"><el-button size="small" @click="resetFilter(column.key)">不限</el-button><el-button size="small" type="primary" @click="applyFilter(column.key)">应用</el-button></div>
         </el-popover></span></template>
-        <template #default="{row}">{{ format(row, column) }}</template>
+        <template #default="{row, $index}"><slot name="cell" :row="row" :column="column" :index="$index">{{ format(row, column) }}</slot></template>
       </el-table-column>
       <el-table-column v-if="$slots.actions" label="操作" fixed="right" :width="actionsWidth"><template #default="{row}"><slot name="actions" :row="row" /></template></el-table-column>
     </el-table>

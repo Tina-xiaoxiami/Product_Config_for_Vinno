@@ -4,14 +4,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
 import { groupProbeVariants } from '../src/utils/probeMatrix.js'
+import { resolveProbeCategory, applicationEditorState, probeContextBlock } from '../src/utils/probeApplications.js'
 const read = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
 const ref = value => ({ value })
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 function probeLoader(getProbeModels) {
-  const context = { loading: ref(false), categories: ref([]), modelMap: ref({}), selectedCategory: ref(null), getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getProbeModels, groupProbeVariants, ElMessage: { error() {} } }
+  const context = { loading: ref(false), categories: ref([]), modelMap: ref({}), selectedCategory: ref(null), getProbeCategories: async () => ({ items: [{ id: 1 }, { id: 2 }] }), getProbeModels, groupProbeVariants, resolveProbeCategory, ElMessage: { error() {} } }
   const source = read('ProbeModelsView')
   const code = source.slice(source.indexOf('let dataLoadRequest ='), source.indexOf('const currentModels ='))
-  return { ...context, ...new Function(...Object.keys(context), code + '\nreturn { loadData }')(...Object.values(context)) }
+  return { ...context, ...new Function(...Object.keys(context), 'let requestedCategoryId = null; ' + code + '\nreturn { loadData }')(...Object.values(context)) }
 }
 test('probe first load includes details and selects a category without an application catalog', async () => {
   const app = probeLoader(async params => {
@@ -45,8 +46,8 @@ test('switching probe categories uses loaded details without fetching again', as
   const app = probeLoader(async () => { requests++; return { items: [{ id: 2, category_id: 2 }] } })
   await app.loadData()
   const source = read('ProbeModelsView')
-  const code = source.slice(source.indexOf('const selectCategory ='), source.indexOf('// Category CRUD'))
-  const selectCategory = new Function('selectedCategory', code + '\nreturn selectCategory')(app.selectedCategory)
+  const code = source.slice(source.indexOf('const selectCategory ='), source.indexOf('watch(() => route.query.category_id'))
+  const selectCategory = new Function('selectedCategory', 'metadataOpen', 'probeContextBlock', 'applicationState', 'ElMessage', code + '\nreturn selectCategory')(app.selectedCategory, () => false, probeContextBlock, ref(applicationEditorState()), { warning() {} })
   selectCategory({ id: 2 })
   assert.equal(app.selectedCategory.value.id, 2)
   assert.equal(requests, 1)
