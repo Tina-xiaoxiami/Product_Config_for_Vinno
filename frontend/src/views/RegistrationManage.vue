@@ -447,6 +447,7 @@
             <el-select
               v-model="overseasCountryCode"
               clearable
+              filterable
               placeholder="全部国家"
               aria-label="海外注册国家"
               @change="loadOverseasRelations"
@@ -454,7 +455,7 @@
               <el-option
                 v-for="country in overseasCountries"
                 :key="country.country_code"
-                :label="`${country.country_code}（${country.relation_count}）`"
+                :label="`${formatCountryCode(country.country_code)}（${country.relation_count}）`"
                 :value="country.country_code"
               />
             </el-select>
@@ -476,7 +477,9 @@
             <span>数据范围 <strong>注册历史</strong></span>
           </div>
           <el-table :data="overseasRows" border stripe empty-text="暂无已发布的海外注册数据">
-            <el-table-column prop="country_code" label="国家/地区" width="110" />
+            <el-table-column prop="country_code" label="国家/地区" min-width="150">
+              <template #default="scope">{{ formatCountryCode(scope.row.country_code) }}</template>
+            </el-table-column>
             <el-table-column prop="model_name" label="注册型号" min-width="150" />
             <el-table-column prop="probe_model" label="注册探头型号" min-width="150" />
             <el-table-column label="注册状态" width="120" align="center">
@@ -1086,6 +1089,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { formatCountryCode } from '../utils/countryNames.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, UploadFilled, View } from '@element-plus/icons-vue'
 import {
