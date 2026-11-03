@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { probeApplicationsRedirect } from '../utils/probeManagementNavigation'
 
 const routes = [
   {
@@ -53,13 +54,12 @@ const routes = [
         path: 'probe-models',
         name: 'ProbeModelsView',
         component: () => import('../views/ProbeModelsView.vue'),
-        meta: { title: '探头管理' }
+        meta: { title: '探头&应用' }
       },
       {
         path: 'applications',
         name: 'ApplicationsView',
-        component: () => import('../views/ApplicationsView.vue'),
-        meta: { title: '应用管理' }
+        redirect: probeApplicationsRedirect
       },
       {
         path: 'feature-manage',

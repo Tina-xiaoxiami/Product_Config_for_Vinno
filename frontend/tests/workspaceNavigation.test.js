@@ -13,7 +13,7 @@ test('measurement belongs to master data with one stable navigation identity', (
 })
 
 test('probe management deep links retain their page identity and parent selection', () => {
-  for (const [path, title] of [['/feature-manage', '模板管理'], ['/applications', '应用管理'], ['/probe-models', '探头管理']]) {
+  for (const [path, title] of [['/feature-manage', '模板管理'], ['/applications', '探头&应用'], ['/probe-models', '探头&应用']]) {
     const page = workspaceForPath(path)
     assert.equal(page.title, title)
     assert.equal(page.activeTab, '/template-features')
