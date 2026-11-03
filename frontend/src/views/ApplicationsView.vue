@@ -205,6 +205,7 @@ const availableApps = ref([])
 
 // Create app
 const dialogVisible = ref(false)
+const closingAppDialog = ref(false)
 const saving = ref(false)
 const form = reactive({ name: '', en_name: '', sort_order: 0 })
 const formBaseline = ref(JSON.stringify(form))
@@ -283,7 +284,7 @@ const filteredAllApps = computed(() => {
 })
 
 const editorState = computed(() => applicationEditorState({ pendingCount: pendingCount.value, editMode: editMode.value,
-  submitting: submitting.value, saving: saving.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value }))
+  submitting: submitting.value, saving: saving.value || closingAppDialog.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value }))
 watch(editorState, value => emit('editor-state', value), { immediate: true, flush: 'sync' })
 const loadCategories = async (force = false) => {
   loading.value = true
@@ -483,14 +484,15 @@ const refreshData = async ({ force = false } = {}) => {
   return true
 }
 const closeAppDialog = async done => {
-  if (saving.value) return false
-  if (formDirty.value) {
-    try { await ElMessageBox.confirm('应用定义尚未保存，是否放弃修改？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
-    catch { return false }
-  }
-  dialogVisible.value = false
-  if (typeof done === 'function') done()
-  return true
+  if (saving.value || closingAppDialog.value) return false
+  closingAppDialog.value = true
+  try {
+    if (formDirty.value) await ElMessageBox.confirm('应用定义尚未保存，是否放弃修改？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' })
+    dialogVisible.value = false
+    if (typeof done === 'function') done()
+    return true
+  } catch { return false }
+  finally { closingAppDialog.value = false }
 }
 const discardLocal = () => { cancelEdit(); dialogVisible.value = false; addAppId.value = null }
 const requestLeave = async () => {
