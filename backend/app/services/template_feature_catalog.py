@@ -167,7 +167,8 @@ def _positive(value: Any) -> bool:
     return type(value) is int and value > 0
 
 
-async def validate_snapshot(db: AsyncSession, raw: str) -> tuple[list[dict], list[dict] | None]:
+def read_template_snapshot(raw: str) -> tuple[list[dict], list[dict] | None]:
+    """One structural contract for legacy cells and membership-aware versions."""
     try:
         snapshot = json.loads(raw)
         members = None
@@ -181,13 +182,9 @@ async def validate_snapshot(db: AsyncSession, raw: str) -> tuple[list[dict], lis
             templates = snapshot
         if not isinstance(templates, list):
             raise ValueError
-        feature_ids = set((await db.scalars(select(Feature.id))).all())
-        group_ids = set((await db.scalars(select(FeatureGroup.id))).all())
-        category_ids = set((await db.scalars(select(ProbeCategory.id))).all())
         seen = set()
         for row in templates:
             if (not isinstance(row, dict) or not _positive(row.get('feature_id')) or not _positive(row.get('category_id'))
-                    or row['feature_id'] not in feature_ids or row['category_id'] not in category_ids
                     or row.get('default_support', 'unsupported') not in SUPPORT_STATES
                     or row.get('default_excludes') is not None and not isinstance(row['default_excludes'], str)):
                 raise ValueError
@@ -198,11 +195,25 @@ async def validate_snapshot(db: AsyncSession, raw: str) -> tuple[list[dict], lis
         seen_members = set()
         for row in members or []:
             if (not isinstance(row, dict) or not _positive(row.get('feature_id')) or not _positive(row.get('group_id'))
-                    or row['feature_id'] not in feature_ids or row['group_id'] not in group_ids or row['feature_id'] in seen_members):
+                    or row['feature_id'] in seen_members):
                 raise ValueError
             seen_members.add(row['feature_id'])
         if members is not None and any(row['feature_id'] not in seen_members for row in templates):
             raise ValueError
         return templates, members
     except (ValueError, TypeError, KeyError) as error:
+        raise ValueError('模板版本快照结构无效') from error
+
+
+async def validate_snapshot(db: AsyncSession, raw: str) -> tuple[list[dict], list[dict] | None]:
+    try:
+        templates, members = read_template_snapshot(raw)
+        feature_ids = set((await db.scalars(select(Feature.id))).all())
+        group_ids = set((await db.scalars(select(FeatureGroup.id))).all())
+        category_ids = set((await db.scalars(select(ProbeCategory.id))).all())
+        if (any(row['feature_id'] not in feature_ids or row['category_id'] not in category_ids for row in templates)
+                or any(row['feature_id'] not in feature_ids or row['group_id'] not in group_ids for row in members or [])):
+            raise ValueError
+        return templates, members
+    except ValueError as error:
         raise HTTPException(422, '模板版本快照无效或引用已不存在，未执行回滚') from error
