@@ -61,6 +61,8 @@ def _validate_library(payload: Any) -> dict:
         if not isinstance(feature, dict) or not isinstance(feature.get('id'), str) or not feature['id'] or feature['id'] in seen:
             raise ValueError('白皮书功能身份缺失或重复')
         seen.add(feature['id'])
+        if feature.get('configuration_errors'):
+            raise ValueError('白皮书功能库未能读取其配置关联，当前不能判断是否已关联')
         if not isinstance(feature.get('configuration_items'), list) or not isinstance(feature.get('series_description_views'), dict):
             raise ValueError('白皮书配置关联或系列描述投影无效')
         if not isinstance(feature.get('bindings'), list):
