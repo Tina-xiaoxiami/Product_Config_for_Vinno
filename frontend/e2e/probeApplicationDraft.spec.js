@@ -42,3 +42,36 @@ test('application associations autosave across reload and keep publication separ
   await expect(applications.getByRole('button',{name:'编辑应用',exact:true})).toBeVisible()
   expect((await (await page.request.get('/api/applications/versions')).json()).length).toBe(before)
 })
+
+test('publication and cleanup failure remain distinct and an old local draft cannot create another version',async({page})=>{
+  const response=await page.request.post('/api/applications',{data:{name:'清理失败回归应用',en_name:'Cleanup test'}})
+  expect(response.ok()).toBe(true)
+  const before=(await (await page.request.get('/api/applications/versions')).json()).length
+  await page.addInitScript(()=>{
+    const remove=Storage.prototype.removeItem
+    Storage.prototype.removeItem=function(key){
+      if(key==='probe-application-associations-draft-v1'&&!window.allowDraftCleanup)throw new Error('simulated cleanup failure')
+      return remove.call(this,key)
+    }
+  })
+  await page.goto('/probe-models')
+  const scope=page.getByRole('region',{name:'类别应用',exact:true})
+  await scope.getByPlaceholder('选择应用').click()
+  await page.getByRole('option',{name:'清理失败回归应用',exact:true}).click()
+  await scope.getByRole('button',{name:'添加',exact:true}).click()
+  await expect(scope.getByRole('status')).toContainText('本机草稿已自动保存 · 1 项')
+  await scope.getByRole('button',{name:'提交并创建版本',exact:true}).click()
+  await expect(scope.getByRole('alert').filter({hasText:'服务器已提交'})).toBeVisible()
+  await expect(scope.getByRole('button',{name:'重试清理本机草稿',exact:true})).toBeVisible()
+  await expect(scope.getByRole('button',{name:'提交并创建版本',exact:true})).toBeDisabled()
+  await expect(scope.locator('.app-tag').filter({hasText:'清理失败回归应用'})).toHaveCount(1)
+  expect((await (await page.request.get('/api/applications/versions')).json()).length).toBe(before+1)
+  await page.reload()
+  await expect(scope.locator('.app-tag').filter({hasText:'清理失败回归应用'})).toHaveCount(1)
+  await scope.getByRole('button',{name:'提交并创建版本',exact:true}).click()
+  expect((await (await page.request.get('/api/applications/versions')).json()).length).toBe(before+1)
+  await page.evaluate(()=>{window.allowDraftCleanup=true})
+  await scope.getByRole('button',{name:'废弃全部',exact:true}).click()
+  await page.reload()
+  await expect(scope.getByRole('button',{name:'编辑应用',exact:true})).toBeVisible()
+})

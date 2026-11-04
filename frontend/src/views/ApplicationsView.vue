@@ -236,7 +236,7 @@ let initialCategoryRequested = Number(route.query.category_id) || restoredDraft.
 editMode.value = restoredDraft.editMode
 draftSaved.value = !restoredDraft.error
 watch(() => ({ changes: { ...pendingChanges }, editMode: editMode.value, categoryId: selectedCategory.value?.id || restoredDraft.categoryId }), value => {
-  if (draftWritePaused) return
+  if (draftWritePaused || committedUncleared.value) return
   draftSaved.value = draftStore.save(value.changes, value)
   if (draftSaved.value) draftError.value = ''
 }, { deep: true, flush: 'sync' })
@@ -259,7 +259,7 @@ const regularApps = computed(() => {
     if (ch.action === 'remove') removed.add(ch.appId)
     if (ch.action === 'add') added.push({ id: ch.appId, name: ch.appName, en_name: '', _pending: true })
   }
-  return [...base.filter(a => !removed.has(a.id)), ...added]
+  return [...base.filter(a => !removed.has(a.id)), ...added.filter(app => !base.some(existing => existing.id === app.id))]
 })
 
 const pocApps = computed(() => {
@@ -274,7 +274,7 @@ const pocApps = computed(() => {
     if (ch.action === 'remove') removed.add(ch.appId)
     if (ch.action === 'add') added.push({ id: ch.appId, name: ch.appName, en_name: '', _pending: true })
   }
-  return [...base.filter(a => !removed.has(a.id)), ...added]
+  return [...base.filter(a => !removed.has(a.id)), ...added.filter(app => !base.some(existing => existing.id === app.id))]
 })
 
 // Pending changes for current category (for display)

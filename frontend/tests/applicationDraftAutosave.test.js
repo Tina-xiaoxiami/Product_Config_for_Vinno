@@ -50,3 +50,13 @@ test('restored already-published edits are filtered before a version can be crea
   assert.equal(applicationEditorState({pendingCount:2,editMode:true,draftSaved:true}).protected,false)
   assert.equal(applicationEditorState({pendingCount:2,editMode:true,draftSaved:false}).protected,true)
 })
+
+test('a committed addition retained for cleanup appears only once after official data refreshes',()=>{
+  for(const kind of ['regular','poc']) {
+    const start=view.indexOf(`const ${kind}Apps = computed(`)
+    const end=view.indexOf('\n})',start)+3
+    const refs={editMode:{value:true},selectedCategory:{value:{id:1}},categoryApps:{value:{[kind]:[{id:2,name:'应用'}]}},pendingChanges:{one:{action:'add',catId:1,appId:2,appName:'应用',probeType:kind}},computed:fn=>({get value(){return fn()}})}
+    const apps=new Function(...Object.keys(refs),view.slice(start,end)+`;return ${kind}Apps`)(...Object.values(refs))
+    assert.equal(apps.value.length,1)
+  }
+})
