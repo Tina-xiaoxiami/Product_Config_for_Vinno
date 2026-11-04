@@ -5,10 +5,11 @@ from pathlib import Path
 import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.knowledge_sources import CitationSourceError, citation_evidence, verified_original
 from app.services.knowledge_answer_review import (
     KnowledgeAnswerReviewError, KnowledgeAnswerReviewConflict,
     KnowledgeAnswerReviewUnavailable, review_answer,
@@ -417,11 +418,35 @@ async def extract_document_content(
     return KnowledgeDocumentExtractionItem(**item, review=review)
 
 
+@router.get("/documents/{document_id}/evidence")
+async def locate_citation(
+    document_id: int,
+    version_id: str = Query(..., pattern=r"^[a-f0-9]{64}$"),
+    page: int | None = Query(None, ge=1, le=10000),
+    chunk_id: int | None = Query(None, ge=1),
+    quote: str | None = Query(None, min_length=6, max_length=400),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await citation_evidence(db, document_id, version_id, page=page, chunk_id=chunk_id, quote=quote)
+    except CitationSourceError as error:
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
+
+
 @router.get("/documents/{document_id}/preview")
 async def preview_document(
     document_id: int,
+    version_id: str | None = Query(None, pattern=r"^[a-f0-9]{64}$"),
     db: AsyncSession = Depends(get_db),
 ):
+    if version_id is not None:
+        try:
+            document, data = await verified_original(db, document_id, version_id)
+        except CitationSourceError as error:
+            raise HTTPException(status_code=error.status, detail=str(error)) from error
+        from urllib.parse import quote as encode_filename
+        return Response(data, media_type=document['mime_type'] or mimetypes.guess_type(document['file_name'])[0] or 'application/octet-stream',
+                        headers={'Cache-Control': 'no-store', 'Content-Disposition': "inline; filename*=UTF-8''" + encode_filename(document['file_name'])})
     document = await get_registered_document(db, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="资料不存在")
