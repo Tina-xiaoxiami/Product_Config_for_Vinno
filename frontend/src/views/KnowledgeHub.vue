@@ -610,7 +610,10 @@ const openCitation = (citation) => {
 watch(() => JSON.stringify([qaQuestion.value, qaScope]), () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => qaResult.value, () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => answerCandidates.value, () => citationViewer.value?.close(), { flush: 'sync' })
-watch(activeTab, () => citationViewer.value?.close(), { flush: 'sync' })
+watch(activeTab, () => {
+  citationViewer.value?.close()
+  evidenceAnswer.value?.closeCitation()
+}, { flush: 'sync' })
 
 const useCandidate = (candidate) => {
   if (!answerForm.value.answer_text.trim()) answerForm.value.answer_text = candidate.excerpt

@@ -34,7 +34,7 @@ watch(() => JSON.stringify([props.question, props.scope]), () => { controller.in
 watch(() => state.result, () => citationViewer.value?.close(), { flush: 'sync' })
 onMounted(() => controller.checkAvailability())
 onBeforeUnmount(() => controller.dispose())
-defineExpose({ run: () => controller.run(), state })
+defineExpose({ run: () => controller.run(), state, closeCitation: () => citationViewer.value?.close() })
 </script>
 
 <style scoped>
