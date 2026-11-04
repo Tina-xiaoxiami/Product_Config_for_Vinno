@@ -62,3 +62,33 @@ def test_oversized_input_fails_before_launching_shared_runtime(tmp_path, monkeyp
     monkeypatch.setattr(subprocess, 'run', lambda *a, **k: pytest.fail('too much context'))
     with pytest.raises(bridge.SharedEvidenceUnavailable):
         bridge.run_shared_evidence({'text': 'a' * (4 * 1024 * 1024)})
+
+
+def test_server_source_manifest_is_private_scoped_and_deleted_after_runtime(tmp_path, monkeypatch):
+    config(tmp_path, monkeypatch)
+    source = tmp_path / 'original.pdf'; source.write_bytes(b'synthetic')
+    payload = {'pages': [{'id': 'kb-1', 'version_id': 'a'*64}]}
+    sources = [{'id': 'kb-1', 'version_id': 'a'*64, 'file_path': str(source)}]
+    seen = []
+    def run(command, **kwargs):
+        from pathlib import Path
+        manifest = Path(kwargs['env']['VINNO_PRODUCT_SOURCE_MANIFEST'])
+        seen.append(manifest)
+        assert json.loads(manifest.read_text()) == sources
+        assert 'file_path' not in kwargs['input'].decode()
+        assert manifest.stat().st_mode & 0o077 == 0
+        kwargs['stdout'].write(b'{"status":"no_evidence","claims":[]}')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, 'run', run)
+    bridge.run_shared_evidence(payload, sources=sources)
+    assert not seen[0].exists()
+
+
+@pytest.mark.parametrize('sources', [[{'id':'kb-2','version_id':'a'*64,'file_path':'/private/source.pdf'}],
+    [{'id':'kb-1','version_id':'b'*64,'file_path':'/private/source.pdf'}],
+    [{'id':'kb-1','version_id':'a'*64,'file_path':'relative.pdf'}]])
+def test_manifest_cannot_expand_payload_source_authorization(tmp_path, monkeypatch, sources):
+    config(tmp_path, monkeypatch)
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: pytest.fail('unauthorized source passed to runtime'))
+    with pytest.raises(bridge.SharedEvidenceUnavailable):
+        bridge.run_shared_evidence({'pages':[{'id':'kb-1','version_id':'a'*64}]}, sources=sources)
