@@ -276,3 +276,41 @@ async def test_office_change_during_parse_never_commits_mixed_version_chunks(
             ).scalar() == "failed"
     finally:
         await engine.dispose()
+
+
+def _worksheet_package(xml):
+    original = xlsx_bytes()
+    output = BytesIO()
+    with ZipFile(BytesIO(original)) as source, ZipFile(output, 'w', ZIP_DEFLATED) as destination:
+        for entry in source.infolist():
+            destination.writestr(entry, xml if entry.filename == 'xl/worksheets/sheet1.xml' else source.read(entry))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize('ranges,limit', [('A1:XFD1048576',100000),('A1:C2 D1:F2',10)])
+def test_merge_expansion_is_bounded_before_workbook_allocation(monkeypatch,ranges,limit):
+    monkeypatch.setattr(service,'MAX_OFFICE_CELLS',limit)
+    monkeypatch.setattr(service,'_xlsx_blocks',lambda *args:pytest.fail('unbounded merged cell allocation'))
+    merges=''.join(f'<mergeCell ref="{ref}"/>' for ref in ranges.split())
+    xml=f'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData><mergeCells>{merges}</mergeCells></worksheet>'.encode()
+    with pytest.raises(service.KnowledgeContentError,match='上限'):
+        service.extract_office_blocks(_worksheet_package(xml),'.xlsx')
+
+
+def test_array_formula_is_stable_literal_source_with_explicit_range():
+    from openpyxl.worksheet.formula import ArrayFormula
+    book=Workbook();book.active['A1']=ArrayFormula(ref='A1:A2',text='=ROW(A1:A2)')
+    stream=BytesIO();book.save(stream);book.close();raw=stream.getvalue()
+    first=service.extract_office_blocks(raw,'.xlsx');second=service.extract_office_blocks(raw,'.xlsx')
+    assert first==second
+    cell=first[0].locator['cells'][0]
+    assert cell['text']=='=ROW(A1:A2)' and cell['formula_ref']=='A1:A2'
+    assert cell['formula_state']=='not_evaluated' and cell['value_type']=='formula'
+
+
+def test_data_table_formula_without_stable_text_is_explicitly_unsupported():
+    from openpyxl.worksheet.formula import DataTableFormula
+    book=Workbook();book.active['A1']=DataTableFormula(ref='A1:B2',r1='C1')
+    stream=BytesIO();book.save(stream);book.close()
+    with pytest.raises(service.KnowledgeContentError,match='公式'):
+        service.extract_office_blocks(stream.getvalue(),'.xlsx')
