@@ -35,6 +35,19 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
     trace = await trace_release_history(db, question, scope)
     release_ids = {item['document_id'] for item in trace.get('source_documents', [])}
     release_ids.update(item['document_id'] for chain in trace.get('chains', []) for item in chain.get('documents', []))
+    source_scopes = defaultdict(set)
+    source_versions = defaultdict(set)
+    records = list(trace.get('source_documents', []))
+    records.extend(item for chain in trace.get('chains', []) for item in chain.get('documents', []))
+    for item in records:
+        if isinstance(item.get('version'), str) and item['version'].strip():
+            source_versions[item['document_id']].add(item['version'].strip())
+    for chain in trace.get('chains', []):
+        if chain.get('country') and chain.get('market') and chain.get('release_line'):
+            key = _fingerprint({'country': chain['country'], 'market': chain['market'],
+                                'release_line': chain['release_line'], 'product_model_id': scope['product_model_id']})
+            for item in chain.get('documents', []):
+                source_scopes[item['document_id']].add(key)
     docs = (await db.execute(text('''SELECT d.*,e.source_sha256,e.status AS extraction_status
         FROM knowledge_documents d LEFT JOIN knowledge_document_extractions e ON e.document_id=d.id
         WHERE d.source_status='active' ORDER BY d.id'''))).mappings().all()
@@ -60,6 +73,15 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
         except (OSError, ValueError):
             gaps.append(f'资料{ident}原件不可用或摘要已变化')
             continue
+        if document['document_type'] != 'release_note' and document['country'] and same_scope:
+            source_scopes[ident].add(_fingerprint({'country': document['country'], 'market': document['market'],
+                'release_line': None, 'product_model_id': scope['product_model_id']}))
+        document['source_scope_keys'] = sorted(source_scopes[ident])
+        if document['document_type'] == 'release_note':
+            actual_versions = source_versions[ident]
+            document['evidence_document_version'] = next(iter(actual_versions)) if len(actual_versions) == 1 else None
+        else:
+            document['evidence_document_version'] = document['version']
         eligible.append(document)
     if not eligible:
         return [], gaps, _fingerprint({'scope': scope, 'pages': []})
@@ -94,7 +116,7 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
             size += len(content.encode())
             pages.append({'id': f'kb-{ident}', 'page': page, 'text': content, 'version_id': doc['sha256'],
                           'title': doc['title'], 'file_name': doc['file_name'], 'year': None,
-                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True})
+                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True, 'document_version': doc['evidence_document_version'], 'source_scope_keys': doc['source_scope_keys']})
     fingerprint = _fingerprint({'scope': scope, 'pages': pages, 'documents': eligible})
     return pages, list(dict.fromkeys(gaps)), fingerprint
 
@@ -146,7 +168,7 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
         result = await asyncio.to_thread(run_shared_evidence, {'question': question, 'scope': scope, 'pages': pages}, sources=sources)
     except SharedEvidenceUnavailable as error:
         return {**_base('unavailable', str(error), gaps=gaps, coverage=coverage), 'scope': scope, 'metrics': {'model_calls': None}}
-    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}
+    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {}), 'deduplication': result.get('deduplication', {})}
     # This endpoint owns a read-only session. End its read transaction to recheck
     # current applicability, text and files after a potentially long model call.
     await db.rollback()
@@ -168,4 +190,4 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     return {'status': status, 'claims': claims if status in {'draft', 'partial'} else [], 'scope': scope,
             'message': '资料草稿，尚未人工确认或发布', 'gaps': gaps + result.get('gaps', []),
             'coverage': {**result.get('coverage', {}), **coverage}, 'metrics': result.get('metrics', {}),
-            'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}
+            'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {}), 'deduplication': result.get('deduplication', {})}

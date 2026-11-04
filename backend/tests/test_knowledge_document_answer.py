@@ -66,6 +66,7 @@ def result(payload):
     page = payload['pages'][0]
     return {'status': 'draft', 'claims': [{'text': '仅适用于新平台。', 'kind': 'source_statement', 'support_status': 'direct',
                                          'citations': [{'document_id': page['id'], 'pdf_page': page['page'], 'original_excerpt': PAGE, 'version_id': page['version_id']}]}],
+            'deduplication': {'merged_count': 0, 'groups': [{'output_index':0, 'source_claim_indices':[0], 'visual_claim_indices':[0]}]},
             'gaps': [], 'coverage': {}, 'visual_review': {'status': 'model_checked', 'human_reviewed': False}, 'metrics': {'model_calls': 4}, 'runtime_identity': {'protocol_version': 1}}
 
 
@@ -75,6 +76,8 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
     def run(payload, **kwargs):
         calls.append(payload)
         assert payload['pages'][0]['requires_visual_review'] is True
+        assert payload['pages'][0]['document_version'] == '1.14.81'
+        assert len(payload['pages'][0]['source_scope_keys']) == 1
         assert kwargs['sources'][0]['id'] == 'kb-1'
         assert kwargs['sources'][0]['version_id'] == payload['pages'][0]['version_id']
         assert kwargs['sources'][0]['file_path'].endswith('source.pdf')
@@ -86,12 +89,14 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
         data = r.json()
         assert data['status'] == 'draft'
         assert [p['id'] for p in calls[0]['pages']] == ['kb-1']
-        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url', 'requires_visual_review'}
+        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url', 'requires_visual_review', 'document_version', 'source_scope_keys'}
         cite = data['claims'][0]['citations'][0]
         assert cite['document_id'] == 1 and cite['page'] == 1
         assert cite['preview_url'] == f"/api/knowledge/documents/1/preview?version_id={calls[0]['pages'][0]['version_id']}#page=1"
         assert data['coverage']['document_count'] == 1
         assert data['visual_review']['status'] == 'model_checked'
+        assert data['deduplication']['merged_count'] == 0
+        assert data['deduplication']['groups'][0]['source_claim_indices'] == [0]
         async with factory() as db:
             assert (await db.execute(text('SELECT count(*) FROM knowledge_questions'))).scalar() == 0
             assert (await db.execute(text('SELECT count(*) FROM knowledge_answers'))).scalar() == 0
@@ -213,3 +218,37 @@ async def test_corrupt_chunk_hash_is_not_accepted_as_original_evidence(tmp_path,
             await db.commit()
         data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
         assert data['status'] == 'no_evidence' and data['gaps']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('country,line',[('US','main'),('CN','fork')])
+async def test_source_scope_keys_follow_release_chains_not_optional_query_country(tmp_path,monkeypatch,country,line):
+    async with setup(tmp_path,monkeypatch) as (_,factory,_):
+        async def trace(*args,**kwargs):
+            return {'chains':[{'country':'CN','market':'domestic','release_line':'main','documents':[{'document_id':1}]},
+                             {'country':country,'market':'domestic','release_line':line,'documents':[{'document_id':2}]}]}
+        monkeypatch.setattr(service,'trace_release_history',trace)
+        async with factory() as db:
+            await db.execute(text("UPDATE knowledge_documents SET document_type='release_note',product_series='VINNO 6' WHERE id IN (1,2)"))
+            await db.commit()
+            scope=await service.resolve_query_scope(db,SCOPE)
+            pages,_,_=await service._pages(db,'升级有哪些条件？',scope)
+            keys={page['id']:page['source_scope_keys'] for page in pages}
+            assert keys['kb-1'] and keys['kb-2'] and keys['kb-1'] != keys['kb-2']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('actual_versions',[('1.14.80',),('1.14.80','1.14.81')])
+async def test_release_version_uses_extracted_trace_facts_not_a_stale_registry_label(tmp_path,monkeypatch,actual_versions):
+    async with setup(tmp_path,monkeypatch) as (_,factory,_):
+        async def trace(*args,**kwargs):
+            return {'chains':[{'country':'CN','market':'domestic','release_line':'main',
+                'documents':[{'document_id':1,'version':v} for v in actual_versions]}]}
+        monkeypatch.setattr(service,'trace_release_history',trace)
+        async with factory() as db:
+            await db.execute(text("UPDATE knowledge_documents SET document_type='release_note' WHERE id=1"))
+            await db.commit()
+            scope=await service.resolve_query_scope(db,SCOPE)
+            pages,_,_=await service._pages(db,'升级有哪些条件？',scope)
+            assert pages[0]['document_version'] == ('1.14.80' if len(actual_versions)==1 else None)
+            assert (await db.execute(text('SELECT version FROM knowledge_documents WHERE id=1'))).scalar() == '1.14.81'
