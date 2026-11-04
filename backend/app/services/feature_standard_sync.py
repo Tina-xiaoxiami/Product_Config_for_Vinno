@@ -28,7 +28,7 @@ def identity_keys(value):
         trimmed = re.sub(r'(功能|技术|成像|模式|软件)$', '', trimmed)
         if len(trimmed) >= 4:
             values.add(trimmed)
-    return {re.sub(r'\s+', '', unicodedata.normalize('NFKC', text)).casefold().rstrip('：:') for text in values if text}
+    return {re.sub(r'\s+', '', unicodedata.normalize('NFKC', text)).casefold().rstrip('：:') for text in values if text and not re.fullmatch(r'(?:v\d+(?:\.\d+)*|[234]d|ngs|pro|plus|basic|advanced)',text.strip(),re.I)}
 
 
 def compatible_identity(feature, standard):
