@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { projectManagedMeasurement, dictionaryLabel, identityRows, formatManagedChange, workspaceChangeRows, normalizeMeasurementModes, sourceEvidenceHasDrift } from '../src/utils/measurementWorkspace.js'
+import { projectManagedMeasurement, dictionaryLabel, identityRows, formatManagedChange, workspaceChangeRows, normalizeMeasurementModes, sourceEvidenceHasDrift, reorderDictionaryCodes } from '../src/utils/measurementWorkspace.js'
 import { filterMeasurements } from '../src/utils/measurementLibrary.js'
 const document = {
   applications: [{ code: 'Common', name: '常规项目' }, { code: 'CARD', name: '心脏' }],
@@ -114,4 +114,13 @@ test('page derives pending sync on load and row menu bounds fixed action width',
   assert.match(page, /aria-label="编辑"/)
   assert.match(page, /el-dropdown-item command="rename">编辑名称/)
   assert.match(page, /el-dropdown-item command="assign">编辑关联/)
+})
+
+
+test('dictionary drag moves the source to the target without losing hidden codes', () => {
+  const entries = ['A', 'B', 'C', 'D'].map(code => ({ code }))
+  assert.deepEqual(reorderDictionaryCodes(entries, 'A', 'C'), ['B', 'C', 'A', 'D'])
+  assert.deepEqual(reorderDictionaryCodes(entries, 'D', 'B'), ['A', 'D', 'B', 'C'])
+  assert.deepEqual(reorderDictionaryCodes(entries, 'B', 'B'), ['A', 'B', 'C', 'D'])
+  assert.deepEqual(reorderDictionaryCodes(entries, 'missing', 'B'), ['A', 'B', 'C', 'D'])
 })
