@@ -125,6 +125,7 @@ async def test_sources_changed_during_generation_invalidate_every_claim(tmp_path
         data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
         assert data['status'] == 'unavailable'
         assert data['claims'] == []
+        assert data['metrics']['model_calls'] == 4
 
 
 @pytest.mark.asyncio
@@ -140,6 +141,18 @@ async def test_fabricated_reference_identity_or_quote_is_rejected(tmp_path, monk
     async with setup(tmp_path, monkeypatch) as (client, _, _):
         data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
         assert data['status'] == 'validation_failed' and not data['claims']
+        assert data['metrics']['model_calls'] == 4
+
+
+@pytest.mark.asyncio
+async def test_runner_timeout_does_not_report_zero_model_calls(tmp_path, monkeypatch):
+    from app.integrations.guideline_evidence import SharedEvidenceUnavailable
+    def fail(_):
+        raise SharedEvidenceUnavailable('共享运行器超时')
+    monkeypatch.setattr(service, 'run_shared_evidence', fail)
+    async with setup(tmp_path, monkeypatch) as (client, _, _):
+        data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
+        assert data['status'] == 'unavailable' and data['metrics']['model_calls'] is None
 
 
 @pytest.mark.asyncio
