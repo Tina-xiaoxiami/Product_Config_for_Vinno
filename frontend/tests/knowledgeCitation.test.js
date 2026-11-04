@@ -55,3 +55,14 @@ test('versioned preview links stay on the registered product document route',asy
   assert.equal(evidenceCitationUrl({...citation(),preview_url:`/api/knowledge/documents/2/preview?version_id=${sha}#page=2`}),null)
   assert.equal(evidenceCitationUrl({...citation(),preview_url:`/api/knowledge/documents/1/preview?version_id=${sha}&path=bad`}),null)
 })
+
+test('knowledge tab changes close both local and teleported child citation viewers', async () => {
+  const { readFileSync } = await import('node:fs')
+  const hub = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const child = readFileSync(new URL('../src/components/KnowledgeEvidenceAnswer.vue', import.meta.url), 'utf8')
+  assert.match(child, /defineExpose\(\{[^}]*closeCitation:\s*\(\)\s*=>\s*citationViewer\.value\?\.close\(\)/)
+  const tabWatcher = hub.match(/watch\(activeTab,\s*\(\)\s*=>\s*\{([\s\S]*?)\},\s*\{\s*flush:\s*'sync'\s*\}\)/)
+  assert.ok(tabWatcher, 'tab watcher must synchronously close teleported viewers')
+  assert.match(tabWatcher[1], /citationViewer\.value\?\.close\(\)/)
+  assert.match(tabWatcher[1], /evidenceAnswer\.value\?\.closeCitation\(\)/)
+})
