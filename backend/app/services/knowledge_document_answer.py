@@ -125,7 +125,7 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     scope = await resolve_query_scope(db, supplied_scope)
     if scope is None:
         raise KnowledgeScopeError('请明确市场、完整机型及软件版本')
-    if re.search(r'标配|选配|招标|注册|选型|电池|容量|频率范围', question) or await topics_for_question(db, question):
+    if re.search(r'标配|选配|招标|注册|选型|电池|容量|频率范围|\b(?:standard|optional|tender|registration|registered|battery|capacity)\b|\bfrequency\s+range\b', question, re.I) or await topics_for_question(db, question):
         return {**_base('deterministic_required', '此问题请使用正式配置、注册或参数型答案入口，资料草稿不替代确定性查询'), 'scope': scope}
     pages, gaps, fingerprint = await _pages(db, question, scope)
     coverage = {'document_count': len({page['id'] for page in pages}), 'page_count': len(pages)}
