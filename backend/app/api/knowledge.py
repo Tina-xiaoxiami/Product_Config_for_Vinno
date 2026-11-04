@@ -421,6 +421,7 @@ async def extract_document_content(
 @router.get("/documents/{document_id}/evidence")
 async def locate_citation(
     document_id: int,
+    response: Response,
     version_id: str = Query(..., pattern=r"^[a-f0-9]{64}$"),
     page: int | None = Query(None, ge=1, le=10000),
     chunk_id: int | None = Query(None, ge=1),
@@ -428,7 +429,9 @@ async def locate_citation(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await citation_evidence(db, document_id, version_id, page=page, chunk_id=chunk_id, quote=quote)
+        result = await citation_evidence(db, document_id, version_id, page=page, chunk_id=chunk_id, quote=quote)
+        response.headers['Cache-Control'] = 'no-store'
+        return result
     except CitationSourceError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from error
 
