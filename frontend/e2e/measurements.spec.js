@@ -95,14 +95,9 @@ test('measurement controls stay compact and the table fills remaining height thr
   await page.goto('/measurements')
   await expect(page.getByText('87 / 87 条', { exact: true })).toBeVisible()
   const search = page.getByPlaceholder('查找 Id、英文 UI 或中文 UI 名称')
-  const version = page.getByRole('combobox', { name: '来源批次' })
   const searchBox = await page.locator('.search-input > .el-input__wrapper').boundingBox()
-  const versionBox = await page.locator('.batch-select .el-select__wrapper').boundingBox()
-  expect(Math.abs(searchBox.y + searchBox.height / 2 - versionBox.y - versionBox.height / 2), 'search and version share the first row').toBeLessThan(4)
-  expect(searchBox.x).toBeLessThan(versionBox.x)
   expect(searchBox.height).toBe(38)
   expect(searchBox.width).toBeGreaterThanOrEqual(440)
-  expect(versionBox.height).toBe(32)
   expect((await page.getByRole('button', { name: '导入人用中文表', exact: true }).boundingBox()).height).toBe(32)
   expect((await page.getByRole('button', { name: '筛选中文 UI 名称', exact: true }).boundingBox()).height).toBe(24)
   const separator = page.getByRole('separator', { name: '调整应用和模式筛选区宽度', exact: true })
@@ -208,7 +203,7 @@ test('flat application and mode facets combine, keep empty choices and reset tog
   await sidebar.getByRole('button', { name: '不限模式', exact: true }).click()
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('measurement-compact-sidebar.png') })
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toHaveCount(0)
   await expect(applications.getByRole('checkbox', { name: 'GYN', exact: true })).toBeChecked()
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await choose(page.getByRole('radiogroup', { name: '测量分类' }).getByRole('radio', { name: '常规测量', exact: true }))
@@ -219,4 +214,42 @@ test('flat application and mode facets combine, keep empty choices and reset tog
   await page.locator('.query-controls').getByRole('button', { name: '清除查询条件', exact: true }).click()
   await expect(page.getByText('7 / 7 条', { exact: true })).toBeVisible()
   await expect(modes.getByRole('checkbox', { name: '未标注模式', exact: true })).not.toBeChecked()
+})
+
+
+test('source batches can be viewed and switched through management', async ({ page }) => {
+  const buffer = await readFile(fileURLToPath(new URL('./fixtures/measurement-human.xlsx', import.meta.url)))
+  const ids = []
+  for (const version of ['batch-older-test', 'batch-newer-test']) {
+    const response = await page.request.post('/api/measurements/import', { multipart: {
+      version, file: { name: 'measurement-human.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer }
+    } })
+    expect(response.ok()).toBe(true)
+    ids.push((await response.json()).batch_id)
+  }
+  await page.goto('/measurements')
+  await expect(page.getByRole('button', { name: '发布版本', exact: true })).toBeVisible()
+  await expect(page.locator('.measurement-main-toolbar').getByRole('combobox', { name: '来源批次' })).toHaveCount(0)
+  await expect(page.locator('.measurement-main-toolbar').getByRole('button', { name: '刷新', exact: true })).toHaveCount(0)
+  async function openBatches() {
+    await page.getByRole('button', { name: '管理 ▾', exact: true }).click()
+    await page.getByRole('menuitem', { name: '来源批次', exact: true }).click()
+    return page.getByRole('dialog', { name: '来源批次', exact: true })
+  }
+  let dialog = await openBatches()
+  await expect(dialog.getByRole('combobox', { name: '来源批次' })).toHaveValue(/batch-newer-test/)
+  await dialog.getByRole('combobox', { name: '来源批次' }).click()
+  await page.getByRole('option', { name: new RegExp(`batch-older-test.*#${ids[0]}$`) }).click()
+  await dialog.getByRole('button', { name: '切换批次', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('.workspace-version')).toContainText('batch-older-test')
+  await page.locator('.workspace-version').click()
+  await page.getByRole('option', { name: /^batch-older-test · / }).click()
+  await expect(page.getByText('历史快照 · 只读', { exact: true })).toBeVisible()
+  dialog = await openBatches()
+  await dialog.getByRole('combobox', { name: '来源批次' }).click()
+  await page.getByRole('option', { name: new RegExp(`batch-newer-test.*#${ids[1]}$`) }).click()
+  await dialog.getByRole('button', { name: '切换批次', exact: true }).click()
+  await expect(page.locator('.workspace-version')).toContainText('batch-newer-test')
+  await expect(page.getByText('历史快照 · 只读', { exact: true })).toHaveCount(0)
 })

@@ -12,16 +12,12 @@
           </el-radio-group>
         </div>
       <div class="source-controls">
-        <el-select v-if="library.batches.length" v-model="batchId" aria-label="来源批次" size="small" class="batch-select" :disabled="workspaceLocked || syncingEvidence || evidenceSyncPending" @change="loadLibrary">
-          <el-option v-for="batch in library.batches" :key="batch.id" :value="batch.id" :label="`${batch.version} · ${batch.source_file} · #${batch.id}`" />
-        </el-select>
-        <div class="source-actions"><el-button size="small" type="primary" :disabled="workspaceLocked || syncingEvidence || evidenceSyncPending" @click="openImport">导入人用中文表</el-button>
-        <el-button size="small" :disabled="workspaceLocked || syncingEvidence || evidenceSyncPending" @click="loadLibrary">刷新</el-button></div>
+        <el-button size="small" type="primary" :disabled="workspaceLocked || syncingEvidence || evidenceSyncPending" @click="openImport">导入人用中文表</el-button>
       </div>
     </div>
-    <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
+    <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon><el-button size="small" :loading="loading" @click="loadLibrary">重试</el-button></el-alert>
     <template v-if="library.batch">
-      <MeasurementWorkspaceControls v-if="workspace" ref="workspaceControls" :workspace="workspace" :snapshot="snapshot" :sync-pending="evidenceSyncPending" @updated="acceptWorkspace" @snapshot="selectSnapshot" @locked="workspaceLocked = $event" @sync-evidence="syncEvidence" />
+      <MeasurementWorkspaceControls v-if="workspace" ref="workspaceControls" :workspace="workspace" :snapshot="snapshot" :batches="library.batches" :sync-pending="evidenceSyncPending || syncingEvidence" @select-batch="selectBatch" @updated="acceptWorkspace" @snapshot="selectSnapshot" @locked="workspaceLocked = $event" @sync-evidence="syncEvidence" />
       <el-alert v-if="evidenceSyncPending" type="warning" :closable="false" title="原始核对资料与测量库草稿尚未同步。请重试同步，完成后再发布。"><el-button size="small" :loading="syncingEvidence" @click="syncEvidence">重试同步核对资料</el-button><span>{{ evidenceSyncError }}</span></el-alert>
       <el-alert v-if="snapshot" type="info" :closable="false" :title="`正在查看历史快照 ${snapshot.version_number}，名称、字典与核对证据均为当时保存内容。`" />
       <ResizableSidebar class="measurement-browser" storage-key="measurement-filter-pane-width-v1" separator-label="调整应用和模式筛选区宽度">
@@ -213,6 +209,12 @@ watch(scope, value => { kind.value = ''; if (value !== 'application') selectedAp
 function selectApplication(values) { if (values.length) scope.value = 'application' }
 function clearFilters() { query.value = ''; kind.value = ''; scope.value = ''; selectedApplications.value = []; selectedModes.value = []; resetCounter.value++ }
 let requestId = 0
+function selectBatch(value) {
+  if (workspaceLocked.value || syncingEvidence.value || evidenceSyncPending.value || value === batchId.value) return
+  batchId.value = value
+  clearFilters()
+  loadLibrary()
+}
 async function loadLibrary() {
   const current = ++requestId
   loading.value = true; loadError.value = ''
@@ -289,7 +291,7 @@ onBeforeUnmount(() => { requestId++ })
 </script>
 
 <style scoped>
-.measurement-library{container:measurement-library / inline-size;display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.batch-select{width:330px;max-width:100%}.search-input{width:440px;max-width:100%;--workspace-control-height:38px;--workspace-control-font-size:14px}.query-reset{--workspace-control-height:38px}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.frozen-evidence pre{max-height:40vh;overflow:auto;white-space:pre-wrap;font-size:12px}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
+.measurement-library{container:measurement-library / inline-size;display:flex;flex-direction:column;flex:1;min-height:0;width:100%;min-width:0}.toolbar,.query-controls,.source-controls,.measurement-table-context{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.toolbar{margin-bottom:0;flex-shrink:0}.toolbar .el-button+.el-button{margin-left:0}.query-controls{min-width:0}.source-controls{margin-left:auto;justify-content:flex-end}.search-input{width:440px;max-width:100%;--workspace-control-height:38px;--workspace-control-font-size:14px}.query-reset{--workspace-control-height:38px}.scope-hint,.result-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.measurement-table-context{flex:1 1 520px;min-width:0}.result-line{margin-left:auto}.statistics-content{max-height:min(60vh,520px);overflow:auto;font-size:12px;line-height:1.7}.statistics-content p{margin:4px 0}.statistics-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.count-chip{background:var(--el-fill-color-light);border-radius:3px;padding:0 5px;white-space:nowrap}.warning-tag{margin-left:6px}.warnings{padding-left:20px;color:var(--el-color-warning-dark-2);margin:6px 0}.table-region{display:flex;flex-direction:column;flex:1;min-height:180px;min-width:0;width:100%}.frozen-evidence pre{max-height:40vh;overflow:auto;white-space:pre-wrap;font-size:12px}.detail-value{white-space:pre-wrap;word-break:break-word;user-select:text}
 .classification-filter{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
 .filter-group-label{font-size:12px;font-weight:600;color:var(--el-color-primary-dark-2)}
 .measurement-segments{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--el-border-color-light);border-radius:9px;background:var(--el-fill-color-light)}
@@ -334,8 +336,6 @@ onBeforeUnmount(() => { requestId++ })
 .query-controls{display:flex;flex-wrap:nowrap;max-width:100%;min-width:0}
 .query-controls .search-input{flex:1;min-width:140px;width:auto;max-width:600px}
 .source-controls{min-width:0;margin-left:0;flex-wrap:nowrap}
-.source-controls .batch-select{flex:1;min-width:160px;max-width:330px;width:330px}
-.source-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .table-region{container:measurement-results / inline-size}
 .table-region :deep(.table-actions){display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center}
 .measurement-table-context{display:contents}
@@ -346,14 +346,12 @@ onBeforeUnmount(() => { requestId++ })
 .measurement-browser.is-stacked .measurement-filter-sidebar{flex:none;height:clamp(150px,24vh,220px)}
 .measurement-browser.is-stacked .table-region{min-height:260px}
 @container measurement-library (max-width:1350px){
-  .measurement-main-toolbar{grid-template-columns:minmax(300px,1fr) auto}
-  .source-controls{grid-column:1/-1;justify-content:flex-start}
+  .measurement-main-toolbar{grid-template-columns:minmax(220px,1fr) auto auto}
 }
 @container measurement-library (max-width:900px){
   .measurement-main-toolbar{grid-template-columns:minmax(0,1fr)}
   .classification-filter,.source-controls{grid-column:1}
   .source-controls{flex-wrap:wrap}
-  .source-controls .batch-select{width:auto;flex:1 1 240px}
 }
 @container measurement-results (max-width:1000px){
   .table-region :deep(.table-actions){grid-template-columns:minmax(0,1fr) auto}
