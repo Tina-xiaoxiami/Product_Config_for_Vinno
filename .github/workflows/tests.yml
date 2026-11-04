@@ -46,7 +46,7 @@ jobs:
 
       - name: Feature name confirmation and source invalidation
         run: >-
-          python -m pytest backend/tests/test_feature_name_reviews.py backend/tests/test_feature_name_standards_api.py -q
+          python -m pytest backend/tests/test_feature_name_reviews.py backend/tests/test_feature_name_standards_api.py backend/tests/test_standard_name_policy.py -q
           --cov-config=backend/coverage.ini
           --cov=app.services.feature_name_reviews --cov=app.api.feature_standards
           --cov-report=term-missing --cov-fail-under=80

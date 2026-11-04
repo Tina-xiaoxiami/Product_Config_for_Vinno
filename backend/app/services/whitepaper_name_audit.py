@@ -357,20 +357,12 @@ async def audit_whitepaper_names(
                 ],
                 "功能名称标准表",
             )
-            config_result = _combine(
-                [
-                    verdict
-                    for verdict in (
-                        _verdict(used_cn, feature["config_cn_desc"], "配置管理中文描述"),
-                        _verdict(used_en, feature["config_en_desc"], "配置管理英文描述"),
-                    )
-                    if verdict is not None
-                ],
-                "配置管理描述",
-            )
+            # Configuration descriptions remain search aliases, not naming rules.
+            from app.services.feature_name_standards import _config_check
+            config_result = _config_check(feature)
             severities = [
                 result["severity"]
-                for result in (standard_result, config_result)
+                for result in (standard_result,)
                 if result is not None
             ]
             severity = (
@@ -420,7 +412,7 @@ async def audit_whitepaper_names(
             if entry["standard"] and entry["standard"]["severity"] != "ok"
         ),
         "config_differs": sum(
-            1 for entry in entries if entry["config"] and entry["config"]["severity"] != "ok"
+            1 for entry in entries if entry["config"] and entry["config"]["severity"] == "ambiguous"
         ),
         "variants": len(variants),
     }

@@ -54,7 +54,7 @@ async def whitepaper_names(
     include_matched: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
-    """核对白皮书正文里的功能名称：分别与标准表和配置管理描述比对。
+    """核对白皮书正文名称是否符合标准表，配置侧仅显示IPN链接。
 
     不指定 document_id 时只返回按白皮书汇总的概览；指定时返回该白皮书的逐条差异。
     """
@@ -91,7 +91,7 @@ async def import_feature_name_standards(
 
 
 from pydantic import BaseModel, Field
-from app.services.feature_name_reviews import review_detail, confirm_differences, revoke_confirmation
+from app.services.feature_name_reviews import review_detail, confirm_differences, revoke_confirmation, apply_standard_names
 
 class NameReviewInput(BaseModel):
     checks: dict[str,str] = Field(min_length=1,max_length=2)
@@ -109,3 +109,14 @@ async def confirm_name_reviews(feature_id: int, data: NameReviewInput, db: Async
 @router.post('/reviews/{feature_id}/{review_id}/revoke')
 async def revoke_name_review(feature_id: int, review_id: int, db: AsyncSession = Depends(get_db)):
     return await revoke_confirmation(db,feature_id,review_id)
+
+
+class StandardNameInput(BaseModel):
+    fingerprint: str = Field(min_length=64, max_length=64)
+    note: str = Field(default='', max_length=1000)
+    confirmed_by: str = Field(default='local_user', min_length=1, max_length=100)
+
+
+@router.post('/reviews/{feature_id}/apply-standard')
+async def apply_feature_standard(feature_id: int, data: StandardNameInput, db: AsyncSession = Depends(get_db)):
+    return await apply_standard_names(db, feature_id, data.fingerprint, data.note, data.confirmed_by)

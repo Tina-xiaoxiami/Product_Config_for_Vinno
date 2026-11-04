@@ -7,7 +7,7 @@
         </div>
         <div v-for="check in flag.checks" :key="check.baseline" class="feature-name-mark-check">
           <div class="feature-name-mark-check-label" :class="`is-${check.reviewed ? 'ok' : check.severity}`">
-            {{ check.label }}：{{ check.reviewed ? '已确认沿用' : severityLabel(check.severity) }}
+            {{ check.label }}：{{ check.baseline === 'config' && check.severity === 'ok' ? '已链接' : severityLabel(check.severity) }}
           </div>
           <div v-if="check.standard_cn_name">标准中文名称：{{ check.standard_cn_name }}</div>
           <div v-if="check.standard_en_name">标准英文名称：{{ check.standard_en_name }}</div>
@@ -15,7 +15,7 @@
           <div v-if="check.ipn">IPN：{{ check.ipn }}</div>
           <div v-if="check.message" class="feature-name-mark-message">{{ check.message }}</div>
         </div>
-        <div class="feature-name-mark-message">点击标记进行名称核对</div>
+        <div class="feature-name-mark-message">点击查看标准名称与配置链接</div>
       </div>
     </template>
     <button type="button" class="feature-name-mark" :class="`is-${flag.severity}`" :aria-label="'核对 ' + (flag.feature_en_name || flag.feature_cn_name) + ' 名称'" @click.stop="reviewDialog.open(flag.feature_id)"><el-icon><component :is="icon" /></el-icon></button>

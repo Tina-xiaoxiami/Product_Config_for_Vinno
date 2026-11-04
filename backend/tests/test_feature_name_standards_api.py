@@ -129,7 +129,7 @@ async def test_flags_cover_uncovered_features_and_name_index(tmp_path):
     assert flag["standard_check"]["severity"] == "uncovered"
     assert "标准表未收录" in flag["standard_check"]["message"]
     assert flag["config_check"]["severity"] == "unlinked"
-    assert [check["label"] for check in flag["checks"]] == ["功能名称标准表", "配置管理描述"]
+    assert [check["label"] for check in flag["checks"]] == ["功能名称标准表", "配置项链接"]
 
     # 提示同时按名称建立索引，前端在任何位置按名称显示都能命中
     assert body["by_name"]["vmindob"]["feature_id"] == 31
@@ -314,8 +314,8 @@ async def test_optional_configuration_marker_is_not_a_name_difference(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_config_description_baseline_is_prompted_separately(tmp_path):
-    """功能主名与配置管理中文/英文描述不一致时，与标准表基准分开提醒。"""
+async def test_config_descriptions_do_not_define_feature_names(tmp_path):
+    """名称只与标准表核对，配置表仅保留链接关系。"""
 
     database_path = tmp_path / "knowledge.db"
     _create_knowledge_database(database_path)
@@ -340,21 +340,12 @@ async def test_config_description_baseline_is_prompted_separately(tmp_path):
     await engine.dispose()
 
     body = audit.json()
-    # 标准表基准一致，配置管理描述基准不一致 → 只提醒配置管理这一侧
     assert body["standards"][0]["severity"] == "ok"
-    assert body["summary"]["config_differs"] == 1
-
-    flag = flags.json()["by_feature"]["1"]
-    assert flag["severity"] == "differs"
-    assert flag["standard_check"] is None
-    config_check = flag["config_check"]
-    assert config_check["severity"] == "differs"
-    assert config_check["ipn"] == "6009000"
-    assert config_check["feature_relation"]["severity"] == "differs"
-    # 配置描述与标准名称同样不一致
-    assert config_check["standard_relation"]["severity"] == "differs"
-    assert "旧中文描述" in config_check["feature_relation"]["message"]
-    assert "Old English" in config_check["feature_relation"]["message"]
+    assert body["summary"]["config_differs"] == 0
+    assert "1" not in flags.json()["by_feature"]
+    link = flags.json()["checks_by_feature"]["1"]["config_check"]
+    assert link["severity"] == "ok" and link["ipn"] == "6009000"
+    assert link["feature_relation"] is None and link["standard_relation"] is None
 
 
 def _create_whitepaper(database_path, document_id, title, chunks):
@@ -461,8 +452,8 @@ async def test_whitepaper_names_are_checked_against_both_baselines(tmp_path):
     assert "宽景扩展成像" in panoramic["used_cn"]
     assert panoramic["standard"]["severity"] == "differs"
     assert "宽景扩展成像" in panoramic["standard"]["message"]
-    assert panoramic["config"]["severity"] == "differs"
-    assert "宽景扩展成像" in panoramic["config"]["message"]
+    assert panoramic["config"]["severity"] == "ok"
+    assert panoramic["config"]["message"] == "已关联主IPN"
     assert panoramic["snippets"]
 
     # 只有选配标记和括号说明的行不会成为差异项：SMF 两个基准都一致

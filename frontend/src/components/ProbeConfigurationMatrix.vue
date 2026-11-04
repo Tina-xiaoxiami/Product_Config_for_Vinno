@@ -14,7 +14,7 @@
       <el-checkbox v-model="allGroups" :indeterminate="groupIndeterminate" size="small">全选</el-checkbox>
       <el-checkbox-group v-model="selectedGroups" class="group-options" size="small"><el-checkbox v-for="group in catalog.feature_groups" :key="group.id" :value="group.id" :label="group.id">{{ group.name }}</el-checkbox></el-checkbox-group>
       <span class="matrix-count">{{ matrixRows.length }} 个探头物料 · {{ visibleFeatures.length }} 个功能</span>
-      <TableColumnSettings :model-value="layout" :defaults="defaultColumns" @update:model-value="applyLayout" />
+      <TableColumnSettings :model-value="displayLayout" :defaults="defaultColumns" @update:model-value="applyLayout" />
     </div>
     <div class="matrix-note">定义自动取自已提交模板；机型视图保留各机型差异。{{ valueSide === 'both' ? '单元格上行为定义，下行为现状。' : '' }}</div>
     <div class="matrix-table-wrap">
@@ -44,6 +44,7 @@
   </section>
 </template>
 <script setup>
+import { featureCurrentName } from '../utils/featureNameStandard'
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import TableColumnSettings from './TableColumnSettings.vue'
@@ -65,14 +66,15 @@ const defaultColumns = computed(()=>[
   {key:'probe_name',label:'探头 / 物料',width:170,fixed:true,visible:true},
   {key:'regular',label:'常规应用',width:140,fixed:true,visible:true},
   {key:'poc',label:'POC 应用',width:140,fixed:true,visible:true},
-  ...props.catalog.features.map(f=>({key:'feature:'+f.id,label:f.name,width:88,fixed:false,visible:true})),
+  ...props.catalog.features.map(f=>({key:'feature:'+f.id,label:featureCurrentName(f.id,f.name),width:88,fixed:false,visible:true})),
 ])
 const storage = {getItem:key=>localStorage.getItem(key),setItem:(key,value)=>localStorage.setItem(key,value)}
 const storageKey = 'probe-template-matrix-columns-v1'
 const layout = ref(loadColumnLayout(storage,storageKey,defaultColumns.value,ElMessage.warning))
+const displayLayout = computed(() => layout.value.map(column => ({...column,label:column.key.startsWith('feature:') ? featureCurrentName(column.key.slice(8),column.label) : column.label})))
 function applyLayout(value){layout.value=normalizeColumnLayout(defaultColumns.value,value);saveColumnLayout(storage,storageKey,layout.value,ElMessage.warning)}
 function resize(width, old, column){applyLayout(layout.value.map(c=>c.key===column.property?{...c,width}:c))}
-const featureMap = computed(()=>new Map(props.catalog.features.map(f=>[f.id,f])))
+const featureMap = computed(()=>new Map(props.catalog.features.map(f=>[f.id,{...f,name:featureCurrentName(f.id,f.name)}])))
 const visibleFeatures = computed(()=>layout.value.filter(c=>c.visible&&c.key.startsWith('feature:')).map(c=>featureMap.value.get(Number(c.key.slice(8)))).filter(f=>f&&selectedGroups.value.includes(f.group_id)&&f.name.toLowerCase().includes(featureSearch.value.toLowerCase())))
 const columnSegments = computed(()=>matrixColumnSegments(layout.value, visibleFeatures.value, props.catalog.feature_groups || [], showRegular.value, showPOC.value))
 const structureKey = computed(()=>JSON.stringify(columnSegments.value))

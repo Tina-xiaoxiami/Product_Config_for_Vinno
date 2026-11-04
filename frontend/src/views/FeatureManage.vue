@@ -30,10 +30,10 @@
               <div class="feature-main">
                 <div class="feature-names">
                   <span class="feature-name">
-                    {{ feature.primary_cn_name || feature.name }}
+                    {{ featureCurrentName(feature.id, feature.primary_cn_name || feature.name) }}
                     <FeatureNameMark :feature-id="feature.id" :cn="feature.primary_cn_name" :en="feature.primary_en_name" :name="feature.name" />
                   </span>
-                  <span v-if="feature.primary_en_name" class="feature-en-name">{{ feature.primary_en_name }}</span>
+                  <span v-if="featureCurrentName(feature.id, feature.primary_en_name, 'en')" class="feature-en-name">{{ featureCurrentName(feature.id, feature.primary_en_name, 'en') }}</span>
                 </div>
                 <span v-if="feature.ipn" class="feature-ipn">IPN: {{ feature.ipn }}</span>
               </div>
@@ -245,7 +245,7 @@
           <el-tag size="small" type="info">标准表有、系统未登记 {{ standardData.summary.missing }}</el-tag>
           <el-tag size="small" type="info">系统有、标准表未收录 {{ standardData.summary.uncovered }}</el-tag>
           <el-tag size="small" :type="standardData.summary.config_differs ? 'danger' : 'success'">
-            配置管理描述不一致 {{ standardData.summary.config_differs }}
+            配置项链接异常 {{ standardData.summary.config_differs }}
           </el-tag>
           <el-tag size="small" type="info" v-if="standardData.summary.config_unlinked">
             未关联主IPN {{ standardData.summary.config_unlinked }}
@@ -347,7 +347,7 @@
                   <div class="std-before" v-if="row.standard && row.standard.severity !== 'ok'">{{ row.standard.message }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="配置管理描述" min-width="230">
+              <el-table-column label="配置项链接" min-width="230">
                 <template #default="{ row }">
                   <el-tag size="small" :type="baselineTagType(row.config?.severity)">{{ severityLabel(row.config?.severity) }}</el-tag>
                   <div class="std-before" v-if="row.config && row.config.severity !== 'ok'">{{ row.config.message }}</div>
@@ -361,7 +361,7 @@
             </el-table>
           </el-tab-pane>
 
-          <el-tab-pane label="两个基准逐条核对" name="baselines">
+          <el-tab-pane label="标准名称与配置链接" name="baselines">
             <el-table :data="baselineRows" size="small" border max-height="380">
               <el-table-column label="功能" min-width="170">
                 <template #default="{ row }">
@@ -371,14 +371,14 @@
               </el-table-column>
               <el-table-column label="功能名称标准表" min-width="250">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="baselineTagType(row.standard.severity)">{{ row.standard.reviewed ? '已确认沿用' : severityLabel(row.standard.severity) }}</el-tag>
+                  <el-tag size="small" :type="baselineTagType(row.standard.severity)">{{ severityLabel(row.standard.severity) }}</el-tag>
                   <div class="std-after" v-if="row.standard.standard_cn_name">标准：{{ row.standard.standard_cn_name }}</div>
                   <div class="std-before" v-if="row.standard.severity === 'differs' || row.standard.severity === 'style'">{{ row.standard.message }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="配置管理描述" min-width="250">
+              <el-table-column label="配置项链接" min-width="250">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="baselineTagType(row.config.severity)">{{ row.config.reviewed ? '已确认沿用' : severityLabel(row.config.severity) }}</el-tag>
+                  <el-tag size="small" :type="baselineTagType(row.config.severity)">{{ row.config.severity === 'ok' ? '已链接' : severityLabel(row.config.severity) }}</el-tag>
                   <div class="std-after" v-if="row.config.ipn">IPN：{{ row.config.ipn }}</div>
                   <div class="std-before" v-if="row.config.severity === 'differs' || row.config.severity === 'style'">{{ row.config.message }}</div>
                 </template>
@@ -407,6 +407,7 @@
 import FeatureNameReviewDialog from '../components/FeatureNameReviewDialog.vue'
 
 import { ref, reactive, computed } from 'vue'
+import { featureCurrentName } from '../utils/featureNameStandard'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
@@ -488,7 +489,7 @@ const severityLabel = (severity) => severityLabels[severity] || severity
 const baselineTagType = (severity) => (
   { differs: 'danger', style: 'warning', ambiguous: 'warning', ok: 'success' }[severity] || 'info'
 )
-// 逐条列出每个功能在两个基准上的结论：标准表（从核对条目取）与配置管理描述（从提示标记取）
+// 名称只依据标准表；配置侧单独显示身份链接状态。
 const baselineRows = computed(() => {
   const byFeature = featureFlags.value?.checks_by_feature || featureFlags.value?.by_feature || {}
   const flagOf = (featureId) => byFeature[String(featureId)] || {}
