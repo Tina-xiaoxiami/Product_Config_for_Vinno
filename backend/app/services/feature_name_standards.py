@@ -534,75 +534,18 @@ def _relation_result(
     }
 
 
-def _config_check(feature: dict, standard_entry: dict | None) -> dict:
-    """第二个基准：配置管理里该 IPN 的中文/英文描述。
-
-    分别给出两种关系的结论：与功能主名是否一致、与功能名称标准是否一致。
-    """
-
+def _config_check(feature: dict, standard_entry: dict | None = None) -> dict:
+    """Configuration determines identity links, never the naming baseline."""
+    links = feature["primary_links"]
     check = {
-        "baseline": "config",
-        "label": "配置管理描述",
-        "ipn": feature["config_ipn"],
-        "config_cn_desc": feature["config_cn_desc"],
-        "config_en_desc": feature["config_en_desc"],
-        "feature_relation": None,
-        "standard_relation": None,
-        "severity": "unlinked",
-        "message": "",
+        "baseline": "config", "label": "配置项链接", "ipn": feature["config_ipn"],
+        "feature_relation": None, "standard_relation": None,
+        "severity": "ok" if feature["config_ipn"] else "unlinked",
+        "message": "已关联主IPN" if feature["config_ipn"] else "未关联主IPN，请在功能管理中设置链接关系",
     }
-    if not feature["config_ipn"]:
-        check["message"] = "未关联主IPN，没有配置管理描述可比对"
-        return check
-
-    feature_relation = _relation_result(
-        [
-            ("中文描述", feature["cn_name"], feature["config_cn_desc"]),
-            ("英文描述", feature["en_name"], feature["config_en_desc"]),
-        ],
-        "与功能主名的描述",
-        left_label="功能主名",
-        right_label="配置管理描述",
-    )
-    check["feature_relation"] = feature_relation
-
-    if standard_entry is not None:
-        standard_en = standard_entry["en_name"] or standard_entry["short_en"]
-        # 标准名里的括号补充不影响比对（宽景成像（Pview）按 宽景成像 比）
-        check["standard_relation"] = _relation_result(
-            [
-                (
-                    "中文描述",
-                    strip_name_markers(standard_entry["cn_name"]),
-                    feature["config_cn_desc"],
-                ),
-                ("英文描述", standard_en, feature["config_en_desc"]),
-            ],
-            "与标准名称的描述",
-            left_label="标准名称",
-            right_label="配置管理描述",
-        )
-
-    relations = [feature_relation]
-    if check["standard_relation"]:
-        relations.append(check["standard_relation"])
-    severity_rank = {"differs": 2, "style": 1, "ok": 0}
-    check["severity"] = max(
-        (relation["severity"] for relation in relations),
-        key=lambda value: severity_rank.get(value, 0),
-    )
-    parts = []
-    parts.append(
-        "与功能主名一致" if feature_relation["severity"] == "ok" else feature_relation["message"]
-    )
-    if check["standard_relation"]:
-        relation = check["standard_relation"]
-        parts.append(
-            "与标准名称一致" if relation["severity"] == "ok" else relation["message"]
-        )
-    else:
-        parts.append("标准表未收录该功能，未与标准名称比对")
-    check["message"] = "；".join(parts)
+    if len(links) > 1:
+        check.update(severity="ambiguous", message="关联了多个主IPN，请先核对链接关系",
+                     ipn=", ".join(link["ipn"] for link in links))
     return check
 
 
@@ -725,7 +668,7 @@ async def audit_feature_names(session: AsyncSession) -> dict:
         )
         entries.append(entry)
 
-    # 4. 生成每个功能的提示标记：标准表和配置管理描述两个基准分别提醒
+    # 4. 标准表决定名称，配置项仅检查身份链接。
     flags_by_feature: dict[str, dict] = {}
     # 标准定义本身待人工确认（歧义）时，不拿它去比对配置管理描述
     standard_entry_by_feature = {
@@ -743,13 +686,13 @@ async def audit_feature_names(session: AsyncSession) -> dict:
                                              ipn=', '.join(link['ipn'] for link in feature['primary_links']))
     for entry in entries:
         feature_id = entry["feature_id"]
-        if feature_id is None or entry["severity"] == "ok":
+        if feature_id is None:
             continue
         label = entry["cn_name"] or entry["en_name"] or entry["ui_label"]
         if entry["severity"] == "ambiguous":
             message = f"标准表里有多条定义同时匹配该功能（如「{label}」），需要人工确认对应关系"
         else:
-            message = _flag_message(entry["cn_field"], entry["en_field"], label, entry["severity"])
+            message = "名称与标准表一致" if entry["severity"] == "ok" else _flag_message(entry["cn_field"], entry["en_field"], label, entry["severity"])
         flags_by_feature.setdefault(str(feature_id), {"feature_id": feature_id})[
             "standard_check"
         ] = {
@@ -760,6 +703,7 @@ async def audit_feature_names(session: AsyncSession) -> dict:
             "standard_cn_name": entry["cn_name"],
             "standard_en_name": entry["en_name"] or entry["short_en"],
             "standard_ui_label": entry["ui_label"],
+            "match_reason": entry["match_reason"],
         }
 
     uncovered_features: list[dict] = []
@@ -789,8 +733,6 @@ async def audit_feature_names(session: AsyncSession) -> dict:
     severity_rank = {"differs": 3, "ambiguous": 2, "style": 1, "uncovered": 0, "ok": 0, "unlinked": 0}
     # 配置管理描述基准单独不一致时也要能提示
     for feature_id, config_check in config_checks.items():
-        if config_check["severity"] in {"ok", "unlinked"}:
-            continue
         flags_by_feature.setdefault(str(feature_id), {"feature_id": feature_id})
 
     for feature_id, flag in list(flags_by_feature.items()):
@@ -821,7 +763,7 @@ async def audit_feature_names(session: AsyncSession) -> dict:
     await decorate_checks(session, features, flags_by_feature)
     review_flags = _build_flag_index(features, deepcopy(flags_by_feature))
     for fid, flag in list(flags_by_feature.items()):
-        active = [c['severity'] for c in flag['checks'] if not c['reviewed'] and c['severity'] not in {'ok', 'unlinked'}]
+        active = [c['severity'] for c in flag['checks'] if c['severity'] not in {'ok', 'unlinked'}]
         if not active:
             del flags_by_feature[fid]
         else:

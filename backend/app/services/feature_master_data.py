@@ -313,6 +313,27 @@ async def _replace_language_names(
         )
 
 
+async def set_feature_primary_names(
+    session: AsyncSession, feature_id: int, primary_cn_name: str, primary_en_name: str
+) -> None:
+    """Update only names, reusing alias maintenance without rewriting any IPN link."""
+    existing = await get_feature_master_data(session, feature_id)
+    if existing is None:
+        raise FeatureMasterDataError("功能不存在")
+    legacy = await session.scalar(text("SELECT name FROM features WHERE id=:id"), {"id": feature_id})
+    names = {"cn": clean_feature_name(primary_cn_name), "en": clean_feature_name(primary_en_name)}
+    if not all(names.values()):
+        raise FeatureMasterDataError("中文主名称和英文主名称不能为空")
+    for language, primary in names.items():
+        aliases = [*existing[f"alias_{language}_names"], existing[f"primary_{language}_name"]]
+        if legacy and ((language == "cn") == any("\u3400" <= char <= "\u9fff" for char in legacy)):
+            aliases.append(legacy)
+        await _replace_language_names(session, feature_id=feature_id, language=language,
+                                      primary=primary, aliases=_clean_aliases(aliases, primary))
+    await session.execute(text("UPDATE features SET name=:cn, primary_cn_name=:cn, primary_en_name=:en WHERE id=:id"),
+                          {"id": feature_id, **names})
+
+
 async def update_feature_master_data(
     session: AsyncSession,
     *,
