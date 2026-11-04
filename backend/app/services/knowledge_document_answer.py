@@ -94,7 +94,7 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
             size += len(content.encode())
             pages.append({'id': f'kb-{ident}', 'page': page, 'text': content, 'version_id': doc['sha256'],
                           'title': doc['title'], 'file_name': doc['file_name'], 'year': None,
-                          'source_url': f'/api/knowledge/documents/{ident}/preview'})
+                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True})
     fingerprint = _fingerprint({'scope': scope, 'pages': pages, 'documents': eligible})
     return pages, list(dict.fromkeys(gaps)), fingerprint
 
