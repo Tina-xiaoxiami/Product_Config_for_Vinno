@@ -35,6 +35,13 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
     trace = await trace_release_history(db, question, scope)
     release_ids = {item['document_id'] for item in trace.get('source_documents', [])}
     release_ids.update(item['document_id'] for chain in trace.get('chains', []) for item in chain.get('documents', []))
+    source_scopes = defaultdict(set)
+    for chain in trace.get('chains', []):
+        if chain.get('country') and chain.get('market') and chain.get('release_line'):
+            key = _fingerprint({'country': chain['country'], 'market': chain['market'],
+                                'release_line': chain['release_line'], 'product_model_id': scope['product_model_id']})
+            for item in chain.get('documents', []):
+                source_scopes[item['document_id']].add(key)
     docs = (await db.execute(text('''SELECT d.*,e.source_sha256,e.status AS extraction_status
         FROM knowledge_documents d LEFT JOIN knowledge_document_extractions e ON e.document_id=d.id
         WHERE d.source_status='active' ORDER BY d.id'''))).mappings().all()
@@ -60,6 +67,10 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
         except (OSError, ValueError):
             gaps.append(f'资料{ident}原件不可用或摘要已变化')
             continue
+        if document['document_type'] != 'release_note' and document['country'] and same_scope:
+            source_scopes[ident].add(_fingerprint({'country': document['country'], 'market': document['market'],
+                'release_line': None, 'product_model_id': scope['product_model_id']}))
+        document['source_scope_keys'] = sorted(source_scopes[ident])
         eligible.append(document)
     if not eligible:
         return [], gaps, _fingerprint({'scope': scope, 'pages': []})
@@ -94,7 +105,7 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
             size += len(content.encode())
             pages.append({'id': f'kb-{ident}', 'page': page, 'text': content, 'version_id': doc['sha256'],
                           'title': doc['title'], 'file_name': doc['file_name'], 'year': None,
-                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True, 'document_version': doc['version']})
+                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True, 'document_version': doc['version'], 'source_scope_keys': doc['source_scope_keys']})
     fingerprint = _fingerprint({'scope': scope, 'pages': pages, 'documents': eligible})
     return pages, list(dict.fromkeys(gaps)), fingerprint
 
