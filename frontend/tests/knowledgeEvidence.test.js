@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createEvidenceAnswerController, evidenceCitationUrl, evidenceStatusLabel } from '../src/utils/knowledgeEvidence.js'
 
 const input = () => ({ question: '针增益有哪些版本变化？', scope: { market: 'domestic', product_model_id: 9, software_version: '1.14.81' } })
-const answer = text => ({ status: 'draft', claims: [{ text, citations: [] }], coverage: { document_count: 2 }, metrics: { model_calls: 3 }, gaps: [] })
+const answer = text => ({ status: 'draft', claims: [{ text, citations: [{ document_id: 20, title: '验收资料', page: 4, quote: '原文中的明确记录', preview_url: '/api/knowledge/documents/20/preview#page=4' }] }], coverage: { document_count: 2 }, metrics: { model_calls: 3 }, gaps: [] })
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 function setup(options = {}) {
   const state = {}, current = input(), calls = [], waits = []
@@ -126,6 +126,35 @@ test('disposed or superseded capability requests cannot alter mounted state', as
   await pending
   assert.equal(work.state.result, null)
   assert.equal(work.calls[0].signal.aborted, true)
+  assert.equal(await work.controller.run(), false)
+  assert.equal(await work.controller.checkAvailability(), false)
+})
+
+test('capability connection failure remains explicit and can recover without generating an answer', async () => {
+  let failed = true
+  const { controller, state, calls } = setup({ capabilities: async () => { if (failed) throw new Error('network'); return { available: true } } })
+  assert.equal(await controller.checkAvailability(), false)
+  assert.match(state.unavailableReason, /无法连接/)
+  assert.equal(state.checking, false)
+  failed = false
+  assert.equal(await controller.checkAvailability(), true)
+  assert.equal(state.unavailableReason, '')
+  assert.equal(calls.length, 0)
+})
+
+test('unknown responses and uncited draft claims retain the previous verified result as a failed refresh', async () => {
+  const { controller, state, waits } = setup()
+  await controller.checkAvailability()
+  let pending = controller.run()
+  waits[0].resolve(answer('已核验草稿'))
+  await pending
+  for (const [index, value] of [{ status: 'unexpected', claims: [] }, { status: 'draft', claims: [{ text: '没有引文', citations: [] }] }].entries()) {
+    pending = controller.run()
+    waits[index + 1].resolve(value)
+    assert.equal(await pending, false)
+    assert.equal(state.result.claims[0].text, '已核验草稿')
+    assert.match(state.error, /格式无效|缺少有效原文/)
+  }
 })
 
 test('citation links are bound to product document identities and cannot use external or script URLs', () => {
@@ -133,6 +162,8 @@ test('citation links are bound to product document identities and cannot use ext
   for (const url of ['javascript:alert(1)', 'https://example.com', '//example.com', '/api/knowledge/documents/21/preview']) {
     assert.equal(evidenceCitationUrl({ document_id: 20, preview_url: url }), null)
   }
+  assert.equal(evidenceCitationUrl({ document_id: '20', preview_url: '/api/knowledge/documents/20/preview' }), null)
+  assert.equal(evidenceCitationUrl({ document_id: 20 }), null)
   assert.equal(evidenceStatusLabel('draft'), '资料草稿 · 未发布')
   assert.equal(evidenceStatusLabel('deterministic_required'), '请使用确定性查询')
 })
