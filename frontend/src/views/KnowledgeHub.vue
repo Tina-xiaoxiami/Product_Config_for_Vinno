@@ -114,6 +114,11 @@
           </template>
         </article>
 
+        <section v-if="qaResult?.parameter_topics?.length" class="qa-parameter-topics" data-testid="qa-parameter-topics">
+          <strong>可按配置查询的参数主题</strong>
+          <span>尚未匹配配置；选择主题后，明确配置快照和型号，再查看对应参数。</span>
+          <el-button v-for="topic in qaResult.parameter_topics" :key="topic.id" size="small" type="primary" plain @click="openParameterTopic(topic.id)">{{ topic.name }} · 按配置查询</el-button>
+        </section>
         <KnowledgeHistoryTrace v-if="qaResult?.history_trace" :trace="qaResult.history_trace" />
 
         <section class="qa-queue">
@@ -181,7 +186,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
-      <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace /></el-tab-pane>
+      <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace ref="parameterWorkspace" /></el-tab-pane>
     </el-tabs>
 
     <el-dialog
@@ -302,6 +307,10 @@ import {
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref('qa')
+const parameterWorkspace = ref(null)
+const openParameterTopic = async id => {
+  if (await parameterWorkspace.value?.openFromQuestion(id)) activeTab.value = 'parameters'
+}
 watch(() => route.query.tab, (tab) => {
   if (tab === 'features') {
     router.replace({ path: '/template-features' })
@@ -649,6 +658,9 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-ask-panel :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
 .qa-result { margin-bottom: 16px; padding: 17px 18px; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; }
 .qa-result.pending { border-color: #fde68a; background: #fffbeb; }
+.qa-parameter-topics { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--el-border-color-light); border-radius: 6px; }
+.qa-parameter-topics > span { color: var(--el-text-color-secondary); font-size: 12px; }
+.qa-parameter-topics > .el-button + .el-button { margin-left: 0; }
 .qa-result-heading { align-items: center; }
 .qa-result-heading > div { display: flex; align-items: center; gap: 9px; }
 .similarity-note, .qa-question-text, .answer-meta { color: #64748b; font-size: 12px; }

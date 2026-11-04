@@ -32,9 +32,10 @@ export function createLatestParameterRequest() {
     async run(request, handlers) {
       const current = ++sequence
       handlers.start?.()
-      try { const result = await request(); if (current === sequence) handlers.success?.(result) }
+      try { const result = await request(); if (current === sequence) { handlers.success?.(result); return true } }
       catch (error) { if (current === sequence) handlers.error?.(error) }
       finally { if (current === sequence) handlers.finish?.() }
+      return false
     }
   }
 }
