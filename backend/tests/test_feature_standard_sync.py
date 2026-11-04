@@ -74,3 +74,24 @@ def test_batch_never_collapses_dimension_or_version_parentheses():
 def test_plus_variant_cannot_fall_back_to_a_nonplus_rd_alias():
     plan=plan_standard_sync([{'cn_name':'脉搏波定量分析','en_name':'PWV'}],{1:source(1,'PWV+超快功能','超快功能','Ultra frame PWV+',['PWV'])})
     assert not plan['checked']
+
+import subprocess
+import sys
+from pathlib import Path
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('alias',['same','symlink','hardlink'])
+async def test_sync_cli_refuses_report_over_source_database(tmp_path,alias):
+    path,client,engine=await setup(tmp_path)
+    await client.aclose();await engine.dispose()
+    report=path
+    if alias=='symlink':
+        report=tmp_path/'report.json';report.symlink_to(path)
+    elif alias=='hardlink':
+        import os
+        report=tmp_path/'report.json';os.link(path,report)
+    before=path.read_bytes()
+    script=Path(__file__).resolve().parents[1]/'scripts/sync_feature_standard_names.py'
+    result=subprocess.run([sys.executable,str(script),'--database',str(path),'--report',str(report)],capture_output=True,text=True)
+    assert result.returncode != 0
+    assert path.read_bytes()==before
