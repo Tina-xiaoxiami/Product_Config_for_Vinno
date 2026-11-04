@@ -647,7 +647,7 @@ async def find_candidate_evidence(
     result = await session.execute(
         text(
             f"""
-            SELECT chunk.id AS chunk_id, chunk.document_id, document.title, document.sha256 AS version_id,
+            SELECT chunk.id AS chunk_id, chunk.document_id, document.title, CASE WHEN extraction.source_sha256 = document.sha256 THEN document.sha256 END AS version_id,
                    document.document_type, document.product_series,
                    chunk.source_ref, chunk.page_number, chunk.content,
                    COALESCE((
@@ -676,7 +676,7 @@ async def find_candidate_evidence(
             JOIN knowledge_document_extractions extraction
               ON extraction.document_id = document.id
              AND extraction.status = 'completed'
-             AND extraction.source_sha256 = document.sha256
+             AND (extraction.source_sha256 = document.sha256 OR extraction.source_sha256 IS NULL OR document.sha256 IS NULL)
             WHERE document.source_status = 'active'
               {prefilter_sql}
             ORDER BY chunk.document_id, chunk.chunk_index
