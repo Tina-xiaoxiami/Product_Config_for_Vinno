@@ -127,7 +127,7 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   expect((await (await page.request.get(`/api/measurements?batch_id=${batchId}`)).json()).entries).toEqual(sourceBefore.entries)
   await search.clear()
   await page.screenshot({ path: testInfo.outputPath('measurement-workspace-current.png') })
-  await page.getByRole('combobox', { name: '测量库版本', exact: true }).click()
+  await page.locator('.workspace-version').click()
   await page.getByRole('option', { name: new RegExp('^measurement-workspace-browser · ') }).click()
   await expect(page.getByText('历史快照 · 只读', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0)
