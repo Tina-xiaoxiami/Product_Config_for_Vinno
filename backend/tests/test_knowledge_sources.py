@@ -111,3 +111,21 @@ async def test_location_and_version_are_explicit_not_guessed(tmp_path, params):
             params = {'version_id': sha, **params}
         response = await client.get('/api/knowledge/documents/1/evidence', params=params)
         assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_candidate_locator_carries_source_version_and_excludes_stale_extractions(tmp_path):
+    from app.services.knowledge_content import find_candidate_evidence
+    from app.services.knowledge_qa import normalize_question
+    from app.schemas.knowledge import KnowledgeCandidateEvidence
+    async with source_client(tmp_path, '.xlsx') as (_, factory, _, sha):
+        async with factory() as db:
+            await db.execute(text('UPDATE knowledge_document_chunks SET normalized_content=:value'), {'value': normalize_question(PAGE)})
+            await db.commit()
+            candidates = await find_candidate_evidence(db, 'needle gain')
+            assert candidates
+            item = KnowledgeCandidateEvidence(**candidates[0]).model_dump()
+            assert item['version_id'] == sha and item['chunk_id'] == 1
+            await db.execute(text('UPDATE knowledge_document_extractions SET source_sha256=:sha'), {'sha': 'b'*64})
+            await db.commit()
+            assert not await find_candidate_evidence(db, 'needle gain')
