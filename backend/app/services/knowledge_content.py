@@ -164,7 +164,7 @@ def _docx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
     from docx.text.paragraph import Paragraph
     from docx.table import _Cell
 
-    document = Document(path)
+    document = Document(str(path) if isinstance(path, Path) else path)
     blocks: list[ExtractedBlock] = []
     section_name: str | None = None
     paragraph_number, table_number = 0, 0
@@ -272,12 +272,27 @@ def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None
             required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"}
             if len(names) != len(set(names)) or not required.issubset(names) or any(e.flag_bits & 1 for e in entries):
                 raise KnowledgeContentError("Office包结构无效、重复或已加密")
+            cell_count = 0
             for entry in entries:
                 if entry.filename.endswith((".xml", ".rels")):
                     # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
-                    xml = package.read(entry).replace(b"\x00", b"").upper()
+                    xml_data = package.read(entry)
+                    xml = xml_data.replace(b"\x00", b"").upper()
                     if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
                         raise KnowledgeContentError("Office包包含不支持的XML声明")
+                    if suffix == ".xlsx":
+                        from xml.etree.ElementTree import iterparse
+                        from openpyxl.utils.cell import range_boundaries
+                        for _, element in iterparse(BytesIO(xml_data), events=("end",)):
+                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c":
+                                cell_count += 1
+                                if cell_count > MAX_OFFICE_CELLS:
+                                    raise KnowledgeContentError("Office单元格数量超过本次解析上限")
+                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}dimension":
+                                left, top, right, bottom = range_boundaries(element.attrib.get("ref", "A1"))
+                                if None in (left, top, right, bottom) or (right-left+1)*(bottom-top+1) > MAX_OFFICE_CELLS:
+                                    raise KnowledgeContentError("Office工作表范围超过本次解析上限")
+                            element.clear()
         blocks = _docx_blocks(BytesIO(data)) if suffix == ".docx" else _xlsx_blocks(BytesIO(data))
     except KnowledgeContentError:
         raise
