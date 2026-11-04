@@ -57,6 +57,7 @@ async def test_pdf_citation_returns_verified_page_context_and_version_locked_ori
     async with source_client(tmp_path) as (client, _, path, sha):
         response = await client.get('/api/knowledge/documents/1/evidence', params={'version_id': sha, 'page': 1, 'quote': 'Check the hardware first.'})
         assert response.status_code == 200, response.text
+        assert response.headers.get('cache-control') == 'no-store'
         data = response.json()
         assert data['text'] == PAGE and data['page'] == 1
         assert data['quote'] == 'Check the hardware first.'
