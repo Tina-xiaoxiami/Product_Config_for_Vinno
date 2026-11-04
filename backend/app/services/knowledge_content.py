@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import hashlib
 from io import BytesIO
-from zipfile import ZipFile, BadZipFile
+from zipfile import ZipFile
 from pathlib import Path
 import re
 import shutil
@@ -286,7 +286,7 @@ def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None
             cell_count = 0
             merged_area = 0
             for entry in entries:
-                if entry.filename.endswith((".xml", ".rels")):
+                if entry.filename.casefold().endswith((".xml", ".rels")):
                     # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
                     xml_data = package.read(entry)
                     xml = xml_data.replace(b"\x00", b"").upper()
