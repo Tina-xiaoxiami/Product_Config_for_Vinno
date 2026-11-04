@@ -8,6 +8,7 @@ from app.integrations.guideline_evidence import capabilities
 from app.schemas.knowledge import KnowledgeQueryScope
 from app.services.knowledge_document_answer import document_answer
 from app.services.knowledge_scope import KnowledgeScopeError
+from app.services.knowledge_release_history import ReleaseHistoryError
 
 router = APIRouter(prefix='/document-answer')
 
@@ -27,5 +28,5 @@ async def availability():
 async def answer(data: DocumentAnswerRequest, db: AsyncSession = Depends(get_db)):
     try:
         return await document_answer(db, data.question.strip(), data.scope.model_dump())
-    except KnowledgeScopeError as error:
+    except (KnowledgeScopeError, ReleaseHistoryError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
