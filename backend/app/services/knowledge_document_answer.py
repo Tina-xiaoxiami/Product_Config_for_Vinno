@@ -63,11 +63,17 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
         eligible.append(document)
     if not eligible:
         return [], gaps, _fingerprint({'scope': scope, 'pages': []})
-    chunks = (await db.execute(text('''SELECT document_id,page_number,chunk_index,content FROM knowledge_document_chunks
+    chunks = (await db.execute(text('''SELECT document_id,page_number,chunk_index,content,content_hash FROM knowledge_document_chunks
         WHERE document_id IN :ids ORDER BY document_id,chunk_index''').bindparams(bindparam('ids', expanding=True)),
         {'ids': [doc['id'] for doc in eligible]})).mappings().all()
     grouped = defaultdict(list)
+    invalid_documents = {chunk['document_id'] for chunk in chunks
+                         if hashlib.sha256(chunk['content'].encode()).hexdigest() != chunk['content_hash']}
+    for ident in sorted(invalid_documents):
+        gaps.append(f'资料{ident}正文片段摘要已变化，未送入资料回答')
     for chunk in chunks:
+        if chunk['document_id'] in invalid_documents:
+            continue
         if isinstance(chunk['page_number'], int) and chunk['page_number'] > 0:
             grouped[(chunk['document_id'], chunk['page_number'])].append(chunk['content'])
         else:
@@ -115,9 +121,10 @@ def _claims(result: dict, pages: list[dict]) -> list[dict]:
                 raise ValueError('unregistered citation')
             bound.append({'document_id': int(source['id'].removeprefix('kb-')), 'title': source['title'],
                           'page': source['page'], 'quote': quote, 'version_id': source['version_id'],
-                          'preview_url': source['source_url'] + f"#page={source['page']}"})
+                          'preview_url': source['source_url'] + f"?version_id={source['version_id']}#page={source['page']}",
+                          'verification_status': citation.get('verification_status')})
         checked.append({'text': claim['text'], 'kind': claim.get('kind'), 'support_status': claim.get('support_status'),
-                        'citations': bound})
+                        'citations': bound, 'verification': claim.get('verification', {})})
     return checked
 
 
@@ -131,11 +138,15 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     coverage = {'document_count': len({page['id'] for page in pages}), 'page_count': len(pages)}
     if not pages:
         return {**_base('no_evidence', '当前范围缺少可完整定位的资料页', gaps=gaps, coverage=coverage), 'scope': scope}
+    source_ids = [int(ident.removeprefix('kb-')) for ident in dict.fromkeys(page['id'] for page in pages)]
+    source_rows = (await db.execute(text('SELECT id,sha256,file_path FROM knowledge_documents WHERE id IN :ids')
+                                   .bindparams(bindparam('ids', expanding=True)), {'ids': source_ids})).mappings().all()
+    sources = [{'id': f"kb-{row['id']}", 'version_id': row['sha256'], 'file_path': row['file_path']} for row in source_rows]
     try:
-        result = await asyncio.to_thread(run_shared_evidence, {'question': question, 'scope': scope, 'pages': pages})
+        result = await asyncio.to_thread(run_shared_evidence, {'question': question, 'scope': scope, 'pages': pages}, sources=sources)
     except SharedEvidenceUnavailable as error:
         return {**_base('unavailable', str(error), gaps=gaps, coverage=coverage), 'scope': scope, 'metrics': {'model_calls': None}}
-    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {})}
+    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}
     # This endpoint owns a read-only session. End its read transaction to recheck
     # current applicability, text and files after a potentially long model call.
     await db.rollback()
@@ -157,4 +168,4 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     return {'status': status, 'claims': claims if status in {'draft', 'partial'} else [], 'scope': scope,
             'message': '资料草稿，尚未人工确认或发布', 'gaps': gaps + result.get('gaps', []),
             'coverage': {**result.get('coverage', {}), **coverage}, 'metrics': result.get('metrics', {}),
-            'runtime_identity': result.get('runtime_identity', {})}
+            'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}

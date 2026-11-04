@@ -40,13 +40,31 @@ def capabilities() -> dict:
         return {'available': False, 'reason': str(error)}
 
 
-def run_shared_evidence(payload: dict) -> dict:
+def run_shared_evidence(payload: dict, *, sources: list[dict] | None = None) -> dict:
     root, python, environment = _configuration()
     encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
     if len(encoded) > 4 * 1024 * 1024:
         raise SharedEvidenceUnavailable('适用资料超过单次处理上限，请缩小查询范围')
+    # Source authorization is a server-only argument, never part of HTTP/model input.
+    environment.pop('VINNO_PRODUCT_SOURCE_MANIFEST', None)
+    if sources is not None:
+        allowed = {(p['id'], p['version_id']) for p in payload.get('pages', [])}
+        if (not isinstance(sources, list) or len(sources) > 500
+                or any(not isinstance(source, dict) or set(source) != {'id', 'version_id', 'file_path'}
+                       or (source['id'], source['version_id']) not in allowed
+                       or not isinstance(source['file_path'], str) or not Path(source['file_path']).is_absolute()
+                       or Path(source['file_path']).suffix.lower() != '.pdf' for source in sources)
+                or len({(s['id'], s['version_id']) for s in sources}) != len(sources)
+                or {(s['id'], s['version_id']) for s in sources} != allowed):
+            raise SharedEvidenceUnavailable('原页授权与本次资料范围不一致，未调用模型')
     # Fixed module invocation; no executable, path or environment is accepted from HTTP.
-    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+    with tempfile.TemporaryDirectory(prefix='vinno-evidence-') as private, tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        if sources:
+            manifest = Path(private) / 'sources.json'
+            with manifest.open('x', encoding='utf-8') as stream:
+                os.chmod(manifest, 0o600)
+                json.dump(sources, stream, ensure_ascii=False)
+            environment['VINNO_PRODUCT_SOURCE_MANIFEST'] = str(manifest)
         try:
             completed = subprocess.run([python, '-m', 'guidelines.product_evidence'], input=encoded,
                                        cwd=root, env=environment, stdout=output, stderr=errors,
