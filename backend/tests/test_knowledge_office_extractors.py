@@ -97,3 +97,17 @@ def test_xlsx_cell_limits_precede_library_object_allocation(monkeypatch):
     monkeypatch.setattr(service,'MAX_OFFICE_CELLS',2)
     monkeypatch.setattr(service,'_xlsx_blocks',lambda *args:pytest.fail('library allocated before bounds'))
     with pytest.raises(service.KnowledgeContentError,match='上限'):service.extract_office_blocks(xlsx_bytes(),'.xlsx')
+
+
+def test_docx_body_index_counts_unsupported_xml_children_without_pretending_to_extract_them():
+    from docx.oxml import OxmlElement
+    doc=Document();doc.add_paragraph('First');doc.add_paragraph('Last')
+    doc.element.body.insert(1,OxmlElement('w:sdt'))
+    stream=BytesIO();doc.save(stream)
+    blocks=service.extract_office_blocks(stream.getvalue(),'.docx')
+    assert [b.locator['body_index'] for b in blocks]==[1,3]
+
+
+def test_formula_cell_has_its_own_not_evaluated_marker():
+    block=service.extract_office_blocks(xlsx_bytes(),'.xlsx')[0]
+    assert block.locator['cells'][-1]['formula_state']=='not_evaluated'
