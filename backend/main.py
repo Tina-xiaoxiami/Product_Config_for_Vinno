@@ -11,6 +11,7 @@ from app.api import series, models, config, versions, drafts, import_export, enu
 from app.api import probe_categories, probe_models as probe_models_api, applications, features, template_features, probe_config, probe_import
 from app.api import probe_workspace
 from app.api import knowledge, knowledge_release_history, knowledge_parameters
+from app.api import knowledge_document_answer
 from app.api import feature_import
 from app.api import feature_standards
 from app.api import release
@@ -56,6 +57,7 @@ app.include_router(probe_import.router, prefix="/api/probes", tags=["探头导�
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["产品知识库"])
 app.include_router(knowledge_release_history.router, prefix="/api/knowledge")
 app.include_router(knowledge_parameters.router, prefix="/api/knowledge")
+app.include_router(knowledge_document_answer.router, prefix="/api/knowledge")
 app.include_router(measurements.router, prefix="/api/measurements", tags=["测量库"])
 app.include_router(measurement_workspace.router, prefix="/api/measurement-workspace", tags=["测量库版本工作区"])
 app.include_router(release.router, prefix="/api/release", tags=["功能发布"])
