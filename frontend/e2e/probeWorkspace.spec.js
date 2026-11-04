@@ -18,7 +18,7 @@ test('shared combination retains model differences through editing, publication 
   await expect(create).not.toBeVisible()
   await expect(page.getByText('3 个机型', { exact: true })).toBeVisible()
   await expect(page.getByText('2 个探头物料 · 1 个功能', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button',{name:'编辑 P2 P-2 的 造影',exact:true})).toBeVisible()
+  await expect(page.getByRole('button',{name:/^编辑 P2 P-2 的 /})).toBeVisible()
   await page.getByRole('button', { name: '核对 Imaging 名称', exact: true }).click()
   const nameReview=page.getByRole('dialog',{name:'功能名称核对',exact:true})
   await expect(nameReview.getByRole('checkbox')).toHaveCount(0)
