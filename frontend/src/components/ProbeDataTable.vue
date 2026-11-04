@@ -1,6 +1,6 @@
 <template>
   <div class="probe-data-table" :class="{ 'fill-height': fillHeight }">
-    <div class="table-actions"><slot name="toolbar" /><span>{{ filtered.length }} / {{ rows.length }} 条</span><TableColumnSettings :model-value="layout" :defaults="columns" @update:model-value="applyLayout" /><el-button v-if="Object.values(filters).some(v => v != null)" size="small" @click="clearFilters">清除筛选</el-button></div>
+    <div class="table-actions"><slot name="toolbar" /><div class="table-tools" :class="{ 'is-grouped': groupTools }"><span>{{ filtered.length }} / {{ rows.length }} 条</span><TableColumnSettings :model-value="layout" :defaults="columns" @update:model-value="applyLayout" /><el-button v-if="Object.values(filters).some(v => v != null)" size="small" @click="clearFilters">清除筛选</el-button></div></div>
     <el-table :key="structureKey" :data="displayRows" border stripe size="small" :height="fillHeight ? '100%' : height" :max-height="fillHeight || height ? undefined : 360" @header-dragend="resize">
       <el-table-column v-for="column in visibleColumns" :key="column.key" :prop="column.key" :width="column.width" :fixed="column.fixed" show-overflow-tooltip>
         <template #header><span class="column-heading">{{ column.label }}<el-popover :ref="el => { if (el) popovers[column.key] = el }" v-if="column.filter !== false && (rows.length || filters[column.key] != null || filterKey === column.key)" trigger="click" :width="220" placement="bottom-start" @before-enter="openFilter(column.key)" @before-leave="finishFilter(column.key)">
@@ -26,7 +26,7 @@ import TableColumnSettings from './TableColumnSettings.vue'
 import { loadColumnLayout, normalizeColumnLayout, saveColumnLayout } from '../utils/tableColumnLayout'
 import { probeStatusLabel } from '../utils/probeWorkspace'
 import { probeFilterValue, probeFilterOptions, filterProbeRows, selectVisibleFilterValues } from '../utils/probeTableFilters'
-const props = defineProps({ rows: { type: Array, required: true }, columns: { type: Array, required: true }, tableId: { type: String, required: true }, height: Number, fillHeight: Boolean, actionsWidth: { type: Number, default: 180 }, pageSize: { type: Number, default: 0 }, autoApplyFilters: Boolean })
+const props = defineProps({ rows: { type: Array, required: true }, columns: { type: Array, required: true }, tableId: { type: String, required: true }, height: Number, fillHeight: Boolean, actionsWidth: { type: Number, default: 180 }, pageSize: { type: Number, default: 0 }, autoApplyFilters: Boolean, groupTools: Boolean })
 const emit = defineEmits(['filtered'])
 const storage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
 const key = `probe-${props.tableId}-layout-v1`
@@ -58,4 +58,5 @@ watch(() => props.columns.map(c => c.key).join('|'), () => { layout.value = norm
 .table-actions,.filter-tools,.column-heading{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.table-actions{justify-content:flex-end;margin:4px 0}.table-actions .el-button+.el-button{margin-left:0}.column-heading{justify-content:space-between;flex-wrap:nowrap}.filter-button{width:24px;height:24px;padding:3px}.filter-tools{margin-top:7px}.filter-options{display:flex;flex-direction:column;align-items:flex-start;max-height:220px;overflow:auto;margin-top:8px}.filter-options .el-checkbox{margin:0;width:100%;height:auto;min-height:26px;white-space:normal}.probe-data-table{width:100%;overflow:hidden}
 .table-pagination{margin-top:8px;justify-content:flex-end}.filter-hint{font-size:12px;color:var(--el-text-color-secondary);margin:8px 0}
 .fill-height{display:flex;flex-direction:column;flex:1;min-height:0}.fill-height>.el-table{flex:1;min-height:0}.fill-height>.table-actions,.fill-height>.table-pagination{flex-shrink:0}
+.table-tools{display:contents}.table-tools.is-grouped{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px;max-width:100%}.table-tools>span{white-space:nowrap}
 </style>

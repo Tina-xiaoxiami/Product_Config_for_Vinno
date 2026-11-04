@@ -1,17 +1,21 @@
 <template>
   <div class="workspace-controls">
+    <div class="workspace-selection">
     <span class="workspace-caption">测量库版本</span>
     <el-select :model-value="snapshot?.id || 0" aria-label="测量库版本" size="small" class="workspace-version" :disabled="locked" @change="selectVersion">
       <el-option :value="0" :label="`当前工作区 · ${latestVersion}${workspace.has_draft ? ' · 有草稿' : ''}`" />
       <el-option v-for="version in workspace.versions" :key="version.id" :value="version.id" :label="`${version.version_number} · ${version.created_at || ''}`" />
     </el-select>
     <el-tag v-if="snapshot" size="small" type="info">历史快照 · 只读</el-tag>
-    <template v-else>
+    </div>
+    <div class="workspace-action-buttons">
+    <template v-if="!snapshot">
       <el-dropdown trigger="click" :disabled="locked" @command="manage"><el-button size="small" :disabled="locked">管理 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="new">新增项目 / 关系</el-dropdown-item><el-dropdown-item command="applications">应用字典</el-dropdown-item><el-dropdown-item command="modes">模式字典</el-dropdown-item><el-dropdown-item command="sync">同步核对资料</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
       <el-button size="small" :type="workspace.has_draft ? 'warning' : 'default'" :disabled="locked" @click="openDialog('drafts')">草稿 ({{ workspace.changes?.length || 0 }})</el-button>
       <el-button size="small" type="primary" :disabled="locked || !workspace.has_draft || syncPending" @click="openDialog('publish')">发布版本</el-button>
     </template>
     <el-button size="small" :disabled="locked" @click="openDialog('history')">版本历史 / 对比</el-button>
+    </div>
     <span v-if="snapshot?.description" class="workspace-note">{{ snapshot.description }}</span>
   </div>
   <el-dialog :model-value="!!dialog" :title="dialogTitle" width="min(1080px, calc(100vw - 32px))" top="5vh" append-to-body destroy-on-close :before-close="requestClose" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :show-close="!busy">
@@ -197,5 +201,5 @@ onBeforeUnmount(() => { session++ })
 defineExpose({ openRename, openAssignment, requestClose })
 </script>
 <style scoped>
-.workspace-controls,.compare-controls,.draft-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.workspace-controls{margin-top:8px;flex-shrink:0}.workspace-controls .el-button+.el-button{margin-left:0}.workspace-version{width:300px}.workspace-caption,.workspace-note,.workspace-hint,.identity-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.workspace-alert{margin-bottom:12px}.workspace-hint{margin:8px 0}.identity-line{margin-left:120px}.el-form :deep(.el-select){min-width:260px}.dictionary-form{margin-top:16px}.compare-controls{margin-top:16px}.compare-controls .el-select{width:210px}.draft-filters{margin:10px 0}.draft-filters .el-tag{cursor:pointer}.version-description{width:340px;max-width:100%}
+.workspace-controls,.compare-controls,.draft-filters,.workspace-selection,.workspace-action-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.workspace-controls{margin-top:8px;padding:8px 10px;border:1px solid var(--el-border-color-light);border-radius:8px;background:var(--el-fill-color-lighter);flex-shrink:0;justify-content:space-between}.workspace-selection{flex:0 1 360px;min-width:0;max-width:100%;flex-wrap:nowrap}.workspace-action-buttons{max-width:100%;min-width:0}.workspace-caption{white-space:nowrap}.workspace-controls .el-button+.el-button{margin-left:0}.workspace-version{flex:1;min-width:0;width:300px}.workspace-caption,.workspace-note,.workspace-hint,.identity-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.workspace-alert{margin-bottom:12px}.workspace-hint{margin:8px 0}.identity-line{margin-left:120px}.el-form :deep(.el-select){min-width:260px}.dictionary-form{margin-top:16px}.compare-controls{margin-top:16px}.compare-controls .el-select{width:210px}.draft-filters{margin:10px 0}.draft-filters .el-tag{cursor:pointer}.version-description{width:340px;max-width:100%}
 </style>
