@@ -26,6 +26,7 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   await page.route('**/api/measurement-workspace?batch_id=*', async route => { await new Promise(resolve => setTimeout(resolve, 200)); await route.continue() })
   await page.goto('/measurements')
   await expect(page.getByRole('button', { name: '发布版本', exact: true })).toBeVisible()
+  await expect(page.locator('.workspace-version')).toContainText('当前工作区')
   const fetchWorkspace = async () => (await (await page.request.get(`/api/measurement-workspace?batch_id=${batchId}`)).json())
   let workspace = await fetchWorkspace()
   const initialId = workspace.versions[0].id
@@ -72,7 +73,7 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   await page.getByRole('menuitem', { name: '编辑关联', exact: true }).click()
   const association = page.getByRole('dialog', { name: '编辑当前关系的应用与模式', exact: true })
   for (const [label, option] of [['编辑应用', '研究应用 (RESEARCH)'], ['编辑关联模式', '研究模式 (ResearchMode)']]) {
-    await association.getByRole('combobox', { name: label, exact: true }).click()
+    await association.locator('.el-select').filter({ has: page.getByRole('combobox', { name: label, exact: true }) }).click()
     await page.getByRole('option', { name: option, exact: true }).click()
     await association.locator('.el-dialog__header').click()
   }
@@ -90,7 +91,7 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   await added.getByRole('textbox', { name: '中文 UI 名称', exact: true }).fill('新增测量示例')
   await added.getByRole('textbox', { name: '英文 Description', exact: true }).fill('New measurement')
   async function chooseOption(label, option) {
-    await added.getByRole('combobox', { name: label, exact: true }).click()
+    await added.locator('.el-select').filter({ has: page.getByRole('combobox', { name: label, exact: true }) }).click()
     await page.getByRole('option', { name: option, exact: true }).click()
     await added.getByRole('textbox', { name: '新增 Id', exact: true }).click()
   }

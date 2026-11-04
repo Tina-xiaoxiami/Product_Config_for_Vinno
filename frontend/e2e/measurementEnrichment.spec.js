@@ -93,6 +93,7 @@ test('calculation suggestions filter provisionally and require an explicit human
   await openReview()
   await expect(dialog.getByRole('button', { name: '撤销确认', exact: true })).toBeVisible()
   await expect(dialog.getByRole('combobox', { name: '人工核对模式', exact: true }).locator('..').locator('..')).not.toContainText('Tissue')
+  await dialog.getByRole('textbox', { name: '本次核对人', exact: true }).fill('回归核对')
   await dialog.getByRole('textbox', { name: '核对说明', exact: true }).fill('撤销隔离回归确认')
   await dialog.getByRole('button', { name: '撤销确认', exact: true }).click()
   await expect(dialog).not.toBeVisible()

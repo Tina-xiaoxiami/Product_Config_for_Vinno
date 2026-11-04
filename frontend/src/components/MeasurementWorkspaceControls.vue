@@ -1,8 +1,8 @@
 <template>
   <div class="workspace-controls">
     <span class="workspace-caption">测量库版本</span>
-    <el-select :model-value="snapshot?.id || ''" aria-label="测量库版本" size="small" class="workspace-version" :disabled="locked" @change="selectVersion">
-      <el-option value="" :label="`当前工作区 · ${latestVersion}${workspace.has_draft ? ' · 有草稿' : ''}`" />
+    <el-select :model-value="snapshot?.id || 0" aria-label="测量库版本" size="small" class="workspace-version" :disabled="locked" @change="selectVersion">
+      <el-option :value="0" :label="`当前工作区 · ${latestVersion}${workspace.has_draft ? ' · 有草稿' : ''}`" />
       <el-option v-for="version in workspace.versions" :key="version.id" :value="version.id" :label="`${version.version_number} · ${version.created_at || ''}`" />
     </el-select>
     <el-tag v-if="snapshot" size="small" type="info">历史快照 · 只读</el-tag>
