@@ -94,7 +94,7 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
             size += len(content.encode())
             pages.append({'id': f'kb-{ident}', 'page': page, 'text': content, 'version_id': doc['sha256'],
                           'title': doc['title'], 'file_name': doc['file_name'], 'year': None,
-                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True})
+                          'source_url': f'/api/knowledge/documents/{ident}/preview', 'requires_visual_review': True, 'document_version': doc['version']})
     fingerprint = _fingerprint({'scope': scope, 'pages': pages, 'documents': eligible})
     return pages, list(dict.fromkeys(gaps)), fingerprint
 
@@ -146,7 +146,7 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
         result = await asyncio.to_thread(run_shared_evidence, {'question': question, 'scope': scope, 'pages': pages}, sources=sources)
     except SharedEvidenceUnavailable as error:
         return {**_base('unavailable', str(error), gaps=gaps, coverage=coverage), 'scope': scope, 'metrics': {'model_calls': None}}
-    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}
+    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {}), 'deduplication': result.get('deduplication', {})}
     # This endpoint owns a read-only session. End its read transaction to recheck
     # current applicability, text and files after a potentially long model call.
     await db.rollback()
@@ -168,4 +168,4 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     return {'status': status, 'claims': claims if status in {'draft', 'partial'} else [], 'scope': scope,
             'message': '资料草稿，尚未人工确认或发布', 'gaps': gaps + result.get('gaps', []),
             'coverage': {**result.get('coverage', {}), **coverage}, 'metrics': result.get('metrics', {}),
-            'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {})}
+            'runtime_identity': result.get('runtime_identity', {}), 'visual_review': result.get('visual_review', {}), 'deduplication': result.get('deduplication', {})}
