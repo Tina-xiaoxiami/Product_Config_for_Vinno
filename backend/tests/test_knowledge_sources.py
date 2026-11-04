@@ -70,15 +70,12 @@ async def test_pdf_citation_returns_verified_page_context_and_version_locked_ori
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('suffix', ['.docx', '.xlsx'])
-async def test_non_pdf_chunk_locator_keeps_real_source_ref_without_fake_pdf_page(tmp_path, suffix):
+async def test_legacy_office_index_requires_reextraction_before_structural_verification(tmp_path, suffix):
     async with source_client(tmp_path, suffix) as (client, _, _, sha):
         response = await client.get('/api/knowledge/documents/1/evidence', params={'version_id': sha, 'chunk_id': 1})
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data['source_ref'] == 'Sheet1!第5行' and data['page'] is None
-        assert data['chunk_id'] == 1 and data['text'] == PAGE
-        assert data['verification']['quote'] == 'not_requested'
-        assert '#page' not in data['preview_url']
+        assert response.status_code == 409, response.text
+        assert '重新提取' in response.json()['detail']
+        assert 'locator' not in response.json()
 
 
 @pytest.mark.asyncio
