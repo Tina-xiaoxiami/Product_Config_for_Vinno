@@ -120,3 +120,13 @@ class StandardNameInput(BaseModel):
 @router.post('/reviews/{feature_id}/apply-standard')
 async def apply_feature_standard(feature_id: int, data: StandardNameInput, db: AsyncSession = Depends(get_db)):
     return await apply_standard_names(db, feature_id, data.fingerprint, data.note, data.confirmed_by)
+
+
+class DisplayNameInput(BaseModel):
+    name: str = Field(default='', max_length=200)
+
+
+@router.put('/reviews/{feature_id}/display-name')
+async def update_display_name(feature_id: int, data: DisplayNameInput, db: AsyncSession = Depends(get_db)):
+    from app.services.feature_name_reviews import set_display_name
+    return await set_display_name(db, feature_id, data.name)

@@ -38,3 +38,11 @@ class FeatureNameReview(Base):
     confirmed_by = Column(String(100), nullable=False, default='local_user')
     confirmed_at = Column(DateTime, nullable=False, default=utcnow)
     revoked_at = Column(DateTime, nullable=True)
+
+
+class FeatureDisplayName(Base):
+    """Optional presentation label independent of canonical Chinese/English names."""
+    __tablename__ = 'feature_display_names'
+    feature_id = Column(Integer, ForeignKey('features.id', ondelete='CASCADE'), primary_key=True)
+    name = Column(String(200), nullable=False, default='')
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
