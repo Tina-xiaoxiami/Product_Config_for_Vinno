@@ -32,8 +32,8 @@
       </el-form>
     </template>
     <template v-if="dialog === 'dictionary'">
-      <p class="workspace-hint">代码为稳定标识，已有代码不可修改；显示名称可编辑。Common 始终表示常规分类，改名不会改变语义。</p>
-      <ProbeDataTable :rows="workspace.data[dimension]" :columns="dictionaryColumns" :table-id="`measurement-dictionary-${dimension}`" :page-size="10" :actions-width="90"><template #actions="{ row }"><el-button size="small" link :disabled="busy" @click="editDictionary(row)">编辑名称</el-button></template></ProbeDataTable>
+      <p class="workspace-hint">代码为稳定标识，已有代码不可修改；显示名称可编辑。使用上下移调整显示顺序，操作立即保存到草稿。Common 始终表示常规分类，改名不会改变语义。</p>
+      <ProbeDataTable :rows="workspace.data[dimension]" :columns="dictionaryColumns" :table-id="`measurement-dictionary-${dimension}`" :page-size="10" :actions-width="200"><template #actions="{ row }"><el-button size="small" link :disabled="busy || syncPending || workspace.data[dimension][0]?.code === row.code" :aria-label="`上移 ${row.name}`" @click="moveDictionary(row, -1)">上移</el-button><el-button size="small" link :disabled="busy || syncPending || workspace.data[dimension].at(-1)?.code === row.code" :aria-label="`下移 ${row.name}`" @click="moveDictionary(row, 1)">下移</el-button><el-button size="small" link :disabled="busy" @click="editDictionary(row)">编辑名称</el-button></template></ProbeDataTable>
       <el-form inline size="small" :disabled="busy" class="dictionary-form" @submit.prevent><el-form-item label="代码"><el-input v-model="form.code" aria-label="字典代码" :disabled="dictionaryExisting" /></el-form-item><el-form-item label="显示名称"><el-input v-model="form.name" aria-label="字典显示名称" /></el-form-item><el-button size="small" :disabled="busy" @click="newDictionary">新增代码</el-button></el-form>
     </template>
     <template v-if="dialog === 'drafts'">
@@ -108,6 +108,15 @@ function manage(value) {
   openDialog(value === 'new' ? 'new' : 'dictionary')
   if (value === 'new') replaceForm({ kind: 'measurement', item_id: '', cn_name: '', description: '', categories: [], modes: [], group: '', unit: '', enabled_raw: '', allow_existing_id: false })
   else { dimension.value = value; newDictionary() }
+}
+async function moveDictionary(row, direction) {
+  if (dirty.value && !await confirmAbandon()) return
+  const codes = props.workspace.data[dimension.value].map(item => item.code)
+  const index = codes.indexOf(row.code), next = index + direction
+  if (index < 0 || next < 0 || next >= codes.length) return
+  ;[codes[index], codes[next]] = [codes[next], codes[index]]
+  const result = await mutate('edit', { operation: 'reorder_dictionary', dimension: dimension.value, codes })
+  if (result) { replaceForm({ code: '', name: '' }); dictionaryExisting.value = false; ElMessage.success('顺序已保存到测量库草稿') }
 }
 async function newDictionary() { if (dirty.value && !await confirmAbandon()) return; dictionaryExisting.value = false; replaceForm({ code: '', name: '' }) }
 async function editDictionary(row) {

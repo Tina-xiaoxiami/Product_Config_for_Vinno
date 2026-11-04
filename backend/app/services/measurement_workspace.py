@@ -103,8 +103,10 @@ def register_codes(document: dict[str, Any], rows: list[dict[str, Any]]) -> None
                 mode_dict.setdefault(code, {'code': code, 'name': code})
     # Common is a reserved semantic code even in batches without a Common row.
     applications.setdefault('Common', {'code': 'Common', 'name': 'Common'})
-    document['applications'] = sorted(applications.values(), key=lambda item: item['code'])
-    document['modes'] = sorted(mode_dict.values(), key=lambda item: item['code'])
+    for dimension, entries in (('applications', applications), ('modes', mode_dict)):
+        existing = [item['code'] for item in document[dimension]]
+        order = existing + sorted(entries.keys() - set(existing))
+        document[dimension] = [entries[code] for code in order]
 
 
 async def source_document(db: AsyncSession, batch_id: int) -> dict[str, Any]:
@@ -170,6 +172,10 @@ def document_diff(before: dict[str, Any], after: dict[str, Any]) -> list[dict[st
     for dimension in ('applications', 'modes'):
         old = {item['code']: item for item in before[dimension]}
         new = {item['code']: item for item in after[dimension]}
+        old_order = [entry['code'] for entry in before[dimension] if entry['code'] in new]
+        old_order += sorted(new.keys() - old.keys())
+        new_order = [entry['code'] for entry in after[dimension]]
+        add(['dictionary_order', dimension], 'dictionary_order', dimension, dimension, old_order, new_order)
         for code in sorted(old.keys() | new.keys()):
             add(['dictionary', dimension, code], 'dictionary', f'{dimension} · {code}', dimension, old.get(code), new.get(code))
     return result
@@ -324,7 +330,11 @@ async def edit(db: AsyncSession, item: MeasurementWorkspace, data: EditInput) ->
             existing['name'] = data.name
         else:
             document[data.dimension].append({'code': data.code, 'name': data.name})
-            document[data.dimension].sort(key=lambda entry: entry['code'])
+    elif operation == 'reorder_dictionary':
+        entries = {entry['code']: entry for entry in document[data.dimension]}
+        if len(data.codes) != len(entries) or set(data.codes) != set(entries):
+            raise HTTPException(422, '排序必须包含所有字典代码且不能重复')
+        document[data.dimension] = [entries[code] for code in data.codes]
     elif operation == 'add_item':
         if data.item_id != data.item_id.strip():
             raise HTTPException(422, 'Id 不能为空或含首尾空格')
@@ -353,7 +363,10 @@ async def undo(db: AsyncSession, item: MeasurementWorkspace, data: UndoInput) ->
     if delta is None:
         raise HTTPException(409, '变更已不存在，请刷新草稿列表')
     before, after, field = delta['before'], delta['after'], delta['field']
-    if delta['entity'] == 'dictionary':
+    if delta['entity'] == 'dictionary_order':
+        rank = {code: index for index, code in enumerate(before)}
+        document[field].sort(key=lambda entry: rank.get(entry['code'], len(rank)))
+    elif delta['entity'] == 'dictionary':
         code = (before or after)['code']
         if before is None:
             references = ('categories', 'source_categories', 'official_categories') if field == 'applications' else ('mode', 'official_mode')
@@ -362,10 +375,16 @@ async def undo(db: AsyncSession, item: MeasurementWorkspace, data: UndoInput) ->
             evidenced = any(code in payload.get(payload_field, []) for row in document['entries'] for payload in evidence_payloads(row))
             if assigned or evidenced:
                 raise HTTPException(409, '该字典代码仍被记录引用，请先撤销相关记录变更')
-        document[field] = [entry for entry in document[field] if entry['code'] != code]
-        if before is not None:
+        index = next((i for i, entry in enumerate(document[field]) if entry['code'] == code), None)
+        if index is not None:
+            if before is None:
+                document[field].pop(index)
+            else:
+                document[field][index] = before
+        elif before is not None:
             document[field].append(before)
-            document[field].sort(key=lambda entry: entry['code'])
+            order = {entry['code']: index for index, entry in enumerate(baseline[field])}
+            document[field].sort(key=lambda entry: order.get(entry['code'], len(order)))
     elif field == 'record':
         key = (before or after)['record_key']
         document['entries'] = [row for row in document['entries'] if row['record_key'] != key]

@@ -30,7 +30,7 @@ export function workspaceChangeRows(changes = []) {
     ...change,
     label: change.label?.replace(/^measurement · /, '测量项 · ').replace(/^calculation · /, '计算项 · ').replace(/^applications · /, '应用 · ').replace(/^modes · /, '模式 · '),
     type_label: ({ create: '新增', update: '修改', delete: '移除' })[change.change_type] || change.change_type,
-    field_label: ({ names: 'UI 名称', assignments: '应用与模式', name: '字典名称', evidence: '核对资料', record: '整条关系', applications: '应用字典', modes: '模式字典' })[change.field] || change.field,
+    field_label: change.entity === 'dictionary_order' ? (change.field === 'applications' ? '应用显示顺序' : '模式显示顺序') : ({ names: 'UI 名称', assignments: '应用与模式', name: '字典名称', evidence: '核对资料', record: '整条关系', applications: '应用字典', modes: '模式字典' })[change.field] || change.field,
     before_label: readableChange(draftBaseline(change, change.before)),
     after_label: readableChange(draftWorkingValue(change, change.after))
   }))
@@ -51,6 +51,7 @@ export function formatManagedChange(change, value, document) {
     return [...counts].map(([label, count]) => `${label}\n适用 ${count} 条关系`).join('\n\n')
   }
   if (change.field === 'assignments') return `应用：${applications(value)}\n模式：${modes(value)}`
+  if (change.entity === 'dictionary_order') return joined(value.map(code => dictionaryLabel(document, change.field, code)))
   if (change.entity === 'dictionary') return `${value.code} · ${value.name}`
   if (change.field === 'evidence') {
     const evidence = value.enrichment

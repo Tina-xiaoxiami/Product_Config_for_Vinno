@@ -69,7 +69,13 @@ class UpsertDictionary(RevisionInput):
         return value
 
 
-EditInput = Annotated[RenameItem | AssignItem | AddItem | UpsertDictionary, Field(discriminator='operation')]
+class ReorderDictionary(RevisionInput):
+    operation: Literal['reorder_dictionary']
+    dimension: Literal['applications', 'modes']
+    codes: list[str] = Field(max_length=1000)
+
+
+EditInput = Annotated[RenameItem | AssignItem | AddItem | UpsertDictionary | ReorderDictionary, Field(discriminator='operation')]
 
 
 class UndoInput(RevisionInput):

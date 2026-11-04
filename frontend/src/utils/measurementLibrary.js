@@ -43,7 +43,7 @@ export function measurementCounts(rows) {
 
 // Facets use the full projected batch, before pagination or table-column filters.
 // Ignore a facet's own selection so multi-select siblings remain discoverable.
-export function measurementFacets(rows, filters = {}) {
+export function measurementFacets(rows, filters = {}, document = null) {
   const scopes = measurementCounts(filterMeasurements(rows, { q: filters.q, kind: filters.kind, mode: filters.mode }))
   const countOptions = (field, candidates, selection) => {
     const counts = new Map()
@@ -55,11 +55,15 @@ export function measurementFacets(rows, filters = {}) {
     return [...new Set([...measurementOptions(rows, field), ...(selection || [])])].sort()
       .map(value => ({ value, count: counts.get(value) || 0 }))
   }
+  const orderOptions = (options, dimension) => {
+    const ranks = new Map((document?.[dimension] || []).map((item, index) => [item.code, index]))
+    return options.sort((a, b) => (ranks.get(a.value) ?? ranks.size) - (ranks.get(b.value) ?? ranks.size))
+  }
   return {
     scopes: { all: scopes.rows, common: scopes.common, application: scopes.application, unclassified: scopes.unclassified },
-    categories: countOptions('categories', filterMeasurements(rows, { ...filters, scope: 'application', category: null }), filters.category)
-      .filter(option => option.value && option.value !== 'Common'),
-    modes: countOptions('mode', filterMeasurements(rows, { ...filters, mode: null }), filters.mode)
+    categories: orderOptions(countOptions('categories', filterMeasurements(rows, { ...filters, scope: 'application', category: null }), filters.category)
+      .filter(option => option.value && option.value !== 'Common'), 'applications'),
+    modes: orderOptions(countOptions('mode', filterMeasurements(rows, { ...filters, mode: null }), filters.mode), 'modes')
   }
 }
 

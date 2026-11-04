@@ -200,7 +200,7 @@ const projectedRows = computed(() => activeDocument.value ? activeDocument.value
 const sidebarFilters = computed(() => ({ q: query.value, kind: kind.value, scope: scope.value,
   category: selectedApplications.value.length ? selectedApplications.value : null,
   mode: selectedModes.value.length ? selectedModes.value : null }))
-const facets = computed(() => measurementFacets(projectedRows.value, sidebarFilters.value))
+const facets = computed(() => measurementFacets(projectedRows.value, sidebarFilters.value, activeDocument.value))
 const rows = computed(() => filterMeasurements(projectedRows.value, sidebarFilters.value).map(row => ({
   ...row, match_label: matchLabel(row.match),
   enabled_label: row.kind === 'calculation' ? enabledLabel(row.enabled) + (row.enabled === 'unknown' && row.enabled_raw ? ` (${row.enabled_raw})` : '') : '',
