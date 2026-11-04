@@ -1,4 +1,5 @@
 import { draftBaseline, draftWorkingValue } from './configDraftHelpers.js'
+import { moveLayoutColumn } from './tableColumnLayout.js'
 
 // Managed names, assignments and evidence already belong to this workspace revision.
 // Only suggestion-origin assignments respond to the optional pending view toggle.
@@ -10,6 +11,10 @@ export function projectManagedMeasurement(row, includePending = true) {
     categories: [...(hideSuggestion ? row.official_categories || [] : row.categories || [])],
     ...(hideSuggestion ? { classification_basis: row.enrichment?.confirmed_payload ? '已核对补充' : '原表' } : {})
   }
+}
+
+export function reorderDictionaryCodes(entries, from, to) {
+  return moveLayoutColumn(entries.map(entry => ({ key: entry.code })), from, to).map(entry => entry.key)
 }
 
 export function dictionaryLabel(document, dimension, code) {
