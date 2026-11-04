@@ -3,7 +3,7 @@
     <component :is="embedded ? 'div' : ProbeManagementActions" path="/applications" class="application-actions">
       <strong v-if="embedded" class="application-title">应用范围</strong>
       <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
-      <el-tag v-if="editMode" size="small" type="warning">编辑中 · {{ pendingCount }} 项</el-tag>
+      <el-tag v-if="editMode" size="small" :type="draftSaved ? 'success' : 'danger'" role="status">{{ draftSaved ? '本机草稿已自动保存' : '草稿未保存' }} · {{ pendingCount }} 项</el-tag>
       <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
       <template v-if="!editMode">
         <el-button size="small" type="primary" @click="enterEditMode">{{ embedded ? '编辑应用' : '编辑模式' }}</el-button>
@@ -16,6 +16,7 @@
         <el-button size="small" type="danger" @click="discardChanges" :disabled="submitting">废弃全部</el-button>
       </template>
     </component>
+    <el-alert v-if="draftError" :title="draftError" type="error" :closable="false" />
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <div class="panel-layout">
       <!-- Left: Category Panel -->
@@ -82,7 +83,7 @@
             </div>
             <!-- Quick Add -->
             <div class="add-section">
-              <div class="add-section-title">{{ editMode ? '暂存添加（需提交后生效）' : '添加应用到本类别' }}</div>
+              <div class="add-section-title">{{ editMode ? '添加到草稿（自动保存，提交后生效）' : '添加应用到本类别' }}</div>
               <div class="add-section-row">
                 <el-select ref="addInput" v-model="addAppId" placeholder="选择应用" filterable style="width:200px" size="small">
                   <el-option v-for="a in availableApps" :key="a.id" :label="a.name" :value="a.id" />
@@ -184,7 +185,7 @@ import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
-import { applicationEditorState, createCategoryApplicationLoader } from '../utils/probeApplications'
+import { applicationEditorState, createCategoryApplicationLoader, createApplicationDraftStore } from '../utils/probeApplications'
 
 const props = defineProps({ embedded: Boolean, categories: { type: Array, default: () => [] }, categoryId: { type: Number, default: null } })
 const emit = defineEmits(['counts', 'changed', 'editor-state'])
@@ -222,7 +223,17 @@ const typeFilter = ref('')
 const editMode = ref(false)
 const submitting = ref(false)
 // pendingChanges: { key -> { action: 'add'|'remove', catId, appId, appName, probeType } }
-const pendingChanges = reactive({})
+const draftError = ref('')
+const draftSaved = ref(true)
+const draftStore = createApplicationDraftStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value), removeItem: key => localStorage.removeItem(key) }, message => { draftError.value = message })
+const restoredDraft = draftStore.restore()
+const pendingChanges = reactive(restoredDraft.changes)
+editMode.value = restoredDraft.editMode
+draftSaved.value = !restoredDraft.error
+watch(() => ({ changes: { ...pendingChanges }, editMode: editMode.value, categoryId: selectedCategory.value?.id || restoredDraft.categoryId }), value => {
+  draftSaved.value = draftStore.save(value.changes, value)
+  if (draftSaved.value) draftError.value = ''
+}, { deep: true, flush: 'sync' })
 
 // Version management
 const showVersions = ref(false)
@@ -284,14 +295,14 @@ const filteredAllApps = computed(() => {
 })
 
 const editorState = computed(() => applicationEditorState({ pendingCount: pendingCount.value, editMode: editMode.value,
-  submitting: submitting.value, saving: saving.value || closingAppDialog.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value }))
+  submitting: submitting.value, saving: saving.value || closingAppDialog.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value, draftSaved: draftSaved.value }))
 watch(editorState, value => emit('editor-state', value), { immediate: true, flush: 'sync' })
 const loadCategories = async (force = false) => {
   loading.value = true
   try {
     const source = props.embedded ? props.categories : (await getProbeCategories({ limit: 200 })).items || []
     categories.value = source
-    const requested = props.embedded ? props.categoryId : Number(route.query.category_id)
+    const requested = props.embedded ? props.categoryId : Number(route.query.category_id) || restoredDraft.categoryId
     const selected = source.find(cat => cat.id === requested) || source.find(cat => cat.id === selectedCategory.value?.id) || source[0]
     if (selected) await selectCategory(selected, force)
     else { selectedCategory.value = null; categoryLoader.invalidate(); categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] }
@@ -513,7 +524,7 @@ const requestLeave = async () => {
 }
 const focusAdd = async () => { await nextTick(); addInput.value?.focus() }
 const beforeUnload = event => { if (!props.embedded && editorState.value.protected) { event.preventDefault(); event.returnValue = '' } }
-useWorkspaceRefresh(refreshData, { canRefresh: () => editorState.value.canRefresh && (!props.embedded || props.categories.length > 0) })
+useWorkspaceRefresh(() => refreshData({ force: !categories.value.length }), { canRefresh: () => !categories.value.length || editorState.value.canRefresh && (!props.embedded || props.categories.length > 0) })
 onBeforeRouteLeave(() => props.embedded ? true : requestLeave())
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', beforeUnload)
 onBeforeUnmount(() => { categoryLoader.dispose(); countsRequest += 1; window.removeEventListener('beforeunload', beforeUnload) })
