@@ -14,7 +14,7 @@ from app.integrations.guideline_evidence import SharedEvidenceUnavailable, run_s
 from app.services.knowledge_content import _file_sha256
 from app.services.knowledge_parameters import topics_for_question
 from app.services.knowledge_release_history import trace_release_history
-from app.services.knowledge_scope import KnowledgeScopeError, resolve_query_scope
+from app.services.knowledge_scope import KnowledgeScopeError, resolve_query_scope, document_model_identity_unique
 
 MAX_PAGES = 500
 MAX_TEXT_BYTES = 3 * 1024 * 1024
@@ -30,6 +30,8 @@ def _fingerprint(value) -> str:
 
 
 async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str], str]:
+    if not await document_model_identity_unique(db, scope):
+        return [], ['同市场存在同名型号，资料尚不能唯一关联当前完整型号'], _fingerprint({'scope': scope, 'ambiguous': True})
     trace = await trace_release_history(db, question, scope)
     release_ids = {item['document_id'] for item in trace.get('source_documents', [])}
     release_ids.update(item['document_id'] for chain in trace.get('chains', []) for item in chain.get('documents', []))
@@ -105,9 +107,11 @@ def _claims(result: dict, pages: list[dict]) -> list[dict]:
             raise ValueError('missing citation')
         bound = []
         for citation in citations:
-            source = lookup.get((citation.get('id'), citation.get('page')))
-            quote = citation.get('quote')
-            if not source or not isinstance(quote, str) or not 6 <= len(quote) <= 400 or ' '.join(quote.split()) not in ' '.join(source['text'].split()):
+            source = lookup.get((citation.get('document_id'), citation.get('pdf_page')))
+            quote = citation.get('original_excerpt')
+            if (not source or type(citation.get('pdf_page')) is not int or citation.get('version_id') != source['version_id']
+                    or not isinstance(quote, str) or not 6 <= len(quote) <= 400
+                    or ' '.join(quote.split()) not in ' '.join(source['text'].split())):
                 raise ValueError('unregistered citation')
             bound.append({'document_id': int(source['id'].removeprefix('kb-')), 'title': source['title'],
                           'page': source['page'], 'quote': quote, 'version_id': source['version_id'],
