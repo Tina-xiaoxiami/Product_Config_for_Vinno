@@ -65,7 +65,7 @@ async def empty_trace(*args, **kwargs):
 def result(payload):
     page = payload['pages'][0]
     return {'status': 'draft', 'claims': [{'text': '仅适用于新平台。', 'kind': 'source_statement', 'support_status': 'direct',
-                                         'citations': [{'id': page['id'], 'page': page['page'], 'quote': PAGE}]}],
+                                         'citations': [{'document_id': page['id'], 'pdf_page': page['page'], 'original_excerpt': PAGE, 'version_id': page['version_id']}]}],
             'gaps': [], 'coverage': {}, 'metrics': {'model_calls': 4}, 'runtime_identity': {'protocol_version': 1}}
 
 
@@ -134,7 +134,7 @@ async def test_fabricated_reference_identity_or_quote_is_rejected(tmp_path, monk
         answer = result(payload)
         cite = answer['claims'][0]['citations'][0]
         cite['preview_url'] = 'https://evil.invalid/'
-        cite[{'document': 'id', 'page': 'page', 'quote': 'quote'}[change]] = {'document': 'kb-2', 'page': 99, 'quote': '这句话不在原文中，不能成为引用。'}[change]
+        cite[{'document': 'document_id', 'page': 'pdf_page', 'quote': 'original_excerpt'}[change]] = {'document': 'kb-2', 'page': 99, 'quote': '这句话不在原文中，不能成为引用。'}[change]
         return answer
     monkeypatch.setattr(service, 'run_shared_evidence', run)
     async with setup(tmp_path, monkeypatch) as (client, _, _):
@@ -158,6 +158,18 @@ async def test_unreferencable_short_pages_are_reported_before_shared_validation(
     async with setup(tmp_path, monkeypatch) as (client, factory, _):
         async with factory() as db:
             await db.execute(text("UPDATE knowledge_document_chunks SET content='1' WHERE document_id=1"))
+            await db.commit()
+        data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
+        assert data['status'] == 'no_evidence' and data['gaps']
+
+
+@pytest.mark.asyncio
+async def test_same_market_same_name_in_another_series_requires_identity_resolution(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, 'run_shared_evidence', lambda _: pytest.fail('ambiguous name sent to model'))
+    async with setup(tmp_path, monkeypatch) as (client, factory, _):
+        async with factory() as db:
+            db.add(ProductSeries(id=3, name='Other-China'))
+            db.add(ProductModel(id=3, series_id=3, name='VINNO 6'))
             await db.commit()
         data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
         assert data['status'] == 'no_evidence' and data['gaps']
