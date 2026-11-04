@@ -235,3 +235,20 @@ async def test_source_scope_keys_follow_release_chains_not_optional_query_countr
             pages,_,_=await service._pages(db,'升级有哪些条件？',scope)
             keys={page['id']:page['source_scope_keys'] for page in pages}
             assert keys['kb-1'] and keys['kb-2'] and keys['kb-1'] != keys['kb-2']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('actual_versions',[('1.14.80',),('1.14.80','1.14.81')])
+async def test_release_version_uses_extracted_trace_facts_not_a_stale_registry_label(tmp_path,monkeypatch,actual_versions):
+    async with setup(tmp_path,monkeypatch) as (_,factory,_):
+        async def trace(*args,**kwargs):
+            return {'chains':[{'country':'CN','market':'domestic','release_line':'main',
+                'documents':[{'document_id':1,'version':v} for v in actual_versions]}]}
+        monkeypatch.setattr(service,'trace_release_history',trace)
+        async with factory() as db:
+            await db.execute(text("UPDATE knowledge_documents SET document_type='release_note' WHERE id=1"))
+            await db.commit()
+            scope=await service.resolve_query_scope(db,SCOPE)
+            pages,_,_=await service._pages(db,'升级有哪些条件？',scope)
+            assert pages[0]['document_version'] == ('1.14.80' if len(actual_versions)==1 else None)
+            assert (await db.execute(text('SELECT version FROM knowledge_documents WHERE id=1'))).scalar() == '1.14.81'
