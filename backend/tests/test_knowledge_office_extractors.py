@@ -314,3 +314,20 @@ def test_data_table_formula_without_stable_text_is_explicitly_unsupported():
     stream=BytesIO();book.save(stream);book.close()
     with pytest.raises(service.KnowledgeContentError,match='公式'):
         service.extract_office_blocks(stream.getvalue(),'.xlsx')
+
+
+@pytest.mark.parametrize('extension',['XML','Xml'])
+def test_uppercase_xml_relationship_target_cannot_skip_preflight(monkeypatch,extension):
+    output=BytesIO()
+    with ZipFile(BytesIO(xlsx_bytes())) as original, ZipFile(output,'w',ZIP_DEFLATED) as modified:
+        for entry in original.infolist():
+            name=entry.filename
+            content=original.read(entry)
+            if name=='xl/worksheets/sheet1.xml':name='xl/worksheets/sheet1.'+extension
+            if name in {'[Content_Types].xml','xl/_rels/workbook.xml.rels'}:
+                content=content.replace(b'sheet1.xml',('sheet1.'+extension).encode())
+            modified.writestr(name,content)
+    monkeypatch.setattr(service,'MAX_OFFICE_CELLS',2)
+    monkeypatch.setattr(service,'_xlsx_blocks',lambda *args:pytest.fail('case-sensitive budget bypass'))
+    with pytest.raises(service.KnowledgeContentError,match='上限'):
+        service.extract_office_blocks(output.getvalue(),'.xlsx')
