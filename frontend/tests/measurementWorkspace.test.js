@@ -124,3 +124,13 @@ test('dictionary drag moves the source to the target without losing hidden codes
   assert.deepEqual(reorderDictionaryCodes(entries, 'B', 'B'), ['A', 'B', 'C', 'D'])
   assert.deepEqual(reorderDictionaryCodes(entries, 'missing', 'B'), ['A', 'B', 'C', 'D'])
 })
+
+test('source batch switching lives in management rather than the main toolbar', () => {
+  const page = fs.readFileSync(new URL('../src/views/MeasurementLibrary.vue', import.meta.url), 'utf8')
+  const controls = fs.readFileSync(new URL('../src/components/MeasurementWorkspaceControls.vue', import.meta.url), 'utf8')
+  const toolbar = page.split('<div class="toolbar measurement-main-toolbar">')[1].split('<el-alert')[0]
+  assert.doesNotMatch(toolbar, /aria-label="来源批次"|>刷新</)
+  assert.match(controls, /command="batches">来源批次/)
+  assert.match(controls, /aria-label="来源批次"/)
+  assert.match(page, /@select-batch="selectBatch"/)
+})

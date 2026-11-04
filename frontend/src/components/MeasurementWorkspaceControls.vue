@@ -9,8 +9,8 @@
     <el-tag v-if="snapshot" size="small" type="info">历史快照 · 只读</el-tag>
     </div>
     <div class="workspace-action-buttons">
+    <el-dropdown trigger="click" :disabled="locked" @command="manage"><el-button size="small" :disabled="locked">管理 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="batches">来源批次</el-dropdown-item><template v-if="!snapshot"><el-dropdown-item command="new">新增项目 / 关系</el-dropdown-item><el-dropdown-item command="applications">应用字典</el-dropdown-item><el-dropdown-item command="modes">模式字典</el-dropdown-item><el-dropdown-item command="sync">同步核对资料</el-dropdown-item></template></el-dropdown-menu></template></el-dropdown>
     <template v-if="!snapshot">
-      <el-dropdown trigger="click" :disabled="locked" @command="manage"><el-button size="small" :disabled="locked">管理 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="new">新增项目 / 关系</el-dropdown-item><el-dropdown-item command="applications">应用字典</el-dropdown-item><el-dropdown-item command="modes">模式字典</el-dropdown-item><el-dropdown-item command="sync">同步核对资料</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
       <el-button size="small" :type="workspace.has_draft ? 'warning' : 'default'" :disabled="locked" @click="openDialog('drafts')">草稿 ({{ workspace.changes?.length || 0 }})</el-button>
       <el-button size="small" type="primary" :disabled="locked || !workspace.has_draft || syncPending" @click="openDialog('publish')">发布版本</el-button>
     </template>
@@ -30,6 +30,11 @@
         <template v-if="dialog !== 'rename'"><el-form-item label="应用"><el-select v-model="form.categories" multiple filterable aria-label="编辑应用"><el-option v-for="item in workspace.data.applications" :key="item.code" :value="item.code" :label="`${item.name} (${item.code})`" /></el-select></el-form-item><el-form-item label="关联模式"><el-select v-model="form.modes" multiple filterable aria-label="编辑关联模式"><el-option v-for="item in workspace.data.modes" :key="item.code" :value="item.code" :label="`${item.name} (${item.code})`" /></el-select></el-form-item></template>
         <template v-if="dialog === 'new'"><el-form-item label="计算分组"><el-input v-model="form.group" aria-label="新增计算分组" /></el-form-item><el-form-item label="单位"><el-input v-model="form.unit" aria-label="新增单位" /></el-form-item><el-form-item label="原始启用值"><el-input v-model="form.enabled_raw" aria-label="新增启用值" /></el-form-item><el-form-item v-if="duplicateIdentity" label="同 Id 关系"><el-checkbox v-model="form.allow_existing_id" aria-label="允许同 Id 新关系">明确新增同类型、同 Id 的独立关系（沿用现有名称）</el-checkbox></el-form-item><el-alert v-if="duplicateIdentity" type="warning" :closable="false" title="该类型与 Id 已存在。需明确勾选新增关系；现有名称将自动沿用，不合并来源行。" /></template>
       </el-form>
+    </template>
+    <template v-if="dialog === 'batches'">
+      <p class="workspace-hint">来源批次来自导入的原始表格；每个批次分别维护测量库草稿和版本。</p>
+      <el-form label-width="90px" size="small" @submit.prevent><el-form-item label="来源批次"><el-select v-model="selectedBatch" aria-label="来源批次" :disabled="syncPending" class="batch-select"><el-option v-for="batch in batches" :key="batch.id" :value="batch.id" :label="`${batch.version} · ${batch.source_file} · #${batch.id}`" /></el-select></el-form-item></el-form>
+      <el-alert v-if="syncPending" type="warning" :closable="false" title="请先完成核对资料同步，再切换来源批次。" />
     </template>
     <template v-if="dialog === 'dictionary'">
       <p class="workspace-hint">代码为稳定标识，已有代码不可修改；显示名称可编辑。拖动排序手柄调整显示顺序，操作立即保存到草稿；聚焦手柄后也可使用 Alt + ↑ / ↓。Common 始终表示常规分类，改名不会改变语义。</p>
@@ -55,6 +60,7 @@
     </template>
     <template #footer>
       <el-button size="small" :disabled="busy" @click="requestClose()">关闭</el-button>
+      <el-button v-if="dialog === 'batches'" size="small" type="primary" :disabled="syncPending || !selectedBatch || selectedBatch === workspace.batch_id" @click="selectBatch">切换批次</el-button>
       <el-button v-if="['rename', 'assign', 'new', 'dictionary'].includes(dialog)" size="small" type="primary" :loading="busy" :disabled="!dirty || syncPending" @click="saveEdit">保存到草稿</el-button>
       <el-button v-if="dialog === 'drafts'" size="small" type="danger" plain :disabled="busy || !workspace.has_draft || syncPending" @click="discard">放弃全部草稿</el-button>
       <el-button v-if="dialog === 'publish'" size="small" type="primary" :loading="busy" :disabled="!preview?.signature || syncPending" @click="publish">确认发布 {{ preview?.version_number || '' }}</el-button>
@@ -62,7 +68,7 @@
   </el-dialog>
 </template>
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api/index'
@@ -70,9 +76,10 @@ import ProbeDataTable from './ProbeDataTable.vue'
 import MeasurementWorkspaceChanges from './MeasurementWorkspaceChanges.vue'
 import { identityRows, reorderDictionaryCodes } from '../utils/measurementWorkspace'
 import { useDraftFilter } from '../utils/useDraftFilter'
-const props = defineProps({ workspace: { type: Object, required: true }, snapshot: Object, syncPending: Boolean })
-const emit = defineEmits(['updated', 'snapshot', 'locked', 'sync-evidence'])
+const props = defineProps({ workspace: { type: Object, required: true }, snapshot: Object, batches: { type: Array, default: () => [] }, syncPending: Boolean })
+const emit = defineEmits(['updated', 'snapshot', 'locked', 'sync-evidence', 'select-batch'])
 const dialog = ref(''), busy = ref(false), error = ref(''), target = ref(null), dimension = ref('applications'), dictionaryExisting = ref(false)
+const selectedBatch = ref(null)
 const dragCode = ref(null), dragTarget = ref(null)
 const form = reactive({}), baseline = ref(''), preview = ref(null), comparison = ref(null), fromVersion = ref(null), toVersion = ref(null)
 const comparisonDocuments = reactive({ before: null, after: null })
@@ -91,7 +98,7 @@ watch(() => [form.allow_existing_id, form.kind, form.item_id], () => {
   else form.allow_existing_id = false
 })
 const kindLabel = value => value === 'measurement' ? '测量项' : '计算项'
-const dialogTitle = computed(() => ({ rename: '编辑同类型同 Id 的全库名称', assign: '编辑当前关系的应用与模式', new: '新增测量库项目 / 关系', dictionary: dimension.value === 'applications' ? '管理应用字典' : '管理模式字典', drafts: '测量库草稿', publish: '预览并发布测量库版本', history: '版本历史与对比' })[dialog.value] || '')
+const dialogTitle = computed(() => ({ rename: '编辑同类型同 Id 的全库名称', assign: '编辑当前关系的应用与模式', new: '新增测量库项目 / 关系', dictionary: dimension.value === 'applications' ? '管理应用字典' : '管理模式字典', drafts: '测量库草稿', publish: '预览并发布测量库版本', history: '版本历史与对比', batches: '来源批次' })[dialog.value] || '')
 const dictionaryColumns = [{ key: 'code', label: '稳定代码', width: 220, fixed: true, visible: true }, { key: 'name', label: '显示名称', width: 300, visible: true }]
 const versionColumns = [{ key: 'version_number', label: '版本号', width: 180, fixed: true, visible: true }, { key: 'description', label: '版本说明', width: 400, visible: true }, { key: 'created_at', label: '发布时间', width: 190, visible: true }]
 const { getDraftTagType, toggleDraftFilter, clearDraftFilter, filterByDraftMode } = useDraftFilter()
@@ -106,11 +113,17 @@ function openDialog(value) {
   dialog.value = value
 }
 function manage(value) {
+  if (value === 'batches') { selectedBatch.value = props.workspace.batch_id; openDialog('batches'); return }
   if (value === 'sync') { emit('sync-evidence'); return }
   if (props.syncPending) return
   openDialog(value === 'new' ? 'new' : 'dictionary')
   if (value === 'new') replaceForm({ kind: 'measurement', item_id: '', cn_name: '', description: '', categories: [], modes: [], group: '', unit: '', enabled_raw: '', allow_existing_id: false })
   else { dimension.value = value; newDictionary() }
+}
+async function selectBatch() {
+  if (props.syncPending || !selectedBatch.value || selectedBatch.value === props.workspace.batch_id) return
+  const batch = selectedBatch.value
+  if (await requestClose()) { await nextTick(); emit('select-batch', batch) }
 }
 function dictionaryCodeAtEvent(event) { return event.target.closest('tr')?.querySelector('[data-dictionary-code]')?.dataset.dictionaryCode }
 function startDictionaryDrag(event, code) {
@@ -239,6 +252,7 @@ onBeforeUnmount(() => { session++ })
 defineExpose({ openRename, openAssignment, requestClose })
 </script>
 <style scoped>
+.batch-select{width:min(700px,100%)}
 .dictionary-drag{display:inline-block;cursor:grab;color:var(--el-text-color-secondary);padding:4px 8px;touch-action:none}.dictionary-drag:active{cursor:grabbing}.dictionary-drag.is-drop-target{color:var(--el-color-primary);box-shadow:inset 0 2px var(--el-color-primary)}.dictionary-drag[draggable="false"]{cursor:not-allowed;opacity:.5}
 .workspace-controls,.compare-controls,.draft-filters,.workspace-selection,.workspace-action-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.workspace-controls{margin-top:8px;padding:8px 10px;border:1px solid var(--el-border-color-light);border-radius:8px;background:var(--el-fill-color-lighter);flex-shrink:0;justify-content:space-between}.workspace-selection{flex:0 1 360px;min-width:0;max-width:100%;flex-wrap:nowrap}.workspace-action-buttons{max-width:100%;min-width:0}.workspace-caption{white-space:nowrap}.workspace-controls .el-button+.el-button{margin-left:0}.workspace-version{flex:1;min-width:0;width:300px}.workspace-caption,.workspace-note,.workspace-hint,.identity-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.workspace-alert{margin-bottom:12px}.workspace-hint{margin:8px 0}.identity-line{margin-left:120px}.el-form :deep(.el-select){min-width:260px}.dictionary-form{margin-top:16px}.compare-controls{margin-top:16px}.compare-controls .el-select{width:210px}.draft-filters{margin:10px 0}.draft-filters .el-tag{cursor:pointer}.version-description{width:340px;max-width:100%}
 </style>
