@@ -240,7 +240,7 @@ test('source batches can be viewed and switched through management', async ({ pa
   // Element Plus renders the selected label beside its empty readonly input.
   await expect(dialog.locator('.batch-select')).toContainText(`batch-newer-test · measurement-human.xlsx · #${ids[1]}`)
   await expect(dialog.getByRole('button', { name: '切换批次', exact: true })).toBeDisabled()
-  await dialog.getByRole('combobox', { name: '来源批次' }).click()
+  await dialog.locator('.batch-select').click()
   await expect(page.getByRole('option', { name: new RegExp(`batch-newer-test.*#${ids[1]}$`) })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('option', { name: new RegExp(`batch-older-test.*#${ids[0]}$`) }).click()
   await expect(dialog.locator('.batch-select')).toContainText(`batch-older-test · measurement-human.xlsx · #${ids[0]}`)
@@ -253,7 +253,7 @@ test('source batches can be viewed and switched through management', async ({ pa
   await expect(page.getByText('历史快照 · 只读', { exact: true })).toBeVisible()
   dialog = await openBatches()
   await expect(dialog.locator('.batch-select')).toContainText(`batch-older-test · measurement-human.xlsx · #${ids[0]}`)
-  await dialog.getByRole('combobox', { name: '来源批次' }).click()
+  await dialog.locator('.batch-select').click()
   await page.getByRole('option', { name: new RegExp(`batch-newer-test.*#${ids[1]}$`) }).click()
   await expect(dialog.locator('.batch-select')).toContainText(`batch-newer-test · measurement-human.xlsx · #${ids[1]}`)
   await dialog.getByRole('button', { name: '切换批次', exact: true }).click()
