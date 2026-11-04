@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page template-matrix-page">
     <ProbeManagementActions path="/template-features">
         <span v-if="featureCatalog" class="management-meta">功能库 {{ featureCatalog.total }} · 已入模板 {{ features.filter(feature => !feature.pending).length }}</span>
         <el-button size="small" :disabled="loading || !!loadError || !featureCatalog" @click="openTemplateCatalog">从功能库添加</el-button>
@@ -34,6 +34,7 @@
           <div class="toolbar-right">
             <el-switch v-model="showRegular" size="small" active-text="常规" inactive-text="常规" style="margin-right:4px" />
             <el-switch v-model="showPOC" size="small" active-text="POC" inactive-text="POC" style="margin-right:4px" />
+            <TableColumnSettings :model-value="columnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
             <div class="view-toggle" v-if="!editMode">
               <el-radio-group v-model="showMode" size="small">
                 <el-radio value="auto">智能</el-radio>
@@ -52,41 +53,36 @@
           <el-button v-if="featureSearch && searchMatchGroups.length && searchMatchGroups.length !== selectedGroupIds.length" size="small" text type="primary" @click="selectSearchResults">选中搜索结果</el-button>
         </div>
 
-        <div class="table-wrap">
-          <el-table :data="categories" border stripe size="small" height="100%" style="width:100%" :header-cell-style="headerCellStyle">
-            <el-table-column label="探头类别" width="120" fixed>
+        <div class="matrix-scroll-tools">
+          <span>{{ categories.length }} 个探头类别 · {{ filteredFeatures.length }} 个功能（可在列设置中显示或隐藏）</span>
+          <el-button size="small" aria-label="向左查看功能" @click="scrollFeatures(-1)">←</el-button>
+          <el-button size="small" aria-label="向右查看功能" @click="scrollFeatures(1)">→</el-button>
+        </div>
+        <div ref="tableWrap" class="table-wrap" role="region" aria-label="探头功能模板矩阵" tabindex="0" @keydown.left.self.prevent="scrollFeatures(-1)" @keydown.right.self.prevent="scrollFeatures(1)">
+          <el-table ref="matrixTable" :data="categories" border stripe size="small" height="100%" :fit="false" scrollbar-always-on style="width:100%" :header-cell-style="headerCellStyle" @header-dragend="resizeColumn">
+            <template v-for="section in matrixSections" :key="section.key">
+            <el-table-column v-if="section.kind === 'base'" :column-key="section.key" :prop="section.key" :label="section.label" :width="section.width" :fixed="section.fixed" show-overflow-tooltip>
               <template #default="{ row: cat }">
-                <div class="cat-name">{{ cat.name }}</div>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="showRegular" label="常规应用" width="140" fixed>
-              <template #default="{ row: cat }">
-                <div v-if="categoryAppsMap[cat.id]" class="cat-apps">
-                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.regular||[])" :key="a.id" size="small" class="app-tag">{{ a.name }}</el-tag>
+                <div v-if="section.key === 'category'" class="cat-name" :title="cat.name">{{ cat.name }}</div>
+                <div v-else class="cat-apps">
+                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.[section.key] || [])" :key="a.id" size="small" class="app-tag" :type="section.key === 'poc' ? 'warning' : 'primary'" :title="a.name">{{ a.name }}</el-tag>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column v-if="showPOC" label="POC 应用" width="140" fixed>
-              <template #default="{ row: cat }">
-                <div v-if="categoryAppsMap[cat.id]" class="cat-apps">
-                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.poc||[])" :key="'poc-'+a.id" size="small" type="warning" class="app-tag">{{ a.name }}</el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column v-for="g in visibleGroups" :key="g.id" :label="g.name" align="center">
-              <el-table-column v-for="f in getGroupFeatures(g.id)" :key="f.id" :label="f.name" min-width="72" align="center">
+            <el-table-column v-else :label="section.label" :fixed="section.fixed" align="center">
+              <el-table-column v-for="column in section.columns" :key="column.key" :column-key="column.key" :prop="column.key" :label="column.label" :width="column.width" align="center">
                 <template #header>
                   <span class="matrix-feature-header">
-                    {{ f.name }}
-                    <FeatureNameMark :feature-id="f.id" :name="f.name" />
-                    <small v-if="f.pending" class="catalog-preview-badge">待提交</small>
+                    <span class="matrix-feature-label" :title="column.label">{{ column.label }}</span>
+                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" />
+                    <small v-if="column.feature.pending" class="catalog-preview-badge" title="待提交">待</small>
                   </span>
                 </template>
                 <template #default="{ row: cat }">
                   <el-popover
                     v-if="editMode"
                     trigger="click"
-                    :visible="popoverKey === `${cat.id}_${f.id}`"
+                    :visible="popoverKey === `${cat.id}_${column.feature.id}`"
                     placement="bottom"
                     :width="260"
                     @hide="popoverKey = ''"
@@ -94,10 +90,10 @@
                     <template #reference>
                       <div
                         class="tpl-cell"
-                        :class="getCellClass(cat.id, f.id)"
-                        @click="openPopover(cat.id, f.id)"
+                        :class="getCellClass(cat.id, column.feature.id)"
+                        @click="openPopover(cat.id, column.feature.id)"
                         style="cursor:pointer"
-                      ><div class="cell-apps" :class="{ 'is-all': isAllApps(cat.id, f.id) }">{{ getCellDisplay(cat.id, f.id) }}</div></div>
+                      ><div class="cell-apps" :title="getCellTooltip(cat.id, column.feature.id)" :class="{ 'is-all': isAllApps(cat.id, column.feature.id) }">{{ getCellDisplay(cat.id, column.feature.id) }}</div></div>
                     </template>
                     <div>
                       <el-alert v-if="popUnknownExcludes.length" type="warning" :closable="false" :title="`旧排除名称无法对应：${popUnknownExcludes.join('、')}。请核对当前应用后保存。`" />
@@ -145,12 +141,13 @@
                       </div>
                     </div>
                   </el-popover>
-                  <el-tooltip v-else :content="getCellTooltip(cat.id, f.id)" placement="top" :disabled="!getCellTooltip(cat.id, f.id)">
-                    <ProbeSupportCell :class="{ 'catalog-preview-cell': f.pending }" :status="_getStatus(`${cat.id}_${f.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${f.id}`)" :tender="_getTender(`${cat.id}_${f.id}`)" :mode="showMode" />
+                  <el-tooltip v-else :content="getCellTooltip(cat.id, column.feature.id)" placement="top" :disabled="!getCellTooltip(cat.id, column.feature.id)">
+                    <ProbeSupportCell :class="{ 'catalog-preview-cell': column.feature.pending }" :status="_getStatus(`${cat.id}_${column.feature.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${column.feature.id}`)" :tender="_getTender(`${cat.id}_${column.feature.id}`)" :mode="showMode" />
                   </el-tooltip>
                 </template>
               </el-table-column>
             </el-table-column>
+            </template>
           </el-table>
         </div>
       </div>
@@ -174,7 +171,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
@@ -183,6 +180,8 @@ import { catalogFeatureLabel, projectTemplateCatalog, catalogCellSource } from '
 import api from '../api/index'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 import ProbeSupportCell from '../components/ProbeSupportCell.vue'
+import TableColumnSettings from '../components/TableColumnSettings.vue'
+import { buildTemplateMatrixColumns, templateMatrixSections, normalizeColumnLayout, loadColumnLayout, saveColumnLayout } from '../utils/tableColumnLayout'
 import { expandCombinedName, parseProbeExcludes, formatProbeSupport, probeGroupColors } from '../utils/probeSupport'
 
 const categories = ref([]); const features = ref([])
@@ -196,6 +195,30 @@ const featureSearch = ref('')
 const showRegular = ref(true)
 const showPOC = ref(true)
 const selectedGroupIds = ref([])
+
+const matrixTable = ref(null)
+const tableWrap = ref(null)
+const columnStorageKey = 'template-matrix-columns-v1'
+const columnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const columnDefaults = computed(() => buildTemplateMatrixColumns(features.value))
+const columnLayout = ref([])
+// Only normalize once the complete catalog is available, never against search results.
+watch(features, () => {
+  columnLayout.value = loadColumnLayout(columnStorage, columnStorageKey, columnDefaults.value, message => ElMessage.warning(message))
+}, { immediate: true })
+const applyColumnLayout = columns => {
+  columnLayout.value = normalizeColumnLayout(columnDefaults.value, columns)
+  saveColumnLayout(columnStorage, columnStorageKey, columnLayout.value, message => ElMessage.warning(message))
+  nextTick(() => matrixTable.value?.doLayout())
+}
+const resizeColumn = (width, _oldWidth, column) => {
+  applyColumnLayout(columnLayout.value.map(item => item.key === column.columnKey ? { ...item, width: Math.max(30, width) } : item))
+}
+const scrollFeatures = direction => {
+  const wrap = tableWrap.value?.querySelector('.el-scrollbar__wrap')
+  if (wrap) matrixTable.value?.setScrollLeft(wrap.scrollLeft + direction * Math.max(100, wrap.clientWidth / 2))
+}
+
 
 const selectAllGroups = computed({
   get: () => selectedGroupIds.value.length === featureGroups.value.length,
@@ -239,20 +262,15 @@ function getGroupFeatures(groupId) {
   return filteredFeatures.value.filter(f => f.group_id === groupId)
 }
 
-const visibleGroups = computed(() => {
-  const ids = [...new Set(filteredFeatures.value.map(f => f.group_id))]
-  return ids.map(id => {
-    const g = featureGroups.value.find(g => g.id === id)
-    return { id, name: g ? g.name : '' }
-  })
-})
+const matrixSections = computed(() => templateMatrixSections(columnLayout.value, filteredFeatures.value, featureGroups.value, {
+  showRegular: showRegular.value, showPOC: showPOC.value
+}))
 
 // ---- group header coloring ----
 const groupColorMap = computed(() => probeGroupColors(featureGroups.value))
 
 function headerCellStyle({ column }) {
-  // Match feature columns by label
-  const feat = features.value.find(f => f.name === column.label)
+  const feat = features.value.find(f => `feature:${f.id}` === column.property)
   if (!feat) return {}
   const c = groupColorMap.value[feat.group_id]
   if (!c) return { fontWeight: 600, fontSize: '12px' }
@@ -591,7 +609,7 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalog
 </script>
 
 <style scoped>
-.page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 360px; }
+.page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .template-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .template-card :deep(.el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px; }
 .matrix-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -607,13 +625,23 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalog
 .group-filter-compact { display:inline-flex; flex-wrap:wrap; gap:2px }
 .group-filter-compact .el-checkbox { margin-right:0; white-space:nowrap }
 .view-toggle { flex-shrink: 0 }
-.table-wrap { flex: 1; min-height: 0; overflow: hidden; }
+.table-wrap { flex: 1 1 0; min-height: 120px; min-width: 0; overflow: hidden; }
+.matrix-scroll-tools { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-shrink: 0; margin-bottom: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
+.matrix-scroll-tools .el-button + .el-button { margin-left: 0; }
+.table-wrap :deep(.el-table__header .cell) { white-space: nowrap; }
+.table-wrap :deep(.probe-support-cell), .cell-apps, .cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-wrap :deep(.probe-support-cell) { box-sizing: border-box; min-height: 28px; }
+.table-wrap :deep(.el-scrollbar__bar.is-horizontal) { height: 10px; bottom: 1px; }
+.table-wrap :deep(.el-scrollbar__wrap) { padding-bottom: 10px; box-sizing: border-box; }
+.app-tag { max-width: 100%; }
+.app-tag :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .tpl-cell { width: 100%; text-align: center; transition: background .1s; min-height: 28px; display: flex; align-items: center; justify-content: center }
 .tpl-cell.supported { background: #dcfce7; color: #166534 }
 .tpl-cell.conditional { background: #fef3c7; color: #92400e }
 .tpl-cell.unsupported { background: #f1f5f9; color: #94a3b8 }
 .tpl-cell.is-dirty { outline: 2px dashed #f59e0b; outline-offset: -2px }
-.cell-apps { font-size: 11px; line-height: 1.3; padding: 2px 4px; word-break: break-all }
+.cell-apps { font-size: 11px; line-height: 1.3; padding: 2px 4px; max-width: 100%; box-sizing: border-box }
 .cell-apps.is-all { font-weight: 700; font-size: 13px }
 .draft-bar { display:flex; align-items:center; flex-wrap:wrap; flex-shrink:0; gap:6px; padding:6px 10px; margin-bottom:6px; background:#fef3c7; border-radius:4px; }
 .cat-cell { line-height:1.4 }
@@ -625,8 +653,14 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalog
 .catalog-preview-badge { margin-left: 4px; white-space: nowrap; }
 .catalog-preview-cell, .tpl-cell.is-catalog-preview { outline: 1px dashed #d97706; outline-offset: -1px; }
 .matrix-feature-header {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
   align-items: center;
   justify-content: center;
 }
+.matrix-feature-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.matrix-feature-header :deep(.feature-name-mark), .catalog-preview-badge { flex-shrink: 0; }
+
 </style>
