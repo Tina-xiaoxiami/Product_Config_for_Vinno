@@ -95,3 +95,7 @@ async def test_sync_cli_refuses_report_over_source_database(tmp_path,alias):
     result=subprocess.run([sys.executable,str(script),'--database',str(path),'--report',str(report)],capture_output=True,text=True)
     assert result.returncode != 0
     assert path.read_bytes()==before
+
+def test_shared_version_note_is_not_a_function_identifier():
+    plan=plan_standard_sync([{'cn_name':'应变分析','en_name':'Strain(V1)'}],{1:source(1,'Other(V1)','另一个分析','Other(V1)')})
+    assert not plan['checked']
