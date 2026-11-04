@@ -134,16 +134,17 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
     try:
         result = await asyncio.to_thread(run_shared_evidence, {'question': question, 'scope': scope, 'pages': pages})
     except SharedEvidenceUnavailable as error:
-        return {**_base('unavailable', str(error), gaps=gaps, coverage=coverage), 'scope': scope}
+        return {**_base('unavailable', str(error), gaps=gaps, coverage=coverage), 'scope': scope, 'metrics': {'model_calls': None}}
+    actual_run = {'metrics': result.get('metrics', {'model_calls': None}), 'runtime_identity': result.get('runtime_identity', {})}
     # This endpoint owns a read-only session. End its read transaction to recheck
     # current applicability, text and files after a potentially long model call.
     await db.rollback()
     current_scope = await resolve_query_scope(db, supplied_scope)
     if current_scope != scope:
-        return {**_base('unavailable', '机型范围已变化，请重新查询'), 'scope': scope}
+        return {**_base('unavailable', '机型范围已变化，请重新查询'), 'scope': scope, **actual_run}
     _, _, current = await _pages(db, question, scope)
     if current != fingerprint:
-        return {**_base('unavailable', '原文、提取或适用范围已变化，请重新查询'), 'scope': scope}
+        return {**_base('unavailable', '原文、提取或适用范围已变化，请重新查询'), 'scope': scope, **actual_run}
     try:
         claims = _claims(result, pages)
         status = result['status']
@@ -152,7 +153,7 @@ async def document_answer(db, question: str, supplied_scope: dict) -> dict:
         if status in {'draft', 'partial'} and not claims:
             status = 'validation_failed'
     except (ValueError, TypeError, KeyError, AttributeError):
-        return {**_base('validation_failed', '回答或引用核验未通过，未发布任何答案', gaps=gaps, coverage=coverage), 'scope': scope}
+        return {**_base('validation_failed', '回答或引用核验未通过，未发布任何答案', gaps=gaps, coverage=coverage), 'scope': scope, **actual_run}
     return {'status': status, 'claims': claims if status in {'draft', 'partial'} else [], 'scope': scope,
             'message': '资料草稿，尚未人工确认或发布', 'gaps': gaps + result.get('gaps', []),
             'coverage': {**result.get('coverage', {}), **coverage}, 'metrics': result.get('metrics', {}),
