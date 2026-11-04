@@ -42,3 +42,14 @@ test('the app-hosted editor remains registered when a table header disappears',(
  stopOther();openFeatureNameReview(3,true)
  assert.equal(other.length,1)
 })
+
+test('refresh protects unsaved display text and saved names do not block it',()=>{
+ const component=readFileSync(new URL('../src/components/FeatureNameReviewDialog.vue',import.meta.url),'utf8')
+ const code=component.slice(component.indexOf('const beforeUnload='),component.indexOf('onMounted(()=>window.addEventListener'))
+ const refs={visible:{value:true},saving:{value:false},displayDirty:{value:true},note:{value:''},reviewer:{value:''}}
+ const guard=new Function(...Object.keys(refs),code+';return beforeUnload')(...Object.values(refs))
+ let prevented=0;const event={preventDefault(){prevented++}}
+ guard(event);assert.equal(prevented,1)
+ refs.displayDirty.value=false;guard(event);assert.equal(prevented,1)
+ refs.visible.value=false;refs.displayDirty.value=true;guard(event);assert.equal(prevented,1)
+})

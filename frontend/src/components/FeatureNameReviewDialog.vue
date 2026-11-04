@@ -39,7 +39,7 @@
   </el-dialog>
 </template>
 <script setup>
-import { ref, computed, getCurrentInstance } from 'vue'
+import { ref, computed, getCurrentInstance, onMounted, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getFeatureNameReviews, applyFeatureStandardNames, revokeFeatureNameReview, updateFeatureDisplayName } from '../api/data'
@@ -90,6 +90,9 @@ async function revoke(record) {
   catch(e){error.value=committed?'撤销已保存，标记刷新失败，请刷新页面':e.response?.data?.detail||e.message}
   finally{saving.value=false}
 }
+const beforeUnload=event=>{if(visible.value&&(saving.value||displayDirty.value||note.value||reviewer.value)){event.preventDefault();event.returnValue=''}}
+onMounted(()=>window.addEventListener('beforeunload',beforeUnload))
+onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))
 async function requestLeave(){ if(!visible.value)return true; await close(); return !visible.value }
 if(!props.globalHost) onBeforeRouteLeave(requestLeave)
 defineExpose({open,requestLeave})
