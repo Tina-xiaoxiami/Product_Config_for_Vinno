@@ -15,7 +15,7 @@ from app.api import feature_import
 from app.api import feature_standards
 from app.api import release
 from app.api import registration
-from app.api import measurements
+from app.api import measurements, measurement_workspace
 
 app = FastAPI(
     title="产品配置管理系统",
@@ -57,6 +57,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["产品知�
 app.include_router(knowledge_release_history.router, prefix="/api/knowledge")
 app.include_router(knowledge_parameters.router, prefix="/api/knowledge")
 app.include_router(measurements.router, prefix="/api/measurements", tags=["测量库"])
+app.include_router(measurement_workspace.router, prefix="/api/measurement-workspace", tags=["测量库版本工作区"])
 app.include_router(release.router, prefix="/api/release", tags=["功能发布"])
 app.include_router(
     registration.router,

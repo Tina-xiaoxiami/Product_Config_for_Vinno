@@ -29,7 +29,7 @@ subseries_file = disposable_path(os.environ['WHITEPAPER_SUBSERIES_FILE'])
 from fastapi import FastAPI
 from app.database import engine, async_session, Base
 from app.api import probe_workspace, models, drafts, series, feature_standards
-from app.api import measurements
+from app.api import measurements, measurement_workspace
 from app.api import config, versions, enums, probe_categories, probe_models, applications, features, template_features, probe_config, registration, knowledge
 from app.services.overseas_registration_history import migrate_overseas_registration_history_schema
 from app.models import ProductSeries, ProductModel, ConfigItem, ConfigValue, FeatureNameStandard
@@ -83,6 +83,7 @@ app.include_router(drafts.router, prefix='/api/drafts')
 app.include_router(series.router, prefix='/api/series')
 app.include_router(feature_standards.router, prefix='/api/features/standards')
 app.include_router(measurements.router, prefix='/api/measurements')
+app.include_router(measurement_workspace.router, prefix='/api/measurement-workspace')
 app.include_router(config.router, prefix='/api/config')
 app.include_router(versions.router, prefix='/api/versions')
 app.include_router(enums.router, prefix='/api/enums')

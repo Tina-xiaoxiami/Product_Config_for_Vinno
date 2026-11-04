@@ -29,6 +29,7 @@ test('calculation suggestions filter provisionally and require an explicit human
     if (checked) await expect(control).toBeChecked()
     else await expect(control).not.toBeChecked()
   }
+  const openReview = async () => { await page.getByRole('button', { name: '编辑', exact: true }).first().click(); await page.getByRole('menuitem', { name: '核对建议', exact: true }).click() }
   const parent = page.getByRole('radiogroup', { name: '测量分类' })
   const child = page.getByRole('radiogroup', { name: '记录类型' })
   const pending = page.getByRole('checkbox', { name: '包含待核对建议', exact: true })
@@ -49,7 +50,7 @@ test('calculation suggestions filter provisionally and require an explicit human
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '筛选关联模式', exact: true })).toHaveClass(/el-button--primary/)
 
-  await page.getByRole('button', { name: '核对建议', exact: true }).click()
+  await openReview()
   const dialog = page.getByRole('dialog', { name: '计算项补充资料人工核对', exact: true })
   await expect(dialog.getByRole('combobox', { name: '人工核对分类', exact: true })).toBeVisible()
   await dialog.screenshot({ path: testInfo.outputPath('measurement-review-dialog.png') })
@@ -62,8 +63,23 @@ test('calculation suggestions filter provisionally and require an explicit human
   const menu = await modes.getByRole('combobox').getAttribute('aria-controls')
   await page.locator(`#${menu}`).getByRole('option', { name: 'Tissue', exact: true }).click()
   await dialog.getByRole('heading', { name: '公开来源', exact: true }).click()
+  let syncFailed = false
+  await page.route('**/api/measurement-workspace/*/sync-evidence', async route => {
+    if (!syncFailed) { syncFailed = true; await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ detail: '隔离回归模拟同步冲突' }) }) }
+    else await route.continue()
+  })
   await dialog.getByRole('button', { name: '确认人工核对结果', exact: true }).click()
   await expect(dialog).not.toBeVisible()
+  const retrySync = page.getByRole('button', { name: '重试同步核对资料', exact: true })
+  await expect(retrySync).toBeVisible()
+  await page.reload()
+  await expect(retrySync).toBeVisible()
+  await expect(page.getByRole('button', { name: '发布版本', exact: true })).toBeDisabled()
+  await retrySync.click()
+  await expect(retrySync).not.toBeVisible()
+  await page.getByPlaceholder('查找 Id、英文 UI 或中文 UI 名称').fill(raw.item_id)
+  await choose(parent.getByRole('radio', { name: '应用测量', exact: true }))
+  await choose(child.getByRole('radio', { name: '计算项', exact: true }))
   await choose(pending, false)
   await expect(page.getByText('1 / 1 条', { exact: true })).toBeVisible()
   await expect(page.getByRole('cell', { name: '已核对补充', exact: true })).toBeVisible()
@@ -74,7 +90,7 @@ test('calculation suggestions filter provisionally and require an explicit human
   const saved = after.entries.find(row => row.id === raw.id)
   for (const key of Object.keys(raw).filter(key => key !== 'enrichment')) expect(saved[key], key).toEqual(raw[key])
   expect(saved.enrichment.confirmed_payload.modes).toEqual(['Doppler'])
-  await page.getByRole('button', { name: '核对建议', exact: true }).click()
+  await openReview()
   await expect(dialog.getByRole('button', { name: '撤销确认', exact: true })).toBeVisible()
   await expect(dialog.getByRole('combobox', { name: '人工核对模式', exact: true }).locator('..').locator('..')).not.toContainText('Tissue')
   await dialog.getByRole('textbox', { name: '核对说明', exact: true }).fill('撤销隔离回归确认')
