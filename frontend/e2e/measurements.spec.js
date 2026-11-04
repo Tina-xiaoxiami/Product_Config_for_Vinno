@@ -95,7 +95,7 @@ test('measurement controls stay compact and the table fills remaining height thr
   await page.goto('/measurements')
   await expect(page.getByText('87 / 87 条', { exact: true })).toBeVisible()
   const search = page.getByPlaceholder('查找 Id、英文 UI 或中文 UI 名称')
-  const version = page.getByRole('combobox', { name: '测量库版本' })
+  const version = page.getByRole('combobox', { name: '来源批次' })
   const searchBox = await page.locator('.search-input > .el-input__wrapper').boundingBox()
   const versionBox = await page.locator('.batch-select .el-select__wrapper').boundingBox()
   expect(Math.abs(searchBox.y + searchBox.height / 2 - versionBox.y - versionBox.height / 2), 'search and version share the first row').toBeLessThan(4)

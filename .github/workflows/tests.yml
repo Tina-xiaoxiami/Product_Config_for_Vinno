@@ -105,6 +105,7 @@ jobs:
             frontend/test-results/knowledgeCompact-*/**/*.png
             frontend/test-results/measurements-*/**/measurement-compact-*.png
             frontend/test-results/measurementEnrichment-*/**/*.png
+            frontend/test-results/measurementWorkspace-*/**/*.png
           if-no-files-found: ignore
 
   service-manager:
