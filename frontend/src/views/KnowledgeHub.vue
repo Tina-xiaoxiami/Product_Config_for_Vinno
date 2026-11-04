@@ -6,7 +6,7 @@
           <div class="qa-ask-heading">
             <div>
               <h3>直接提问</h3>
-              <p>系统只复用已经确认发布的答案；查不到时进入待确认队列，系统不会猜测。</p>
+              <p>查询已确认答案，或检索资料生成带原文依据的草稿；配置与参数按确定性规则查询，系统不会猜测缺失值。</p>
             </div>
             <el-tag type="success" effect="plain">受控知识</el-tag>
           </div>
@@ -36,6 +36,8 @@
           />
           <div class="qa-ask-actions">
             <span>Ctrl + Enter 快速提问</span>
+            <div class="qa-query-buttons">
+            <el-button size="small" :loading="evidenceAnswer?.state.loading" :disabled="!knowledgeScopePayload(qaScope) || evidenceAnswer?.state.checking || evidenceAnswer?.state.available !== true" @click="evidenceAnswer?.run()">查资料并生成草稿</el-button>
             <el-button
               data-testid="ask-knowledge-question"
               type="primary"
@@ -45,8 +47,11 @@
             >
               查询答案
             </el-button>
+            </div>
           </div>
         </section>
+
+        <KnowledgeEvidenceAnswer ref="evidenceAnswer" :question="qaQuestion" :scope="knowledgeScopePayload(qaScope)" />
 
         <article v-if="qaResult" class="qa-result" :class="qaResult.status">
           <div class="qa-result-heading">
@@ -282,6 +287,7 @@
 import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
+import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
 import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
@@ -307,6 +313,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref('qa')
+const evidenceAnswer = ref(null)
 const parameterWorkspace = ref(null)
 const openParameterTopic = async id => {
   const sourceTab = activeTab.value
@@ -330,7 +337,7 @@ const qaScope = reactive({ market: '', product_model_id: null, software_version:
 const qaModels = ref([])
 const qaModelsLoading = ref(false)
 const qaModelsError = ref(false)
-const qaQueueMode = ref('legacy')
+const qaQueueMode = ref('selected')
 const qaAvailableModels = computed(() => qaModels.value.filter(model => (
   !qaScope.market || model.series_name.endsWith(qaScope.market === 'domestic' ? '-China' : '-Oversea')
 )))
@@ -655,6 +662,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .qa-ask-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
 .qa-ask-heading p { margin: 5px 0 0; color: #475569; font-size: 12px; }
 .qa-ask-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: #64748b; font-size: 11px; }
+.qa-query-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.qa-query-buttons > .el-button + .el-button { margin-left: 0; }
 .qa-ask-panel :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
 .qa-ask-panel :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
 .qa-result { margin-bottom: 16px; padding: 17px 18px; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; }
