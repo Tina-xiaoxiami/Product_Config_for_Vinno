@@ -191,6 +191,7 @@ class KnowledgeDocumentExtractionItem(BaseModel):
 
 
 class KnowledgeCandidateEvidence(BaseModel):
+    version_id: str | None = None
     chunk_id: int
     document_id: int
     document_title: str
