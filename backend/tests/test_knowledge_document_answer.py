@@ -34,12 +34,15 @@ async def setup(tmp_path, monkeypatch):
                     ProductModel(id=1, series_id=1, name='VINNO 6'), ProductModel(id=2, series_id=2, name='VINNO 6')])
         await db.flush()
         for ident, model, version in [(1, 'VINNO 6', '1.14.81'), (2, 'VINNO 10', '1.14.81'), (3, 'VINNO 6', '1.14.82')]:
+            document_path = source if ident == 1 else tmp_path / f'source-{ident}.pdf'
+            if ident != 1:
+                document_path.write_bytes(source.read_bytes())
             db.add(KnowledgeDocument(id=ident, document_type='manual', title=f'合成资料{ident}', file_name='source.pdf',
-                                    file_path=str(source), version=version, market='domestic', country='CN',
+                                    file_path=str(document_path), version=version, market='domestic', country='CN',
                                     product_series=model, mime_type='application/pdf', sha256=sha, source_status='active'))
             await db.flush()
             db.add(KnowledgeDocumentExtraction(document_id=ident, source_sha256=sha, status='completed', extractor_version='test'))
-            db.add(KnowledgeDocumentChunk(document_id=ident, chunk_index=0, page_number=1, source_ref='第1页', content=PAGE, normalized_content=PAGE))
+            db.add(KnowledgeDocumentChunk(document_id=ident, chunk_index=0, page_number=1, source_ref='第1页', content=PAGE, normalized_content=PAGE, content_hash=hashlib.sha256(PAGE.encode()).hexdigest()))
         await db.commit()
     monkeypatch.setattr(service, 'trace_release_history', empty_trace)
     app = FastAPI()

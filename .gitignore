@@ -42,6 +42,7 @@ release_attachments/
 .env
 .env.local
 backend/config/release_workbench.local.json
+backend/config/knowledge_evidence.local.json
 
 # Detached local service state
 .runtime/
