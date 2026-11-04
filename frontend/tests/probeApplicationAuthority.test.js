@@ -4,9 +4,11 @@ import { readFileSync } from 'node:fs'
 const read = name => readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
 const source = read('ApplicationsView')
 const ref = value => ({ value })
+import { applicationChangeStillPending } from '../src/utils/probeApplications.js'
 function submitHarness(post) {
   const changes = { one: { action:'add', catId:1, appId:2, probeType:'poc' } }
-  const context = { pendingChanges: changes, submitting: ref(false), editMode: ref(true), api:{ post }, ElMessage:{ warning(){},success(){},error(){} }, refreshData: async()=>{}, emit() {} }
+  const context = { pendingChanges: changes, submitting: ref(false), editMode: ref(true), api:{ post, get: async()=>({regular:[],poc:[]}) }, ElMessage:{ warning(){},success(){},error(){} }, refreshData: async()=>{}, emit() {}, committedUncleared:ref(false), draftError:ref(''), applicationChangeStillPending }
+  context.clearLocalChanges = () => { Object.keys(changes).forEach(key=>delete changes[key]); context.editMode.value=false; return true }
   const block = source.slice(source.indexOf('const submitChanges ='), source.indexOf('// ========= CRUD'))
   const submit = new Function(...Object.keys(context), `${block}; return submitChanges`)(...Object.values(context))
   return { ...context, submit }
@@ -33,7 +35,7 @@ test('failed batch keeps editing changes for retry', async () => {
 })
 
 test('quick add enters edit mode so the pending change is visible and protected', () => {
-  const context={addAppId:ref(2),selectedCategory:ref({id:1}),availableApps:ref([{id:2,name:'App'}]),addAppType:ref('poc'),pendingChanges:{},editMode:ref(false),submitting:ref(false)}
+  const context={addAppId:ref(2),selectedCategory:ref({id:1}),availableApps:ref([{id:2,name:'App'}]),addAppType:ref('poc'),pendingChanges:{},editMode:ref(false),submitting:ref(false),committedUncleared:ref(false)}
   const block=source.slice(source.indexOf('const stageAdd ='),source.indexOf('const stageRemove ='))
   const add=new Function(...Object.keys(context),`${block}; return stageAdd`)(...Object.values(context))
   add()
@@ -53,6 +55,7 @@ test('submitting locks draft changes and duplicate submissions until the batch c
   const work = actions.submitChanges()
   actions.stageAdd(); actions.stageRemove({ id: 2, name: 'First' }, 'poc'); actions.undoPending('one')
   actions.enterEditMode(); actions.cancelEdit(); actions.discardChanges(); await actions.submitChanges()
+  await new Promise(resolve => setImmediate(resolve))
   assert.equal(posts, 1)
   assert.deepEqual(Object.keys(app.pendingChanges), ['one'])
   assert.equal(app.editMode.value, true)
@@ -71,6 +74,25 @@ test('model application maintenance focuses its shared category without a second
   assert.doesNotMatch(block,/router\.push/)
   assert.doesNotMatch(view,/setProbeModelApps|selectedAppIds/)
   assert.match(view,/useWorkspaceRefresh\(loadData/)
-  assert.match(source,/useWorkspaceRefresh\(refreshData, \{ canRefresh: \(\) => editorState.value.canRefresh/)
+  assert.match(source,/useWorkspaceRefresh\([\s\S]*?canRefresh: \(\) => !categories.value.length \|\| editorState.value.canRefresh/)
   assert.match(source,/Number\(route.query.category_id\)/)
+})
+
+test('published-but-uncleared draft is reported separately and cannot submit a second version',async()=>{
+  let posts=0
+  const app=submitHarness(async()=>{posts++})
+  app.clearLocalChanges=()=>false
+  const block=source.slice(source.indexOf('const submitChanges ='),source.indexOf('// ========= CRUD'))
+  const submit=new Function(...Object.keys(app),block+';return submitChanges')(...Object.values(app))
+  await submit();assert.equal(posts,1);assert.equal(app.committedUncleared.value,true)
+  assert.match(app.draftError.value,/服务器已提交/)
+  assert.ok(app.pendingChanges.one)
+  await submit();assert.equal(posts,1)
+})
+test('recovered changes already present on server clear locally without posting or creating a version',async()=>{
+  let posts=0
+  const app=submitHarness(async()=>{posts++})
+  app.api.get=async()=>({regular:[],poc:[{id:2}]})
+  await app.submit()
+  assert.equal(posts,0);assert.deepEqual(app.pendingChanges,{})
 })

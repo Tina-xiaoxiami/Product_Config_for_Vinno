@@ -29,3 +29,11 @@ test('an explicit feature ID never borrows a same-name feature warning after con
   assert.equal(state.featureNameFlag({featureId:2,names:['same']}),other)
   assert.equal(state.featureNameFlag({names:['same']}),other)
 })
+
+test('standard alignment projects new current names even when the original English field was empty',async()=>{
+  const state=new Function('computed','ref','getFeatureNameStandardFlags',source+';return {loadFeatureNameStandardFlags,featureCurrentName}')(fn=>({get value(){return fn()}}),value=>({value}),async()=>({checks_by_feature:{1:{feature_cn_name:'标准名称',feature_en_name:'Standard English'}}}))
+  await state.loadFeatureNameStandardFlags()
+  assert.equal(state.featureCurrentName(1,'旧名称'),'标准名称')
+  assert.equal(state.featureCurrentName(1,'','en'),'Standard English')
+  assert.equal(state.featureCurrentName(2,'原名称'),'原名称')
+})

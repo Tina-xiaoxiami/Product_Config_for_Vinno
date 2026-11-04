@@ -54,7 +54,7 @@ async def whitepaper_names(
     include_matched: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
-    """核对白皮书正文里的功能名称：分别与标准表和配置管理描述比对。
+    """核对白皮书正文名称是否符合标准表，配置侧仅显示IPN链接。
 
     不指定 document_id 时只返回按白皮书汇总的概览；指定时返回该白皮书的逐条差异。
     """

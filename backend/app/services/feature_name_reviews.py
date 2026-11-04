@@ -35,7 +35,7 @@ async def decorate_checks(db, features, flags):
                 best = max(scores.values(), default=0)
                 safe = best >= 1.5 and [key for key, score in scores.items() if score == best] == [int(fid)]
             check.update(fingerprint=digest, identity_ambiguous=len(feature['primary_links']) > 1,
-                         confirmable=False, can_apply=safe and len(feature['primary_links']) <= 1,
+                         confirmable=False, can_apply=bool(safe and len(feature['primary_links']) <= 1 and check.get('standard_cn_name') and check.get('standard_en_name')),
                          reviewed=False, review_id=None, review_snapshot=snapshot)
     return flags
 

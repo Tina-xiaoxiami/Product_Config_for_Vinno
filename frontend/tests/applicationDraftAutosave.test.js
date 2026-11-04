@@ -32,3 +32,21 @@ test('corrupt data and cross-tab changes cannot be silently overwritten',()=>{
   const bad=createApplicationDraftStore(storage);assert.ok(bad.restore().error)
   assert.equal(bad.save(changes,{}),false);assert.equal(storage.data.get(key),'broken json')
 })
+
+import { readFileSync } from 'node:fs'
+import { applicationChangeStillPending, applicationEditorState } from '../src/utils/probeApplications.js'
+const view=readFileSync(new URL('../src/views/ApplicationsView.vue',import.meta.url),'utf8')
+test('discard refuses to erase working edits or report success when durable clear fails',()=>{
+  const state={pendingChanges:structuredClone(changes),editMode:{value:true},draftStore:{clear:()=>false},draftSaved:{value:true},draftError:{value:''},committedUncleared:{value:false}}
+  const block=view.slice(view.indexOf('const clearLocalChanges ='),view.indexOf('const enterEditMode ='))
+  const clear=new Function(...Object.keys(state), 'let draftWritePaused=false;'+block+';return clearLocalChanges')(...Object.values(state))
+  assert.equal(clear(),false);assert.deepEqual(state.pendingChanges,changes);assert.equal(state.editMode.value,true);assert.equal(state.draftSaved.value,false)
+})
+test('restored already-published edits are filtered before a version can be created',()=>{
+  assert.equal(applicationChangeStillPending(changes['1_2_regular'],{regular:[],poc:[]}),false)
+  assert.equal(applicationChangeStillPending(changes['3_4_poc'],{regular:[],poc:[{id:4}]}),false)
+  assert.equal(applicationChangeStillPending(changes['1_2_regular'],{regular:[{id:2}],poc:[]}),true)
+  assert.equal(applicationChangeStillPending(changes['3_4_poc'],{regular:[],poc:[]}),true)
+  assert.equal(applicationEditorState({pendingCount:2,editMode:true,draftSaved:true}).protected,false)
+  assert.equal(applicationEditorState({pendingCount:2,editMode:true,draftSaved:false}).protected,true)
+})

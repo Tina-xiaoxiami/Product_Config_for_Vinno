@@ -12,11 +12,13 @@
       <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
       <template v-if="editMode">
         <el-button size="small" @click="cancelEdit" :disabled="submitting">撤销</el-button>
-        <el-button size="small" type="primary" @click="submitChanges" :loading="submitting">提交并创建版本</el-button>
+        <el-button size="small" type="primary" @click="submitChanges" :loading="submitting" :disabled="committedUncleared">提交并创建版本</el-button>
         <el-button size="small" type="danger" @click="discardChanges" :disabled="submitting">废弃全部</el-button>
       </template>
     </component>
-    <el-alert v-if="draftError" :title="draftError" type="error" :closable="false" />
+    <el-alert v-if="draftError" :title="draftError" type="error" :closable="false">
+      <el-button v-if="committedUncleared" size="small" @click="clearLocalChanges">重试清理本机草稿</el-button>
+    </el-alert>
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <div class="panel-layout">
       <!-- Left: Category Panel -->
@@ -185,7 +187,7 @@ import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
-import { applicationEditorState, createCategoryApplicationLoader, createApplicationDraftStore } from '../utils/probeApplications'
+import { applicationEditorState, createCategoryApplicationLoader, createApplicationDraftStore, applicationChangeStillPending } from '../utils/probeApplications'
 
 const props = defineProps({ embedded: Boolean, categories: { type: Array, default: () => [] }, categoryId: { type: Number, default: null } })
 const emit = defineEmits(['counts', 'changed', 'editor-state'])
@@ -225,12 +227,16 @@ const submitting = ref(false)
 // pendingChanges: { key -> { action: 'add'|'remove', catId, appId, appName, probeType } }
 const draftError = ref('')
 const draftSaved = ref(true)
+const committedUncleared = ref(false)
+let draftWritePaused = false
 const draftStore = createApplicationDraftStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value), removeItem: key => localStorage.removeItem(key) }, message => { draftError.value = message })
 const restoredDraft = draftStore.restore()
 const pendingChanges = reactive(restoredDraft.changes)
+let initialCategoryRequested = Number(route.query.category_id) || restoredDraft.categoryId
 editMode.value = restoredDraft.editMode
 draftSaved.value = !restoredDraft.error
 watch(() => ({ changes: { ...pendingChanges }, editMode: editMode.value, categoryId: selectedCategory.value?.id || restoredDraft.categoryId }), value => {
+  if (draftWritePaused) return
   draftSaved.value = draftStore.save(value.changes, value)
   if (draftSaved.value) draftError.value = ''
 }, { deep: true, flush: 'sync' })
@@ -302,9 +308,9 @@ const loadCategories = async (force = false) => {
   try {
     const source = props.embedded ? props.categories : (await getProbeCategories({ limit: 200 })).items || []
     categories.value = source
-    const requested = props.embedded ? props.categoryId : Number(route.query.category_id) || restoredDraft.categoryId
+    const requested = props.embedded ? props.categoryId : initialCategoryRequested
     const selected = source.find(cat => cat.id === requested) || source.find(cat => cat.id === selectedCategory.value?.id) || source[0]
-    if (selected) await selectCategory(selected, force)
+    if (selected) { await selectCategory(selected, force); initialCategoryRequested = null }
     else { selectedCategory.value = null; categoryLoader.invalidate(); categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] }
     return true
   } catch { loadError.value = '加载探头类别失败，请重试'; return false }
@@ -344,27 +350,29 @@ watch(() => [props.categoryId, props.categories], async ([id, source], previous)
 })
 
 // ========= Edit mode =========
+const clearLocalChanges = () => {
+  if (!draftStore.clear()) { draftSaved.value = false; return false }
+  draftWritePaused = true
+  try { Object.keys(pendingChanges).forEach(key => delete pendingChanges[key]); editMode.value = false }
+  finally { draftWritePaused = false }
+  draftSaved.value = true; draftError.value = ''; committedUncleared.value = false
+  return true
+}
 const enterEditMode = () => {
-  if (submitting.value) return
+  if (submitting.value || committedUncleared.value) return
   editMode.value = true
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
 }
-
 const cancelEdit = () => {
-  if (submitting.value) return
-  editMode.value = false
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
+  if (submitting.value) return false
+  return clearLocalChanges()
 }
-
 const discardChanges = () => {
   if (submitting.value) return
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
-  editMode.value = false
-  ElMessage.success('已废弃所有变更')
+  if (clearLocalChanges()) ElMessage.success('已废弃所有本机草稿变更')
 }
 
 const stageAdd = () => {
-  if (submitting.value) return
+  if (submitting.value || committedUncleared.value) return
   if (!addAppId.value || !selectedCategory.value) return
   const app = availableApps.value.find(a => a.id === addAppId.value)
   if (!app) return
@@ -380,7 +388,7 @@ const stageAdd = () => {
 }
 
 const stageRemove = (app, probeType) => {
-  if (submitting.value) return
+  if (submitting.value || committedUncleared.value) return
   if (!selectedCategory.value) return
   const key = `${selectedCategory.value.id}_${app.id}_${probeType}`
   // If there's a pending add for this same combo, just remove the pending
@@ -392,24 +400,34 @@ const stageRemove = (app, probeType) => {
 }
 
 const undoPending = (key) => {
-  if (submitting.value) return
+  if (submitting.value || committedUncleared.value) return
   delete pendingChanges[key]
 }
 
 const submitChanges = async () => {
-  if (submitting.value) return
-  const entries = Object.values(pendingChanges)
+  if (submitting.value || committedUncleared.value) return
+  let entries = Object.values(pendingChanges)
   if (!entries.length) return ElMessage.warning('没有待提交的变更')
   submitting.value = true
   try {
+    const categoryIds = [...new Set(entries.map(change => change.catId))]
+    const current = new Map(await Promise.all(categoryIds.map(async id => [id, await api.get(`/probe-categories/${id}/apps`)])))
+    entries = entries.filter(change => applicationChangeStillPending(change, current.get(change.catId)))
+    if (!entries.length) {
+      if (clearLocalChanges()) ElMessage.success('修改已生效，本机草稿已清理，未创建新版本')
+      return
+    }
     await api.post('/applications/associations/batch', {
       changes: entries.map(ch => ({ action: ch.action, category_id: ch.catId, application_id: ch.appId, probe_type: ch.probeType })),
       version_number: `v${Date.now()}`,
       description: '应用关联变更'
     })
-    Object.keys(pendingChanges).forEach(key => delete pendingChanges[key])
-    editMode.value = false
-    ElMessage.success(`已提交 ${entries.length} 项变更并创建版本`)
+    if (clearLocalChanges()) ElMessage.success(`已提交 ${entries.length} 项变更并创建版本`)
+    else {
+      committedUncleared.value = true
+      draftError.value = '服务器已提交并创建版本，但本机旧草稿未清理；请重试清理，勿重复提交'
+      ElMessage.warning('版本已创建，本机旧草稿清理失败')
+    }
     await refreshData({ force: true })
     emit('changed')
   } catch (error) {
@@ -514,13 +532,13 @@ const closeAppDialog = async done => {
   } catch { return false }
   finally { closingAppDialog.value = false }
 }
-const discardLocal = () => { cancelEdit(); dialogVisible.value = false; addAppId.value = null }
+const discardLocal = () => { if (!cancelEdit()) return false; dialogVisible.value = false; addAppId.value = null; return true }
 const requestLeave = async () => {
   if (editorState.value.busy) return false
   if (!editorState.value.hasUnsavedChanges) return true
   try { await ElMessageBox.confirm('应用编辑尚未提交，是否放弃并离开？', '未提交的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
   catch { return false }
-  discardLocal(); return true
+  return discardLocal()
 }
 const focusAdd = async () => { await nextTick(); addInput.value?.focus() }
 const beforeUnload = event => { if (!props.embedded && editorState.value.protected) { event.preventDefault(); event.returnValue = '' } }

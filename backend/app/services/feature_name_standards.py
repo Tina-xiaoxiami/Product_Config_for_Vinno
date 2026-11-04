@@ -772,7 +772,7 @@ async def audit_feature_names(session: AsyncSession) -> dict:
     summary = {
         "ok": sum(1 for entry in entries if entry["severity"] == "ok"),
         "config_differs": sum(
-            1 for check in config_checks.values() if check["severity"] == "differs"
+            1 for check in config_checks.values() if check["severity"] == "ambiguous"
         ),
         "config_unlinked": sum(
             1 for check in config_checks.values() if check["severity"] == "unlinked"

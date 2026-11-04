@@ -34,7 +34,7 @@
           <div class="toolbar-right">
             <el-switch v-model="showRegular" size="small" active-text="常规" inactive-text="常规" style="margin-right:4px" />
             <el-switch v-model="showPOC" size="small" active-text="POC" inactive-text="POC" style="margin-right:4px" />
-            <TableColumnSettings :model-value="columnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
+            <TableColumnSettings :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
             <div class="view-toggle" v-if="!editMode">
               <el-radio-group v-model="showMode" size="small">
                 <el-radio value="auto">智能</el-radio>
@@ -172,6 +172,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { featureCurrentName } from '../utils/featureNameStandard'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
@@ -200,7 +201,7 @@ const matrixTable = ref(null)
 const tableWrap = ref(null)
 const columnStorageKey = 'template-matrix-columns-v1'
 const columnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
-const columnDefaults = computed(() => buildTemplateMatrixColumns(features.value))
+const columnDefaults = computed(() => buildTemplateMatrixColumns(features.value.map(feature => ({ ...feature, name: featureCurrentName(feature.id, feature.name) }))))
 const columnLayout = ref([])
 // Only normalize once the complete catalog is available, never against search results.
 watch(features, () => {
@@ -234,7 +235,7 @@ const searchMatchGroups = computed(() => {
   const q = featureSearch.value.toLowerCase()
   const matched = new Set()
   for (const f of features.value) {
-    if (catalogFeatureLabel(f).toLowerCase().includes(q)) matched.add(f.group_id)
+    if (catalogFeatureLabel({ ...f, name: featureCurrentName(f.id, f.name) }).toLowerCase().includes(q)) matched.add(f.group_id)
   }
   return [...matched]
 })
@@ -246,14 +247,14 @@ function selectSearchResults() {
 }
 
 const filteredFeatures = computed(() => {
-  let list = features.value
+  let list = features.value.map(feature => ({ ...feature, name: featureCurrentName(feature.id, feature.name) }))
   if (selectedGroupIds.value.length) {
     const set = new Set(selectedGroupIds.value)
     list = list.filter(f => set.has(f.group_id))
   }
   if (featureSearch.value) {
     const q = featureSearch.value.toLowerCase()
-    list = list.filter(f => catalogFeatureLabel(f).toLowerCase().includes(q))
+    list = list.filter(f => catalogFeatureLabel({ ...f, name: featureCurrentName(f.id, f.name) }).toLowerCase().includes(q))
   }
   return list
 })
@@ -262,7 +263,8 @@ function getGroupFeatures(groupId) {
   return filteredFeatures.value.filter(f => f.group_id === groupId)
 }
 
-const matrixSections = computed(() => templateMatrixSections(columnLayout.value, filteredFeatures.value, featureGroups.value, {
+const displayColumnLayout = computed(() => columnLayout.value.map(column => ({ ...column, label: column.key.startsWith('feature:') ? featureCurrentName(column.key.slice(8), column.label) : column.label })))
+const matrixSections = computed(() => templateMatrixSections(displayColumnLayout.value, filteredFeatures.value, featureGroups.value, {
   showRegular: showRegular.value, showPOC: showPOC.value
 }))
 

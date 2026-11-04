@@ -75,7 +75,7 @@ export function createApplicationDraftStore(storage, warn = () => {}) {
         const payload = Object.keys(changes).length || editMode
           ? JSON.stringify({ version: 1, changes, categoryId, editMode, savedAt: new Date().toISOString() }) : null
         if (payload) storage.setItem(APPLICATION_DRAFT_KEY, payload)
-        else storage.removeItem(APPLICATION_DRAFT_KEY)
+        else if (observed !== null) storage.removeItem(APPLICATION_DRAFT_KEY)
         observed = payload
         return true
       } catch {
@@ -85,4 +85,10 @@ export function createApplicationDraftStore(storage, warn = () => {}) {
     },
     clear() { return this.save({}) }
   }
+}
+
+// A restored draft may already have been published before browser storage failed.
+export function applicationChangeStillPending(change, apps) {
+  const exists = (apps[change.probeType] || []).some(app => Number(app.id) === change.appId)
+  return change.action === 'add' ? !exists : exists
 }

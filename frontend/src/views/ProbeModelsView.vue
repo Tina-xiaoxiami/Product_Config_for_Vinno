@@ -1,30 +1,14 @@
 <template>
   <div class="page">
     <ProbeManagementActions path="/probe-models">
-      <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
-      <template v-if="selectedCategory">
-
-              <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
-              <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置自动填充</el-button>
-              <el-upload
-                :show-file-list="false"
-                :auto-upload="false"
-                :on-change="h => importAllVariants(h.raw)"
-                accept=".xlsx,.xls"
-                style="display:inline-block"
-              >
-                <el-button size="small" @click="">导入变体</el-button>
-              </el-upload>
-              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
-      </template>
       <el-button size="small" @click="refreshData">刷新</el-button>
-      <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增类别</el-button>
     </ProbeManagementActions>
     <div class="panel-layout">
       <!-- Left: Category Panel -->
       <div class="panel panel-left">
         <div class="panel-header">
           <span class="panel-title">探头类别</span>
+          <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增类别</el-button>
         </div>
         <div class="panel-body" v-loading="loading">
           <div
@@ -54,7 +38,25 @@
             @counts="applicationCounts = $event" @editor-state="applicationState = $event" @changed="onApplicationsChanged" />
         </section>
         <section class="models-zone" aria-label="探头型号">
-          <div class="models-heading"><strong>探头型号</strong><span>{{ currentModels.length }} 型</span></div>
+          <div class="models-heading">
+            <strong>探头型号</strong><span>{{ currentModels.length }} 型</span>
+            <div v-if="selectedCategory" class="models-actions">
+              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
+              <el-tooltip content="读取配置管理中的 Probes 配置项，按对外型号匹配现有探头，补齐研发内部型号和 IPN 变体；不会新增探头型号。批量作用于全部类别。" placement="top">
+                <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置补齐变体</el-button>
+              </el-tooltip>
+              <el-popover trigger="click" placement="bottom-end" :width="200">
+                <template #reference><el-button size="small">批量变体 ▾</el-button></template>
+                <div class="bulk-variant-actions">
+                  <p>跨型号批量维护；当前型号可使用行内「变体」。</p>
+                  <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
+                  <el-upload :show-file-list="false" :auto-upload="false" :on-change="h => importAllVariants(h.raw)" accept=".xlsx,.xls">
+                    <el-button size="small">导入所有变体</el-button>
+                  </el-upload>
+                </div>
+              </el-popover>
+            </div>
+          </div>
           <ProbeDataTable v-if="selectedCategory" :rows="modelRows" :columns="modelColumns" table-id="probe-applications-models"
             fill-height :actions-width="260" auto-apply-filters>
             <template #cell="{row, column}">
@@ -172,7 +174,7 @@ import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
 import ApplicationsView from './ApplicationsView.vue'
 import ProbeDataTable from '../components/ProbeDataTable.vue'
-import { resolveProbeCategory, applicationEditorState, probeContextBlock, probeModelRows } from '../utils/probeApplications'
+import { resolveProbeCategory, applicationEditorState, probeContextBlock, probeModelRows, createApplicationDraftStore } from '../utils/probeApplications'
 
 const route = useRoute()
 const loading = ref(false)
@@ -181,7 +183,7 @@ const modelMap = ref({})
 const selectedCategory = ref(null)
 const applicationsPanel = ref(), applicationsSection = ref()
 const applicationCounts = ref({}), applicationState = ref(applicationEditorState())
-let requestedCategoryId = Number(route.query.category_id) || null
+let requestedCategoryId = Number(route.query.category_id) || createApplicationDraftStore({ getItem: key => localStorage.getItem(key) }).restore().categoryId
 const modelColumns = [
   { key: 'position', label: '#', width: 42, fixed: true, filter: false },
   { key: 'model_number', label: '型号', width: 135, fixed: true },
@@ -400,7 +402,7 @@ const requestLeave = async () => {
   if (metadataDirty() || applicationState.value.hasUnsavedChanges) {
     try { await ElMessageBox.confirm('探头或应用编辑尚未保存或提交，是否放弃并离开？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
     catch { return false }
-    applicationsPanel.value?.discardLocal()
+    if (applicationState.value.hasUnsavedChanges && applicationsPanel.value?.discardLocal() === false) return false
   }
   catDialogVisible.value = false; modelDialogVisible.value = false; variantDialogVisible.value = false
   return true
@@ -566,7 +568,12 @@ useWorkspaceRefresh(loadData, { canRefresh: () => !metadataOpen() && application
 .unified-right { padding: 8px; gap: 8px; }
 .applications-zone { flex-shrink: 0; min-height: 0; max-height: 45%; overflow: auto; outline: none; }
 .models-zone { flex: 1; display: flex; flex-direction: column; min-height: 160px; overflow: hidden; }
-.models-heading { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 3px; }
+.models-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13px; margin-bottom: 6px; }
+.models-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.models-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.bulk-variant-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.bulk-variant-actions p { font-size: 12px; color: #64748b; margin: 0 0 4px; }
+.bulk-variant-actions :deep(.el-upload), .bulk-variant-actions :deep(.el-button) { width: 100%; }
 .models-heading span, .app-counts { color: #909399; font-size: 11px; }
 .app-counts { white-space: nowrap; }
 @media (max-width: 760px) { .panel-left { width: 160px; min-width: 140px; }.unified-right { padding: 6px; } }
