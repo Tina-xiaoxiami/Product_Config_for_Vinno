@@ -57,7 +57,7 @@ def test_pdf_docx_and_xlsx_extractors_preserve_source_locations(tmp_path):
     assert pdf_blocks[0].page_number == 1
     assert any(block.section_name == "Release Note" for block in docx_blocks)
     assert any(block.source_ref == "表格1 第1行" for block in docx_blocks)
-    assert [block.source_ref for block in xlsx_blocks] == ["CN!第1行", "CN!第2行"]
+    assert [block.source_ref for block in xlsx_blocks] == ["CN!A1:C1", "CN!A2:C2"]
 
 
 def test_text_extraction_long_chunking_and_unsupported_type(tmp_path):

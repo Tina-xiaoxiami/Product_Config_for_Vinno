@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
+from zipfile import ZipFile, BadZipFile
 from pathlib import Path
 import re
 import shutil
@@ -20,6 +22,12 @@ from app.services.knowledge_qa import normalize_question
 
 
 EXTRACTOR_VERSION = "2"
+OFFICE_EXTRACTOR_VERSION = "office-locator-v1"
+MAX_SOURCE_BYTES = 128 * 1024 * 1024
+MAX_OFFICE_EXPANDED_BYTES = 64 * 1024 * 1024
+MAX_OFFICE_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_OFFICE_ENTRIES = 10000
+MAX_OFFICE_CELLS = 100000
 MAX_CHUNK_CHARACTERS = 1200
 CHUNK_OVERLAP_CHARACTERS = 120
 MAX_CANDIDATE_EXCERPT = 800
@@ -60,6 +68,7 @@ class ExtractedBlock:
     source_ref: str
     page_number: int | None = None
     section_name: str | None = None
+    locator: dict | None = None
 
 
 def _clean_text(value: str) -> str:
@@ -150,75 +159,144 @@ def _ocr_pdf_blocks(path: Path) -> list[ExtractedBlock]:
         return blocks
 
 
-def _docx_blocks(path: Path) -> list[ExtractedBlock]:
+def _docx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
     from docx import Document
+    from docx.text.paragraph import Paragraph
+    from docx.table import _Cell
 
     document = Document(path)
     blocks: list[ExtractedBlock] = []
     section_name: str | None = None
-    paragraph_number = 0
-    for paragraph in document.paragraphs:
-        content = _clean_text(paragraph.text)
-        if not content:
-            continue
-        paragraph_number += 1
-        style_name = str(paragraph.style.name or "") if paragraph.style else ""
-        if style_name.casefold().startswith("heading") or style_name.startswith("标题"):
-            section_name = content
-        blocks.append(
-            ExtractedBlock(
-                text=content,
-                source_ref=section_name or f"段落{paragraph_number}",
-                section_name=section_name,
-            )
-        )
-    for table_index, table in enumerate(document.tables, start=1):
-        for row_index, row in enumerate(table.rows, start=1):
-            values = [_clean_text(cell.text) for cell in row.cells]
-            content = " | ".join(value for value in values if value)
-            if content:
-                blocks.append(
-                    ExtractedBlock(
-                        text=content,
-                        source_ref=f"表格{table_index} 第{row_index}行",
-                        section_name=f"表格{table_index}",
-                    )
-                )
+    paragraph_number, table_number = 0, 0
+    for body_index, item in enumerate(document.iter_inner_content(), start=1):
+        if isinstance(item, Paragraph):
+            paragraph_number += 1
+            content = _clean_text(item.text)
+            if not content:
+                continue
+            style_name = str(item.style.name or "") if item.style else ""
+            if style_name.casefold().startswith("heading") or style_name.startswith("标题"):
+                section_name = content
+            locator = {"schema_version": 1, "format": "docx", "kind": "paragraph",
+                       "part": "word/document.xml", "body_index": body_index,
+                       "paragraph_index": paragraph_number}
+            blocks.append(ExtractedBlock(text=content, source_ref=f"段落{paragraph_number}" + (f" · {section_name}" if section_name else ""),
+                                         section_name=section_name, locator=locator))
+        else:
+            table_number += 1
+            for row_index, row in enumerate(item.rows, start=1):
+                # Physical XML cells avoid projecting merged anchors into phantom cells.
+                cells = [{"cell_index": cell_index, "text": _clean_text(_Cell(tc, item).text),
+                          "grid_span": tc.grid_span,
+                          "vertical_merge": tc.vMerge,
+                          "contains_nested_tables": bool(tc.findall("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tbl"))}
+                         for cell_index, tc in enumerate(row._tr.tc_lst, start=1)]
+                content = " | ".join(cell["text"] for cell in cells if cell["text"])
+                if content:
+                    locator = {"schema_version": 1, "format": "docx", "kind": "table_row",
+                               "part": "word/document.xml", "body_index": body_index,
+                               "table_index": table_number, "row_index": row_index, "cells": cells}
+                    blocks.append(ExtractedBlock(text=content, source_ref=f"表格{table_number} 第{row_index}行",
+                                                 section_name=f"表格{table_number}", locator=locator))
     return blocks
 
 
-def _xlsx_blocks(path: Path) -> list[ExtractedBlock]:
+def _xlsx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
     from openpyxl import load_workbook
 
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    # Source formulas are retained literally; no calculation/cache result is inferred.
+    workbook = load_workbook(path, read_only=False, data_only=False, keep_links=False)
     blocks: list[ExtractedBlock] = []
     try:
-        for worksheet in workbook.worksheets:
-            for row_index, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
-                values = [_clean_text(str(value)) for value in row if value is not None]
-                content = " | ".join(value for value in values if value)
-                if content:
-                    blocks.append(
-                        ExtractedBlock(
-                            text=content,
-                            source_ref=f"{worksheet.title}!第{row_index}行",
-                            section_name=worksheet.title,
-                        )
-                    )
+        total_cells = sum(ws.max_row * ws.max_column for ws in workbook.worksheets)
+        if total_cells > MAX_OFFICE_CELLS:
+            raise KnowledgeContentError("Office单元格数量超过本次解析上限")
+        for sheet_index, worksheet in enumerate(workbook.worksheets, start=1):
+            merged = {str(r.start_cell.coordinate): str(r) for r in worksheet.merged_cells.ranges}
+            for row_index, row in enumerate(worksheet.iter_rows(), start=1):
+                cells = []
+                for cell in row:
+                    if cell.value is None:
+                        continue
+                    value = _clean_text(str(cell.value))
+                    if not value:
+                        continue
+                    item = {"cell": cell.coordinate, "column_index": cell.column, "text": value,
+                            "value_type": "formula" if cell.data_type == "f" else "literal",
+                            "number_format": cell.number_format}
+                    if cell.coordinate in merged:
+                        item["merged_range"] = merged[cell.coordinate]
+                    cells.append(item)
+                if cells:
+                    cell_range = cells[0]["cell"] + ":" + cells[-1]["cell"]
+                    locator = {"schema_version": 1, "format": "xlsx", "kind": "worksheet_row",
+                               "sheet_name": worksheet.title, "sheet_index": sheet_index,
+                               "row_index": row_index, "range": cell_range, "cells": cells,
+                               "formula_state": "not_evaluated"}
+                    blocks.append(ExtractedBlock(text=" | ".join(c["text"] for c in cells),
+                        source_ref=f"{worksheet.title}!{cell_range}", section_name=worksheet.title, locator=locator))
     finally:
         workbook.close()
     return blocks
 
 
+def document_extractor_version(path: Path, mime_type: str | None = None) -> str:
+    return OFFICE_EXTRACTOR_VERSION if path.suffix.casefold() in {".docx", ".xlsx"} else EXTRACTOR_VERSION
+
+
+def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None) -> list[ExtractedBlock]:
+    """Replay bounded Office structure from one immutable, version-identifiable snapshot.
+
+    Coverage is main DOCX body/top-level tables or XLSX worksheet values/formulas;
+    headers, footers, nested table contents and rendered appearance are not inferred.
+    """
+    suffix = suffix.casefold()
+    expected_mime = {".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+    if suffix == ".xls":
+        raise KnowledgeContentError("旧XLS尚未支持结构定位，请提供原始XLSX；未按XLSX处理")
+    if suffix not in expected_mime:
+        raise KnowledgeContentError("暂不支持此Office格式")
+    if mime_type and mime_type.casefold() != expected_mime[suffix]:
+        raise KnowledgeContentError("Office文件类型与登记格式不一致")
+    if len(data) > MAX_SOURCE_BYTES:
+        raise KnowledgeContentError("Office原件超过本次大小上限")
+    try:
+        with ZipFile(BytesIO(data)) as package:
+            entries = package.infolist()
+            if (len(entries) > MAX_OFFICE_ENTRIES
+                    or sum(e.file_size for e in entries) > MAX_OFFICE_EXPANDED_BYTES
+                    or any(e.file_size > MAX_OFFICE_MEMBER_BYTES for e in entries)):
+                raise KnowledgeContentError("Office解压内容超过本次解析上限")
+            names = [e.filename for e in entries]
+            required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"}
+            if len(names) != len(set(names)) or not required.issubset(names) or any(e.flag_bits & 1 for e in entries):
+                raise KnowledgeContentError("Office包结构无效、重复或已加密")
+            for entry in entries:
+                if entry.filename.endswith((".xml", ".rels")):
+                    # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
+                    xml = package.read(entry).replace(b"\x00", b"").upper()
+                    if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
+                        raise KnowledgeContentError("Office包包含不支持的XML声明")
+        blocks = _docx_blocks(BytesIO(data)) if suffix == ".docx" else _xlsx_blocks(BytesIO(data))
+    except KnowledgeContentError:
+        raise
+    except Exception as error:
+        raise KnowledgeContentError("Office原件结构无法读取，未采用提取结果") from error
+    sha = hashlib.sha256(data).hexdigest()
+    return [ExtractedBlock(text=b.text, source_ref=b.source_ref, page_number=None,
+                           section_name=b.section_name, locator={**(b.locator or {}), "source_sha256": sha}) for b in blocks]
+
+
 def extract_document_blocks(path: Path, mime_type: str | None) -> list[ExtractedBlock]:
     suffix = path.suffix.casefold()
     mime = str(mime_type or "").casefold()
+    if suffix in {".docx", ".xlsx", ".xls"} or "wordprocessingml.document" in mime or "spreadsheetml.sheet" in mime:
+        with path.open("rb") as stream:
+            data = stream.read(MAX_SOURCE_BYTES + 1)
+        return extract_office_blocks(data, suffix, mime_type)
     if mime == "application/pdf" or suffix == ".pdf":
         return _pdf_blocks(path)
-    if "wordprocessingml.document" in mime or suffix == ".docx":
-        return _docx_blocks(path)
-    if "spreadsheetml.sheet" in mime or suffix == ".xlsx":
-        return _xlsx_blocks(path)
     if mime.startswith("text/") or suffix in {".txt", ".md", ".csv"}:
         content = _clean_text(path.read_text(encoding="utf-8", errors="replace"))
         return [ExtractedBlock(text=content, source_ref="全文")] if content else []
@@ -273,6 +351,7 @@ def build_document_chunks(blocks: list[ExtractedBlock]) -> list[dict]:
                     "content": content,
                     "normalized_content": normalize_question(content),
                     "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    **({"locator": block.locator} if block.locator is not None else {}),
                 }
             )
     return chunks
@@ -310,6 +389,7 @@ async def extract_registered_document(
     if not path.is_absolute() or not path.is_file():
         raise KnowledgeDocumentMissingError("原文件不存在或尚未同步")
 
+    extractor_version = document_extractor_version(path, document.mime_type)
     source_sha256 = await asyncio.to_thread(_file_sha256, path)
     current_result = await session.execute(
         text(
@@ -326,7 +406,7 @@ async def extract_registered_document(
         not force
         and current is not None
         and current.status == "completed"
-        and current.extractor_version == EXTRACTOR_VERSION
+        and current.extractor_version == extractor_version
         and current.source_sha256 == source_sha256
         and document.sha256 == source_sha256
     ):
@@ -342,6 +422,10 @@ async def extract_registered_document(
     old_hash = document.sha256 or (current.source_sha256 if current else None)
     try:
         blocks = await asyncio.to_thread(extract_document_blocks, path, document.mime_type)
+        if any(block.locator and block.locator.get("source_sha256") != source_sha256 for block in blocks):
+            raise KnowledgeContentError("Office原件在提取期间变化，请重新提取")
+        if extractor_version == OFFICE_EXTRACTOR_VERSION and await asyncio.to_thread(_file_sha256, path) != source_sha256:
+            raise KnowledgeContentError("Office原件在提取期间变化，请重新提取")
         chunks = build_document_chunks(blocks)
         if not chunks:
             raise KnowledgeContentError("未从原文件中提取到可检索正文")
@@ -360,7 +444,7 @@ async def extract_registered_document(
                     ON CONFLICT(document_id) DO UPDATE SET status = 'failed',
                         error_message = :message, updated_at = CURRENT_TIMESTAMP
                 """),
-                {"document_id": document_id, "extractor_version": EXTRACTOR_VERSION, "message": message[:1000]},
+                {"document_id": document_id, "extractor_version": extractor_version, "message": message[:1000]},
             )
             await session.commit()
         if isinstance(exc, KnowledgeContentError):
@@ -409,7 +493,7 @@ async def extract_registered_document(
         ),
         {
             "document_id": document_id,
-            "extractor_version": EXTRACTOR_VERSION,
+            "extractor_version": extractor_version,
             "source_sha256": source_sha256,
             "chunk_count": len(chunks),
         },
