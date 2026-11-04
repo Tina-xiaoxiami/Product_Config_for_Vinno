@@ -91,3 +91,9 @@ def test_office_version_does_not_invalidate_pdf_or_text_extractors(tmp_path):
 def test_sparse_exaggerated_dimensions_are_bounded(monkeypatch):
     monkeypatch.setattr(service,'MAX_OFFICE_CELLS',2)
     with pytest.raises(service.KnowledgeContentError,match='上限'):service.extract_office_blocks(xlsx_bytes(),'.xlsx')
+
+
+def test_xlsx_cell_limits_precede_library_object_allocation(monkeypatch):
+    monkeypatch.setattr(service,'MAX_OFFICE_CELLS',2)
+    monkeypatch.setattr(service,'_xlsx_blocks',lambda *args:pytest.fail('library allocated before bounds'))
+    with pytest.raises(service.KnowledgeContentError,match='上限'):service.extract_office_blocks(xlsx_bytes(),'.xlsx')
