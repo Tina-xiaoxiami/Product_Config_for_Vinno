@@ -82,6 +82,7 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
         data = r.json()
         assert data['status'] == 'draft'
         assert [p['id'] for p in calls[0]['pages']] == ['kb-1']
+        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url'}
         cite = data['claims'][0]['citations'][0]
         assert cite['document_id'] == 1 and cite['page'] == 1
         assert cite['preview_url'] == '/api/knowledge/documents/1/preview#page=1'
@@ -149,3 +150,14 @@ async def test_missing_scope_does_not_call_runner_and_does_not_record_a_question
         assert r.status_code == 422
         async with factory() as db:
             assert (await db.execute(text('SELECT count(*) FROM knowledge_questions'))).scalar() == 0
+
+
+@pytest.mark.asyncio
+async def test_unreferencable_short_pages_are_reported_before_shared_validation(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, 'run_shared_evidence', lambda _: pytest.fail('blank page passed to runner'))
+    async with setup(tmp_path, monkeypatch) as (client, factory, _):
+        async with factory() as db:
+            await db.execute(text("UPDATE knowledge_document_chunks SET content='1' WHERE document_id=1"))
+            await db.commit()
+        data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
+        assert data['status'] == 'no_evidence' and data['gaps']
