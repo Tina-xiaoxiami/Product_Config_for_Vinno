@@ -66,14 +66,17 @@ def result(payload):
     page = payload['pages'][0]
     return {'status': 'draft', 'claims': [{'text': '仅适用于新平台。', 'kind': 'source_statement', 'support_status': 'direct',
                                          'citations': [{'document_id': page['id'], 'pdf_page': page['page'], 'original_excerpt': PAGE, 'version_id': page['version_id']}]}],
-            'gaps': [], 'coverage': {}, 'metrics': {'model_calls': 4}, 'runtime_identity': {'protocol_version': 1}}
+            'gaps': [], 'coverage': {}, 'visual_review': {'status': 'model_checked', 'human_reviewed': False}, 'metrics': {'model_calls': 4}, 'runtime_identity': {'protocol_version': 1}}
 
 
 @pytest.mark.asyncio
 async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_without_qa_writes(tmp_path, monkeypatch):
     calls = []
-    def run(payload):
+    def run(payload, **kwargs):
         calls.append(payload)
+        assert kwargs['sources'][0]['id'] == 'kb-1'
+        assert kwargs['sources'][0]['version_id'] == payload['pages'][0]['version_id']
+        assert kwargs['sources'][0]['file_path'].endswith('source.pdf')
         return result(payload)
     monkeypatch.setattr(service, 'run_shared_evidence', run)
     async with setup(tmp_path, monkeypatch) as (client, factory, _):
@@ -85,8 +88,9 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
         assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url'}
         cite = data['claims'][0]['citations'][0]
         assert cite['document_id'] == 1 and cite['page'] == 1
-        assert cite['preview_url'] == '/api/knowledge/documents/1/preview#page=1'
+        assert cite['preview_url'] == f"/api/knowledge/documents/1/preview?version_id={calls[0]['pages'][0]['version_id']}#page=1"
         assert data['coverage']['document_count'] == 1
+        assert data['visual_review']['status'] == 'model_checked'
         async with factory() as db:
             assert (await db.execute(text('SELECT count(*) FROM knowledge_questions'))).scalar() == 0
             assert (await db.execute(text('SELECT count(*) FROM knowledge_answers'))).scalar() == 0
@@ -117,7 +121,7 @@ async def test_stale_extraction_or_original_produces_a_gap_and_no_model_call(tmp
 @pytest.mark.asyncio
 async def test_sources_changed_during_generation_invalidate_every_claim(tmp_path, monkeypatch):
     async with setup(tmp_path, monkeypatch) as (client, _, source):
-        def run(payload):
+        def run(payload, **kwargs):
             answer = result(payload)
             source.write_bytes(b'changed during inference')
             return answer
@@ -131,7 +135,7 @@ async def test_sources_changed_during_generation_invalidate_every_claim(tmp_path
 @pytest.mark.asyncio
 @pytest.mark.parametrize('change', ['document', 'page', 'quote'])
 async def test_fabricated_reference_identity_or_quote_is_rejected(tmp_path, monkeypatch, change):
-    def run(payload):
+    def run(payload, **kwargs):
         answer = result(payload)
         cite = answer['claims'][0]['citations'][0]
         cite['preview_url'] = 'https://evil.invalid/'
@@ -147,7 +151,7 @@ async def test_fabricated_reference_identity_or_quote_is_rejected(tmp_path, monk
 @pytest.mark.asyncio
 async def test_runner_timeout_does_not_report_zero_model_calls(tmp_path, monkeypatch):
     from app.integrations.guideline_evidence import SharedEvidenceUnavailable
-    def fail(_):
+    def fail(_, **kwargs):
         raise SharedEvidenceUnavailable('共享运行器超时')
     monkeypatch.setattr(service, 'run_shared_evidence', fail)
     async with setup(tmp_path, monkeypatch) as (client, _, _):
@@ -197,3 +201,14 @@ async def test_insufficient_history_topic_returns_actionable_validation_instead_
         monkeypatch.setattr(service, 'trace_release_history', unclear)
         r = await client.post('/api/knowledge/document-answer', json={'question': 'V6支持吗', 'scope': SCOPE})
         assert r.status_code == 422 and '主题' in r.json()['detail']
+
+
+@pytest.mark.asyncio
+async def test_corrupt_chunk_hash_is_not_accepted_as_original_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, 'run_shared_evidence', lambda *a, **k: pytest.fail('corrupt extraction sent to model'))
+    async with setup(tmp_path, monkeypatch) as (client, factory, _):
+        async with factory() as db:
+            await db.execute(text("UPDATE knowledge_document_chunks SET content='tampered without updating the extraction hash' WHERE document_id=1"))
+            await db.commit()
+        data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
+        assert data['status'] == 'no_evidence' and data['gaps']
