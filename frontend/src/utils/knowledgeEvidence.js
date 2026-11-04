@@ -4,7 +4,7 @@ export const evidenceErrorMessage = error => typeof error?.response?.data?.detai
 export function evidenceCitationUrl(citation) {
   const id = citation?.document_id, url = citation?.preview_url
   if (!Number.isSafeInteger(id) || id <= 0 || typeof url !== 'string') return null
-  return new RegExp(`^/api/knowledge/documents/${id}/preview(?:#page=[1-9][0-9]*)?$`).test(url) ? url : null
+  return new RegExp(`^/api/knowledge/documents/${id}/preview(?:\\?version_id=[a-fA-F0-9]{64})?(?:#page=[1-9][0-9]*)?$`).test(url) ? url : null
 }
 
 const copy = value => JSON.parse(JSON.stringify(value))

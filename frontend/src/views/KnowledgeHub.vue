@@ -281,12 +281,15 @@
       <el-empty v-else description="暂无变更记录" />
     </el-dialog>
   </div>
+  <KnowledgeCitationViewer ref="citationViewer" />
 </template>
 
 <script setup>
 import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
+import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
+import { citationRequest } from '../utils/knowledgeCitation'
 import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
 import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
@@ -314,6 +317,7 @@ const route = useRoute()
 const router = useRouter()
 const activeTab = ref('qa')
 const evidenceAnswer = ref(null)
+const citationViewer = ref(null)
 const parameterWorkspace = ref(null)
 const openParameterTopic = async id => {
   const sourceTab = activeTab.value
@@ -599,7 +603,12 @@ const showHistory = async (question) => {
   }
 }
 
-const openCitation = (citation) => window.open(citation.preview_url, '_blank', 'noopener')
+const openCitation = (citation) => {
+  if (citationRequest(citation)) return citationViewer.value?.open(citation)
+  if (/^\/api\/knowledge\/documents\/[1-9][0-9]*\/preview(?:#page=[1-9][0-9]*)?$/.test(citation.preview_url || '')) window.open(citation.preview_url, '_blank', 'noopener')
+}
+watch(() => JSON.stringify([qaQuestion.value, qaScope]), () => citationViewer.value?.close(), { flush: 'sync' })
+watch(() => qaResult.value, () => citationViewer.value?.close(), { flush: 'sync' })
 
 const useCandidate = (candidate) => {
   if (!answerForm.value.answer_text.trim()) answerForm.value.answer_text = candidate.excerpt

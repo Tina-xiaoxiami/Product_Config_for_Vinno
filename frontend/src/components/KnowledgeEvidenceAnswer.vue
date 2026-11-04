@@ -9,24 +9,29 @@
       <p v-if="state.result.claims.length" class="evidence-note">以下为有原文依据的资料草稿，需人工确认；配置、注册与参数结论以对应确定性查询为准。</p>
       <section v-for="(claim,index) in state.result.claims" :key="index" class="evidence-claim">
         <p class="evidence-claim-text">{{ claim.text }}</p>
-        <div class="evidence-citations"><details v-for="(citation,citeIndex) in claim.citations" :key="`${citation.document_id}-${citation.page}-${citeIndex}`"><summary><span>[{{ index + 1 }}.{{ citeIndex + 1 }}] {{ citation.title }}<span v-if="citation.page"> · PDF第{{ citation.page }}页</span></span></summary><blockquote>{{ citation.quote }}</blockquote><a v-if="evidenceCitationUrl(citation)" :href="evidenceCitationUrl(citation)" target="_blank" rel="noopener noreferrer">打开原文</a></details></div>
+        <div class="evidence-citations"><details v-for="(citation,citeIndex) in claim.citations" :key="`${citation.document_id}-${citation.page}-${citeIndex}`"><summary><span>[{{ index + 1 }}.{{ citeIndex + 1 }}] {{ citation.title }}<span v-if="citation.page"> · PDF第{{ citation.page }}页</span></span></summary><blockquote>{{ citation.quote }}</blockquote><el-button v-if="evidenceCitationUrl(citation)" size="small" link type="primary" @click="citationViewer?.open(citation)">定位并核验原文</el-button><small>{{ citationVisualLabel(citation) }}</small></details></div>
       </section>
       <p v-if="state.result.coverage" class="evidence-note">本次读取 {{ state.result.coverage.document_count ?? 0 }} 份资料<span v-if="state.result.coverage.page_count != null">、{{ state.result.coverage.page_count }} 页</span>；范围以本次已登记可用资料为限。</p>
       <div v-if="state.result.gaps?.length" class="evidence-gaps"><strong>缺口与边界</strong><ul><li v-for="(gap,index) in state.result.gaps" :key="index">{{ gap }}</li></ul></div>
     </article>
+    <KnowledgeCitationViewer ref="citationViewer" />
   </div>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, watch } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getKnowledgeEvidenceCapabilities, generateKnowledgeEvidenceAnswer } from '../api/knowledgeEvidence'
 import { createEvidenceAnswerController, evidenceCitationUrl, evidenceStatusLabel } from '../utils/knowledgeEvidence'
+import KnowledgeCitationViewer from './KnowledgeCitationViewer.vue'
+import { citationVisualLabel } from '../utils/knowledgeCitation'
 import { knowledgeScopeLabel } from '../utils/knowledgeQueryScope'
 
 const props = defineProps({ question: { type: String, default: '' }, scope: { type: Object, default: null } })
 const state = reactive({})
+const citationViewer = ref(null)
 const controller = createEvidenceAnswerController({ state, getInput: () => ({ question: props.question, scope: props.scope }), request: generateKnowledgeEvidenceAnswer, capabilities: getKnowledgeEvidenceCapabilities })
-watch(() => JSON.stringify([props.question, props.scope]), () => controller.invalidate(), { flush: 'sync' })
+watch(() => JSON.stringify([props.question, props.scope]), () => { controller.invalidate(); citationViewer.value?.close() }, { flush: 'sync' })
+watch(() => state.result, () => citationViewer.value?.close(), { flush: 'sync' })
 onMounted(() => controller.checkAvailability())
 onBeforeUnmount(() => controller.dispose())
 defineExpose({ run: () => controller.run(), state })

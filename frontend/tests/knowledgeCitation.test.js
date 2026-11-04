@@ -48,3 +48,10 @@ test('only actual visual audit marks a citation as model checked; never human ap
   assert.match(citationVisualLabel({verification_status:'model_visual_checked'}),/模型已看原页.*未人工确认/)
   assert.match(citationVisualLabel({}),/未看图/)
 })
+
+test('versioned preview links stay on the registered product document route',async()=>{
+  const { evidenceCitationUrl }=await import('../src/utils/knowledgeEvidence.js')
+  assert.equal(evidenceCitationUrl({...citation(),preview_url:response().preview_url}),response().preview_url)
+  assert.equal(evidenceCitationUrl({...citation(),preview_url:`/api/knowledge/documents/2/preview?version_id=${sha}#page=2`}),null)
+  assert.equal(evidenceCitationUrl({...citation(),preview_url:`/api/knowledge/documents/1/preview?version_id=${sha}&path=bad`}),null)
+})
