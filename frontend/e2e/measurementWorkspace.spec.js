@@ -68,6 +68,18 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   await search.clear()
   await addDictionary('应用字典', 'RESEARCH', '研究应用')
   await addDictionary('模式字典', 'ResearchMode', '研究模式')
+  for (const [menuName, dimension, sourceCode] of [['应用字典', 'applications', 'RESEARCH'], ['模式字典', 'modes', 'ResearchMode']]) {
+    await page.getByRole('button', { name: '管理 ▾', exact: true }).click()
+    await page.getByRole('menuitem', { name: menuName, exact: true }).click()
+    const dialog = page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: '字典代码', exact: true }) })
+    const before = (await fetchWorkspace()).data[dimension].map(item => item.code)
+    const targetCode = before[0]
+    const saved = page.waitForResponse(response => response.url().includes('/measurement-workspace/') && response.url().endsWith('/edit') && response.request().method() === 'POST')
+    await dialog.locator(`[data-dictionary-code="${sourceCode}"]`).dragTo(dialog.locator(`[data-dictionary-code="${targetCode}"]`))
+    expect((await saved).ok()).toBe(true)
+    await expect.poll(async () => (await fetchWorkspace()).data[dimension][0].code).toBe(sourceCode)
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  }
   await search.fill('Distance')
   await page.getByRole('button', { name: '编辑', exact: true }).first().click()
   await page.getByRole('menuitem', { name: '编辑关联', exact: true }).click()

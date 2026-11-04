@@ -32,8 +32,10 @@
       </el-form>
     </template>
     <template v-if="dialog === 'dictionary'">
-      <p class="workspace-hint">代码为稳定标识，已有代码不可修改；显示名称可编辑。使用上下移调整显示顺序，操作立即保存到草稿。Common 始终表示常规分类，改名不会改变语义。</p>
-      <ProbeDataTable :rows="workspace.data[dimension]" :columns="dictionaryColumns" :table-id="`measurement-dictionary-${dimension}`" :page-size="10" :actions-width="200"><template #actions="{ row }"><el-button size="small" link :disabled="busy || syncPending || workspace.data[dimension][0]?.code === row.code" :aria-label="`上移 ${row.name}`" @click="moveDictionary(row, -1)">上移</el-button><el-button size="small" link :disabled="busy || syncPending || workspace.data[dimension].at(-1)?.code === row.code" :aria-label="`下移 ${row.name}`" @click="moveDictionary(row, 1)">下移</el-button><el-button size="small" link :disabled="busy" @click="editDictionary(row)">编辑名称</el-button></template></ProbeDataTable>
+      <p class="workspace-hint">代码为稳定标识，已有代码不可修改；显示名称可编辑。拖动排序手柄调整显示顺序，操作立即保存到草稿；聚焦手柄后也可使用 Alt + ↑ / ↓。Common 始终表示常规分类，改名不会改变语义。</p>
+      <div @dragover="dictionaryDragOver" @drop="dropDictionary">
+        <ProbeDataTable :rows="workspace.data[dimension]" :columns="dictionaryColumns" :table-id="`measurement-dictionary-${dimension}`" :actions-width="120"><template #actions="{ row }"><span class="dictionary-drag" :class="{ 'is-drop-target': dragTarget === row.code }" :data-dictionary-code="row.code" :draggable="!busy && !syncPending" tabindex="0" :aria-label="`拖动排序 ${row.name}`" title="拖动调整顺序；也可按 Alt + ↑ / ↓" @dragstart="startDictionaryDrag($event, row.code)" @dragend="clearDictionaryDrag" @keydown.alt.up.prevent="moveDictionaryByKeyboard(row.code, -1)" @keydown.alt.down.prevent="moveDictionaryByKeyboard(row.code, 1)">⠿</span><el-button size="small" link :disabled="busy" @click="editDictionary(row)">编辑名称</el-button></template></ProbeDataTable>
+      </div>
       <el-form inline size="small" :disabled="busy" class="dictionary-form" @submit.prevent><el-form-item label="代码"><el-input v-model="form.code" aria-label="字典代码" :disabled="dictionaryExisting" /></el-form-item><el-form-item label="显示名称"><el-input v-model="form.name" aria-label="字典显示名称" /></el-form-item><el-button size="small" :disabled="busy" @click="newDictionary">新增代码</el-button></el-form>
     </template>
     <template v-if="dialog === 'drafts'">
@@ -66,11 +68,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api/index'
 import ProbeDataTable from './ProbeDataTable.vue'
 import MeasurementWorkspaceChanges from './MeasurementWorkspaceChanges.vue'
-import { identityRows } from '../utils/measurementWorkspace'
+import { identityRows, reorderDictionaryCodes } from '../utils/measurementWorkspace'
 import { useDraftFilter } from '../utils/useDraftFilter'
 const props = defineProps({ workspace: { type: Object, required: true }, snapshot: Object, syncPending: Boolean })
 const emit = defineEmits(['updated', 'snapshot', 'locked', 'sync-evidence'])
 const dialog = ref(''), busy = ref(false), error = ref(''), target = ref(null), dimension = ref('applications'), dictionaryExisting = ref(false)
+const dragCode = ref(null), dragTarget = ref(null)
 const form = reactive({}), baseline = ref(''), preview = ref(null), comparison = ref(null), fromVersion = ref(null), toVersion = ref(null)
 const comparisonDocuments = reactive({ before: null, after: null })
 let session = 0, prompting = false
@@ -109,12 +112,38 @@ function manage(value) {
   if (value === 'new') replaceForm({ kind: 'measurement', item_id: '', cn_name: '', description: '', categories: [], modes: [], group: '', unit: '', enabled_raw: '', allow_existing_id: false })
   else { dimension.value = value; newDictionary() }
 }
-async function moveDictionary(row, direction) {
+function dictionaryCodeAtEvent(event) { return event.target.closest('tr')?.querySelector('[data-dictionary-code]')?.dataset.dictionaryCode }
+function startDictionaryDrag(event, code) {
+  if (busy.value || props.syncPending) { event.preventDefault(); return }
+  dragCode.value = code
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', code)
+}
+function clearDictionaryDrag() { dragCode.value = null; dragTarget.value = null }
+function dictionaryDragOver(event) {
+  if (!dragCode.value) return
+  const target = dictionaryCodeAtEvent(event)
+  if (target) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; dragTarget.value = target }
+}
+function dropDictionary(event) {
+  if (!dragCode.value) return
+  const from = dragCode.value, to = dictionaryCodeAtEvent(event)
+  clearDictionaryDrag()
+  if (!to) return
+  event.preventDefault()
+  moveDictionary(from, to)
+}
+function moveDictionaryByKeyboard(code, direction) {
+  const entries = props.workspace.data[dimension.value]
+  const target = entries[entries.findIndex(item => item.code === code) + direction]
+  if (target) moveDictionary(code, target.code)
+}
+async function moveDictionary(from, to) {
+  if (busy.value || props.syncPending || from === to) return
   if (dirty.value && !await confirmAbandon()) return
-  const codes = props.workspace.data[dimension.value].map(item => item.code)
-  const index = codes.indexOf(row.code), next = index + direction
-  if (index < 0 || next < 0 || next >= codes.length) return
-  ;[codes[index], codes[next]] = [codes[next], codes[index]]
+  const entries = props.workspace.data[dimension.value]
+  if (!entries.some(item => item.code === from) || !entries.some(item => item.code === to)) return
+  const codes = reorderDictionaryCodes(entries, from, to)
   const result = await mutate('edit', { operation: 'reorder_dictionary', dimension: dimension.value, codes })
   if (result) { replaceForm({ code: '', name: '' }); dictionaryExisting.value = false; ElMessage.success('顺序已保存到测量库草稿') }
 }
@@ -210,5 +239,6 @@ onBeforeUnmount(() => { session++ })
 defineExpose({ openRename, openAssignment, requestClose })
 </script>
 <style scoped>
+.dictionary-drag{display:inline-block;cursor:grab;color:var(--el-text-color-secondary);padding:4px 8px;touch-action:none}.dictionary-drag:active{cursor:grabbing}.dictionary-drag.is-drop-target{color:var(--el-color-primary);box-shadow:inset 0 2px var(--el-color-primary)}.dictionary-drag[draggable="false"]{cursor:not-allowed;opacity:.5}
 .workspace-controls,.compare-controls,.draft-filters,.workspace-selection,.workspace-action-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.workspace-controls{margin-top:8px;padding:8px 10px;border:1px solid var(--el-border-color-light);border-radius:8px;background:var(--el-fill-color-lighter);flex-shrink:0;justify-content:space-between}.workspace-selection{flex:0 1 360px;min-width:0;max-width:100%;flex-wrap:nowrap}.workspace-action-buttons{max-width:100%;min-width:0}.workspace-caption{white-space:nowrap}.workspace-controls .el-button+.el-button{margin-left:0}.workspace-version{flex:1;min-width:0;width:300px}.workspace-caption,.workspace-note,.workspace-hint,.identity-line{font-size:12px;color:var(--el-text-color-secondary);line-height:1.7}.workspace-alert{margin-bottom:12px}.workspace-hint{margin:8px 0}.identity-line{margin-left:120px}.el-form :deep(.el-select){min-width:260px}.dictionary-form{margin-top:16px}.compare-controls{margin-top:16px}.compare-controls .el-select{width:210px}.draft-filters{margin:10px 0}.draft-filters .el-tag{cursor:pointer}.version-description{width:340px;max-width:100%}
 </style>
