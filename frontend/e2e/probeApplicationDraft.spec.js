@@ -31,7 +31,7 @@ test('application associations autosave across reload and keep publication separ
   expect((await (await page.request.get('/api/applications/versions')).json()).length).toBe(before)
   const official=await (await page.request.get('/api/probe-categories/1/apps')).json()
   expect(official.regular.some(item=>item.id===app.id)).toBe(true)
-  await page.locator('.panel-left .category-item').filter({hasText:category.name}).click()
+  await page.locator('.panel-left .category-item').filter({hasText:category.name}).locator('.category-name').click()
   await page.getByRole('button',{name:'刷新',exact:true}).click()
   await expect(page.locator('.panel-left .category-item.active')).toContainText(category.name)
   await page.reload()
