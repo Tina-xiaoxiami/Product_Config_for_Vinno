@@ -168,7 +168,9 @@ def _docx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
     blocks: list[ExtractedBlock] = []
     section_name: str | None = None
     paragraph_number, table_number = 0, 0
-    for body_index, item in enumerate(document.iter_inner_content(), start=1):
+    body_indices = {element: index for index, element in enumerate(document.element.body, start=1)}
+    for item in document.iter_inner_content():
+        body_index = body_indices[item._element]
         if isinstance(item, Paragraph):
             paragraph_number += 1
             content = _clean_text(item.text)
@@ -224,6 +226,8 @@ def _xlsx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
                     item = {"cell": cell.coordinate, "column_index": cell.column, "text": value,
                             "value_type": "formula" if cell.data_type == "f" else "literal",
                             "number_format": cell.number_format}
+                    if cell.data_type == "f":
+                        item["formula_state"] = "not_evaluated"
                     if cell.coordinate in merged:
                         item["merged_range"] = merged[cell.coordinate]
                     cells.append(item)
