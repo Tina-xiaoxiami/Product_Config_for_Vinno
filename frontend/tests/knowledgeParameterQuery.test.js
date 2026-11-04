@@ -23,7 +23,7 @@ function setup({ refresh = true, items = [{ id: 7 }], editing = false } = {}) {
   assert.ok(start > 0 && end > start, 'workspace exposes guarded topic selection')
   const events = []
   const context = {
-    editorState: { visible: editing }, topics: { value: items }, topicId: { value: 1 },
+    editorState: { visible: editing }, parameterSelectionRevision: { value: 0 }, topics: { value: items }, topicId: { value: 1 },
     seriesId: { value: 8 }, loadTopics: async () => refresh,
     onSeriesChange: () => { events.push('clear snapshot, models and preview') },
     onTopicChange: () => { events.push('load selected specs') },
@@ -58,7 +58,7 @@ test('question navigation cannot overwrite an open parameter editor or a newer t
   const start = workspace.indexOf('let topicOpenRequestId = 0')
   const end = workspace.indexOf('\ndefineExpose', start)
   const waits = [], events = [], context = {
-    editorState: { visible: false }, topics: { value: [{ id: 7 }, { id: 8 }] },
+    editorState: { visible: false }, parameterSelectionRevision: { value: 0 }, topics: { value: [{ id: 7 }, { id: 8 }] },
     topicId: { value: 1 }, seriesId: { value: 4 },
     loadTopics: () => new Promise(resolve => waits.push(resolve)),
     onSeriesChange() {}, onTopicChange() { events.push(context.topicId.value) }, ElMessage: { warning() {} }
@@ -70,6 +70,52 @@ test('question navigation cannot overwrite an open parameter editor or a newer t
   waits[0](true)
   assert.equal(await first, false)
   assert.deepEqual(events, [8])
+})
+
+test('manual topic or snapshot edits cancel older question navigation', async () => {
+  const start = workspace.indexOf('let topicOpenRequestId = 0')
+  const end = workspace.indexOf('\ndefineExpose', start)
+  let finish
+  const context = {
+    editorState: { visible: false }, parameterSelectionRevision: { value: 0 },
+    topics: { value: [{ id: 7 }, { id: 8 }] }, topicId: { value: 1 }, seriesId: { value: 4 },
+    loadTopics: () => new Promise(resolve => { finish = resolve }),
+    onSeriesChange() {}, onTopicChange() {}, ElMessage: { warning() {} }
+  }
+  const open = new Function(...Object.keys(context), `${workspace.slice(start, end)};return openFromQuestion`)(...Object.values(context))
+  const pending = open(7)
+  context.topicId.value = 8
+  context.seriesId.value = 9
+  context.parameterSelectionRevision.value += 1
+  finish(true)
+  assert.equal(await pending, false)
+  assert.equal(context.topicId.value, 8)
+  assert.equal(context.seriesId.value, 9)
+  assert.match(workspace, /const invalidatePreview = \(\) => \{ parameterSelectionRevision\.value \+= 1/)
+})
+
+test('the hub changes tabs only after successful topic selection and respects a newer tab choice', async () => {
+  const start = hub.indexOf('const openParameterTopic = async')
+  const end = hub.indexOf('\nwatch(', start)
+  assert.ok(start > 0 && end > start)
+  let finish
+  const parameterWorkspace = { value: { openFromQuestion: () => new Promise(resolve => { finish = resolve }) } }
+  const activeTab = { value: 'qa' }
+  const open = new Function('parameterWorkspace', 'activeTab', `${hub.slice(start, end)};return openParameterTopic`)(parameterWorkspace, activeTab)
+  let pending = open(7)
+  finish(false)
+  await pending
+  assert.equal(activeTab.value, 'qa')
+  pending = open(7)
+  activeTab.value = 'history'
+  finish(true)
+  await pending
+  assert.equal(activeTab.value, 'history')
+  activeTab.value = 'qa'
+  pending = open(7)
+  finish(true)
+  await pending
+  assert.equal(activeTab.value, 'parameters')
 })
 
 test('ordinary question results offer all parameter candidates without treating them as confirmed answers', () => {
