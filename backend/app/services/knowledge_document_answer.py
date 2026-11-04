@@ -70,20 +70,23 @@ async def _pages(db, question: str, scope: dict) -> tuple[list[dict], list[str],
             grouped[(chunk['document_id'], chunk['page_number'])].append(chunk['content'])
         else:
             gaps.append(f"资料{chunk['document_id']}存在缺少真实PDF页号的内容，未送入资料回答")
-    pages, size = [], 0
+    pages: list[dict] = []
+    size = 0
     for doc in eligible:
         for (ident, page), parts in grouped.items():
             if ident != doc['id']:
                 continue
             content = '\n'.join(parts)
+            if len(content.strip()) < 6:
+                gaps.append(f'资料{ident}第{page}页没有足够可引用正文，未送入资料回答')
+                continue
             if len(content) > 32000 or len(pages) >= MAX_PAGES or size + len(content.encode()) > MAX_TEXT_BYTES:
                 gaps.append(f'资料{ident}第{page}页超过本次完整页预算，未截断后取证')
                 continue
             size += len(content.encode())
             pages.append({'id': f'kb-{ident}', 'page': page, 'text': content, 'version_id': doc['sha256'],
                           'title': doc['title'], 'file_name': doc['file_name'], 'year': None,
-                          'source_url': f'/api/knowledge/documents/{ident}/preview',
-                          'source_version': doc['version']})
+                          'source_url': f'/api/knowledge/documents/{ident}/preview'})
     fingerprint = _fingerprint({'scope': scope, 'pages': pages, 'documents': eligible})
     return pages, list(dict.fromkeys(gaps)), fingerprint
 
