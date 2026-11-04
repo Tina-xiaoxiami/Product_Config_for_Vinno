@@ -205,6 +205,7 @@ def _docx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
 
 def _xlsx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
     from openpyxl import load_workbook
+    from openpyxl.worksheet.formula import ArrayFormula
 
     # Source formulas are retained literally; no calculation/cache result is inferred.
     workbook = load_workbook(path, read_only=False, data_only=False, keep_links=False)
@@ -220,7 +221,11 @@ def _xlsx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
                 for cell in row:
                     if cell.value is None:
                         continue
-                    value = _clean_text(str(cell.value))
+                    array_formula = isinstance(cell.value, ArrayFormula)
+                    raw_value = cell.value.text if array_formula else cell.value
+                    if cell.data_type == "f" and (not isinstance(raw_value, str) or not raw_value.startswith("=")):
+                        raise KnowledgeContentError("此特殊公式缺少稳定源码，尚不支持结构定位")
+                    value = _clean_text(str(raw_value))
                     if not value:
                         continue
                     item = {"cell": cell.coordinate, "column_index": cell.column, "text": value,
@@ -228,6 +233,8 @@ def _xlsx_blocks(path: Path | BytesIO) -> list[ExtractedBlock]:
                             "number_format": cell.number_format}
                     if cell.data_type == "f":
                         item["formula_state"] = "not_evaluated"
+                        if array_formula:
+                            item["formula_ref"] = cell.value.ref
                     if cell.coordinate in merged:
                         item["merged_range"] = merged[cell.coordinate]
                     cells.append(item)
@@ -277,6 +284,7 @@ def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None
             if len(names) != len(set(names)) or not required.issubset(names) or any(e.flag_bits & 1 for e in entries):
                 raise KnowledgeContentError("Office包结构无效、重复或已加密")
             cell_count = 0
+            merged_area = 0
             for entry in entries:
                 if entry.filename.endswith((".xml", ".rels")):
                     # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
@@ -296,6 +304,14 @@ def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None
                                 left, top, right, bottom = range_boundaries(element.attrib.get("ref", "A1"))
                                 if None in (left, top, right, bottom) or (right-left+1)*(bottom-top+1) > MAX_OFFICE_CELLS:
                                     raise KnowledgeContentError("Office工作表范围超过本次解析上限")
+                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}mergeCell":
+                                left, top, right, bottom = range_boundaries(element.attrib.get("ref", ""))
+                                if (None in (left, top, right, bottom) or left < 1 or top < 1
+                                        or right < left or bottom < top or right > 16384 or bottom > 1048576):
+                                    raise KnowledgeContentError("Office合并单元格范围无效")
+                                merged_area += (right-left+1)*(bottom-top+1)
+                                if merged_area + cell_count > MAX_OFFICE_CELLS:
+                                    raise KnowledgeContentError("Office合并单元格展开面积超过本次解析上限")
                             element.clear()
         blocks = _docx_blocks(BytesIO(data)) if suffix == ".docx" else _xlsx_blocks(BytesIO(data))
     except KnowledgeContentError:
