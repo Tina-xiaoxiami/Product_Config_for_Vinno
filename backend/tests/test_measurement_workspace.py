@@ -485,3 +485,27 @@ async def test_preview_rejects_inconsistent_automatic_projection(api):
         await db.commit()
     response = await client.post(f"{BASE}/{workspace['id']}/preview", json={'revision': workspace['revision'], 'version_number': 'Invalid'})
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dictionary_order_is_versioned_validated_and_undoable(api):
+    client, _ = api
+    workspace = await initialize(client)
+    initial = workspace['latest_version_id']
+    for dimension in ('applications', 'modes'):
+        original = [entry['code'] for entry in workspace['data'][dimension]]
+        response = await client.post(f"{BASE}/{workspace['id']}/edit", json={
+            'revision': workspace['revision'], 'operation': 'reorder_dictionary',
+            'dimension': dimension, 'codes': original[:-1]})
+        assert response.status_code == 422
+        workspace = await edit(client, workspace, 'reorder_dictionary', dimension=dimension, codes=original[::-1])
+        assert [entry['code'] for entry in workspace['data'][dimension]] == original[::-1]
+    assert len(workspace['changes']) == 2
+    workspace = await publish(client, workspace)
+    old = (await client.get(f"{BASE}/{workspace['id']}/versions/{initial}")).json()
+    assert old['data']['modes'] != workspace['data']['modes']
+    current = [entry['code'] for entry in workspace['data']['modes']]
+    workspace = await edit(client, workspace, 'reorder_dictionary', dimension='modes', codes=current[::-1])
+    workspace = await act(client, workspace, 'undo', change_key=workspace['changes'][0]['key'])
+    assert [entry['code'] for entry in workspace['data']['modes']] == current
+    assert not workspace['has_draft']

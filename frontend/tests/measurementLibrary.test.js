@@ -99,3 +99,17 @@ test('a calculation is never classified by a similar ID or group name alone', ()
   assert.deepEqual(row.categories, [])
   assert.equal(filterMeasurements([row], { scope: 'common' }).length, 0)
 })
+
+test('facet order follows the active dictionary while unknown and blank values remain visible', () => {
+  const rows = [
+    { kind: 'measurement', categories: ['CARD'], mode: ['Tissue'] },
+    { kind: 'measurement', categories: ['ABD'], mode: ['Doppler'] },
+    { kind: 'measurement', categories: ['OTHER'], mode: [] }
+  ]
+  const facets = measurementFacets(rows, {}, {
+    applications: [{ code: 'CARD' }, { code: 'ABD' }],
+    modes: [{ code: 'Tissue' }, { code: 'Doppler' }]
+  })
+  assert.deepEqual(facets.categories.map(option => option.value), ['CARD', 'ABD', 'OTHER'])
+  assert.deepEqual(facets.modes.map(option => option.value), ['Tissue', 'Doppler', ''])
+})
