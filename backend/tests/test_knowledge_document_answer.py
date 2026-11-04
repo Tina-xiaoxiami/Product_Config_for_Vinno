@@ -93,7 +93,7 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('question', ['该功能是标配还是选配？', 'V6电池容量是多少？', 'VINNO 6注册支持这个探头吗？'])
+@pytest.mark.parametrize('question', ['该功能是标配还是选配？', 'V6电池容量是多少？', 'VINNO 6注册支持这个探头吗？', 'Is VINNO 6 standard or optional?', 'What is the battery capacity?', 'Is this probe registered?'])
 async def test_configuration_registration_and_parameter_questions_never_call_a_model(tmp_path, monkeypatch, question):
     def forbidden(_):
         pytest.fail('deterministic question sent to model')
