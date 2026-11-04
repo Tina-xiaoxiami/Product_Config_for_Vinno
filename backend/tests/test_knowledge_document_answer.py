@@ -173,3 +173,14 @@ async def test_same_market_same_name_in_another_series_requires_identity_resolut
             await db.commit()
         data = (await client.post('/api/knowledge/document-answer', json={'question': '针增益怎样使用？', 'scope': SCOPE})).json()
         assert data['status'] == 'no_evidence' and data['gaps']
+
+
+@pytest.mark.asyncio
+async def test_insufficient_history_topic_returns_actionable_validation_instead_of_server_error(tmp_path, monkeypatch):
+    from app.services.knowledge_release_history import ReleaseHistoryError
+    async def unclear(*args, **kwargs):
+        raise ReleaseHistoryError('请明确要追溯的功能或主题')
+    async with setup(tmp_path, monkeypatch) as (client, _, _):
+        monkeypatch.setattr(service, 'trace_release_history', unclear)
+        r = await client.post('/api/knowledge/document-answer', json={'question': 'V6支持吗', 'scope': SCOPE})
+        assert r.status_code == 422 and '主题' in r.json()['detail']
