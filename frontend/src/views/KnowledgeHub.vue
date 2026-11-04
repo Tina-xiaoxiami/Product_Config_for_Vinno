@@ -309,7 +309,8 @@ const router = useRouter()
 const activeTab = ref('qa')
 const parameterWorkspace = ref(null)
 const openParameterTopic = async id => {
-  if (await parameterWorkspace.value?.openFromQuestion(id)) activeTab.value = 'parameters'
+  const sourceTab = activeTab.value
+  if (await parameterWorkspace.value?.openFromQuestion(id) && activeTab.value === sourceTab) activeTab.value = 'parameters'
 }
 watch(() => route.query.tab, (tab) => {
   if (tab === 'features') {

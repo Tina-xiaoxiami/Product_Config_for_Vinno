@@ -92,7 +92,8 @@ const seriesList = ref([]), seriesId = ref(null), versions = ref([]), versionId 
 const topic = computed(() => topics.value.find(item => item.id === topicId.value))
 const topicRequests = createLatestParameterRequest(), specRequests = createLatestParameterRequest(), versionRequests = createLatestParameterRequest(), snapshotRequests = createLatestParameterRequest(), previewRequests = createLatestParameterRequest()
 const fail = failure => { error.value = parameterFailure(failure) }
-const invalidatePreview = () => { previewRequests.invalidate(); preview.value = null; previewLoading.value = false; error.value = ''; page.value = 1; answerVisible.value = false; detailRow.value = null }
+const parameterSelectionRevision = ref(0)
+const invalidatePreview = () => { parameterSelectionRevision.value += 1; previewRequests.invalidate(); preview.value = null; previewLoading.value = false; error.value = ''; page.value = 1; answerVisible.value = false; detailRow.value = null }
 const loadTopics = async () => topicRequests.run(getParameterTopics, { start: () => { topicsLoading.value = true; error.value = '' }, success: result => { available.value = result.available !== false; topics.value = result.items || []; if (topicId.value && !topics.value.some(item => item.id === topicId.value)) { topicId.value = null; onTopicChange() } }, error: fail, finish: () => { topicsLoading.value = false } })
 const onTopicChange = () => { invalidatePreview(); specs.value = []; specRequests.invalidate(); specsLoading.value = false; if (topicId.value) loadSpecs() }
 const loadSpecs = async () => { const id = topicId.value; if (!id) return; await specRequests.run(() => getParameterSpecs(id), { start: () => { specsLoading.value = true; error.value = '' }, success: result => { specs.value = result.items || []; available.value = result.available !== false }, error: fail, finish: () => { specsLoading.value = false } }) }
@@ -112,8 +113,9 @@ const openFromQuestion = async id => {
   if (!Number.isSafeInteger(id) || id <= 0) return false
   if (editorState.visible) { ElMessage.warning('请先完成或关闭参数编辑，再切换查询主题'); return false }
   const requestId = ++topicOpenRequestId
+  const selectionRevision = parameterSelectionRevision.value
   const loaded = await loadTopics()
-  if (!loaded || requestId !== topicOpenRequestId || editorState.visible) return false
+  if (!loaded || requestId !== topicOpenRequestId || selectionRevision !== parameterSelectionRevision.value || editorState.visible) return false
   if (!topics.value.some(item => item.id === id)) { ElMessage.warning('该参数主题已不可用，请刷新问题后重试'); return false }
   seriesId.value = null
   onSeriesChange()
