@@ -74,6 +74,7 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
     calls = []
     def run(payload, **kwargs):
         calls.append(payload)
+        assert payload['pages'][0]['requires_visual_review'] is True
         assert kwargs['sources'][0]['id'] == 'kb-1'
         assert kwargs['sources'][0]['version_id'] == payload['pages'][0]['version_id']
         assert kwargs['sources'][0]['file_path'].endswith('source.pdf')
@@ -85,7 +86,7 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
         data = r.json()
         assert data['status'] == 'draft'
         assert [p['id'] for p in calls[0]['pages']] == ['kb-1']
-        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url'}
+        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url', 'requires_visual_review'}
         cite = data['claims'][0]['citations'][0]
         assert cite['document_id'] == 1 and cite['page'] == 1
         assert cite['preview_url'] == f"/api/knowledge/documents/1/preview?version_id={calls[0]['pages'][0]['version_id']}#page=1"
