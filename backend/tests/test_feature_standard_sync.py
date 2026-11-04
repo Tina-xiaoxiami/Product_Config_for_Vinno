@@ -67,7 +67,7 @@ def test_multiple_ipn_versions_share_a_name_without_merging_and_conflicting_defi
     assert not conflicting['checked'] and len(conflicting['skipped'])==2
 
 def test_batch_never_collapses_dimension_or_version_parentheses():
-    for wrong,right in [('Strain(3D)','Strain(2D)'),('Analysis(V2)','Analysis(V1)')]:
+    for wrong,right in [('Strain(3D)','Strain(2D)'),('Analysis(V2)','Analysis(V1)'),('Strain(三维)','Strain(二维)'),('Strain 3D','Strain 2D')]:
         plan=plan_standard_sync([{'cn_name':'标准功能','en_name':right}],{1:source(1,wrong,wrong,wrong)})
         assert not plan['checked']
 

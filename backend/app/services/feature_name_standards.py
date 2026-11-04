@@ -587,18 +587,30 @@ async def audit_feature_names(session: AsyncSession) -> dict:
     # 2. 每条标准定义认领功能；同一功能被多条定义并列命中时判为歧义，不自动归属
     standard_matches: list[tuple[int, str] | None] = [None] * len(standards)
     ambiguous_standards: dict[int, int] = {}
+    best_standard_scores: dict[int, float] = {}
     for feature_id, feature_claims in claims.items():
         best_score = max(claim[0] for claim in feature_claims)
         best = [claim for claim in feature_claims if claim[0] == best_score]
         if len(best) == 1:
-            _, standard_index, reason = best[0]
-            standard_matches[standard_index] = (feature_id, reason)
+            score, standard_index, reason = best[0]
+            if score > best_standard_scores.get(standard_index, 0):
+                best_standard_scores[standard_index] = score
+                standard_matches[standard_index] = (feature_id, reason)
         else:
             for claim in best:
                 ambiguous_standards[claim[1]] = feature_id
     claimed_features = {
         match[0] for match in standard_matches if match is not None
     } | set(ambiguous_standards.values())
+
+    # Distinct IPN versions may already carry the same exact canonical pair.
+    # They share a naming definition, not a feature identity.
+    for feature_id, feature in features.items():
+        if any(feature['cn_name'] and feature['en_name'] and
+               clean_feature_name(feature['cn_name']) == clean_feature_name(row['cn_name']) and
+               clean_feature_name(feature['en_name']) == clean_feature_name(row['en_name'] or _standard_row(row).short_en())
+               for row in standards):
+            claimed_features.add(feature_id)
 
     # 3. 逐条比较中英文主名
     entries: list[dict] = []

@@ -77,7 +77,9 @@ function resize(width, old, column){applyLayout(layout.value.map(c=>c.key===colu
 const featureMap = computed(()=>new Map(props.catalog.features.map(f=>[f.id,{...f,name:featureCurrentName(f.id,f.name)}])))
 const visibleFeatures = computed(()=>layout.value.filter(c=>c.visible&&c.key.startsWith('feature:')).map(c=>featureMap.value.get(Number(c.key.slice(8)))).filter(f=>f&&selectedGroups.value.includes(f.group_id)&&f.name.toLowerCase().includes(featureSearch.value.toLowerCase())))
 const columnSegments = computed(()=>matrixColumnSegments(layout.value, visibleFeatures.value, props.catalog.feature_groups || [], showRegular.value, showPOC.value))
-const structureKey = computed(()=>JSON.stringify(columnSegments.value))
+const structureKey = computed(()=>JSON.stringify(columnSegments.value.map(segment=>segment.column
+  ? {key:segment.column.key,fixed:segment.column.fixed}
+  : {key:segment.key,id:segment.id,fixed:segment.fixed,features:segment.features.map(feature=>feature.id)})))
 const colors = computed(()=>probeGroupColors(props.catalog.feature_groups||[]))
 function headerStyle({column}){if(!column.property?.startsWith('feature:'))return {};const feature=featureMap.value.get(Number(column.property.slice(8)));const color=colors.value[feature?.group_id];return color?{background:color.bg,borderBottom:'2px solid '+color.border,fontSize:'12px'}:{}}
 function columnFor(id){return layout.value.find(c=>c.key==='feature:'+id)||{width:88}}

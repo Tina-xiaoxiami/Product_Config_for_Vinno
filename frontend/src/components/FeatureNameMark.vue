@@ -18,16 +18,15 @@
         <div class="feature-name-mark-message">点击查看标准名称与配置链接</div>
       </div>
     </template>
-    <button type="button" class="feature-name-mark" :class="`is-${flag.severity}`" :aria-label="'核对 ' + (flag.feature_en_name || flag.feature_cn_name) + ' 名称'" @click.stop="reviewDialog.open(flag.feature_id)"><el-icon><component :is="icon" /></el-icon></button>
+    <button type="button" class="feature-name-mark" :class="`is-${flag.severity}`" :aria-label="'核对 ' + (flag.feature_en_name || flag.feature_cn_name) + ' 名称'" @click.stop="openFeatureNameReview(flag.feature_id)"><el-icon><component :is="icon" /></el-icon></button>
   </el-tooltip>
-  <FeatureNameReviewDialog ref="reviewDialog" />
+  <button v-else-if="featureId" type="button" class="feature-name-mark feature-display-edit" :aria-label="'编辑显示名称 ' + (name || cn || en)" title="编辑显示名称，可选中文、英文或自定义" @click.stop="openFeatureNameReview(featureId, true)"><el-icon><EditPen /></el-icon></button>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import FeatureNameReviewDialog from './FeatureNameReviewDialog.vue'
-const reviewDialog=ref()
-import { InfoFilled, Warning, WarningFilled } from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { openFeatureNameReview } from '../utils/featureNameReviewHost'
+import { InfoFilled, Warning, WarningFilled, EditPen } from '@element-plus/icons-vue'
 import { featureNameFlag, loadFeatureNameStandardFlags } from '../utils/featureNameStandard'
 
 const props = defineProps({
@@ -75,6 +74,8 @@ const icon = computed(() => ICONS[flag.value?.severity] || InfoFilled)
   padding: 0;
   line-height: 1;
 }
+.feature-display-edit { color: #64748b; opacity: .65; }
+.feature-display-edit:hover, .feature-display-edit:focus-visible { opacity: 1; color: #2563c9; }
 .feature-name-mark.is-differs { color: #f56c6c; }
 .feature-name-mark.is-style,
 .feature-name-mark.is-ambiguous { color: #e6a23c; }

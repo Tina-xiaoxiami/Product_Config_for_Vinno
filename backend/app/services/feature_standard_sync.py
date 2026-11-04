@@ -1,5 +1,6 @@
 """Explicit standard-name synchronization, including names with no warning marker."""
 import re
+import hashlib
 import unicodedata
 from uuid import uuid4
 from sqlalchemy import select
@@ -16,7 +17,7 @@ def identity_keys(value):
     """Explicit labels only: preserve +, -, dimensions and compound identifiers."""
     value = clean_feature_name(value)
     values = {value}
-    if '(' in value and not re.search(r'\(\s*(?:[234]d|v\d+(?:\.\d+)*)\s*\)',value,re.I):
+    if '(' in value and not re.search(r'\([^)]*(?:[234]d|[二三四]维|v\d+(?:\.\d+)*|版本)[^)]*\)',value,re.I):
         values.add(value.split('(', 1)[0].strip())
     values.update(re.findall(r'\(([A-Za-z][A-Za-z0-9+\-]{0,30})\)', value))
     prefix = re.match(r'^([A-Za-z][A-Za-z0-9+\-]*)(?=[\u3400-\u9fff])', value)
@@ -34,7 +35,8 @@ def compatible_identity(feature, standard):
     source_names = [feature['legacy_name'], feature['cn_name'], feature['en_name']]
     target_names = [standard.get('cn_name',''),standard.get('en_name',''),standard.get('ui_label','')]
     def versions(names):
-        return {part.casefold() for value in names if value for part in re.findall(r'\(\s*([234]D|V\d+(?:\.\d+)*)\s*\)',clean_feature_name(value),re.I)}
+        return {part.casefold().replace('二维','2d').replace('三维','3d').replace('四维','4d') for value in names if value
+                for part in re.findall(r'([234]D|[二三四]维|V\d+(?:\.\d+)*)(?![A-Za-z0-9])',clean_feature_name(value),re.I)}
     source_versions, target_versions = versions(source_names), versions(target_names)
     if source_versions and target_versions and source_versions.isdisjoint(target_versions):
         return False
@@ -104,9 +106,9 @@ async def sync_all_standard_names(db, confirmed_by='local_user'):
     batch = str(uuid4())
     try:
         for row in plan['checked']:
-            await set_feature_primary_names(db,row['feature_id'],row['cn'],row['en'])
+            if row['changed']:
+                await set_feature_primary_names(db,row['feature_id'],row['cn'],row['en'])
             snapshot = {'action':'sync_standard', 'batch_id':batch, **row}
-            import hashlib
             db.add(FeatureNameReview(feature_id=row['feature_id'],baseline='standard',
                 fingerprint=hashlib.sha256(encode(snapshot).encode()).hexdigest(),snapshot_data=encode(snapshot),
                 note='统一按标准表更新与核对（含无异常标记功能）',confirmed_by=confirmed_by))
