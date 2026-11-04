@@ -66,6 +66,7 @@ def result(payload):
     page = payload['pages'][0]
     return {'status': 'draft', 'claims': [{'text': '仅适用于新平台。', 'kind': 'source_statement', 'support_status': 'direct',
                                          'citations': [{'document_id': page['id'], 'pdf_page': page['page'], 'original_excerpt': PAGE, 'version_id': page['version_id']}]}],
+            'deduplication': {'merged_count': 0, 'groups': [{'output_index':0, 'source_claim_indices':[0], 'visual_claim_indices':[0]}]},
             'gaps': [], 'coverage': {}, 'visual_review': {'status': 'model_checked', 'human_reviewed': False}, 'metrics': {'model_calls': 4}, 'runtime_identity': {'protocol_version': 1}}
 
 
@@ -75,6 +76,7 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
     def run(payload, **kwargs):
         calls.append(payload)
         assert payload['pages'][0]['requires_visual_review'] is True
+        assert payload['pages'][0]['document_version'] == '1.14.81'
         assert kwargs['sources'][0]['id'] == 'kb-1'
         assert kwargs['sources'][0]['version_id'] == payload['pages'][0]['version_id']
         assert kwargs['sources'][0]['file_path'].endswith('source.pdf')
@@ -86,12 +88,14 @@ async def test_draft_only_reads_scope_eligible_pages_and_remaps_citations_withou
         data = r.json()
         assert data['status'] == 'draft'
         assert [p['id'] for p in calls[0]['pages']] == ['kb-1']
-        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url', 'requires_visual_review'}
+        assert set(calls[0]['pages'][0]) == {'id', 'page', 'text', 'version_id', 'title', 'file_name', 'year', 'source_url', 'requires_visual_review', 'document_version'}
         cite = data['claims'][0]['citations'][0]
         assert cite['document_id'] == 1 and cite['page'] == 1
         assert cite['preview_url'] == f"/api/knowledge/documents/1/preview?version_id={calls[0]['pages'][0]['version_id']}#page=1"
         assert data['coverage']['document_count'] == 1
         assert data['visual_review']['status'] == 'model_checked'
+        assert data['deduplication']['merged_count'] == 0
+        assert data['deduplication']['groups'][0]['source_claim_indices'] == [0]
         async with factory() as db:
             assert (await db.execute(text('SELECT count(*) FROM knowledge_questions'))).scalar() == 0
             assert (await db.execute(text('SELECT count(*) FROM knowledge_answers'))).scalar() == 0
