@@ -5,7 +5,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy import inspect, select, update
 from app.models.probe import Feature
-from app.models.feature_standard import FeatureNameReview
+from app.models.feature_standard import FeatureNameReview, FeatureDisplayName
 from app.utils.time import utcnow
 
 
@@ -20,7 +20,11 @@ async def storage_ready(db):
 
 async def decorate_checks(db, features, flags):
     from app.services.feature_name_standards import StandardRow, _match_score
+    connection = await db.connection()
+    ready = await connection.run_sync(lambda c: inspect(c).has_table('feature_display_names'))
+    display_names = {row.feature_id: row.name for row in (await db.scalars(select(FeatureDisplayName))).all()} if ready else {}
     for fid, flag in flags.items():
+        flag['feature_display_name'] = display_names.get(int(fid)) or features[int(fid)]['legacy_name'] or features[int(fid)]['cn_name']
         feature = features[int(fid)]
         identity = {key: feature.get(key) for key in ('id', 'legacy_name', 'cn_name', 'en_name', 'config_ipn', 'config_item_id', 'primary_ipn')}
         identity['primary_links'] = [{'item_id': link['item_id'], 'ipn': link['ipn']} for link in feature['primary_links']]
@@ -56,6 +60,8 @@ async def review_detail(db, feature_id):
                         'note': row.note, 'confirmed_by': row.confirmed_by, 'confirmed_at': row.confirmed_at.isoformat(),
                         'revoked_at': row.revoked_at.isoformat() if row.revoked_at else None, 'effective': False})
     return {'feature_id': feature_id, 'name': feature.primary_cn_name or feature.name,
+            'primary_cn_name': feature.primary_cn_name, 'primary_en_name': feature.primary_en_name,
+            'display_name': await get_display_name(db, feature_id), 'default_display_name': feature.name,
             'checks': flag.get('checks', []), 'history': history}
 
 
@@ -97,8 +103,33 @@ async def revoke_confirmation(db, feature_id, review_id):
     row = await db.get(FeatureNameReview, review_id)
     if row is None or row.feature_id != feature_id or row.revoked_at is not None:
         raise HTTPException(409, '核对记录不存在或已撤销，请刷新')
-    if json.loads(row.snapshot_data).get('action') == 'apply_standard':
+    if json.loads(row.snapshot_data).get('action') in {'apply_standard', 'sync_standard', 'display_name'}:
         raise HTTPException(422, '这是名称更新记录，不是可撤销的差异确认；名称请在功能管理中维护')
     row.revoked_at = utcnow()
+    await db.commit()
+    return await review_detail(db, feature_id)
+
+
+async def get_display_name(db, feature_id):
+    connection = await db.connection()
+    if not await connection.run_sync(lambda c: inspect(c).has_table('feature_display_names')):
+        return ''
+    row = await db.get(FeatureDisplayName, feature_id)
+    return row.name if row else ''
+
+
+async def set_display_name(db, feature_id, name):
+    from app.services.write_serialization import serialize_catalog_write
+    await serialize_catalog_write(db, 'features')
+    if await db.get(Feature, feature_id) is None:
+        raise HTTPException(404, '功能不存在')
+    connection = await db.connection()
+    if not await connection.run_sync(lambda c: inspect(c).has_table('feature_display_names')):
+        raise HTTPException(503, '显示名称存储尚未初始化，请重启服务')
+    row = await db.get(FeatureDisplayName, feature_id)
+    if row is None:
+        db.add(FeatureDisplayName(feature_id=feature_id, name=name.strip()))
+    else:
+        row.name = name.strip()
     await db.commit()
     return await review_detail(db, feature_id)

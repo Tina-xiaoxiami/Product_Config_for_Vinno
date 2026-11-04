@@ -71,7 +71,8 @@ export function useFeatureNameStandard() {
 }
 
 // Current editable catalogs follow persisted primary names; release snapshots keep their own labels.
-export function featureCurrentName(featureId, fallback, language = 'cn') {
+export function featureCurrentName(featureId, fallback, language = 'display') {
   const entry = flags.value.checks_by_feature?.[String(featureId)]
+  if (language === 'display') return entry?.feature_display_name || entry?.feature_cn_name || fallback
   return entry?.[language === 'en' ? 'feature_en_name' : 'feature_cn_name'] || fallback
 }

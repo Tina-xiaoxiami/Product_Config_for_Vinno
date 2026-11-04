@@ -299,3 +299,5 @@ export const confirmFeatureNames = (id, data) => api.post(`/features/standards/r
 export const revokeFeatureNameReview = (id, review) => api.post(`/features/standards/reviews/${id}/${review}/revoke`)
 
 export const applyFeatureStandardNames = (id, data) => api.post(`/features/standards/reviews/${id}/apply-standard`, data)
+
+export const updateFeatureDisplayName = (id, data) => api.put(`/features/standards/reviews/${id}/display-name`, data)
