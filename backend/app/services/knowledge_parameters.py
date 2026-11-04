@@ -65,6 +65,26 @@ async def list_topics(db: AsyncSession) -> dict:
     return {'available': True, 'items': items, 'total': len(items)}
 
 
+async def topics_for_question(db: AsyncSession, question: str) -> list[dict]:
+    """Offer explicit topic matches without selecting a snapshot or answering."""
+    normalized = normalize_question(question)
+    if len(normalized) < 2 or not await available(db):
+        return []
+    rows = (await db.execute(text('''SELECT id,name,question,normalized_question,aliases_json
+        FROM knowledge_parameter_topics ORDER BY id'''))).mappings()
+    candidates = []
+    for row in rows:
+        if normalized == row['normalized_question']:
+            match_type = 'question'
+        elif any(normalized == normalize_question(alias) for alias in json.loads(row['aliases_json'])):
+            match_type = 'alias'
+        else:
+            continue
+        candidates.append({'id': row['id'], 'name': row['name'], 'question': row['question'],
+                           'match_type': match_type})
+    return candidates
+
+
 async def create_topic(db: AsyncSession, payload: dict) -> dict:
     await db.execute(text('BEGIN IMMEDIATE'))
     try:

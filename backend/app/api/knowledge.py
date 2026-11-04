@@ -74,6 +74,7 @@ from app.services.knowledge_qa import (
     merge_question,
     publish_answer,
 )
+from app.services.knowledge_parameters import topics_for_question
 from app.services.knowledge_content import (
     KnowledgeContentError,
     KnowledgeDocumentMissingError,
@@ -194,7 +195,9 @@ async def ask_knowledge_question(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return KnowledgeQuestionResult(**(await ask_question(db, data.question, scope=data.scope.model_dump() if data.scope else None)))
+        result = await ask_question(db, data.question, scope=data.scope.model_dump() if data.scope else None)
+        result['parameter_topics'] = await topics_for_question(db, data.question)
+        return KnowledgeQuestionResult(**result)
     except (KnowledgeQaError, KnowledgeScopeError) as exc:
         await db.rollback()
         raise HTTPException(status_code=503 if isinstance(exc, KnowledgeScopeUnavailable) else 422, detail=str(exc)) from exc

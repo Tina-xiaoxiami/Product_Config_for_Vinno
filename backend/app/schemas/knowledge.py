@@ -206,6 +206,13 @@ class KnowledgeCandidateEvidenceList(BaseModel):
     items: list[KnowledgeCandidateEvidence]
 
 
+class KnowledgeParameterTopicCandidate(BaseModel):
+    id: int
+    name: str
+    question: str
+    match_type: Literal['question', 'alias']
+
+
 class KnowledgeQuestionResult(BaseModel):
     history_trace: dict | None = None
     status: str
@@ -216,6 +223,7 @@ class KnowledgeQuestionResult(BaseModel):
     similarity: float
     answer: KnowledgeAnswerItem | None = None
     candidates: list[KnowledgeCandidateEvidence] = Field(default_factory=list)
+    parameter_topics: list[KnowledgeParameterTopicCandidate] = Field(default_factory=list)
     scope: dict | None = None
     matched_scope: dict | None = None
     missing_fields: list[str] = Field(default_factory=list)
