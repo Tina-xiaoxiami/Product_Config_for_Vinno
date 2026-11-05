@@ -45,11 +45,13 @@ jobs:
           --cov-report=term-missing --cov-fail-under=80
 
       - name: Feature name confirmation and source invalidation
+        timeout-minutes: 5
         run: >-
-          python -m pytest backend/tests/test_feature_name_reviews.py backend/tests/test_feature_name_standards_api.py backend/tests/test_standard_name_policy.py backend/tests/test_feature_standard_sync.py -q
+          python -u -m pytest backend/tests/test_feature_name_reviews.py backend/tests/test_feature_name_standards_api.py backend/tests/test_standard_name_policy.py backend/tests/test_feature_standard_sync.py -vv
           --cov-config=backend/coverage.ini
           --cov=app.services.feature_name_reviews --cov=app.services.feature_standard_sync --cov=app.api.feature_standards
           --cov-report=term-missing --cov-fail-under=80
+          -o faulthandler_timeout=30
 
   frontend:
     runs-on: ubuntu-latest
