@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -179,7 +180,7 @@ async def test_raw_per_document_service_is_not_batch_atomic(case,monkeypatch):
     "UPDATE knowledge_document_extractions SET chunk_count=7 WHERE document_id=11",
     "UPDATE data_review_items SET effective_payload_json='{}' WHERE id=3",
     "INSERT INTO data_review_revisions(review_item_id,revision_no,before_payload_json,after_payload_json,action,changed_by) VALUES(3,1,'{}','{}','confirmed','synthetic')",
-    "INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref,excerpt) VALUES(999,11,'synthetic','synthetic reference')",
+    "INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref,excerpt,sort_order) VALUES(999,11,'synthetic','synthetic reference',0)",
 ])
 @pytest.mark.asyncio
 async def test_drift_after_plan_refuses_without_overwriting_current_rows(case,mutation):
@@ -207,7 +208,7 @@ async def test_rollback_rejects_drift_and_preserves_it(case,kind):
         elif kind=='history':
             rid=connection.execute('SELECT min(id) FROM data_review_items WHERE document_id=11').fetchone()[0]
             connection.execute("INSERT INTO data_review_revisions(review_item_id,revision_no,before_payload_json,after_payload_json,action,changed_by) VALUES(?,1,'{}','{}','confirmed','synthetic')",(rid,))
-        elif kind=='reference':connection.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref,excerpt) VALUES(999,11,'synthetic','new reference')")
+        elif kind=='reference':connection.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref,excerpt,sort_order) VALUES(999,11,'synthetic','new reference',0)")
         else:
             old_id=before['knowledge_document_chunks'][0]['id']
             connection.execute("INSERT INTO knowledge_document_chunks(id,document_id,chunk_index,source_ref,content,normalized_content,content_hash) VALUES(?,99,1,'collision','unrelated new data','new',?)",(old_id,'e'*64))
@@ -287,3 +288,117 @@ def test_cli_plan_apply_status_and_rollback_end_to_end(case):
     result=cli(case,*common,'--action','apply','--plan',case.plan_path);assert result.returncode==0,result.stderr
     result=cli(case,*common,'--action','status');assert result.returncode==0,result.stderr;assert json.loads(result.stdout)['state']=='new'
     result=cli(case,*common,'--action','rollback');assert result.returncode==0,result.stderr;assert rows(case.database,True)==before
+
+
+@pytest.mark.parametrize('tamper',['checksum','scope','snapshot'])
+@pytest.mark.asyncio
+async def test_tampered_manifest_refuses_status_and_rollback_without_writes(case,tamper):
+    service,_=await applied(case)
+    payload=json.loads(case.manifest.read_text())
+    if tamper=='checksum':
+        payload['phase']='untrusted'
+        case.manifest.write_text(json.dumps(payload))
+    else:
+        if tamper=='scope':payload['document_ids']=[11]
+        else:payload['before']['knowledge_document_chunks'][0]['content']='tampered rollback content'
+        service._write_json(case.manifest,payload,expected=hashlib.sha256(case.manifest.read_bytes()).hexdigest())
+    before=rows(case.database);manifest_bytes=case.manifest.read_bytes()
+    with pytest.raises(service.OfficeIndexMigrationError):service.inspect_manifest(case.database,case.manifest,document_ids=IDS)
+    with pytest.raises(service.OfficeIndexMigrationError):await service.rollback_manifest(case.database,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before and case.manifest.read_bytes()==manifest_bytes
+
+
+@pytest.mark.asyncio
+async def test_retired_review_id_occupied_by_same_document_other_data_type_is_preserved(case):
+    old_id=rows(case.database,True)['data_review_items'][0]['id']
+    service,_=await applied(case)
+    with connect(case.database) as connection:
+        connection.execute("INSERT INTO data_review_items(id,document_id,data_type,batch_id,source_record_key,source_ref,raw_payload_json,effective_payload_json,review_status) VALUES(?,11,'other_kind',11,'new unrelated','unrelated','{}','{}','auto_ready')",(old_id,))
+    before=rows(case.database)
+    with pytest.raises(service.OfficeIndexMigrationError):await service.rollback_manifest(case.database,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before
+
+
+@pytest.mark.parametrize('table',['knowledge_document_extractions','knowledge_document_chunks','data_review_items'])
+def test_unexpected_mutable_columns_refuse_plan(case,table):
+    with connect(case.database) as connection:connection.execute(f'ALTER TABLE {table} ADD COLUMN synthetic_extra TEXT')
+    before=rows(case.database);service=migration()
+    with pytest.raises(service.OfficeIndexMigrationError):service.build_plan(case.database,case.expectations)
+    assert rows(case.database)==before and not case.plan_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_status_is_read_only_and_missing_database_apply_status_never_create(case):
+    service,_=await applied(case)
+    before=rows(case.database);database_bytes=case.database.read_bytes();manifest_bytes=case.manifest.read_bytes();files=set(case.database.parent.iterdir())
+    assert service.inspect_manifest(case.database,case.manifest,document_ids=IDS)['state']=='new'
+    assert rows(case.database)==before and case.database.read_bytes()==database_bytes
+    assert case.manifest.read_bytes()==manifest_bytes and set(case.database.parent.iterdir())==files
+    missing=case.database.parent/'missing-explicit.db'
+    with pytest.raises(service.OfficeIndexMigrationError):service.inspect_manifest(missing,case.manifest,document_ids=IDS)
+    with pytest.raises(service.OfficeIndexMigrationError):await service.apply_plan(missing,case.plan_path,case.database.parent/'new-manifest.json',document_ids=IDS)
+    assert not missing.exists() and rows(case.database)==before
+
+
+def test_initial_manifest_directory_fsync_observes_single_link_no_temporary_alias(case,monkeypatch):
+    service=migration();plan=service.build_plan(case.database,case.expectations)
+    original=os.fsync;observations=[]
+    def checked(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            observations.append((case.plan_path.stat().st_nlink,list(case.database.parent.glob('.office-index-*'))))
+        return original(fd)
+    monkeypatch.setattr(os,'fsync',checked)
+    service.write_plan(plan,case.plan_path)
+    assert observations==[(1,[])]
+
+
+@pytest.mark.asyncio
+async def test_manifest_replaced_after_load_cannot_commit_rollback(case,monkeypatch):
+    service,_=await applied(case);before=rows(case.database)
+    original=service._engine
+    async def replaced(path):
+        payload=json.loads(case.manifest.read_text());payload['concurrent_note']='another operator'
+        service._write_json(case.manifest,payload,expected=hashlib.sha256(case.manifest.read_bytes()).hexdigest())
+        return await original(path)
+    monkeypatch.setattr(service,'_engine',replaced)
+    with pytest.raises(service.OfficeIndexMigrationError,match='concurrent'):await service.rollback_manifest(case.database,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before
+    assert json.loads(case.manifest.read_text())['concurrent_note']=='another operator'
+
+
+@pytest.mark.asyncio
+async def test_identical_database_copy_replacing_bound_path_cannot_apply(case,monkeypatch):
+    service,_=planned(case);before=rows(case.database);original=service._engine
+    async def replaced(path):
+        replacement=case.database.parent/'replacement.db'
+        replacement.write_bytes(case.database.read_bytes());os.replace(replacement,case.database)
+        return await original(path)
+    monkeypatch.setattr(service,'_engine',replaced)
+    with pytest.raises(service.OfficeIndexMigrationError,match='identity'):await service.apply_plan(case.database,case.plan_path,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before and not case.manifest.exists()
+
+
+@pytest.mark.asyncio
+async def test_precommit_manifest_failure_rolls_back_and_remains_inspectable(case,monkeypatch):
+    service,_=planned(case);before=rows(case.database);original=service._write_json
+    def fail(path,payload,**kwargs):
+        if payload.get('phase')=='commit_prepared':raise OSError('synthetic durable write failure')
+        return original(path,payload,**kwargs)
+    monkeypatch.setattr(service,'_write_json',fail)
+    with pytest.raises(service.OfficeIndexMigrationError):await service.apply_plan(case.database,case.plan_path,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before
+    assert service.inspect_manifest(case.database,case.manifest,document_ids=IDS)['state']=='old'
+
+
+@pytest.mark.asyncio
+async def test_rollback_final_manifest_failure_reports_old_and_cannot_replay(case,monkeypatch):
+    service,_=await applied(case);original=service._write_json
+    def fail(path,payload,**kwargs):
+        if payload.get('phase')=='rolled_back':raise OSError('synthetic rollback final write failure')
+        return original(path,payload,**kwargs)
+    monkeypatch.setattr(service,'_write_json',fail)
+    with pytest.raises(service.OfficeIndexMigrationError):await service.rollback_manifest(case.database,case.manifest,document_ids=IDS)
+    before=rows(case.database)
+    assert service.inspect_manifest(case.database,case.manifest,document_ids=IDS)['state']=='old'
+    with pytest.raises(service.OfficeIndexMigrationError):await service.rollback_manifest(case.database,case.manifest,document_ids=IDS)
+    assert rows(case.database)==before
