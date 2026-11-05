@@ -427,7 +427,11 @@ def _read_json(path):
 
 
 def _write_json(path, payload, *, expected=None):
-    """Durable private install; initial file never clobbers, updates use CAS token."""
+    """Durable private install with optimistic token checks, for one operator.
+
+    File replacement is atomic; check-plus-replace is not an atomic CAS. Keep
+    all maintenance writers exclusive through the final manifest update.
+    """
     path = Path(path)
     encoded = _json(_seal(payload)).encode()
     _require(len(encoded) <= MAX_JSON, "Manifest exceeds size limit")

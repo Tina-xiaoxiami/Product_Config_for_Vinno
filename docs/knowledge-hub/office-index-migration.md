@@ -40,6 +40,8 @@ python backend/scripts/migrate_knowledge_office_index.py --action rollback \
   --manifest /absolute/path/private/run.json
 ```
 
+同一数据库/清单只允许一个维护操作进程，独占期须持续到最终清单写入结束。清单内容 token 用于乐观漂移检查，检查与替换并非原子 CAS，不支持任意并发编辑清单。原子文件替换与完整前后快照保证中断后仍可检查实际状态；不应在迁移或恢复期间手工编辑清单。
+
 整批使用同一个 `BEGIN IMMEDIATE` 外层事务；现有提取服务内部提交只释放保存点。先暂存新缓存，再删除精确旧缓存ID，避免旧审核ID绑定到新片段。旧片段ID若被复用，整批拒绝；工具不修改 schema、插入占位行或操纵分配计数。单份资料占据最高片段ID等情形可能因此拒绝，需要另行评估，不能绕过。
 
 提交前逐片段调用现有 `citation_evidence` 和 `verified_original`：原件哈希、提取版本、内容与结构位置必须匹配。结构匹配不等于视觉或人工核验；Office 保持 `page=null`、`model_answer_eligible=false`、`structure=matched`、`visual=not_checked`、`human=not_reviewed`。
@@ -59,6 +61,8 @@ python backend/scripts/migrate_knowledge_office_index.py --action rollback \
 ## 验证与剩余工作
 
 自动测试仅使用临时 SQLite 和合成 Office 文件，覆盖批次中途失败、源文件/行漂移、旧ID占用、人工历史、引用阻断、提交后清单写入失败、只读检查、精确恢复以及 CLI 全链路。关联提取器、引用核验与暂存测试一起验证；本阶段不重跑实际资料演练，不执行浏览器、模型或服务启动。
+
+本阶段验证：新工具合成测试 38 项通过，关联既有提取器/引用/暂存测试 66 项通过；迁移服务行覆盖 98%，CLI 89%（独立子进程覆盖合并）。三个 Python 文件 Ruff 检查及格式检查通过，两个生产文件限定 mypy（含 `--check-untyped-defs`，跳过外部导入）通过。代码与 Python 专项复核的已知问题已修正或明确操作边界。
 
 正式部署状态确认、旧写入器隔离、经审核的具体生产计划及正式窗口执行仍需后续阶段处理；不能将本地 GREEN 作为线上资料已完成迁移的证据。
 
