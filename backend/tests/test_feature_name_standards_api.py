@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import feature_standards, features, knowledge
+from app.api import feature_standards
 from app.database import Base, get_db
 from app.models import FeatureNameStandard  # noqa: F401  注册标准表模型
 from test_knowledge_api import _create_knowledge_database
@@ -32,9 +32,7 @@ async def _client_for(database_path):
         await connection.run_sync(Base.metadata.tables["feature_name_standards"].create)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
-    app.include_router(features.router, prefix="/api/features")
     app.include_router(feature_standards.router, prefix="/api/features/standards")
-    app.include_router(knowledge.router, prefix="/api/knowledge")
 
     async def override_db():
         async with session_factory() as session:
