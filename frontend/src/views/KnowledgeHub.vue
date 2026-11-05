@@ -289,7 +289,6 @@ import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
-import { citationRequest } from '../utils/knowledgeCitation'
 import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
 import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
@@ -603,10 +602,7 @@ const showHistory = async (question) => {
   }
 }
 
-const openCitation = (citation) => {
-  if (citationRequest(citation)) return citationViewer.value?.open(citation)
-  if (/^\/api\/knowledge\/documents\/[1-9][0-9]*\/preview(?:#page=[1-9][0-9]*)?$/.test(citation.preview_url || '')) window.open(citation.preview_url, '_blank', 'noopener')
-}
+const openCitation = (citation) => citationViewer.value?.open(citation)
 watch(() => JSON.stringify([qaQuestion.value, qaScope]), () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => qaResult.value, () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => answerCandidates.value, () => citationViewer.value?.close(), { flush: 'sync' })
