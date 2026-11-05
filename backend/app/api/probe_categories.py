@@ -1,5 +1,5 @@
 """探头类别 API"""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db
@@ -104,25 +104,7 @@ async def get_available_apps(category_id: int, db: AsyncSession = Depends(get_db
 
 @router.post("/{category_id}/apps")
 async def add_category_app(category_id: int, data: dict, db: AsyncSession = Depends(get_db)):
-    """添加应用到探头类别"""
-    app_id = data.get("application_id")
-    probe_type = data.get("probe_type", "regular")
-    if not app_id:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="application_id 不能为空")
-    if probe_type not in ("regular", "poc"):
-        raise HTTPException(status_code=400, detail="probe_type 必须为 regular 或 poc")
-    # 检查是否已存在
-    r = await db.execute(select(CategoryApplication).where(
-        CategoryApplication.category_id == category_id,
-        CategoryApplication.application_id == app_id,
-        CategoryApplication.probe_type == probe_type))
-    if r.scalar_one_or_none():
-        return {"message": "已存在"}
-    ca = CategoryApplication(category_id=category_id, application_id=app_id, probe_type=probe_type)
-    db.add(ca)
-    await db.commit()
-    return {"message": "添加成功"}
+    raise HTTPException(409, "请通过应用管理批量提交关联并创建版本（/applications/associations/batch）")
 
 
 @router.delete("/{category_id}/apps/{application_id}")
@@ -131,15 +113,4 @@ async def remove_category_app(
     probe_type: str = "regular",
     db: AsyncSession = Depends(get_db)
 ):
-    """从探头类别移除应用"""
-    from fastapi import HTTPException
-    r = await db.execute(select(CategoryApplication).where(
-        CategoryApplication.category_id == category_id,
-        CategoryApplication.application_id == application_id,
-        CategoryApplication.probe_type == probe_type))
-    ca = r.scalar_one_or_none()
-    if not ca:
-        raise HTTPException(status_code=404, detail="该关联不存在")
-    await db.delete(ca)
-    await db.commit()
-    return {"message": "删除成功"}
+    raise HTTPException(409, "请通过应用管理批量提交关联并创建版本（/applications/associations/batch）")

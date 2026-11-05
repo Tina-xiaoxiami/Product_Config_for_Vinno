@@ -1,0 +1,10 @@
+.scenario-description-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scenario-description-heading h3 { margin: 0; }
+.scenario-description-heading span { color: #667085; font-size: 12px; }
+.scenario-description-editor { width: min(800px, 92vw); }
+.scenario-description-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.65; }
+.description-model-fields { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.description-model-fields label { flex: 1 1 180px; min-width: 0; }
+.description-model-fields input, .description-model-fields select { width: 100%; box-sizing: border-box; }
+.description-model-dialog { width: min(680px, 92vw); }
+.description-model-dialog p { overflow-wrap: anywhere; }

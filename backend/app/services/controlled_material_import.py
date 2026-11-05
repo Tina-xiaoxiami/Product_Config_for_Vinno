@@ -11,6 +11,13 @@ import re
 import sqlite3
 
 
+#: 受控材料的唯一规范根目录（真实 Obsidian 库，目录名含空格）。
+#: 所有登记 / 迁移路径都必须由它派生——曾经三处各自硬编码该路径、其中两处漏掉
+#: " Vault"，把登记写进了迁移时误建的旁支目录（见 knowledge_documents id=19/21）。
+CONTROLLED_MATERIALS_ROOT = (
+    Path.home() / "Documents" / "Obsidian Vault" / "产品配置管理系统" / "受控材料"
+)
+
 CONTROLLED_PRODUCT_DIRECTORIES = {
     "说明书": ("manual", {".pdf", ".docx"}),
     "白皮书": ("whitepaper", {".pdf"}),
@@ -18,6 +25,32 @@ CONTROLLED_PRODUCT_DIRECTORIES = {
 }
 SEMANTIC_VERSION_RE = re.compile(r"(?<!\d)(\d+\.\d+\.\d+)(?!\d)")
 MANUAL_REVISION_RE = re.compile(r"(?<![A-Za-z0-9])(R\d+)(?!\d)", re.IGNORECASE)
+
+
+class ControlledMaterialsRootError(ValueError):
+    """受控材料根目录不可用：不存在，或不在真实 Obsidian 库内。"""
+
+
+def validate_controlled_materials_root(root: str | Path) -> Path:
+    """确认 root 位于真实 Obsidian 库内并返回它，否则抛错。
+
+    迁移事故中误建的旁支目录（`~/Documents/` 下那个缺 `Vault` 的）具有完全合法的
+    目录结构，只是名字不对；脚本会照样扫描并报告成功，把登记写进错误位置。这里
+    要求根目录的某个祖先含 `.obsidian/`，把"扫错树还报成功"变成显式失败。
+
+    只在命令行入口做这项校验：service 本身仍接受任意 root，便于测试与迁移。
+    """
+
+    resolved = Path(root).expanduser()
+    if not resolved.is_dir():
+        raise ControlledMaterialsRootError(f"受控材料根目录不存在：{resolved}")
+    for candidate in (resolved, *resolved.parents):
+        if (candidate / ".obsidian").is_dir():
+            return resolved
+    raise ControlledMaterialsRootError(
+        f"{resolved} 不在 Obsidian 库内（向上未找到 .obsidian/ 目录）；"
+        "请确认路径是否漏了 \" Vault\"，或指向了迁移时误建的旁支目录"
+    )
 
 
 @dataclass(frozen=True)
@@ -154,15 +187,44 @@ def discover_controlled_product_materials(
     return sorted(materials, key=lambda material: str(material.path))
 
 
+def document_identity_indexes(rows):
+    """Use one physical-path/content/name identity rule for material importers."""
+    return (
+        {str(Path(row['file_path']).expanduser().resolve()): row for row in rows},
+        {str(row['sha256']): row for row in rows if row['sha256']},
+        {(str(row['document_type']), str(row['file_name'])): row for row in rows},
+    )
+
+
+def match_document_identity(path, digest, document_type, indexes):
+    by_path, by_hash, by_name = indexes
+    resolved = Path(path).expanduser().resolve()
+    if str(resolved) in by_path:
+        return 'same_path', by_path[str(resolved)]
+    if digest in by_hash:
+        return 'duplicate_content', by_hash[digest]
+    if (document_type, resolved.name) in by_name:
+        return 'name_conflict', by_name[(document_type, resolved.name)]
+    return 'ready', None
+
+
 def import_controlled_product_materials(
     database_path: str | Path,
     controlled_root: str | Path,
     *,
     apply: bool = False,
+    materials: list[ControlledMaterial] | None = None,
 ) -> ControlledMaterialImportResult:
     """Plan or apply an idempotent import of controlled product materials."""
 
-    materials = discover_controlled_product_materials(controlled_root)
+    materials = discover_controlled_product_materials(controlled_root) if materials is None else list(materials)
+    resolved_root = Path(controlled_root).expanduser().resolve()
+    for material in materials:
+        path = material.path.expanduser().resolve()
+        if not path.is_relative_to(resolved_root) or not path.is_file():
+            raise ValueError("资料必须是受控目录中的现有文件")
+        if _sha256(path) != material.sha256:
+            raise ValueError("受控资料摘要已变化，请重新核对")
     counts: Counter[str] = Counter(scanned=len(materials), ready=0, inserted=0)
     items: list[ControlledMaterialImportItem] = []
     connection = sqlite3.connect(Path(database_path).expanduser().resolve())
@@ -178,32 +240,21 @@ def import_controlled_product_materials(
             ORDER BY id
             """
         ).fetchall()
-        by_path = {str(Path(row["file_path"]).expanduser().resolve()): row for row in rows}
-        by_hash: dict[str, sqlite3.Row] = {
-            str(row["sha256"]): row for row in rows if row["sha256"]
-        }
-        by_name = {
-            (str(row["document_type"]), str(row["file_name"])): row for row in rows
-        }
+        indexes = document_identity_indexes(rows)
+        by_path, by_hash, by_name = indexes
 
         for material in materials:
             path_text = str(material.path)
-            existing = by_path.get(path_text)
-            if existing is not None:
+            status, existing = match_document_identity(material.path, material.sha256, material.document_type, indexes)
+            if status == 'same_path':
                 status = (
                     "unchanged"
                     if str(existing["sha256"] or "") == material.sha256
                     else "name_conflict"
                 )
                 document_id = int(existing["id"])
-            elif material.sha256 in by_hash:
-                status = "duplicate_content"
-                document_id = int(by_hash[material.sha256]["id"])
-            elif (material.document_type, material.path.name) in by_name:
-                status = "name_conflict"
-                document_id = int(
-                    by_name[(material.document_type, material.path.name)]["id"]
-                )
+            elif existing is not None:
+                document_id = int(existing['id'])
             else:
                 status = "ready"
                 document_id = None
@@ -234,6 +285,7 @@ def import_controlled_product_materials(
                         material.sha256,
                     ),
                 )
+                assert cursor.lastrowid is not None
                 document_id = int(cursor.lastrowid)
                 status = "inserted"
                 counts["inserted"] += 1

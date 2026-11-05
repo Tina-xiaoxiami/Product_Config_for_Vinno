@@ -1,0 +1,1344 @@
+{
+  "source_filename": "探头-功能配置模板.xlsx",
+  "sha256": "03a10f021f0fc4e6dffcab0d226dddf0087d7e19fa39772c1a1255d1b4fc4284",
+  "template_version_id": 3,
+  "records": [
+    {
+      "template_id": 9,
+      "category_id": 1,
+      "feature_id": 11,
+      "category": "常规凸阵",
+      "feature": "常规造影",
+      "source_sheet": "模板",
+      "source_cell": "O3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)(支持腹部常规, 肾脏)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 11,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 10,
+      "category_id": 1,
+      "feature_id": 12,
+      "category": "常规凸阵",
+      "feature": "VFlash",
+      "source_sheet": "模板",
+      "source_cell": "P3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 12,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 11,
+      "category_id": 1,
+      "feature_id": 13,
+      "category": "常规凸阵",
+      "feature": "超快造影",
+      "source_sheet": "模板",
+      "source_cell": "Q3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 13,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 12,
+      "category_id": 1,
+      "feature_id": 14,
+      "category": "常规凸阵",
+      "feature": "URM",
+      "source_sheet": "模板",
+      "source_cell": "R3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 14,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 13,
+      "category_id": 1,
+      "feature_id": 17,
+      "category": "常规凸阵",
+      "feature": "EI",
+      "source_sheet": "模板",
+      "source_cell": "U3",
+      "source_value": "√(除肾脏, 早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 17,
+        "default_support": "supported",
+        "default_excludes": "[\"肾脏\", \"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "肾脏",
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "肾脏",
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 14,
+      "category_id": 1,
+      "feature_id": 18,
+      "category": "常规凸阵",
+      "feature": "SWE",
+      "source_sheet": "模板",
+      "source_cell": "V3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 18,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 15,
+      "category_id": 1,
+      "feature_id": 19,
+      "category": "常规凸阵",
+      "feature": "点式剪切波",
+      "source_sheet": "模板",
+      "source_cell": "W3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 19,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 16,
+      "category_id": 1,
+      "feature_id": 20,
+      "category": "常规凸阵",
+      "feature": "粘性成像",
+      "source_sheet": "模板",
+      "source_cell": "X3",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C3",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D3",
+      "apps_poc_value": "FAST, 肺部, 胸腹积液(穿刺), 腹部血管, 胃肠道, 肾脏, 腹部常规, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 1,
+        "feature_id": 20,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 38,
+      "category_id": 3,
+      "feature_id": 18,
+      "category": "凸阵容积",
+      "feature": "SWE",
+      "source_sheet": "模板",
+      "source_cell": "V5",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C5",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D5",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 3,
+        "feature_id": 18,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 39,
+      "category_id": 3,
+      "feature_id": 19,
+      "category": "凸阵容积",
+      "feature": "点式剪切波",
+      "source_sheet": "模板",
+      "source_cell": "W5",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C5",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D5",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 3,
+        "feature_id": 19,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 40,
+      "category_id": 3,
+      "feature_id": 20,
+      "category": "凸阵容积",
+      "feature": "粘性成像",
+      "source_sheet": "模板",
+      "source_cell": "X5",
+      "source_value": "√(除早\\中\\晚孕, 胎心)",
+      "apps_regular_cell": "C5",
+      "apps_regular_value": "腹部精细, 腹部常规, 腹部穿透, 腹部血管, 肾脏, 早孕, 中孕, 晚孕, 胎心, 子宫, 盆底, 前列腺",
+      "apps_poc_cell": "D5",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 3,
+        "feature_id": 20,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中\\\\晚孕\", \"胎心\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中",
+        "晚孕",
+        "胎心"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中孕",
+        "晚孕",
+        "胎心"
+      ],
+      "token_replacements": {
+        "早": "早孕",
+        "中": "中孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 55,
+      "category_id": 4,
+      "feature_id": 11,
+      "category": "常规腔内",
+      "feature": "常规造影",
+      "source_sheet": "模板",
+      "source_cell": "O6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 11,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 56,
+      "category_id": 4,
+      "feature_id": 12,
+      "category": "常规腔内",
+      "feature": "VFlash",
+      "source_sheet": "模板",
+      "source_cell": "P6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 12,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 57,
+      "category_id": 4,
+      "feature_id": 13,
+      "category": "常规腔内",
+      "feature": "超快造影",
+      "source_sheet": "模板",
+      "source_cell": "Q6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 13,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 58,
+      "category_id": 4,
+      "feature_id": 14,
+      "category": "常规腔内",
+      "feature": "URM",
+      "source_sheet": "模板",
+      "source_cell": "R6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 14,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 59,
+      "category_id": 4,
+      "feature_id": 17,
+      "category": "常规腔内",
+      "feature": "EI",
+      "source_sheet": "模板",
+      "source_cell": "U6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 17,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 60,
+      "category_id": 4,
+      "feature_id": 18,
+      "category": "常规腔内",
+      "feature": "SWE",
+      "source_sheet": "模板",
+      "source_cell": "V6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 18,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 61,
+      "category_id": 4,
+      "feature_id": 19,
+      "category": "常规腔内",
+      "feature": "点式剪切波",
+      "source_sheet": "模板",
+      "source_cell": "W6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 19,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 62,
+      "category_id": 4,
+      "feature_id": 20,
+      "category": "常规腔内",
+      "feature": "粘性成像",
+      "source_sheet": "模板",
+      "source_cell": "X6",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C6",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D6",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 4,
+        "feature_id": 20,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 69,
+      "category_id": 5,
+      "feature_id": 11,
+      "category": "腔内容积",
+      "feature": "常规造影",
+      "source_sheet": "模板",
+      "source_cell": "O7",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C7",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D7",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 5,
+        "feature_id": 11,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 70,
+      "category_id": 5,
+      "feature_id": 12,
+      "category": "腔内容积",
+      "feature": "VFlash",
+      "source_sheet": "模板",
+      "source_cell": "P7",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C7",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D7",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 5,
+        "feature_id": 12,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 71,
+      "category_id": 5,
+      "feature_id": 16,
+      "category": "腔内容积",
+      "feature": "输卵管容积造影",
+      "source_sheet": "模板",
+      "source_cell": "T7",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C7",
+      "apps_regular_value": "子宫, 盆底, 卵泡, 前列腺, 早孕, 中晚孕",
+      "apps_poc_cell": "D7",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 5,
+        "feature_id": 16,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "早孕",
+        "中晚孕"
+      ],
+      "token_replacements": {
+        "早": "早孕"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 81,
+      "category_id": 6,
+      "feature_id": 11,
+      "category": "双平面",
+      "feature": "常规造影",
+      "source_sheet": "模板",
+      "source_cell": "O8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 11,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 82,
+      "category_id": 6,
+      "feature_id": 12,
+      "category": "双平面",
+      "feature": "VFlash",
+      "source_sheet": "模板",
+      "source_cell": "P8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 12,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 83,
+      "category_id": 6,
+      "feature_id": 13,
+      "category": "双平面",
+      "feature": "超快造影",
+      "source_sheet": "模板",
+      "source_cell": "Q8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 13,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 84,
+      "category_id": 6,
+      "feature_id": 14,
+      "category": "双平面",
+      "feature": "URM",
+      "source_sheet": "模板",
+      "source_cell": "R8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 14,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 85,
+      "category_id": 6,
+      "feature_id": 17,
+      "category": "双平面",
+      "feature": "EI",
+      "source_sheet": "模板",
+      "source_cell": "U8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 17,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 86,
+      "category_id": 6,
+      "feature_id": 18,
+      "category": "双平面",
+      "feature": "SWE",
+      "source_sheet": "模板",
+      "source_cell": "V8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 18,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 87,
+      "category_id": 6,
+      "feature_id": 19,
+      "category": "双平面",
+      "feature": "点式剪切波",
+      "source_sheet": "模板",
+      "source_cell": "W8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 19,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 88,
+      "category_id": 6,
+      "feature_id": 20,
+      "category": "双平面",
+      "feature": "粘性成像",
+      "source_sheet": "模板",
+      "source_cell": "X8",
+      "source_value": "√(除早\\中晚孕)",
+      "apps_regular_cell": "C8",
+      "apps_regular_value": "子宫, 直肠, 前列腺",
+      "apps_poc_cell": "D8",
+      "apps_poc_value": "同常规",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 6,
+        "feature_id": 20,
+        "default_support": "supported",
+        "default_excludes": "[\"早\\\\中晚孕\"]"
+      },
+      "original_excludes": [
+        "早",
+        "中晚孕"
+      ],
+      "decision": "source_conflict",
+      "normalized_excludes": null,
+      "token_replacements": {},
+      "reason": "原件本行常规应用仅列“子宫, 直肠, 前列腺”，POC应用写“同常规”，但功能单元格排除“早\\中晚孕”；早孕和中晚孕均不在该类别原件应用范围内。保留原限制待核对，不据此新增应用或删除限制。"
+    },
+    {
+      "template_id": 94,
+      "category_id": 7,
+      "feature_id": 6,
+      "category": "常规线阵",
+      "feature": "VFlow",
+      "source_sheet": "模板",
+      "source_cell": "J9",
+      "source_value": "√(除椎动脉, 上/下肢静脉)",
+      "apps_regular_cell": "C9",
+      "apps_regular_value": "颈动脉, 椎动脉, 甲状腺, 乳腺, 睾丸, 肌骨, 肌骨(深), 动脉, 下肢静脉, 上肢静脉, 产科, 小儿腹部, 矫形外科, 浅表",
+      "apps_poc_cell": "D9",
+      "apps_poc_value": "颈动脉, 颈部血管(浅), 颈部血管(深), 上肢动脉, 下肢静脉, 肺部, 小儿腹部, 膈肌, 浅表, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 7,
+        "feature_id": 6,
+        "default_support": "supported",
+        "default_excludes": "[\"椎动脉\", \"上/下肢静脉\"]"
+      },
+      "original_excludes": [
+        "椎动脉",
+        "上",
+        "下肢静脉"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "椎动脉",
+        "上肢静脉",
+        "下肢静脉"
+      ],
+      "token_replacements": {
+        "上": "上肢静脉"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 95,
+      "category_id": 7,
+      "feature_id": 7,
+      "category": "常规线阵",
+      "feature": "SMF",
+      "source_sheet": "模板",
+      "source_cell": "K9",
+      "source_value": "√(除椎动脉, 上/下肢静脉)",
+      "apps_regular_cell": "C9",
+      "apps_regular_value": "颈动脉, 椎动脉, 甲状腺, 乳腺, 睾丸, 肌骨, 肌骨(深), 动脉, 下肢静脉, 上肢静脉, 产科, 小儿腹部, 矫形外科, 浅表",
+      "apps_poc_cell": "D9",
+      "apps_poc_value": "颈动脉, 颈部血管(浅), 颈部血管(深), 上肢动脉, 下肢静脉, 肺部, 小儿腹部, 膈肌, 浅表, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 7,
+        "feature_id": 7,
+        "default_support": "supported",
+        "default_excludes": "[\"椎动脉\", \"上/下肢静脉\"]"
+      },
+      "original_excludes": [
+        "椎动脉",
+        "上",
+        "下肢静脉"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "椎动脉",
+        "上肢静脉",
+        "下肢静脉"
+      ],
+      "token_replacements": {
+        "上": "上肢静脉"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 121,
+      "category_id": 8,
+      "feature_id": 6,
+      "category": "高频线阵",
+      "feature": "VFlow",
+      "source_sheet": "模板",
+      "source_cell": "J10",
+      "source_value": "√(除椎动脉, 上/下肢静脉, 肺部, 膈肌)",
+      "apps_regular_cell": "C10",
+      "apps_regular_value": "颈动脉, 椎动脉, 甲状腺, 乳腺, 睾丸, 肌骨, 肌骨(深), 动脉, 下肢静脉, 上肢静脉, 小儿腹部, 矫形外科, 浅表",
+      "apps_poc_cell": "D10",
+      "apps_poc_value": "颈动脉, 颈部血管(浅), 颈部血管(深), 上肢动脉, 下肢静脉, 肺部, 小儿腹部, 膈肌, 浅表, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 8,
+        "feature_id": 6,
+        "default_support": "supported",
+        "default_excludes": "[\"椎动脉\", \"上/下肢静脉\", \"肺部\", \"膈肌\"]"
+      },
+      "original_excludes": [
+        "椎动脉",
+        "上",
+        "下肢静脉",
+        "肺部",
+        "膈肌"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "椎动脉",
+        "上肢静脉",
+        "下肢静脉",
+        "肺部",
+        "膈肌"
+      ],
+      "token_replacements": {
+        "上": "上肢静脉"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 122,
+      "category_id": 8,
+      "feature_id": 7,
+      "category": "高频线阵",
+      "feature": "SMF",
+      "source_sheet": "模板",
+      "source_cell": "K10",
+      "source_value": "√(除椎动脉, 上/下肢静脉, 肺部, 膈肌)",
+      "apps_regular_cell": "C10",
+      "apps_regular_value": "颈动脉, 椎动脉, 甲状腺, 乳腺, 睾丸, 肌骨, 肌骨(深), 动脉, 下肢静脉, 上肢静脉, 小儿腹部, 矫形外科, 浅表",
+      "apps_poc_cell": "D10",
+      "apps_poc_value": "颈动脉, 颈部血管(浅), 颈部血管(深), 上肢动脉, 下肢静脉, 肺部, 小儿腹部, 膈肌, 浅表, 神经肌骨",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 8,
+        "feature_id": 7,
+        "default_support": "supported",
+        "default_excludes": "[\"椎动脉\", \"上/下肢静脉\", \"肺部\", \"膈肌\"]"
+      },
+      "original_excludes": [
+        "椎动脉",
+        "上",
+        "下肢静脉",
+        "肺部",
+        "膈肌"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "椎动脉",
+        "上肢静脉",
+        "下肢静脉",
+        "肺部",
+        "膈肌"
+      ],
+      "token_replacements": {
+        "上": "上肢静脉"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 166,
+      "category_id": 11,
+      "feature_id": 6,
+      "category": "常规相控阵",
+      "feature": "VFlow",
+      "source_sheet": "模板",
+      "source_cell": "J13",
+      "source_value": "√(除心脏, 心脏II, 小儿心脏, FAST, 心包积液(穿刺))",
+      "apps_regular_cell": "C13",
+      "apps_regular_value": "心脏, 心脏II, 小儿心脏, 经颅多普勒, 腹部常规",
+      "apps_poc_cell": "D13",
+      "apps_poc_value": "心脏, 小儿心脏, TCD, 腹部常规, FAST, 心包积液(穿刺)",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 11,
+        "feature_id": 6,
+        "default_support": "supported",
+        "default_excludes": "[\"心脏\", \"心脏II\", \"小儿心脏\", \"FAST\", \"心包积液(穿刺\"]"
+      },
+      "original_excludes": [
+        "心脏",
+        "心脏II",
+        "小儿心脏",
+        "FAST",
+        "心包积液(穿刺"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "心脏",
+        "心脏II",
+        "小儿心脏",
+        "FAST",
+        "心包积液(穿刺)"
+      ],
+      "token_replacements": {
+        "心包积液(穿刺": "心包积液(穿刺)"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 167,
+      "category_id": 11,
+      "feature_id": 7,
+      "category": "常规相控阵",
+      "feature": "SMF",
+      "source_sheet": "模板",
+      "source_cell": "K13",
+      "source_value": "√(除心脏, 心脏II, 小儿心脏, FAST, 心包积液(穿刺))",
+      "apps_regular_cell": "C13",
+      "apps_regular_value": "心脏, 心脏II, 小儿心脏, 经颅多普勒, 腹部常规",
+      "apps_poc_cell": "D13",
+      "apps_poc_value": "心脏, 小儿心脏, TCD, 腹部常规, FAST, 心包积液(穿刺)",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 11,
+        "feature_id": 7,
+        "default_support": "supported",
+        "default_excludes": "[\"心脏\", \"心脏II\", \"小儿心脏\", \"FAST\", \"心包积液(穿刺\"]"
+      },
+      "original_excludes": [
+        "心脏",
+        "心脏II",
+        "小儿心脏",
+        "FAST",
+        "心包积液(穿刺"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "心脏",
+        "心脏II",
+        "小儿心脏",
+        "FAST",
+        "心包积液(穿刺)"
+      ],
+      "token_replacements": {
+        "心包积液(穿刺": "心包积液(穿刺)"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 168,
+      "category_id": 11,
+      "feature_id": 8,
+      "category": "常规相控阵",
+      "feature": "立体血流",
+      "source_sheet": "模板",
+      "source_cell": "L13",
+      "source_value": "√(除FAST, 心包积液(穿刺))",
+      "apps_regular_cell": "C13",
+      "apps_regular_value": "心脏, 心脏II, 小儿心脏, 经颅多普勒, 腹部常规",
+      "apps_poc_cell": "D13",
+      "apps_poc_value": "心脏, 小儿心脏, TCD, 腹部常规, FAST, 心包积液(穿刺)",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 11,
+        "feature_id": 8,
+        "default_support": "supported",
+        "default_excludes": "[\"FAST\", \"心包积液(穿刺\"]"
+      },
+      "original_excludes": [
+        "FAST",
+        "心包积液(穿刺"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "FAST",
+        "心包积液(穿刺)"
+      ],
+      "token_replacements": {
+        "心包积液(穿刺": "心包积液(穿刺)"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    },
+    {
+      "template_id": 169,
+      "category_id": 11,
+      "feature_id": 11,
+      "category": "常规相控阵",
+      "feature": "常规造影",
+      "source_sheet": "模板",
+      "source_cell": "O13",
+      "source_value": "√(除FAST, 心包积液(穿刺))",
+      "apps_regular_cell": "C13",
+      "apps_regular_value": "心脏, 心脏II, 小儿心脏, 经颅多普勒, 腹部常规",
+      "apps_poc_cell": "D13",
+      "apps_poc_value": "心脏, 小儿心脏, TCD, 腹部常规, FAST, 心包积液(穿刺)",
+      "template_version_id": 3,
+      "template_version_original": {
+        "category_id": 11,
+        "feature_id": 11,
+        "default_support": "supported",
+        "default_excludes": "[\"FAST\", \"心包积液(穿刺\"]"
+      },
+      "original_excludes": [
+        "FAST",
+        "心包积液(穿刺"
+      ],
+      "decision": "resolved",
+      "normalized_excludes": [
+        "FAST",
+        "心包积液(穿刺)"
+      ],
+      "token_replacements": {
+        "心包积液(穿刺": "心包积液(穿刺)"
+      },
+      "reason": "依据同一原件功能限制与本类别应用定义恢复简称或被截断的右括号；中晚孕作为既有完整应用名保留。"
+    }
+  ]
+}

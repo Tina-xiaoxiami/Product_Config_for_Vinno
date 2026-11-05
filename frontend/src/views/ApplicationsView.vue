@@ -1,34 +1,28 @@
 <template>
-  <div class="page">
-    <!-- Draft bar -->
-    <div v-if="editMode" class="draft-bar">
-      <el-tag type="warning">编辑中</el-tag>
-      <span><strong>{{ pendingCount }}</strong> 项待提交变更</span>
-      <div class="draft-actions">
-        <el-button size="small" @click="cancelEdit">撤销</el-button>
-        <el-button size="small" type="primary" @click="submitChanges" :loading="submitting">提交并创建版本</el-button>
-        <el-button size="small" type="danger" @click="discardChanges">废弃全部</el-button>
-      </div>
-    </div>
-
-    <div class="card-header">
-      <span>应用管理（按探头类别）</span>
-      <div style="display:flex;gap:12px;align-items:center">
-        <template v-if="!editMode">
-          <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
-          <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
-          <el-button size="small" @click="openVersions">版本历史</el-button>
-          <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
-        </template>
-        <template v-else>
-          <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
-          <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
-        </template>
-      </div>
-    </div>
+  <div class="page" :class="{ embedded }">
+    <component :is="embedded ? 'div' : ProbeManagementActions" path="/applications" class="application-actions">
+      <strong v-if="embedded" class="application-title">应用范围</strong>
+      <span v-if="selectedCategory" class="management-meta">{{ selectedCategory.name }}</span>
+      <el-tag v-if="editMode" size="small" :type="draftSaved ? 'success' : 'danger'" role="status">{{ draftSaved ? '本机草稿已自动保存' : '草稿未保存' }} · {{ pendingCount }} 项</el-tag>
+      <el-button size="small" @click="showAllApps = true">全部应用列表</el-button>
+      <template v-if="!editMode">
+        <el-button size="small" type="primary" @click="enterEditMode">{{ embedded ? '编辑应用' : '编辑模式' }}</el-button>
+        <el-button size="small" @click="openVersions">应用版本</el-button>
+      </template>
+      <el-button size="small" :icon="Plus" @click="handleCreateApp">新增应用</el-button>
+      <template v-if="editMode">
+        <el-button size="small" @click="cancelEdit" :disabled="submitting">撤销</el-button>
+        <el-button size="small" type="primary" @click="submitChanges" :loading="submitting" :disabled="committedUncleared">提交并创建版本</el-button>
+        <el-button size="small" type="danger" @click="discardChanges" :disabled="submitting">废弃全部</el-button>
+      </template>
+    </component>
+    <el-alert v-if="draftError" :title="draftError" type="error" :closable="false">
+      <el-button v-if="committedUncleared" size="small" @click="clearLocalChanges">重试清理本机草稿</el-button>
+    </el-alert>
+    <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <div class="panel-layout">
       <!-- Left: Category Panel -->
-      <div class="panel panel-left">
+      <div v-if="!embedded" class="panel panel-left">
         <div class="panel-header">
           <span class="panel-title">探头类别</span>
           <span class="count-hint"><em>常规</em> <em>POC</em></span>
@@ -56,10 +50,8 @@
       <!-- Right: Apps Panel -->
       <div class="panel panel-right">
         <template v-if="selectedCategory">
-          <div class="panel-header">
-            <span class="panel-title">{{ selectedCategory.name }} — 应用</span>
-          </div>
           <div class="panel-body" v-loading="loadingApps">
+            <div class="app-groups">
             <!-- Regular Apps -->
             <div class="app-group">
               <div class="app-group-header">
@@ -69,7 +61,7 @@
               <div v-if="regularApps.length" class="app-list">
                 <div v-for="app in regularApps" :key="app.id" class="app-tag">
                   <span>{{ app.name }}<em v-if="app.en_name" class="en-name">{{ app.en_name }}</em></span>
-                  <el-button v-if="editMode" size="small" text type="danger" @click="stageRemove(app, 'regular')">移除</el-button>
+                  <el-button v-if="editMode" size="small" text type="danger" :disabled="submitting" @click="stageRemove(app, 'regular')">移除</el-button>
                 </div>
               </div>
               <el-empty v-else description="暂无常规应用" :image-size="40" />
@@ -84,31 +76,32 @@
               <div v-if="pocApps.length" class="app-list">
                 <div v-for="app in pocApps" :key="app.id" class="app-tag poc">
                   <span>{{ app.name }}<em v-if="app.en_name" class="en-name">{{ app.en_name }}</em></span>
-                  <el-button v-if="editMode" size="small" text type="danger" @click="stageRemove(app, 'poc')">移除</el-button>
+                  <el-button v-if="editMode" size="small" text type="danger" :disabled="submitting" @click="stageRemove(app, 'poc')">移除</el-button>
                 </div>
               </div>
               <el-empty v-else description="暂无 POC 应用" :image-size="40" />
             </div>
 
+            </div>
             <!-- Quick Add -->
             <div class="add-section">
-              <div class="add-section-title">{{ editMode ? '暂存添加（需提交后生效）' : '添加应用到本类别' }}</div>
+              <div class="add-section-title">{{ editMode ? '添加到草稿（自动保存，提交后生效）' : '添加应用到本类别' }}</div>
               <div class="add-section-row">
-                <el-select v-model="addAppId" placeholder="选择应用" filterable style="width:200px" size="small">
+                <el-select ref="addInput" v-model="addAppId" placeholder="选择应用" filterable style="width:200px" size="small">
                   <el-option v-for="a in availableApps" :key="a.id" :label="a.name" :value="a.id" />
                 </el-select>
                 <el-radio-group v-model="addAppType" size="small" style="margin:0 8px">
                   <el-radio value="regular">常规</el-radio>
                   <el-radio value="poc">POC</el-radio>
                 </el-radio-group>
-                <el-button size="small" type="primary" @click="stageAdd" :disabled="!addAppId">{{ editMode ? '暂存' : '添加' }}</el-button>
+                <el-button size="small" type="primary" @click="stageAdd" :disabled="!addAppId || submitting">{{ editMode ? '暂存' : '添加' }}</el-button>
               </div>
               <!-- Pending changes for current category -->
               <div v-if="editMode && pendingForCurrentCat.length" class="pending-list">
                 <div class="pending-title">待提交变更：</div>
                 <div v-for="ch in pendingForCurrentCat" :key="ch.key" class="pending-item" :class="ch.action">
                   <span>{{ ch.action === 'add' ? '+' : '-' }} {{ ch.appName }}（{{ ch.probeType === 'regular' ? '常规' : 'POC' }}）</span>
-                  <el-button size="small" text @click="undoPending(ch.key)">撤销</el-button>
+                  <el-button size="small" text :disabled="submitting" @click="undoPending(ch.key)">撤销</el-button>
                 </div>
               </div>
             </div>
@@ -121,14 +114,14 @@
     </div>
 
     <!-- Create Application Dialog -->
-    <el-dialog v-model="dialogVisible" title="新增应用定义" width="450px">
+    <el-dialog v-model="dialogVisible" title="新增应用定义" width="450px" :before-close="closeAppDialog" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving">
       <el-form :model="form" label-width="70px">
         <el-form-item label="中文名"><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="英文名"><el-input v-model="form.en_name" placeholder="如 Abdomen" /></el-form-item>
         <el-form-item label="排序"><el-input-number v-model="form.sort_order" :min="0" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="closeAppDialog()">取消</el-button>
         <el-button type="primary" @click="saveApp" :loading="saving">保存</el-button>
       </template>
     </el-dialog>
@@ -162,7 +155,7 @@
         </el-table-column>
         <el-table-column label="操作" width="80" align="center">
           <template #default="{ row }">
-            <el-button size="small" text type="danger" @click="deleteApp(row)">删除</el-button>
+            <el-button size="small" text type="danger" @click="deleteApp(row)" :disabled="pendingCount > 0 || submitting">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -175,7 +168,7 @@
         <el-table-column prop="created_at" label="时间" width="200" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
-            <el-button size="small" type="warning" @click="rollback(row)">回滚</el-button>
+            <el-button size="small" type="warning" @click="rollback(row)" :disabled="pendingCount > 0 || submitting">回滚</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -185,12 +178,20 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getProbeCategories, getApplications, createApplication, deleteApplication } from '../api/data'
 import api from '../api/index'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
+import { applicationEditorState, createCategoryApplicationLoader, createApplicationDraftStore, applicationChangeStillPending } from '../utils/probeApplications'
+
+const props = defineProps({ embedded: Boolean, categories: { type: Array, default: () => [] }, categoryId: { type: Number, default: null } })
+const emit = defineEmits(['counts', 'changed', 'editor-state'])
+const route = useRoute()
 const loading = ref(false)
 const categories = ref([])
 const selectedCategory = ref(null)
@@ -207,8 +208,13 @@ const availableApps = ref([])
 
 // Create app
 const dialogVisible = ref(false)
+const closingAppDialog = ref(false)
 const saving = ref(false)
 const form = reactive({ name: '', en_name: '', sort_order: 0 })
+const formBaseline = ref(JSON.stringify(form))
+const formDirty = computed(() => dialogVisible.value && JSON.stringify(form) !== formBaseline.value)
+const addInput = ref()
+const loadError = ref('')
 
 // All apps dialog
 const showAllApps = ref(false)
@@ -219,7 +225,21 @@ const typeFilter = ref('')
 const editMode = ref(false)
 const submitting = ref(false)
 // pendingChanges: { key -> { action: 'add'|'remove', catId, appId, appName, probeType } }
-const pendingChanges = reactive({})
+const draftError = ref('')
+const draftSaved = ref(true)
+const committedUncleared = ref(false)
+let draftWritePaused = false
+const draftStore = createApplicationDraftStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value), removeItem: key => localStorage.removeItem(key) }, message => { draftError.value = message })
+const restoredDraft = draftStore.restore()
+const pendingChanges = reactive(restoredDraft.changes)
+let initialCategoryRequested = Number(route.query.category_id) || restoredDraft.categoryId
+editMode.value = restoredDraft.editMode
+draftSaved.value = !restoredDraft.error
+watch(() => ({ changes: { ...pendingChanges }, editMode: editMode.value, categoryId: selectedCategory.value?.id || restoredDraft.categoryId }), value => {
+  if (draftWritePaused || committedUncleared.value) return
+  draftSaved.value = draftStore.save(value.changes, value)
+  if (draftSaved.value) draftError.value = ''
+}, { deep: true, flush: 'sync' })
 
 // Version management
 const showVersions = ref(false)
@@ -239,7 +259,7 @@ const regularApps = computed(() => {
     if (ch.action === 'remove') removed.add(ch.appId)
     if (ch.action === 'add') added.push({ id: ch.appId, name: ch.appName, en_name: '', _pending: true })
   }
-  return [...base.filter(a => !removed.has(a.id)), ...added]
+  return [...base.filter(a => !removed.has(a.id)), ...added.filter(app => !base.some(existing => existing.id === app.id))]
 })
 
 const pocApps = computed(() => {
@@ -254,7 +274,7 @@ const pocApps = computed(() => {
     if (ch.action === 'remove') removed.add(ch.appId)
     if (ch.action === 'add') added.push({ id: ch.appId, name: ch.appName, en_name: '', _pending: true })
   }
-  return [...base.filter(a => !removed.has(a.id)), ...added]
+  return [...base.filter(a => !removed.has(a.id)), ...added.filter(app => !base.some(existing => existing.id === app.id))]
 })
 
 // Pending changes for current category (for display)
@@ -280,57 +300,83 @@ const filteredAllApps = computed(() => {
   })
 })
 
-const loadCategories = async () => {
+const editorState = computed(() => applicationEditorState({ pendingCount: pendingCount.value, editMode: editMode.value,
+  submitting: submitting.value, saving: saving.value || closingAppDialog.value, dialogOpen: dialogVisible.value, formDirty: formDirty.value, draftSaved: draftSaved.value }))
+watch(editorState, value => emit('editor-state', value), { immediate: true, flush: 'sync' })
+const loadCategories = async (force = false) => {
   loading.value = true
   try {
-    const res = await getProbeCategories({ limit: 200 })
-    categories.value = res.items || []
-    if (!selectedCategory.value && categories.value.length) {
-      selectCategory(categories.value[0])
-    }
-  } catch { ElMessage.error('加载探头类别失败') } finally { loading.value = false }
+    const source = props.embedded ? props.categories : (await getProbeCategories({ limit: 200 })).items || []
+    categories.value = source
+    const requested = props.embedded ? props.categoryId : initialCategoryRequested
+    const selected = source.find(cat => cat.id === requested) || source.find(cat => cat.id === selectedCategory.value?.id) || source[0]
+    if (selected) { await selectCategory(selected, force); initialCategoryRequested = null }
+    else { selectedCategory.value = null; categoryLoader.invalidate(); categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] }
+    return true
+  } catch { loadError.value = '加载探头类别失败，请重试'; return false }
+  finally { loading.value = false }
 }
-
-const selectCategory = async (cat) => {
-  selectedCategory.value = cat
-  await loadCategoryApps(cat.id)
-  await loadAvailableApps(cat.id)
+const categoryLoader = createCategoryApplicationLoader({
+  readApps: id => api.get(`/probe-categories/${id}/apps`),
+  readAvailable: id => api.get(`/probe-categories/${id}/available-apps`),
+  selectedId: () => selectedCategory.value?.id,
+  start: () => { loadingApps.value = true; loadError.value = ''; categoryApps.value = { regular: [], poc: [] }; availableApps.value = [] },
+  loaded: (_id, apps, available) => { categoryApps.value = apps; availableApps.value = available },
+  failed: () => { loadError.value = '当前类别应用加载失败，请重试' },
+  finished: () => { loadingApps.value = false }
+})
+const selectCategory = async (cat, force = false) => {
+  if (!force && !editorState.value.canSwitch) return false
+  selectedCategory.value = cat; addAppId.value = null
+  return categoryLoader.load(cat.id)
 }
-
-const loadCategoryApps = async (catId) => {
-  loadingApps.value = true
-  try {
-    categoryApps.value = await api.get(`/probe-categories/${catId}/apps`)
-  } catch { categoryApps.value = { regular: [], poc: [] } } finally { loadingApps.value = false }
-}
-
-const loadAvailableApps = async (catId) => {
-  try {
-    availableApps.value = await api.get(`/probe-categories/${catId}/available-apps`)
-  } catch { availableApps.value = [] }
-}
+const loadCategoryApps = async catId => categoryLoader.load(catId)
+const loadAvailableApps = async catId => categoryLoader.load(catId)
+watch(() => [props.categoryId, props.categories], async ([id, source], previous) => {
+  if (!props.embedded) return
+  categories.value = source
+  const selected = source.find(category => category.id === id)
+  if (!selected) {
+    selectedCategory.value = null
+    categoryLoader.invalidate()
+    categoryApps.value = { regular: [], poc: [] }; availableApps.value = []; addAppId.value = null
+    loadingApps.value = false
+    if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
+    return
+  }
+  if (selected && (selected.id !== selectedCategory.value?.id || !previous)) await selectCategory(selected)
+  else selectedCategory.value = selected
+  if (source !== previous?.[1]) await Promise.all([updateCounts(), loadAllApps()])
+})
 
 // ========= Edit mode =========
+const clearLocalChanges = () => {
+  if (!draftStore.clear()) { draftSaved.value = false; return false }
+  draftWritePaused = true
+  try { Object.keys(pendingChanges).forEach(key => delete pendingChanges[key]); editMode.value = false }
+  finally { draftWritePaused = false }
+  draftSaved.value = true; draftError.value = ''; committedUncleared.value = false
+  return true
+}
 const enterEditMode = () => {
+  if (submitting.value || committedUncleared.value) return
   editMode.value = true
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
 }
-
 const cancelEdit = () => {
-  editMode.value = false
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
+  if (submitting.value) return false
+  return clearLocalChanges()
 }
-
 const discardChanges = () => {
-  Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
-  editMode.value = false
-  ElMessage.success('已废弃所有变更')
+  if (submitting.value) return
+  if (clearLocalChanges()) ElMessage.success('已废弃所有本机草稿变更')
 }
 
 const stageAdd = () => {
+  if (submitting.value || committedUncleared.value) return
   if (!addAppId.value || !selectedCategory.value) return
   const app = availableApps.value.find(a => a.id === addAppId.value)
   if (!app) return
+  editMode.value = true
   const key = `${selectedCategory.value.id}_${app.id}_${addAppType.value}`
   // If there's a pending remove for this same combo, just remove the pending
   if (pendingChanges[key]?.action === 'remove') {
@@ -342,6 +388,7 @@ const stageAdd = () => {
 }
 
 const stageRemove = (app, probeType) => {
+  if (submitting.value || committedUncleared.value) return
   if (!selectedCategory.value) return
   const key = `${selectedCategory.value.id}_${app.id}_${probeType}`
   // If there's a pending add for this same combo, just remove the pending
@@ -353,51 +400,46 @@ const stageRemove = (app, probeType) => {
 }
 
 const undoPending = (key) => {
+  if (submitting.value || committedUncleared.value) return
   delete pendingChanges[key]
 }
 
 const submitChanges = async () => {
-  const entries = Object.entries(pendingChanges)
+  if (submitting.value || committedUncleared.value) return
+  let entries = Object.values(pendingChanges)
   if (!entries.length) return ElMessage.warning('没有待提交的变更')
   submitting.value = true
-  let ok = 0; let fail = 0
   try {
-    for (const [, ch] of entries) {
-      try {
-        if (ch.action === 'add') {
-          await api.post(`/probe-categories/${ch.catId}/apps`, {
-            application_id: ch.appId,
-            probe_type: ch.probeType
-          })
-        } else {
-          await api.delete(`/probe-categories/${ch.catId}/apps/${ch.appId}?probe_type=${ch.probeType}`)
-        }
-        ok++
-      } catch { fail++ }
+    const categoryIds = [...new Set(entries.map(change => change.catId))]
+    const current = new Map(await Promise.all(categoryIds.map(async id => [id, await api.get(`/probe-categories/${id}/apps`)])))
+    entries = entries.filter(change => applicationChangeStillPending(change, current.get(change.catId)))
+    if (!entries.length) {
+      if (clearLocalChanges()) ElMessage.success('修改已生效，本机草稿已清理，未创建新版本')
+      return
     }
-    if (ok > 0) {
-      ElMessage.success(`提交完成：${ok} 项成功${fail ? `，${fail} 项失败` : ''}`)
-      // Create an application version snapshot
-      try {
-        await api.post('/applications/version', { version_number: `v${Date.now()}`, description: '应用关联变更' })
-      } catch {}
-    } else {
-      ElMessage.error('全部提交失败')
+    await api.post('/applications/associations/batch', {
+      changes: entries.map(ch => ({ action: ch.action, category_id: ch.catId, application_id: ch.appId, probe_type: ch.probeType })),
+      version_number: `v${Date.now()}`,
+      description: '应用关联变更'
+    })
+    if (clearLocalChanges()) ElMessage.success(`已提交 ${entries.length} 项变更并创建版本`)
+    else {
+      committedUncleared.value = true
+      draftError.value = '服务器已提交并创建版本，但本机旧草稿未清理；请重试清理，勿重复提交'
+      ElMessage.warning('版本已创建，本机旧草稿清理失败')
     }
-    Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
-    editMode.value = false
-    if (selectedCategory.value) {
-      await loadCategoryApps(selectedCategory.value.id)
-      await loadAvailableApps(selectedCategory.value.id)
-    }
-    await updateCounts()
-    await loadAllApps()
-  } catch { ElMessage.error('提交失败') } finally { submitting.value = false }
+    await refreshData({ force: true })
+    emit('changed')
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '提交失败，编辑内容已保留，请重试')
+  } finally {
+    submitting.value = false
+  }
 }
 
 // ========= CRUD for app definitions =========
 const handleCreateApp = () => {
-  form.name = ''; form.en_name = ''; form.sort_order = 0; dialogVisible.value = true
+  form.name = ''; form.en_name = ''; form.sort_order = 0; formBaseline.value = JSON.stringify(form); dialogVisible.value = true
 }
 
 const saveApp = async () => {
@@ -412,23 +454,27 @@ const saveApp = async () => {
     }
     await updateCounts()
     await loadAllApps()
+    emit('changed')
   } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 
+let countsRequest = 0
 const updateCounts = async () => {
-  for (const cat of categories.value) {
+  const request = ++countsRequest
+  const entries = await Promise.all(categories.value.map(async cat => {
     try {
       const apps = await api.get(`/probe-categories/${cat.id}/apps`)
-      categoryAppCounts.value[cat.id] = {
-        regular: apps.regular?.length || 0,
-        poc: apps.poc?.length || 0,
-        total: (apps.regular?.length || 0) + (apps.poc?.length || 0)
-      }
-    } catch { categoryAppCounts.value[cat.id] = { regular: 0, poc: 0, total: 0 } }
-  }
+      return [cat.id, { regular: apps.regular?.length || 0, poc: apps.poc?.length || 0,
+        total: (apps.regular?.length || 0) + (apps.poc?.length || 0) }]
+    } catch { return [cat.id, categoryAppCounts.value[cat.id] || { regular: null, poc: null, total: null }] }
+  }))
+  if (request !== countsRequest) return
+  categoryAppCounts.value = Object.fromEntries(entries)
+  emit('counts', { ...categoryAppCounts.value })
 }
 
 const deleteApp = async (row) => {
+  if (pendingCount.value || submitting.value || saving.value) return ElMessage.warning('请先提交或撤销应用编辑，再删除定义')
   try {
     await ElMessageBox.confirm(`确认删除应用"${row.name}"？此操作不可恢复。`, '确认删除', { type: 'warning' })
     await deleteApplication(row.id)
@@ -439,7 +485,8 @@ const deleteApp = async (row) => {
       await loadAvailableApps(selectedCategory.value.id)
     }
     await updateCounts()
-  } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+    emit('changed')
+  } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.detail || '删除失败') }
 }
 
 const loadAllApps = async () => {
@@ -457,46 +504,57 @@ const openVersions = async () => {
   showVersions.value = true
 }
 const rollback = async (row) => {
+  if (pendingCount.value || submitting.value || saving.value) return ElMessage.warning('请先处理应用编辑，再回滚版本')
   try {
     await api.post(`/applications/rollback/${row.id}`)
     ElMessage.success('回滚成功')
     await loadVersions()
+    await refreshData({ force: true })
+    emit('changed')
   } catch { ElMessage.error('回滚失败') }
 }
 
-onMounted(async () => {
-  await loadCategories()
-  await updateCounts()
-  await loadAllApps()
-})
+const refreshData = async ({ force = false } = {}) => {
+  if (!force && !editorState.value.canRefresh) return false
+  const success = await loadCategories(force)
+  if (!success) return false
+  await Promise.all([updateCounts(), loadAllApps()])
+  return true
+}
+const closeAppDialog = async done => {
+  if (saving.value || closingAppDialog.value) return false
+  closingAppDialog.value = true
+  try {
+    if (formDirty.value) await ElMessageBox.confirm('应用定义尚未保存，是否放弃修改？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' })
+    dialogVisible.value = false
+    if (typeof done === 'function') done()
+    return true
+  } catch { return false }
+  finally { closingAppDialog.value = false }
+}
+const discardLocal = () => { if (!cancelEdit()) return false; dialogVisible.value = false; addAppId.value = null; return true }
+const requestLeave = async () => {
+  if (editorState.value.busy) return false
+  if (!editorState.value.hasUnsavedChanges) return true
+  try { await ElMessageBox.confirm('应用编辑尚未提交，是否放弃并离开？', '未提交的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+  catch { return false }
+  return discardLocal()
+}
+const focusAdd = async () => { await nextTick(); addInput.value?.focus() }
+const beforeUnload = event => { if (!props.embedded && editorState.value.protected) { event.preventDefault(); event.returnValue = '' } }
+useWorkspaceRefresh(() => refreshData({ force: !categories.value.length }), { canRefresh: () => !categories.value.length || editorState.value.canRefresh && (!props.embedded || props.categories.length > 0) })
+onBeforeRouteLeave(() => props.embedded ? true : requestLeave())
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { categoryLoader.dispose(); countsRequest += 1; window.removeEventListener('beforeunload', beforeUnload) })
+defineExpose({ editorState, refresh: refreshData, requestLeave, discardLocal, focusAdd })
 </script>
 
 <style scoped>
-.page { padding: 0; height: calc(100vh - 120px); display: flex; flex-direction: column; }
-
-/* Draft bar */
-.draft-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-.draft-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-}
-
-.card-header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; padding: 0 0 12px; gap: 12px; }
+.page { padding: 0; flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 
 .panel-layout {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   flex: 1;
   min-height: 0;
 }
@@ -504,41 +562,43 @@ onMounted(async () => {
 .panel {
   background: #fff;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .panel-left {
-  width: 280px;
-  min-width: 240px;
+  width: 220px;
+  min-width: 200px;
   flex-shrink: 0;
 }
 
 .panel-right {
   flex: 1;
+  min-width: 0;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e4e7ed;
   background: #fafafa;
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #303133;
 }
 
 .panel-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 /* Category items */
@@ -546,7 +606,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
@@ -556,7 +616,7 @@ onMounted(async () => {
 .category-item.active {
   background: #ecf5ff;
   border-left: 3px solid #409eff;
-  padding-left: 9px;
+  padding-left: 7px;
 }
 
 .category-info {
@@ -580,7 +640,7 @@ onMounted(async () => {
 .count-poc { color: #e6a23c; font-weight: 500 }
 
 /* App groups */
-.app-group { padding: 12px 16px; border-bottom: 1px solid #f0f0f0 }
+.app-group { padding: 8px 10px; border-bottom: 1px solid #f0f0f0 }
 .app-group-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 500; font-size: 13px }
 .app-count { font-weight: 400; font-size: 12px; color: #909399 }
 .app-list { display: flex; flex-wrap: wrap; gap: 6px }
@@ -596,7 +656,7 @@ onMounted(async () => {
 /* Pending changes list */
 .pending-list {
   margin-top: 8px;
-  padding: 8px;
+  padding: 6px;
   background: #fffbeb;
   border: 1px solid #fde68a;
   border-radius: 6px;
@@ -615,4 +675,20 @@ onMounted(async () => {
 .pending-item.remove { color: #dc2626 }
 
 .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; }
+.application-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.application-title { font-size: 13px; margin-right: auto; }
+.embedded { flex: none; min-height: 0; width: 100%; }
+.embedded .application-actions { margin-bottom: 6px; }
+.embedded .panel-layout { flex: none; }
+.embedded .panel-right { border: 0; }
+.embedded .panel-body { padding: 0; overflow: auto; max-height: 300px; }
+.embedded .app-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.embedded .app-group { padding: 6px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; }
+.embedded .app-group-header { margin-bottom: 4px; }
+.embedded .app-list { gap: 4px; }
+.embedded .app-tag { padding: 2px 5px; }
+.embedded .add-section { padding: 6px 0 0; }
+.embedded .add-section-title { margin-bottom: 4px; }
+.embedded .add-section-row { flex-wrap: wrap; }
+@media (max-width: 760px) { .embedded .app-groups { grid-template-columns: 1fr; } }
 </style>

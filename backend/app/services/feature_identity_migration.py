@@ -46,6 +46,7 @@ def _add_feature_identity_columns(connection: sqlite3.Connection) -> None:
         "primary_cn_name": "TEXT",
         "primary_en_name": "TEXT",
         "identity_status": "TEXT NOT NULL DEFAULT 'pending'",
+        "probe_matrix_enabled": "BOOLEAN NOT NULL DEFAULT 1",
     }
     for column, definition in definitions.items():
         if column not in columns:

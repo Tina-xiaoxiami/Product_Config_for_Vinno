@@ -1,0 +1,185 @@
+中文名称	英文名称	中文UI
+谐波模式	HAR	HAR
+B模式	B	B
+彩色多普勒	CF	CF
+能量多普勒	PDI	PDI
+脉冲多普勒	PW	PW
+解剖M型	M	M
+连续多普勒	CW	CW
+三维成像	3D	3D
+实时三维成像	4D	4D
+组织多普勒	TD	TD
+组织速度成像	TVI	TVI
+造影成像	CBI	CBI
+超分辨显微成像	URM	URM
+应变式弹性成像	EI	EI
+二维实时剪切波弹性成像	VShear	VShear
+点式剪切波弹性成像	pVShear	pVShear
+复合超声成像	VFusion	VFusion
+组织斑点噪声抑制	VSpeckle	VSpeckle
+全域成像	ZoneImage	全域成像
+自动优化	Auto	Auto按键后，显示屏显示自动优化已启用
+声速自适应技术	AAS	AAS
+组织自适应成像	Tissue Boost	Tissue Boost
+时间增益补偿	TGC	TGC
+侧向增益补偿	LGC	LGC
+双同步	Duplex	双同步
+三同步	Triplex	三同步
+局部放大	Zoom	Zoom-旋钮按键
+全屏	Full Screen	全屏
+局部高清成像	HD Imaging	HD Imaging
+穿刺引导	Biopsy	穿刺引导
+穿刺增强	Needle Enhancement	穿刺增强
+自动穿刺增强	Auto Needle Enhancement	自动穿刺增强
+微磁引导	VGuide	VGuide
+梯形成像	TView	TView
+"宽景成像（Pview）
+1)二维宽景成像
+2)彩色宽景成像
+3)能量宽景成像"		PView
+彩色M型	CM	CM
+全方位解剖M型	MAM	MAM
+曲线解剖M型	Curve M	Curve M
+组织速度M型	TVM	TVM
+组织能量多普勒	TPI	TPI
+高灵敏度彩色多普勒	VFlow	VFlow
+超微细血流成像	SMF	SMF
+立体血流	VLuminous Flow	立体血流
+向量血流成像	VFI	VFI
+心电信号	ECG	ECG
+PCG	PCG	PCG
+脉搏波定量分析	PWV	PWV
+超快脉搏波定量分析	PWV+	PWV+
+动脉僵硬度自动测量	AMAS	AMAS
+高脉冲重复频率	HPRF	HPRF
+心脏参数阈值提示	VCQ	设置：VCQ
+组织多普勒定量分析	TDI QA	TDI QA
+智能多普勒追踪	Live Track	Live Track
+多门多普勒	Multi Doppler	多门多普勒
+超声心动图质控系统	UQC-Cardiac	UQC-Cardiac
+心肌应变成像	Strain	Strain
+心肌矢量成像	VVI	VVI
+负荷成像	Stress Echo	负荷成像
+心肌造影	MCE	心肌造影
+左心室显影	LVO	左心室显影
+超快造影	uFR CBI	超快造影
+免造影超分辨显微成像	eURM	eURM
+声动力成像	VFlash	VFlash
+造影时间-强度曲线分析	TIC	TIC
+灌注参量成像	PPI	PPI
+微血管造影增强成像	MCP	MCP
+参量累积成像	PMCP	PMCP
+切面引导	Smart Guide	Smart Guide
+输卵管容积造影	HSG	腔内容积探头，3D/4D模式下，用HSG代替CBI
+智能三维成像	Smart 3D	Smart 3D
+智能胎儿面部成像	Smart Face	Smart Face
+胎儿稚容成像	Baby Moment	胎儿稚容成像
+自由臂3D	Free 3D	Free 3D
+三维焕流成像	Color 3D	HAR+CF+3D/4D或HAR+PDI+3D/4D
+自由切面成像	Free View	Free View
+超声断层成像	MCut	MCut
+智能三维容积计算	Vocal	Vocal
+时间空间相关成像	STIC	STIC
+壁龛成像	Niche View	壁龛成像
+多光源渲染成像	Light Lab	Light Lab
+魔术刀	Magic Cut	魔术刀
+3D内视渲染成像	VNavIn	VNavIn
+羊膜腔镜渲染成像	HQ 3D/4D	羊膜腔镜渲染成像
+HQ剪影渲染成像	HQ Silhouette	HQ剪影渲染成像
+超声衰减成像	VATT	VATT
+"剪切波弹性成像
+a.二维实时剪切波弹性成像（VShear）
+b.点式剪切波弹性成像（pVShear)
+c.粘弹性成像（VIS）
+d.流性成像（FLU）"		"剪切波弹性成像
+a.VShear
+b.pVShear
+c.VIS
+d.FLU"
+肝纹理成像	VLT	VLT
+声速成像	USV (US Velocity)	USV
+多参数联合分析	MMA (Multi-Mode Analysis)	MMA
+融合成像	Fusion Imaging	点击后，主显示器提示“XXX已开启”
+多模态图像对比	Multi-Image Comparison	点击后，主显示器提示“XXX已开启”
+子宫畸形分类	Uterine Class	子宫畸形分类
+子宫内膜容受性分析	Smart ER	Smart ER
+卵巢储备功能分析	Ovarian Reserve	卵巢储备功能分析
+"自动盆底超声解决方案VAim+ Pelvic Package：
+a)VAim+ 盆底脱垂自动测量（VAim+ Pelvic）
+b)VAim+ 3D肛提肌裂孔自动测量（VAim+ LEVA (3D)）
+c)盆底程序化测量（Pelvic Helper）
+d)智能开闭闭（Open-Closing-Closed）"		"各子项功能：
+VAim+ Pelvic(Rest) VAim+盆底脱垂自动测量(静息)
+VAim+ Pelvic(Valsalva) VAim+ 盆底脱垂自动测量(Valsalva)
+VAim+ LEVA (3D) VAim+ 肛提肌裂孔自动测量
+Pelvic Helper
+智能开闭闭"
+甲状腺自动检测分析	VAid Thyroid	VAid Thyroid
+乳腺自动检测分析	VAid Breast	VAid Breast
+肝脏自动检测分析	VAid Liver	VAid Liver
+肾脏自动检测分析	VAid Kidney	VAid Kidney
+自动肝肾比	VAid HRI	VAid HRI
+胆囊自动检测分析	VAid GB	VAid GB
+颈动脉自动检测分析	VAid Carotid	VAid Carotid
+神经自动检测分析	VAid Nerve	VAid Nerve
+肌骨自动检测分析	VAid MSK	VAid MSK
+妇科自动检测分析	VAid GYN	VAid GYN
+VAim+小儿髋关节自动测量	VAim+ HIP	"VAim+ HIP
+VAim+小儿髋关节自动测量"
+VAim+产科自动测量	VAim+ OB	"VAim+ OB
+VAim+产科自动测量"
+VAim+卵泡自动测量	VAim+ Follicle	"VAim+ Follicle
+VAim+卵泡自动测量"
+VAim+羊水自动测量	VAim+ AFI	"VAim+ AFI
+VAim+羊水自动测量"
+VAim+胃窦面积自动测量	VAim+ Antral	"VAim+ Antral
+VAim+胃窦面积自动测量"
+VAim+子宫自动测量	VAim+ Uterus	"VAim+ Uterus
+VAim+子宫自动测量"
+VMind+OB产筛精灵	VMind+ OB	VMind+ OB
+血流量自动测量	Auto Flow VOL	FLOW VOL包含手动、自动测量方法
+颈动脉内中膜自动测量	Auto IMT	颈动脉内中膜包含手动、自动测量方法
+颈动脉内中膜实时自动测量	Live IMT	Live IMT
+膀胱容积自动测量	Auto Bladder	膀胱容积包含手动、自动测量方法
+左心室射血分数自动测量	Auto EF	Auto EF
+左心室射血分数实时自动测量	Live EF	Live EF
+LV Study 自动测量	Auto LV Study	Auto LV Study
+二尖瓣环收缩期位移自动测量	Auto MAPSE	Auto MAPSE
+三尖瓣环收缩期位移自动测量	Auto TAPSE	Auto TAPSE
+"左室舒张功能自动测量（Auto DFR）：
+a)E峰A峰自动识别与测量(Auto E/A)
+b)E'峰A'峰自动识别与测量(Auto E'/A')"		Auto E/A和Auto E'/A'功能激活后TAB名显示为Auto DFR
+二维卵泡自动测量	Auto Follicle(2D)	2D模式Auto Follicle
+三维卵泡自动测量	Auto Follicle(3D)	3D模式Auto Follicle
+子宫内膜自动测量	Auto En.	En.包含手动、自动测量方法
+产科自动测量	Auto OB	"多个测量项且包含手动、自动测量方法
+BPD(Hadlock)双顶径
+HC(Hadlock)头围
+AC(Hadlock)腹围
+FL(Hadlock)股骨长
+OFD(ASUM2000)枕额径 等"
+颈项透明层自动测量	Auto NT	颈项透明层包含手动、自动测量方法
+颅内透明层自动测量	Auto IT	颅内透明层包含手动、自动测量方法
+3D盆底肛提肌裂孔自动测量	Auto Levator Ani	3D盆底肛提肌裂孔自动测量
+膈肌活动度自动测量	Auto DE	Auto DE
+膈肌增厚率自动测量	Auto DTF	Auto DTF
+胸膜自动测量	Auto Pleura	Auto Pleura
+B线自动测量	Auto BLine	Auto BLine
+下腔静脉塌陷率自动测量	Auto IVC	Auto IVC
+时间速度积分自动测量	Auto VTI	Auto VTI
+胃排空分析	Auto GEA	Auto GEA
+临床超声模块	POC Protocol	临床超声模块
+超声教学	Tutorials	超声教学
+远程会诊	Remote	远程会诊
+智能感知	Smart Sense	智能感知
+记忆追踪对比技术	Easy Compare	点击后，主显示器提示“XXX已开启”
+自定义工作流	VWork	自定义工作流
+自定义报告	VReport	自定义报告
+导出3D打印数据	Export 3D data for 3D printer	导出3D打印数据
+DICOM	DICOM export and storage, printer, worklist	DICOM
+云服务	VCloud	云服务
+5G网络	5G	5G
+码上享	Easy Transfer	码上享
+蓝牙传输	Bluetooth	蓝牙传输
+邮件传输	E-Mail	邮件传输
+FTP服务	FTP Server	FTP服务

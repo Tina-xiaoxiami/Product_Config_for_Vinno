@@ -194,7 +194,7 @@ def _probe_summary(items: list[dict]) -> dict[str, int]:
         "optional": sum(item["effective_status"] == "O" for item in items),
         "tender": sum(item["effective_status"] == "Δ" for item in items),
         "undefined": sum(item["effective_status"] == "未定义" for item in items),
-        "auxiliary": sum(item["status_source"] == "current_config_aux" for item in items),
+        "auxiliary": sum(bool(item["current_config_note"]) for item in items),
         "conflicts": sum(bool(item["conflict"]) for item in items),
     }
 
@@ -253,12 +253,17 @@ async def list_product_registration_probes(
     if not mappings:
         return None
 
+    # 结论按「探头型号 → 该型号在探头基础数据里的全部变体 IPN → 配置管理选型类别」算：
+    # 只要有一个变体在本机型的选型类别是正式类别（X/O/Δ），该探头就判为支持，并取该类别。
+    # 注册资料里的 IPN 不参与判定 —— 注册证只有"探头型号"的概念，且 national 的
+    # registration_probes 是全国共用的一行，会被别的证（含已停用的证）改写。
     result = await session.execute(
         text(
             """
             SELECT package.id AS registration_package_id,
                    country_probe.id AS probe_id,
-                   country_probe.probe_model, country_probe.ipn,
+                   country_probe.probe_model,
+                   COALESCE(item.ipn, probe.ipn, country_probe.ipn) AS ipn,
                    COALESCE(matrix.registration_status, 'unregistered')
                        AS registration_status,
                    value.selection_config, value.current_config,
@@ -286,19 +291,43 @@ async def list_product_registration_probes(
              AND matrix.version_id = package_version.id
              AND matrix.version_probe_id = probe.id
             LEFT JOIN config_items item
-              ON country_probe.ipn IS NOT NULL
-             AND item.ipn = country_probe.ipn AND item.category = 'Probes'
-            LEFT JOIN probe_model_variants variant
-              ON variant.id = (
-                  SELECT MIN(candidate.id)
-                  FROM probe_model_variants candidate
-                  WHERE country_probe.ipn IS NOT NULL
-                    AND candidate.ipn IS NOT NULL
-                    AND UPPER(TRIM(candidate.ipn))
-                      = UPPER(TRIM(country_probe.ipn))
+              ON item.id = (
+                  -- 候选 IPN 按「配置管理的**英文描述** = 证上的探头型号」找。
+                  -- 不能拿探头管理的型号字段当匹配键：那里不一定建过该型号
+                  -- （例如 F4-9E 在探头管理里没有，配置管理里有 3 行英文描述是 F4-9E）。
+                  -- 英文描述带括号补充时也认（例如 X4-9E(Straight handle)）。
+                  SELECT candidate_item.id
+                  FROM config_items candidate_item
+                  LEFT JOIN config_values candidate_value
+                    ON candidate_value.item_id = candidate_item.id
+                   AND candidate_value.model_id = :product_model_id
+                  WHERE candidate_item.category = 'Probes'
+                    AND (
+                        UPPER(TRIM(COALESCE(candidate_item.en_desc, '')))
+                          = UPPER(TRIM(country_probe.probe_model))
+                        OR instr(
+                             UPPER(TRIM(COALESCE(candidate_item.en_desc, ''))),
+                             UPPER(TRIM(country_probe.probe_model)) || '('
+                           ) = 1
+                        OR instr(
+                             UPPER(TRIM(COALESCE(candidate_item.en_desc, ''))),
+                             UPPER(TRIM(country_probe.probe_model)) || '（'
+                           ) = 1
+                    )
+                  ORDER BY
+                    -- 只要有候选在本机型是正式类别（X/O/Δ）就算支持，并取该类别；
+                    -- 都没有时回退到任意候选，保证配置项名称与"研发当前配置"
+                    -- 备注照旧能取到（备注只作提示，不参与判定）。
+                    CASE WHEN UPPER(REPLACE(TRIM(COALESCE(candidate_value.selection_config, '')),
+                                            '∆', 'Δ')) IN ('X', 'O', 'Δ')
+                         THEN 0 ELSE 1 END,
+                    CASE WHEN candidate_value.id IS NULL THEN 1 ELSE 0 END,
+                    candidate_item.id
+                  LIMIT 1
               )
             LEFT JOIN probe_models probe_master
-              ON probe_master.id = variant.probe_model_id
+              ON UPPER(TRIM(probe_master.model_number))
+               = UPPER(TRIM(country_probe.probe_model))
             LEFT JOIN config_values value
               ON value.item_id = item.id
              AND value.model_id = :product_model_id
@@ -338,6 +367,7 @@ async def list_product_registration_probes(
             "effective_status": policy.effective_status,
             "status_source": policy.status_source,
             "strategy_is_formal": policy.is_formal,
+            "current_config_note": policy.current_config_note,
             "conflict": policy.conflict,
             "config_item_id": int(row.config_item_id) if row.config_item_id else None,
             "config_name": row.config_name,

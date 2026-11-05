@@ -8,16 +8,16 @@ def generate_next_version(last_version_number: str = None) -> str:
     生成下一个版本号
 
     Args:
-        last_version_number: 上一个版本号，如 "v1.0.0"
+        last_version_number: 上一个版本号，如 "1.0.0"
 
     Returns:
-        新版本号，如 "v1.0.1"
+        新版本号，如 "1.0.1"
     """
     if not last_version_number:
-        return "v1.0.0"
+        return "1.0.0"
 
     try:
-        # 移除v前缀并按.分割
+        # 移除v前缀并按.分割（兼容历史带 v 前缀的数据）
         version_str = last_version_number.lstrip('vV')
 
         # 处理预发布版本（如 1.0.0-beta）
@@ -31,7 +31,7 @@ def generate_next_version(last_version_number: str = None) -> str:
         minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
         patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
 
-        return f"v{major}.{minor}.{patch + 1}"
+        return f"{major}.{minor}.{patch + 1}"
     except (ValueError, IndexError):
         # 解析失败，返回默认版本号
-        return "v1.0.0"
+        return "1.0.0"

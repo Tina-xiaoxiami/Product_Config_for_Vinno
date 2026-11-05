@@ -1,50 +1,29 @@
 <template>
   <div class="knowledge-page">
-    <header class="knowledge-header">
-      <div>
-        <h2>产品知识库</h2>
-        <p>查询已确认产品知识；没有可靠答案的问题自动回流，确认后成为可复用知识。</p>
-        <p class="master-data-note">
-          主数据由基础数据统一维护：
-          <router-link to="/feature-manage">功能管理</router-link>
-          <span>·</span>
-          <router-link to="/registration-manage">注册管理</router-link>
-        </p>
-      </div>
-      <el-tag :type="stats.pending === 0 ? 'success' : 'danger'" effect="plain">
-        {{ stats.pending === 0 ? '无待确认功能' : `${stats.pending} 个功能待确认` }}
-      </el-tag>
-    </header>
-
-    <section class="stats-grid" v-loading="statsLoading">
-      <div class="stat-card primary">
-        <span class="stat-value">{{ stats.total_features }}</span>
-        <span class="stat-label">功能总数</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.auto_matched }}</span>
-        <span class="stat-label">自动匹配</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.confirmed }}</span>
-        <span class="stat-label">人工确认</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ stats.related }}</span>
-        <span class="stat-label">关系型功能</span>
-      </div>
-    </section>
-
     <el-tabs v-model="activeTab" class="knowledge-tabs">
       <el-tab-pane label="问答查询" name="qa">
         <section class="qa-ask-panel">
           <div class="qa-ask-heading">
             <div>
               <h3>直接提问</h3>
-              <p>系统只复用已经确认发布的答案；查不到时进入待确认队列，系统不会猜测。</p>
+              <p>查询已确认答案，或检索资料生成带原文依据的草稿；配置与参数按确定性规则查询，系统不会猜测缺失值。</p>
             </div>
             <el-tag type="success" effect="plain">受控知识</el-tag>
           </div>
+          <div class="qa-scope-controls" data-testid="knowledge-query-scope">
+            <el-select v-model="qaScope.market" size="small" aria-label="查询市场" placeholder="国内/海外" clearable @change="onQaMarketChange">
+              <el-option label="国内" value="domestic" />
+              <el-option label="海外" value="overseas" />
+            </el-select>
+            <el-select v-model="qaScope.product_model_id" size="small" aria-label="查询完整机型" placeholder="完整机型" filterable clearable :loading="qaModelsLoading" @change="onQaScopeChange">
+              <el-option v-for="model in qaAvailableModels" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" />
+            </el-select>
+            <el-input v-model="qaScope.software_version" size="small" aria-label="查询软件版本" placeholder="软件版本，如 1.14.80" maxlength="80" @input="onQaScopeInput" @change="loadQaQuestions" />
+          </div>
+          <p class="qa-scope-note">{{ knowledgeScopePayload(qaScope) ? knowledgeScopeLabel({ ...knowledgeScopePayload(qaScope), model_name: qaModels.find(model => model.id === qaScope.product_model_id)?.name }) : '请明确市场、完整机型和软件版本；历史答案不会自动套用到所选范围。' }}</p>
+          <el-alert v-if="qaModelsError" type="error" :closable="false" title="机型目录加载失败，请重试后查询">
+            <el-button link @click="loadQaModels">重新加载</el-button>
+          </el-alert>
           <el-input
             v-model="qaQuestion"
             data-testid="knowledge-question-input"
@@ -57,6 +36,8 @@
           />
           <div class="qa-ask-actions">
             <span>Ctrl + Enter 快速提问</span>
+            <div class="qa-query-buttons">
+            <el-button size="small" :loading="evidenceAnswer?.state.loading" :disabled="!knowledgeScopePayload(qaScope) || evidenceAnswer?.state.checking || evidenceAnswer?.state.available !== true" @click="evidenceAnswer?.run()">查资料并生成草稿</el-button>
             <el-button
               data-testid="ask-knowledge-question"
               type="primary"
@@ -66,44 +47,51 @@
             >
               查询答案
             </el-button>
+            </div>
           </div>
         </section>
+
+        <KnowledgeEvidenceAnswer ref="evidenceAnswer" :question="qaQuestion" :scope="knowledgeScopePayload(qaScope)" />
 
         <article v-if="qaResult" class="qa-result" :class="qaResult.status">
           <div class="qa-result-heading">
             <div>
               <el-tag :type="qaResult.status === 'answered' ? 'success' : 'warning'" effect="dark">
-                {{ qaResult.status === 'answered' ? '已有确认答案' : '等待确认' }}
+                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '等待确认' }}
               </el-tag>
               <span v-if="qaResult.match_type === 'similar'" class="similarity-note">
                 相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
               </span>
             </div>
-            <span class="qa-question-text">{{ qaResult.question }}</span>
+            <span class="qa-question-text">{{ questionDisplayText(qaResult) }}</span>
           </div>
           <template v-if="qaResult.answer">
-            <p class="qa-answer-text">{{ qaResult.answer.answer_text }}</p>
+            <p class="qa-answer-text">{{ answerDisplayText(qaResult.answer) }}</p>
             <div class="answer-meta">
               <span>版本 v{{ qaResult.answer.version }}</span>
+              <span v-if="qaResult.matched_scope?.country">答案来源国家 {{ qaResult.matched_scope.country }}</span>
               <span v-if="qaResult.answer.change_note">{{ qaResult.answer.change_note }}</span>
             </div>
             <div class="citation-section">
               <span class="section-label">答案依据</span>
               <div v-if="qaResult.answer.citations.length" class="citation-list">
-                <button
+                <div
                   v-for="citation in qaResult.answer.citations"
                   :key="citation.id"
-                  type="button"
-                  class="citation-link"
-                  @click="openCitation(citation)"
                 >
+                <button type="button" class="citation-link" @click="openCitation(citation)">
                   <strong>{{ citation.document_title }}</strong>
                   <span v-if="citation.source_ref">{{ citation.source_ref }}</span>
                   <small v-if="citation.excerpt">{{ citation.excerpt }}</small>
                 </button>
+                <a v-if="canViewUnverifiedOriginal(citation)" :href="citation.preview_url" target="_blank" rel="noopener noreferrer" class="unverified-original">普通原件查看（未核验版本及位置）</a>
+                </div>
               </div>
               <span v-else class="empty-text">本答案由产品负责人确认，暂未绑定原文位置</span>
             </div>
+          </template>
+          <template v-else-if="qaResult.status === 'needs_clarification'">
+            <p class="qa-pending-text">请补齐市场、完整机型和软件版本后重新查询；本次未创建问题或计入询问次数。</p>
           </template>
           <template v-else>
             <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
@@ -131,374 +119,80 @@
           </template>
         </article>
 
+        <section v-if="qaResult?.parameter_topics?.length" class="qa-parameter-topics" data-testid="qa-parameter-topics">
+          <strong>可按配置查询的参数主题</strong>
+          <span>尚未匹配配置；选择主题后，明确配置快照和型号，再查看对应参数。</span>
+          <el-button v-for="topic in qaResult.parameter_topics" :key="topic.id" size="small" type="primary" plain @click="openParameterTopic(topic.id)">{{ topic.name }} · 按配置查询</el-button>
+        </section>
+        <KnowledgeHistoryTrace v-if="qaResult?.history_trace" :trace="qaResult.history_trace" />
+
         <section class="qa-queue">
-          <div class="queue-heading">
-            <div>
-              <h3>{{ qaStatus === 'pending' ? '待确认问题' : '已发布问答' }}</h3>
-              <p>{{ qaStatus === 'pending' ? '优先处理被重复询问次数较多的问题。' : '已发布内容可以修订，历史版本不会丢失。' }}</p>
-            </div>
-            <el-radio-group v-model="qaStatus" size="small" @change="loadQaQuestions">
+          <div class="qa-queue-scope">
+            <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="onQaQueueModeChange">
+              <el-radio-button value="selected">当前查询范围</el-radio-button>
+              <el-radio-button value="legacy">历史范围待核实</el-radio-button>
+              <el-radio-button value="review">答案核对</el-radio-button>
+            </el-radio-group>
+            <el-button data-testid="qa-needs-review" size="small" :type="qaQueueMode === 'review' && qaEvidenceFilter === 'needs_review' ? 'primary' : 'default'" @click="showPendingAnswerReviews">待核对<span v-if="qaReviewCount !== null"> {{ qaReviewCount }}</span></el-button>
+            <span>{{ qaQueueMode === 'review' ? '跨范围维护；逐项查看原答案、已有确认记录与本次核对结论。' : qaQueueMode === 'legacy' ? '保留原问题、答案与历史记录，核实范围后再用于正式查询。' : knowledgeScopePayload(qaScope) ? '仅列出当前范围的问题。' : '补齐查询范围后显示对应问题。' }}</span>
+          </div>
+          <div class="qa-table-toolbar">
+            <el-radio-group v-if="qaQueueMode !== 'review'" v-model="qaStatus" size="small" aria-label="问答发布状态" @change="searchQaQuestions">
               <el-radio-button value="pending">待确认</el-radio-button>
               <el-radio-button value="answered">已发布</el-radio-button>
             </el-radio-group>
+            <el-input v-model="qaSearch" size="small" clearable placeholder="搜索问题" aria-label="搜索问答问题" @keyup.enter="searchQaQuestions" @clear="searchQaQuestions" />
+            <el-button size="small" @click="searchQaQuestions">查询</el-button>
+            <el-button v-if="qaSearch || qaEvidenceFilter !== 'all'" size="small" @click="clearQaFilters">清除筛选</el-button>
+            <span class="qa-total">共 {{ qaTotal }} 条</span>
+            <TableColumnSettings :model-value="qaColumnLayout" :defaults="QA_COLUMNS" @update:model-value="applyQaColumnLayout" />
           </div>
-          <el-table :data="qaQuestions" v-loading="qaListLoading" border stripe empty-text="暂无问题">
-            <el-table-column prop="question_text" label="问题" min-width="360" />
-            <el-table-column prop="asked_count" label="询问次数" width="95" align="center" />
-            <el-table-column label="答案版本" width="95" align="center">
-              <template #default="scope">{{ scope.row.answer ? `v${scope.row.answer.version}` : '—' }}</template>
+          <div ref="qaTableArea" class="qa-table-area">
+          <el-table ref="qaTable" :key="qaColumnStructureKey" :data="qaQuestions" :height="qaTableHeight" @header-dragend="resizeQaColumn" v-loading="qaListLoading" row-key="id" border stripe size="small" data-table-id="knowledge-questions" empty-text="当前条件下暂无问题">
+            <el-table-column type="expand" width="36">
+              <template #default="{ row }">
+                <div class="qa-expanded-answer" data-testid="qa-answer-full">
+                  <h4>{{ questionDisplayText(row) }}</h4>
+                  <p class="qa-answer-meta">{{ knowledgeScopeLabel(row.scope) }}<span v-if="row.answer"> · v{{ row.answer.version }} · {{ row.answer.updated_at }}</span></p>
+                  <pre>{{ answerDisplayText(row.answer) || '此问题尚未填写答案。' }}</pre>
+                  <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
+                  <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
+                  <el-button v-if="row.answer" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
+                </div>
+              </template>
             </el-table-column>
-            <el-table-column label="操作" width="150" align="center">
-              <template #default="scope">
-                <el-button type="primary" link @click="openAnswerDialog(scope.row)">
-                  {{ scope.row.status === 'pending' ? '回答' : '修订' }}
-                </el-button>
-                <el-button v-if="scope.row.answer" link @click="showHistory(scope.row)">记录</el-button>
+            <el-table-column v-for="column in qaVisibleColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false">
+              <template v-if="column.key === 'evidence_review'" #header>
+                <span class="qa-filter-header">{{ column.label }}
+                  <el-popover v-if="qaQueueMode === 'review'" trigger="click" placement="bottom-end" :width="230" :teleported="true">
+                    <template #reference><el-button text size="small" class="qa-filter-button" :class="{ active: qaEvidenceFilter !== 'all' }" :icon="Filter" aria-label="核对状态筛选" :title="qaEvidenceFilter === 'all' ? '核对状态：不限' : qaEvidenceFilter === 'needs_review' ? '核对状态：待核对' : '核对状态：已核对'" /></template>
+                    <div class="qa-filter-options"><span>选择后立即筛选</span><el-radio-group v-model="qaEvidenceFilter" @change="onQaEvidenceFilter"><el-radio value="all">不限</el-radio><el-radio value="needs_review">待核对</el-radio><el-radio value="reviewed">已核对</el-radio></el-radio-group></div>
+                  </el-popover>
+                </span>
+              </template>
+              <template #default="{ row }">
+                <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ answerDisplayText(row.answer) || '尚无答案' }}</p><el-button v-if="row.answer" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
+                <el-tag v-else-if="column.key === 'evidence_review'" size="small" :type="row.evidence_review?.status === 'needs_review' ? 'warning' : 'info'" effect="plain">{{ answerReviewLabel(row) }}</el-tag>
+                <span v-else-if="column.key === 'version'">{{ row.answer ? `v${row.answer.version}` : '—' }}</span>
+                <span v-else>{{ column.key === 'question_text' ? questionDisplayText(row) : row[column.key] }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="160" fixed="right" align="center">
+              <template #default="{ row }">
+                <el-button v-if="row.answer" size="small" type="primary" link @click="openAnswerReview(row)">核对</el-button>
+                <el-button v-if="row.scope || !row.answer" size="small" type="primary" link @click="openAnswerDialog(row)">{{ row.answer ? '修订' : '回答' }}</el-button>
+                <el-button v-if="row.answer" size="small" link @click="showHistory(row)">记录</el-button>
               </template>
             </el-table-column>
           </el-table>
-        </section>
-      </el-tab-pane>
-
-      <el-tab-pane label="功能主数据" name="features">
-        <section class="toolbar">
-          <el-input
-            v-model="featureQuery"
-            data-testid="knowledge-search"
-            clearable
-            placeholder="搜索 IPN、中英文名称或备用名"
-            :prefix-icon="Search"
-            @keyup.enter="searchFeatures"
-            @clear="searchFeatures"
-          />
-          <el-select
-            v-model="identityStatus"
-            data-testid="knowledge-status-filter"
-            clearable
-            placeholder="全部身份状态"
-            @change="searchFeatures"
-          >
-            <el-option label="自动匹配" value="auto_matched" />
-            <el-option label="人工确认" value="confirmed" />
-            <el-option label="关系型功能" value="related" />
-          </el-select>
-          <el-button type="primary" :icon="Search" @click="searchFeatures">查询</el-button>
-        </section>
-
-        <div data-testid="feature-knowledge-list" class="feature-list" v-loading="featureLoading">
-          <article v-for="feature in features" :key="feature.id" class="feature-card">
-            <div class="feature-heading">
-              <div>
-                <div class="feature-title-row">
-                  <h3>{{ feature.primary_cn_name || feature.legacy_name }}</h3>
-                  <el-tag :type="statusType(feature.identity_status)" size="small" effect="plain">
-                    {{ statusLabel(feature.identity_status) }}
-                  </el-tag>
-                </div>
-                <p class="english-name">{{ feature.primary_en_name || '暂无英文主名' }}</p>
-              </div>
-              <span class="group-name">{{ feature.group_name }}</span>
-            </div>
-
-            <div class="ipn-list">
-              <div v-for="entry in feature.ipns" :key="`${entry.ipn}-${entry.relation_type}`" class="ipn-item">
-                <code>{{ entry.ipn }}</code>
-                <span>{{ relationLabel(entry.relation_type) }}</span>
-                <span v-if="entry.zh_desc && entry.zh_desc !== feature.primary_cn_name" class="ipn-description">
-                  {{ entry.zh_desc }}
-                </span>
-              </div>
-            </div>
-
-            <div class="name-section aliases-by-language">
-              <div class="alias-language-group">
-                <span class="section-label">中文曾用名</span>
-                <div class="alias-list">
-                  <el-tag
-                    v-for="name in aliasesByLanguage(feature, 'cn')"
-                    :key="`${name.language}-${name.name}`"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ name.name }}
-                  </el-tag>
-                  <span v-if="aliasesByLanguage(feature, 'cn').length === 0" class="empty-text">无</span>
-                </div>
-              </div>
-              <div class="alias-language-group">
-                <span class="section-label">英文曾用名</span>
-                <div class="alias-list">
-                  <el-tag
-                    v-for="name in aliasesByLanguage(feature, 'en')"
-                    :key="`${name.language}-${name.name}`"
-                    size="small"
-                    type="info"
-                    effect="plain"
-                  >
-                    {{ name.name }}
-                  </el-tag>
-                  <span v-if="aliasesByLanguage(feature, 'en').length === 0" class="empty-text">无</span>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="feature.identity_status === 'related'" class="relation-note">
-              <el-icon><Link /></el-icon>
-              <span>{{ relationNote(feature) }}</span>
-            </div>
-          </article>
-          <el-empty v-if="!featureLoading && features.length === 0" description="未找到匹配功能" />
-        </div>
-
-        <el-pagination
-          v-if="featureTotal > featureLimit"
-          v-model:current-page="featurePage"
-          :page-size="featureLimit"
-          :total="featureTotal"
-          layout="prev, pager, next, total"
-          @current-change="loadFeatures"
-        />
-      </el-tab-pane>
-
-      <el-tab-pane label="国内注册与策略" name="registration">
-        <section class="registration-intro">
-          <div>
-            <div class="registration-title-row">
-              <h3>国内注册探头判定</h3>
-              <el-tag type="success" effect="plain">国内 / CN</el-tag>
-            </div>
-            <p>先执行注册红线，再读取正式选型；研发当前配置仅在没有正式选型时作为辅助信息。</p>
-            <p>同一产品存在多张国内注册证时，查询结果按注册证分别展示，不合并不同注册证的红线。</p>
           </div>
+          <el-pagination v-if="qaTotal" v-model:current-page="qaPage" v-model:page-size="qaPageSize" :total="qaTotal" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" size="small" class="qa-pagination" @current-change="loadQaQuestions" @size-change="searchQaQuestions" />
         </section>
-
-        <section class="status-legend" aria-label="配置状态图例">
-          <span><strong class="status-x">X</strong> X 标配</span>
-          <span><strong class="status-o">O</strong> O 选配</span>
-          <span><strong class="status-tender">Δ</strong> Δ 招标支持</span>
-          <span><strong class="status-blocked">#</strong> # 未注册</span>
-        </section>
-
-        <section class="registration-toolbar">
-          <el-select
-            v-model="selectedProductModelId"
-            data-testid="registration-model-select"
-            aria-label="国内产品型号"
-            filterable
-            placeholder="选择国内产品型号"
-            @change="searchRegistrationProbes"
-          >
-            <el-option
-              v-for="model in registrationModels"
-              :key="model.product_model_id"
-              :label="registrationModelLabel(model)"
-              :value="model.product_model_id"
-            />
-          </el-select>
-          <el-input
-            v-model="registrationQuery"
-            data-testid="registration-probe-search"
-            aria-label="探头搜索"
-            clearable
-            placeholder="搜索探头型号、IPN 或配置名称"
-            :prefix-icon="Search"
-            @keyup.enter="searchRegistrationProbes"
-            @clear="searchRegistrationProbes"
-          />
-          <el-select
-            v-model="registrationStatus"
-            data-testid="registration-status-filter"
-            aria-label="注册状态"
-            clearable
-            placeholder="全部注册状态"
-            @change="searchRegistrationProbes"
-          >
-            <el-option label="已注册" value="registered" />
-            <el-option label="# 未注册" value="unregistered" />
-          </el-select>
-          <el-select
-            v-model="effectiveStatus"
-            data-testid="effective-status-filter"
-            aria-label="最终判定"
-            clearable
-            placeholder="全部最终判定"
-            @change="searchRegistrationProbes"
-          >
-            <el-option label="X 标配" value="X" />
-            <el-option label="O 选配" value="O" />
-            <el-option label="Δ 招标支持" value="Δ" />
-            <el-option label="# 未注册" value="#" />
-            <el-option label="未定义" value="未定义" />
-          </el-select>
-          <el-button type="primary" :icon="Search" @click="searchRegistrationProbes">查询</el-button>
-        </section>
-
-        <div v-loading="registrationLoading" class="registration-groups">
-          <article
-            v-for="group in registrationGroups"
-            :key="group.registration_package_id"
-            class="registration-group-card"
-          >
-            <header class="registration-group-header">
-              <div>
-                <div class="registration-group-title">
-                  <h4>{{ group.registration_package_name }}</h4>
-                  <el-tag type="primary" effect="plain">{{ group.registration_number }}</el-tag>
-                </div>
-                <div class="registration-context">
-                  <span>产品型号：<strong>{{ registrationProductModelName }}</strong></span>
-                  <span>注册基础型号：<strong>{{ group.registration_model_name }}</strong></span>
-                  <el-tag v-if="group.mapping_type !== 'direct'" type="warning" size="small" effect="plain">
-                    衍生型号沿用基础型号注册
-                  </el-tag>
-                </div>
-              </div>
-              <el-button
-                tag="a"
-                :icon="View"
-                :href="group.source_document_id ? getKnowledgeDocumentPreviewUrl(group.source_document_id) : ''"
-                target="_blank"
-                rel="noopener"
-                :disabled="!group.source_document_id"
-              >
-                本证注册差异表原文
-              </el-button>
-            </header>
-
-            <section class="registration-summary">
-              <div><strong>{{ group.summary.registered }}</strong><span>已注册</span></div>
-              <div class="danger"><strong>{{ group.summary.unregistered }}</strong><span>未注册</span></div>
-              <div><strong>{{ group.summary.standard }}</strong><span>标配</span></div>
-              <div><strong>{{ group.summary.optional }}</strong><span>选配</span></div>
-              <div><strong>{{ group.summary.tender }}</strong><span>招标支持</span></div>
-              <div><strong>{{ group.summary.undefined }}</strong><span>策略未定义</span></div>
-            </section>
-
-            <el-table
-              data-testid="registration-strategy-table"
-              :data="group.items"
-              border
-              stripe
-              empty-text="本注册证下没有符合筛选条件的探头"
-              class="registration-table"
-            >
-              <el-table-column prop="probe_model" label="探头型号" min-width="130" fixed="left" />
-              <el-table-column prop="ipn" label="IPN" min-width="115" />
-              <el-table-column prop="config_name" label="配置名称" min-width="180">
-                <template #default="scope">{{ scope.row.config_name || '配置系统暂无对应项' }}</template>
-              </el-table-column>
-              <el-table-column label="注册状态" min-width="105" align="center">
-                <template #default="scope">
-                  <el-tag :type="scope.row.registration_status === 'registered' ? 'success' : 'danger'" effect="plain">
-                    {{ scope.row.registration_status === 'registered' ? '已注册' : '# 未注册' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="选型类别（正式）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.selection_config) }}</template>
-              </el-table-column>
-              <el-table-column label="当前配置（辅助）" min-width="135" align="center">
-                <template #default="scope">{{ displayConfigStatus(scope.row.current_config) }}</template>
-              </el-table-column>
-              <el-table-column label="最终判定" min-width="120" align="center" fixed="right">
-                <template #default="scope">
-                  <el-tag :type="effectiveStatusType(scope.row.effective_status)" effect="dark">
-                    {{ displayConfigStatus(scope.row.effective_status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="判定依据" min-width="165">
-                <template #default="scope">
-                  <span :class="{ 'auxiliary-source': scope.row.status_source === 'current_config_aux' }">
-                    {{ statusSourceLabel(scope.row.status_source) }}
-                  </span>
-                  <el-tag v-if="scope.row.conflict" type="danger" size="small" class="conflict-tag">存在冲突</el-tag>
-                </template>
-              </el-table-column>
-            </el-table>
-          </article>
-          <el-empty
-            v-if="!registrationLoading && selectedProductModelId && registrationGroups.length === 0"
-            description="没有符合筛选条件的注册证数据"
-          />
-        </div>
       </el-tab-pane>
 
-      <el-tab-pane label="原始资料" name="documents">
-        <section class="toolbar document-toolbar">
-          <el-input
-            v-model="documentQuery"
-            clearable
-            placeholder="搜索资料名、版本或产品"
-            :prefix-icon="Search"
-            @keyup.enter="searchDocuments"
-            @clear="searchDocuments"
-          />
-          <el-select v-model="documentType" clearable placeholder="全部资料类型" @change="searchDocuments">
-            <el-option label="注册证/注册变更" value="registration_certificate" />
-            <el-option label="注册差异表" value="registration_difference" />
-            <el-option label="产品说明书" value="manual" />
-            <el-option label="产品白皮书" value="whitepaper" />
-            <el-option label="Release Note" value="release_note" />
-          </el-select>
-          <el-button type="primary" :icon="Search" @click="searchDocuments">查询</el-button>
-        </section>
-
-        <div data-testid="knowledge-document-list" class="document-list" v-loading="documentLoading">
-          <article v-for="document in documents" :key="document.id" class="document-card">
-            <div class="document-icon"><el-icon><Document /></el-icon></div>
-            <div class="document-info">
-              <div class="document-title-row">
-                <h3>{{ document.title }}</h3>
-                <el-tag size="small" effect="plain">{{ documentTypeLabel(document.document_type) }}</el-tag>
-              </div>
-              <p>{{ document.file_name }}</p>
-              <div class="document-meta">
-                <span v-if="document.product_series">{{ document.product_series }}</span>
-                <span v-if="document.version">版本 {{ document.version }}</span>
-                <span>{{ formatFileSize(document.file_size) }}</span>
-                <span :class="document.available ? 'available' : 'unavailable'">
-                  {{ document.available ? '原文已同步' : '原文未同步' }}
-                </span>
-              </div>
-            </div>
-            <div class="document-actions">
-              <el-tag
-                v-if="document.extraction_status === 'completed'"
-                type="success"
-                size="small"
-                effect="plain"
-              >
-                正文已提取 · {{ document.chunk_count }}片段
-              </el-tag>
-              <el-button
-                :loading="Boolean(extractionLoading[document.id])"
-                :disabled="!document.available"
-                @click="extractDocument(document)"
-              >
-                {{ document.extraction_status === 'completed' ? '重新提取' : '提取正文' }}
-              </el-button>
-              <el-button :icon="View" :disabled="!document.available" @click="previewDocument(document)">
-                {{ canInline(document) ? '预览' : '打开原文' }}
-              </el-button>
-            </div>
-          </article>
-          <el-empty v-if="!documentLoading && documents.length === 0" description="暂无已登记资料" />
-        </div>
-      </el-tab-pane>
+      <el-tab-pane label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
+      <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace ref="parameterWorkspace" /></el-tab-pane>
     </el-tabs>
-
-    <el-dialog
-      v-model="previewVisible"
-      data-testid="document-preview-dialog"
-      :title="previewTitle"
-      width="88%"
-      top="4vh"
-      destroy-on-close
-    >
-      <iframe v-if="previewVisible" :src="previewUrl" class="preview-frame" :title="previewTitle" />
-    </el-dialog>
 
     <el-dialog
       v-model="answerDialogVisible"
@@ -506,11 +200,23 @@
       width="720px"
       destroy-on-close
     >
+      <el-alert
+        v-if="qaReviewNotice(answerForm.review_status)"
+        :title="qaReviewNotice(answerForm.review_status)"
+        type="warning"
+        :closable="false"
+        show-icon
+        data-testid="knowledge-answer-evidence-review"
+      />
+      <p v-if="answerForm.previous_change_note" class="answer-previous-change">上次变更说明：{{ answerForm.previous_change_note }}</p>
       <el-form label-position="top">
         <el-form-item label="问题">
-          <div class="dialog-question">{{ answerForm.question_text }}</div>
+          <div class="dialog-question">{{ questionDisplayText(answerForm) }}</div>
         </el-form-item>
-        <el-form-item label="正式答案" required>
+        <el-form-item label="适用范围">
+          <span>{{ knowledgeScopeLabel(answerForm.scope) }}</span>
+        </el-form-item>
+        <el-form-item :label="answerForm.display_answer_text && answerForm.display_answer_text !== answerForm.answer_text ? '正式答案（保存原文，保留历史名称）' : '正式答案'" required>
           <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
         </el-form-item>
         <el-form-item label="相似问法 / 曾用问题">
@@ -560,10 +266,11 @@
       </el-form>
       <template #footer>
         <el-button @click="answerDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="answerSaving" @click="saveAnswer">确认并发布</el-button>
+        <el-button type="primary" :loading="answerSaving" :disabled="!answerForm.scope" @click="saveAnswer">确认并发布</el-button>
       </template>
     </el-dialog>
 
+    <KnowledgeAnswerReviewDialog ref="answerReviewDialog" :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" @saved="onAnswerReviewSaved" />
     <el-dialog v-model="historyVisible" title="答案变更记录" width="650px">
       <el-timeline v-if="answerHistory.length">
         <el-timeline-item v-for="revision in answerHistory" :key="revision.version" :timestamp="revision.created_at">
@@ -574,65 +281,111 @@
       <el-empty v-else description="暂无变更记录" />
     </el-dialog>
   </div>
+  <KnowledgeCitationViewer ref="citationViewer" />
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
+import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
+import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
+import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
+import { canViewUnverifiedOriginal } from '../utils/knowledgeCitation'
+import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
+import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
+import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
+import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Delete, Document, Link, Plus, Search, View } from '@element-plus/icons-vue'
+import { Delete, Filter, Plus, Search } from '@element-plus/icons-vue'
+import TableColumnSettings from '../components/TableColumnSettings.vue'
+import KnowledgeAnswerReviewDialog from '../components/KnowledgeAnswerReviewDialog.vue'
+import { QA_COLUMNS, answerReviewLabel } from '../utils/knowledgeAnswerReview'
+import { loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import {
   askKnowledgeQuestion,
-  extractKnowledgeDocument,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
-  getKnowledgeDocumentPreviewUrl,
-  getKnowledgeFeatures,
-  getKnowledgeStats,
   getKnowledgeQuestions,
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
-  getConfiguredRegistrationModels,
-  getRegistrationProbes
+  getModels,
+  getSeriesList
 } from '../api/data'
 
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref('qa')
-const stats = ref({ total_features: 0, auto_matched: 0, confirmed: 0, related: 0, pending: 0 })
-const statsLoading = ref(false)
-
-const featureQuery = ref('')
-const identityStatus = ref('')
-const featureLoading = ref(false)
-const features = ref([])
-const featureTotal = ref(0)
-const featurePage = ref(1)
-const featureLimit = 20
-
-const documentQuery = ref('')
-const documentType = ref('')
-const documentLoading = ref(false)
+const evidenceAnswer = ref(null)
+const citationViewer = ref(null)
+const parameterWorkspace = ref(null)
+const openParameterTopic = async id => {
+  const sourceTab = activeTab.value
+  if (await parameterWorkspace.value?.openFromQuestion(id) && activeTab.value === sourceTab) activeTab.value = 'parameters'
+}
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'features') {
+    router.replace({ path: '/template-features' })
+  } else if (tab === 'registration') {
+    router.replace({ path: '/registration-manage' })
+  } else if (tab === 'documents') {
+    router.replace({ path: '/release', query: { tab: 'documents' } })
+  } else {
+    activeTab.value = ['qa', 'history', 'parameters'].includes(tab) ? tab : 'qa'
+  }
+}, { immediate: true })
 const documents = ref([])
-const extractionLoading = ref({})
-
-const registrationModels = ref([])
-const selectedProductModelId = ref(null)
-const registrationQuery = ref('')
-const registrationStatus = ref('')
-const effectiveStatus = ref('')
-const registrationLoading = ref(false)
-const registrationGroups = ref([])
-const registrationProductModelName = ref('')
-const registrationLimit = 200
-
-const previewVisible = ref(false)
-const previewUrl = ref('')
-const previewTitle = ref('')
 
 const qaQuestion = ref('')
+const qaScope = reactive({ market: '', product_model_id: null, software_version: '' })
+const qaModels = ref([])
+const qaModelsLoading = ref(false)
+const qaModelsError = ref(false)
+const qaQueueMode = ref('selected')
+const qaAvailableModels = computed(() => qaModels.value.filter(model => (
+  !qaScope.market || model.series_name.endsWith(qaScope.market === 'domestic' ? '-China' : '-Oversea')
+)))
+const loadQaModels = async () => {
+  qaModelsLoading.value = true
+  qaModelsError.value = false
+  try {
+    const [models, series] = await Promise.all([getModels(null, { limit: 1000, include_disabled: true }), getSeriesList({ limit: 1000 })])
+    const names = new Map((series.items || series).map(row => [row.id, row.name]))
+    qaModels.value = (models.items || []).map(model => ({ ...model, series_name: names.get(model.series_id) || '' }))
+  } catch {
+    qaModels.value = []
+    qaModelsError.value = true
+  } finally {
+    qaModelsLoading.value = false
+  }
+}
 const qaAsking = ref(false)
 const qaResult = ref(null)
-const qaStatus = ref('pending')
+const qaStatus = ref('answered')
 const qaQuestions = ref([])
 const qaListLoading = ref(false)
+const qaEvidenceFilter = ref('all'), qaReviewCount = ref(null), qaSearch = ref(''), qaTotal = ref(0), qaPage = ref(1), qaPageSize = ref(20)
+const qaTable = ref(null), qaTableArea = ref(null), qaTableHeight = ref(360), answerReviewDialog = ref(null)
+const qaColumnStorageKey = 'knowledge-questions-column-layout-v1'
+const qaColumnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const qaColumnLayout = ref(loadColumnLayout(qaColumnStorage, qaColumnStorageKey, QA_COLUMNS, message => ElMessage.warning(message)))
+const qaVisibleColumns = computed(() => qaColumnLayout.value.filter(column => column.visible))
+const qaColumnStructureKey = computed(() => qaVisibleColumns.value.map(column => `${column.key}:${column.fixed}`).join('|'))
+const applyQaColumnLayout = value => { qaColumnLayout.value = normalizeColumnLayout(QA_COLUMNS, value); saveColumnLayout(qaColumnStorage, qaColumnStorageKey, qaColumnLayout.value, message => ElMessage.warning(message)) }
+const resizeQaColumn = (width, _old, column) => applyQaColumnLayout(qaColumnLayout.value.map(item => item.key === column.property ? { ...item, width } : item))
+const openAnswerReview = row => answerReviewDialog.value?.open(row)
+const loadQaReviewCount = async () => {
+  try { qaReviewCount.value = (await getKnowledgeQuestions({ status: 'answered', evidence_review: 'needs_review', limit: 1 })).total }
+  catch { qaReviewCount.value = null }
+}
+const onAnswerReviewSaved = async () => { qaPage.value = 1; await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
+const searchQaQuestions = () => { qaPage.value = 1; loadQaQuestions() }
+const onQaQueueModeChange = () => { if (qaQueueMode.value !== 'review') qaEvidenceFilter.value = 'all'; searchQaQuestions() }
+const onQaEvidenceFilter = () => { qaQueueMode.value = 'review'; qaStatus.value = 'answered'; searchQaQuestions() }
+const showPendingAnswerReviews = () => { qaEvidenceFilter.value = 'needs_review'; onQaEvidenceFilter() }
+const clearQaFilters = () => { qaSearch.value = ''; qaEvidenceFilter.value = 'all'; searchQaQuestions() }
+const updateQaTableHeight = () => { if (qaTableArea.value) qaTableHeight.value = Math.max(260, window.innerHeight - Math.max(0, qaTableArea.value.getBoundingClientRect().top) - 80) }
+let qaResizeObserver
 const answerDialogVisible = ref(false)
 const answerSaving = ref(false)
 const answerHistory = ref([])
@@ -643,232 +396,128 @@ const answerForm = ref({
   question_id: null,
   question_text: '',
   version: 0,
+  review_status: '',
+  previous_change_note: '',
   answer_text: '',
   alias_text: '',
   citations: [],
   change_note: ''
 })
 
-const statusLabel = (status) => ({
-  auto_matched: '自动匹配',
-  confirmed: '人工确认',
-  related: '关系型功能',
-  pending: '待确认'
-}[status] || status)
-
-const statusType = (status) => ({
-  auto_matched: 'success',
-  confirmed: 'primary',
-  related: 'warning',
-  pending: 'danger'
-}[status] || 'info')
-
-const relationLabel = (relation) => ({
-  primary: '主 IPN',
-  related: '相关功能',
-  version_variant: '版本 IPN'
-}[relation] || relation)
-
-const documentTypeLabel = (type) => ({
-  registration_certificate: '注册证/变更',
-  registration_difference: '注册差异表',
-  manual: '产品说明书',
-  whitepaper: '产品白皮书',
-  release_note: 'Release Note'
-}[type] || type)
-
-const registrationModelLabel = (model) => {
-  if (model.registration_count > 1) {
-    return `${model.product_model_name}（${model.registration_count}张注册证）`
-  }
-  return model.product_model_name === model.registration_model_name
-    ? model.product_model_name
-    : `${model.product_model_name} → ${model.registration_model_name}`
-}
-const displayConfigStatus = (status) => ({
-  X: 'X 标配',
-  O: 'O 选配',
-  '∆': 'Δ 招标支持',
-  'Δ': 'Δ 招标支持',
-  '#': '# 未注册',
-  未定义: '未定义'
-}[status] || status || '—')
-const effectiveStatusType = (status) => ({
-  X: 'success',
-  O: 'primary',
-  'Δ': 'warning',
-  '#': 'danger',
-  未定义: 'info'
-}[status] || 'info')
-const statusSourceLabel = (source) => ({
-  registration_redline: '注册红线',
-  selection_config: '正式选型类别',
-  current_config_aux: '研发当前配置（辅助）',
-  missing: '尚无正式策略'
-}[source] || source || '—')
-
-const aliasesByLanguage = (feature, language) => (feature.names || []).filter(
-  name => name.name_type === 'alias' && name.language === language
-)
-const relationNote = (feature) => (feature.ipns || []).some(entry => entry.relation_type === 'version_variant')
-  ? '版本关系：保留各组 IPN 独立身份，当前名称作为关系入口。'
-  : '关联功能：保留关联 IPN 的独立身份，当前名称作为查询入口。'
-const canInline = (document) => document.mime_type === 'application/pdf' || document.mime_type?.startsWith('image/')
-const formatFileSize = (size) => {
-  if (!size) return '0 KB'
-  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
-  return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
-
-const loadStats = async () => {
-  statsLoading.value = true
-  try {
-    stats.value = await getKnowledgeStats()
-  } catch {
-    ElMessage.error('统计信息加载失败')
-  } finally {
-    statsLoading.value = false
-  }
-}
-
-const loadFeatures = async () => {
-  featureLoading.value = true
-  try {
-    const result = await getKnowledgeFeatures({
-      q: featureQuery.value || undefined,
-      identity_status: identityStatus.value || undefined,
-      skip: (featurePage.value - 1) * featureLimit,
-      limit: featureLimit
-    })
-    features.value = result.items || []
-    featureTotal.value = result.total || 0
-  } catch {
-    ElMessage.error('功能知识加载失败')
-  } finally {
-    featureLoading.value = false
-  }
-}
-
-const searchFeatures = () => {
-  featurePage.value = 1
-  loadFeatures()
-}
-
 const loadDocuments = async () => {
-  documentLoading.value = true
   try {
-    const result = await getKnowledgeDocuments({
-      q: documentQuery.value || undefined,
-      document_type: documentType.value || undefined,
-      limit: 100
-    })
+    const result = await getKnowledgeDocuments({ limit: 200 })
     documents.value = result.items || []
   } catch {
-    ElMessage.error('原始资料加载失败')
-  } finally {
-    documentLoading.value = false
+    ElMessage.error('引用资料加载失败')
   }
 }
 
-const searchDocuments = () => loadDocuments()
-
-const loadRegistrationModels = async () => {
-  try {
-    const result = await getConfiguredRegistrationModels({ country_code: 'CN' })
-    const uniqueModels = new Map()
-    for (const model of result.items || []) {
-      const existing = uniqueModels.get(model.product_model_id)
-      if (existing) {
-        existing.registration_count += 1
-      } else {
-        uniqueModels.set(model.product_model_id, { ...model, registration_count: 1 })
-      }
-    }
-    registrationModels.value = [...uniqueModels.values()]
-    if (!selectedProductModelId.value && registrationModels.value.length > 0) {
-      const preferred = registrationModels.value.find(model => model.product_model_name === 'VINNO 10')
-      selectedProductModelId.value = (preferred || registrationModels.value[0]).product_model_id
-    }
-    if (selectedProductModelId.value) await loadRegistrationProbes()
-  } catch {
-    ElMessage.error('国内注册型号加载失败')
-  }
+let qaAskRequestId = 0
+let qaQueueRequestId = 0
+const onQaScopeInput = () => {
+  qaAskRequestId += 1
+  qaQueueRequestId += 1
+  qaResult.value = null
+  qaQuestions.value = []
+  qaAsking.value = false
+  qaListLoading.value = false
+  qaTotal.value = 0
+  qaPage.value = 1
 }
-
-const loadRegistrationProbes = async () => {
-  if (!selectedProductModelId.value) return
-  registrationLoading.value = true
-  try {
-    const result = await getRegistrationProbes({
-      product_model_id: selectedProductModelId.value,
-      q: registrationQuery.value || undefined,
-      registration_status: registrationStatus.value || undefined,
-      effective_status: effectiveStatus.value || undefined,
-      skip: 0,
-      limit: registrationLimit
-    })
-    registrationGroups.value = result.registrations || []
-    registrationProductModelName.value = result.product_model_name || ''
-  } catch {
-    ElMessage.error('注册与策略数据加载失败')
-  } finally {
-    registrationLoading.value = false
-  }
+const onQaScopeChange = () => {
+  onQaScopeInput()
+  loadQaQuestions()
 }
-
-const searchRegistrationProbes = () => {
-  loadRegistrationProbes()
+const onQaMarketChange = () => {
+  qaScope.product_model_id = null
+  onQaScopeChange()
 }
-
-const previewDocument = (document) => {
-  const url = getKnowledgeDocumentPreviewUrl(document.id)
-  if (!canInline(document)) {
-    window.open(url, '_blank', 'noopener')
-    return
-  }
-  previewTitle.value = document.title
-  previewUrl.value = url
-  previewVisible.value = true
-}
-
 const askQuestion = async () => {
   const question = qaQuestion.value.trim()
   if (!question) {
     ElMessage.warning('请输入问题')
     return
   }
+  const scope = knowledgeScopePayload(qaScope)
+  if (!scope) {
+    ElMessage.warning('请补齐市场、完整机型和软件版本')
+    return
+  }
+  const requestId = ++qaAskRequestId
+  const fingerprint = knowledgeScopeFingerprint(qaScope)
   qaAsking.value = true
+  qaResult.value = null
   try {
-    qaResult.value = await askKnowledgeQuestion({ question })
+    const result = await askKnowledgeQuestion({ question, scope })
+    if (requestId !== qaAskRequestId || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
+    qaResult.value = result
+    qaQueueMode.value = 'selected'
+    qaEvidenceFilter.value = 'all'
+    qaPage.value = 1
     if (qaResult.value.status === 'pending') {
       qaStatus.value = 'pending'
       ElMessage.info('尚无确认答案，已加入待确认问题')
     }
     await loadQaQuestions()
-  } catch {
-    ElMessage.error('问题查询失败')
+  } catch (error) {
+    if (requestId === qaAskRequestId && fingerprint === knowledgeScopeFingerprint(qaScope)) {
+      ElMessage.error(error?.response?.data?.detail || '问题查询失败')
+    }
   } finally {
-    qaAsking.value = false
+    if (requestId === qaAskRequestId) qaAsking.value = false
   }
 }
 
 const loadQaQuestions = async () => {
-  qaListLoading.value = true
-  try {
-    const result = await getKnowledgeQuestions({ status: qaStatus.value, limit: 100 })
-    qaQuestions.value = result.items || []
-  } catch {
-    ElMessage.error('问答队列加载失败')
-  } finally {
+  const requestId = ++qaQueueRequestId
+  const scope = knowledgeScopePayload(qaScope)
+  const mode = qaQueueMode.value
+  const fingerprint = knowledgeScopeFingerprint(qaScope)
+  if (mode === 'selected' && !scope) {
+    qaQuestions.value = []
+    qaTotal.value = 0
     qaListLoading.value = false
+    return
+  }
+  qaListLoading.value = true
+  qaQuestions.value = []
+  qaTotal.value = 0
+  try {
+    const result = await getKnowledgeQuestions({ status: mode === 'review' ? 'answered' : qaStatus.value, limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value,
+      ...(qaSearch.value.trim() ? { q: qaSearch.value.trim() } : {}),
+      ...(mode === 'selected' ? scope : {}),
+      ...(mode === 'review' ? { evidence_review: qaEvidenceFilter.value } : {}) })
+    if (requestId !== qaQueueRequestId || mode !== qaQueueMode.value || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
+    qaQuestions.value = result.items || []
+    qaTotal.value = result.total || 0
+    nextTick(updateQaTableHeight)
+  } catch {
+    if (requestId === qaQueueRequestId) ElMessage.error('问答队列加载失败')
+  } finally {
+    if (requestId === qaQueueRequestId) qaListLoading.value = false
   }
 }
 
+const qaReviewNotice = (status) => ({
+  source_changed: '引用资料原文已变化，请核对依据后重新确认答案。',
+  scope_changed: '引用资料的适用范围已变化，请核对范围后重新确认答案。',
+  evidence_changed: '引用原文和适用范围均已变化，请核对依据后重新确认答案。'
+}[status] || '')
+
+let answerDialogSessionId = 0
 const openAnswerDialog = async (question) => {
+  const dialogSession = ++answerDialogSessionId
+  answerSaving.value = false
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
+    display_question_text: question.display_question_text,
+    display_answer_text: question.answer?.display_answer_text,
+    scope: question.scope || null,
     version: question.answer?.version || 0,
+    review_status: question.answer?.review_status || '',
+    previous_change_note: question.answer?.change_note || '',
     answer_text: question.answer?.answer_text || '',
     alias_text: (question.alias_questions || []).join('\n'),
     citations: (question.answer?.citations || []).map(citation => ({
@@ -883,11 +532,12 @@ const openAnswerDialog = async (question) => {
   candidateLoading.value = true
   try {
     const result = await getKnowledgeQuestionCandidates(question.id)
+    if (dialogSession !== answerDialogSessionId || !answerDialogVisible.value) return
     answerCandidates.value = result.items || []
   } catch {
-    ElMessage.error('材料候选依据加载失败')
+    if (dialogSession === answerDialogSessionId) ElMessage.error('材料候选依据加载失败')
   } finally {
-    candidateLoading.value = false
+    if (dialogSession === answerDialogSessionId) candidateLoading.value = false
   }
 }
 
@@ -896,6 +546,10 @@ const removeCitation = (index) => answerForm.value.citations.splice(index, 1)
 const parseQuestionAliases = (value) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
 
 const saveAnswer = async () => {
+  if (!answerForm.value.scope) {
+    ElMessage.warning('历史范围尚未核实，请在明确范围内建立问答后发布')
+    return
+  }
   if (!answerForm.value.answer_text.trim()) {
     ElMessage.warning('请填写正式答案')
     return
@@ -909,6 +563,8 @@ const saveAnswer = async () => {
     return
   }
   answerSaving.value = true
+  const dialogSession = answerDialogSessionId
+  const savedScope = knowledgeScopeFingerprint(knowledgeScopePayload(answerForm.value.scope))
   try {
     const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
       answer_text: answerForm.value.answer_text.trim(),
@@ -920,22 +576,20 @@ const saveAnswer = async () => {
       })),
       change_note: answerForm.value.change_note.trim()
     })
-    answerDialogVisible.value = false
-    qaStatus.value = 'answered'
-    qaResult.value = {
-      status: 'answered',
-      question_id: saved.id,
-      question: saved.question_text,
-      match_type: 'exact',
-      similarity: 1,
-      answer: saved.answer
+    if (dialogSession === answerDialogSessionId) answerDialogVisible.value = false
+    if (dialogSession === answerDialogSessionId && knowledgeScopePayload(qaScope) && savedScope === knowledgeScopeFingerprint(knowledgeScopePayload(qaScope))) {
+      qaStatus.value = 'answered'
+      qaResult.value = {
+        status: 'answered', question_id: saved.id, question: saved.question_text, display_question_text: saved.display_question_text,
+        match_type: 'exact', similarity: 1, answer: saved.answer, scope: saved.scope
+      }
     }
     ElMessage.success('答案已确认发布')
     await loadQaQuestions()
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '答案发布失败')
+    if (dialogSession === answerDialogSessionId) ElMessage.error(error?.response?.data?.detail || '答案发布失败')
   } finally {
-    answerSaving.value = false
+    if (dialogSession === answerDialogSessionId) answerSaving.value = false
   }
 }
 
@@ -949,7 +603,14 @@ const showHistory = async (question) => {
   }
 }
 
-const openCitation = (citation) => window.open(citation.preview_url, '_blank', 'noopener')
+const openCitation = (citation) => citationViewer.value?.open(citation)
+watch(() => JSON.stringify([qaQuestion.value, qaScope]), () => citationViewer.value?.close(), { flush: 'sync' })
+watch(() => qaResult.value, () => citationViewer.value?.close(), { flush: 'sync' })
+watch(() => answerCandidates.value, () => citationViewer.value?.close(), { flush: 'sync' })
+watch(activeTab, () => {
+  citationViewer.value?.close()
+  evidenceAnswer.value?.closeCitation()
+}, { flush: 'sync' })
 
 const useCandidate = (candidate) => {
   if (!answerForm.value.answer_text.trim()) answerForm.value.answer_text = candidate.excerpt
@@ -967,55 +628,60 @@ const useCandidate = (candidate) => {
   ElMessage.success('已加入答案草稿，请核对并完善表述')
 }
 
-const extractDocument = async (document) => {
-  extractionLoading.value = { ...extractionLoading.value, [document.id]: true }
-  try {
-    const result = await extractKnowledgeDocument(document.id, document.extraction_status === 'completed')
-    ElMessage.success(`正文提取完成：${result.chunk_count} 个片段`)
-    await loadDocuments()
-  } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '正文提取失败')
-  } finally {
-    extractionLoading.value = { ...extractionLoading.value, [document.id]: false }
-  }
-}
-
+useWorkspaceRefresh(() => Promise.all([
+  loadQaModels(), loadQaQuestions(), loadDocuments(), loadQaReviewCount()
+]), { canRefresh: () => !answerDialogVisible.value && !answerSaving.value })
 onMounted(() => {
-  loadQaQuestions()
-  loadStats()
-  loadFeatures()
-  loadDocuments()
-  loadRegistrationModels()
+  window.addEventListener('resize', updateQaTableHeight)
+  nextTick(() => { updateQaTableHeight(); qaResizeObserver = new ResizeObserver(updateQaTableHeight); if (qaTableArea.value) qaResizeObserver.observe(qaTableArea.value.parentElement) })
 })
+onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight); qaResizeObserver?.disconnect() })
 </script>
 
 <style scoped>
-.knowledge-page { max-width: 1180px; margin: 0 auto; }
-.knowledge-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
-.knowledge-header h2 { margin: 0 0 6px; font-size: 22px; color: #1f2937; }
-.knowledge-header p { margin: 0; color: #475569; font-size: 13px; }
-.knowledge-header .master-data-note { margin-top: 6px; font-size: 12px; }
-.knowledge-header :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
-.master-data-note a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
-.master-data-note span { margin: 0 5px; color: #94a3b8; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-.stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 15px 18px; display: flex; flex-direction: column; }
-.stat-card.primary { background: linear-gradient(135deg, #ecf5ff, #fff); border-color: #bfdbfe; }
-.stat-value { color: #111827; font-size: 24px; font-weight: 700; }
-.stat-label { margin-top: 3px; color: #6b7280; font-size: 12px; }
+.qa-table-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.qa-table-toolbar > .el-input { max-width: 300px; min-width: 160px; flex: 1; }
+.qa-table-toolbar > .el-button + .el-button { margin-left: 0; }
+.qa-table-toolbar .qa-total { margin-left: auto; white-space: nowrap; }
+.qa-table-area { width: 100%; min-width: 0; overflow: hidden; }
+.qa-answer-preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; overflow-wrap: anywhere; margin: 0; line-height: 1.55; }
+.qa-expanded-answer { padding: 10px 18px 16px; }
+.qa-expanded-answer h4 { margin: 0 0 7px; font-size: 14px; }
+.qa-expanded-answer pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.qa-answer-meta, .qa-expanded-note, .qa-total { color: #64748b; font-size: 12px; }
+.qa-expanded-note { margin: 8px 0; white-space: pre-wrap; }
+.qa-filter-header { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
+.qa-filter-button { width: 24px; height: 24px; padding: 3px; color: #94a3b8; }
+.qa-filter-button.active { color: #2563eb; }
+.qa-filter-options { display: flex; flex-direction: column; gap: 6px; }
+.qa-filter-options > span { color: #64748b; font-size: 12px; }
+.qa-filter-options .el-radio-group { display: flex; flex-direction: column; align-items: flex-start; }
+.qa-pagination { margin-top: 10px; justify-content: flex-end; }
+.qa-scope-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.qa-scope-controls > * { flex: 0 1 180px; min-width: 140px; max-width: 100%; }
+.qa-scope-controls > :nth-child(2) { flex-basis: 300px; }
+.qa-scope-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
+.qa-queue-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.qa-queue-scope > span { color: #64748b; font-size: 12px; }
+.knowledge-page { position: relative; max-width: 1180px; margin: 0 auto; }
 .knowledge-tabs { background: #fff; border-radius: 12px; padding: 0 18px 18px; border: 1px solid #e5e7eb; }
 .knowledge-tabs :deep(.el-tabs__item) { color: #475569; }
 .knowledge-tabs :deep(.el-tabs__item.is-active) { color: #1d4ed8; }
 .qa-ask-panel { margin: 12px 0 14px; padding: 18px; border: 1px solid #bfdbfe; border-radius: 10px; background: linear-gradient(135deg, #eff6ff, #fff); }
-.qa-ask-heading, .queue-heading, .qa-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.qa-ask-heading, .qa-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .qa-ask-heading { margin-bottom: 12px; }
-.qa-ask-heading h3, .queue-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
-.qa-ask-heading p, .queue-heading p { margin: 5px 0 0; color: #475569; font-size: 12px; }
+.qa-ask-heading h3 { margin: 0; color: #1f2937; font-size: 16px; }
+.qa-ask-heading p { margin: 5px 0 0; color: #475569; font-size: 12px; }
 .qa-ask-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: #64748b; font-size: 11px; }
+.qa-query-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.qa-query-buttons > .el-button + .el-button { margin-left: 0; }
 .qa-ask-panel :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #16a34a; background: #f0fdf4; }
 .qa-ask-panel :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
 .qa-result { margin-bottom: 16px; padding: 17px 18px; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; }
 .qa-result.pending { border-color: #fde68a; background: #fffbeb; }
+.qa-parameter-topics { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--el-border-color-light); border-radius: 6px; }
+.qa-parameter-topics > span { color: var(--el-text-color-secondary); font-size: 12px; }
+.qa-parameter-topics > .el-button + .el-button { margin-left: 0; }
 .qa-result-heading { align-items: center; }
 .qa-result-heading > div { display: flex; align-items: center; gap: 9px; }
 .similarity-note, .qa-question-text, .answer-meta { color: #64748b; font-size: 12px; }
@@ -1034,11 +700,12 @@ onMounted(() => {
 .citation-list { display: flex; flex-direction: column; gap: 7px; flex: 1; }
 .citation-link { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 4px 12px; width: 100%; padding: 9px 11px; border: 1px solid #dbeafe; border-radius: 7px; background: #fff; color: #1d4ed8; text-align: left; cursor: pointer; }
 .citation-link small { grid-column: 1 / -1; color: #64748b; }
+.unverified-original { display:inline-block;margin-top:3px;font-size:12px;color:var(--el-text-color-secondary); }
 .qa-queue { margin-top: 16px; }
-.queue-heading { align-items: center; margin-bottom: 11px; }
 .qa-queue :deep(.el-radio-button__inner) { color: #475569; }
 .qa-queue :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
 .qa-queue :deep(.el-table .cell), .qa-queue :deep(.el-table__empty-text) { color: #334155; }
+.answer-previous-change { margin: 10px 0; color: #64748b; font-size: 12px; }
 .dialog-question { width: 100%; padding: 10px 12px; border-radius: 7px; background: #f8fafc; color: #334155; }
 .citation-editor { display: flex; flex-direction: column; gap: 9px; width: 100%; }
 .citation-editor-row { display: grid; grid-template-columns: 1.1fr 0.8fr 1.2fr auto; gap: 8px; }
@@ -1047,81 +714,7 @@ onMounted(() => {
 .dialog-candidate-card > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dialog-candidate-card span { color: #92400e; font-size: 11px; }
 .dialog-candidate-card p { max-height: 120px; margin: 7px 0; overflow: auto; color: #475569; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
-.document-actions { display: flex; align-items: center; gap: 8px; }
 .el-timeline p { margin: 6px 0 0; color: #475569; line-height: 1.6; white-space: pre-wrap; }
-.toolbar { display: grid; grid-template-columns: minmax(320px, 1fr) 190px auto; gap: 10px; margin: 10px 0 16px; }
-.feature-list, .document-list { display: flex; flex-direction: column; gap: 10px; min-height: 180px; }
-.feature-card, .document-card { border: 1px solid #e5e7eb; border-radius: 9px; padding: 15px 16px; background: #fff; }
-.feature-card:hover, .document-card:hover { border-color: #bfdbfe; box-shadow: 0 3px 14px rgba(30, 64, 175, 0.06); }
-.feature-heading, .feature-title-row, .document-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.feature-title-row, .document-title-row { justify-content: flex-start; }
-.feature-card h3, .document-card h3 { margin: 0; font-size: 15px; color: #1f2937; }
-.english-name, .document-info p { margin: 4px 0 0; color: #6b7280; font-size: 12px; }
-.group-name { color: #6b7280; background: #f3f4f6; border-radius: 12px; padding: 3px 9px; font-size: 12px; }
-.ipn-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
-.ipn-item { display: flex; align-items: center; gap: 7px; background: #f8fafc; border-radius: 6px; padding: 6px 9px; font-size: 12px; color: #64748b; }
-.ipn-item code { color: #1d4ed8; font-weight: 600; }
-.ipn-description { border-left: 1px solid #dbe3ef; padding-left: 7px; }
-.name-section { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; }
-.aliases-by-language { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
-.alias-language-group { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .section-label { min-width: 66px; padding-top: 3px; color: #6b7280; font-size: 12px; }
-.alias-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.empty-text { color: #9ca3af; font-size: 12px; }
-.relation-note { display: flex; align-items: center; gap: 6px; margin-top: 11px; color: #92400e; font-size: 12px; }
-.document-card { display: flex; align-items: center; gap: 14px; }
-.document-icon { width: 42px; height: 42px; border-radius: 9px; display: grid; place-items: center; background: #eff6ff; color: #2563eb; font-size: 20px; }
-.document-info { flex: 1; min-width: 0; }
-.document-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; color: #6b7280; font-size: 11px; }
-.available { color: #15803d; }
-.unavailable { color: #b91c1c; }
-.registration-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin: 12px 0; padding: 14px 16px; border: 1px solid #dbeafe; border-radius: 9px; background: #f8fbff; }
-.registration-title-row { display: flex; align-items: center; gap: 9px; }
-.registration-title-row h3 { margin: 0; color: #1f2937; font-size: 15px; }
-.registration-intro p { margin: 6px 0 0; color: #64748b; font-size: 12px; }
-.status-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; color: #475569; font-size: 12px; }
-.status-legend span { display: flex; align-items: center; gap: 5px; }
-.status-legend strong { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; color: #fff; }
-.status-x { background: #15803d; }
-.status-o { background: #2563eb; }
-.status-tender { background: #92400e; }
-.status-blocked { background: #dc2626; }
-.registration-toolbar { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(220px, 1.4fr) 150px 150px auto; gap: 9px; margin-bottom: 12px; }
-.registration-groups { display: grid; gap: 18px; min-height: 80px; }
-.registration-group-card { padding: 15px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
-.registration-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
-.registration-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.registration-group-title h4 { margin: 0; color: #1f2937; font-size: 15px; }
-.registration-context { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 8px; color: #64748b; font-size: 12px; }
-.registration-context strong { color: #1f2937; }
-.registration-summary { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
-.registration-summary div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
-.registration-summary strong { color: #1f2937; font-size: 19px; }
-.registration-summary span { color: #64748b; font-size: 11px; }
-.registration-summary .danger strong { color: #dc2626; }
-.registration-table { width: 100%; }
-.registration-intro :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #86efac; }
-.registration-intro :deep(.el-button) { color: #334155; }
-.registration-toolbar :deep(.el-button--primary) { background: #1d4ed8; border-color: #1d4ed8; }
-.registration-context :deep(.el-tag--warning.el-tag--plain) { color: #92400e; border-color: #f59e0b; }
-.registration-table :deep(th.el-table__cell .cell) { color: #374151; }
-.registration-table :deep(.el-tag--success.el-tag--plain) { color: #166534; border-color: #86efac; background: #f0fdf4; }
-.registration-table :deep(.el-tag--danger.el-tag--plain) { color: #b91c1c; border-color: #fca5a5; background: #fef2f2; }
-.registration-table :deep(.el-tag--success.el-tag--dark) { background: #15803d; border-color: #15803d; }
-.registration-table :deep(.el-tag--primary.el-tag--dark) { background: #1d4ed8; border-color: #1d4ed8; }
-.registration-table :deep(.el-tag--warning.el-tag--dark) { background: #92400e; border-color: #92400e; }
-.registration-table :deep(.el-tag--danger.el-tag--dark) { background: #b91c1c; border-color: #b91c1c; }
-.registration-table :deep(.el-tag--info.el-tag--dark) { background: #475569; border-color: #475569; }
-.auxiliary-source { color: #b45309; }
-.conflict-tag { display: block; width: fit-content; margin-top: 4px; }
-.preview-frame { width: 100%; height: 78vh; border: 0; background: #f3f4f6; }
 .el-pagination { justify-content: flex-end; margin-top: 16px; }
-@media (max-width: 850px) {
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .toolbar, .registration-toolbar { grid-template-columns: 1fr; }
-  .registration-summary { grid-template-columns: repeat(2, 1fr); }
-  .registration-intro, .registration-group-header { flex-direction: column; }
-  .aliases-by-language { grid-template-columns: 1fr; }
-  .knowledge-header { flex-direction: column; gap: 10px; }
-}
 </style>

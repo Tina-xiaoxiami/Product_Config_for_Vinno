@@ -1,11 +1,11 @@
 """
 导入历史模型
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class ImportHistory(Base):
@@ -19,7 +19,7 @@ class ImportHistory(Base):
     status = Column(String(20), default="pending")  # pending/success/conflict/failed
     conflict_details = Column(Text)  # JSON格式冲突详情
     imported_by = Column(String(100))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     # 关系
     series = relationship("ProductSeries", back_populates="import_histories")

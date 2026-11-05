@@ -13,6 +13,8 @@ from app.services.knowledge_qa import (
     normalize_question,
     question_similarity,
 )
+from app.services.knowledge_scope import scope_expression
+from app.services.knowledge_names import KnowledgeNameContext, load_name_context
 
 
 @dataclass(frozen=True)
@@ -44,11 +46,13 @@ def _validate_specs(specs: list[SeedQuestionSpec]) -> list[tuple[SeedQuestionSpe
 
 
 async def _existing_questions(session: AsyncSession) -> dict[str, dict]:
+    scope_column = await scope_expression(session)
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT id, question_text, normalized_question, status
             FROM knowledge_questions
+            WHERE {scope_column} = ''
             ORDER BY id
             """
         )
@@ -56,13 +60,15 @@ async def _existing_questions(session: AsyncSession) -> dict[str, dict]:
     return {row.normalized_question: dict(row._mapping) for row in result}
 
 
-async def _published_variants(session: AsyncSession) -> list[dict]:
+async def _published_variants(session: AsyncSession, name_context: KnowledgeNameContext) -> list[dict]:
+    scope_column = await scope_expression(session, "question")
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT question.id AS question_id,
                    question.question_text,
                    question.normalized_question,
+                   answer.answer_text,
                    phrasing.phrasing_text,
                    phrasing.normalized_phrasing
             FROM knowledge_questions question
@@ -72,11 +78,22 @@ async def _published_variants(session: AsyncSession) -> list[dict]:
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
             WHERE question.status = 'answered'
+              AND {scope_column} = ''
             ORDER BY question.id, phrasing.id
             """
         )
     )
-    return [dict(row._mapping) for row in result]
+    variants = []
+    for row in result:
+        item = dict(row._mapping)
+        variants.append(item)
+        displayed_question, _, _ = name_context.question(item['question_text'], item['answer_text'])
+        displayed_phrasing, _, _ = name_context.question(item['phrasing_text'] or '', item['answer_text'])
+        variants.append({**item, 'question_text': displayed_question,
+                         'normalized_question': normalize_question(displayed_question),
+                         'phrasing_text': displayed_phrasing,
+                         'normalized_phrasing': normalize_question(displayed_phrasing)})
+    return variants
 
 
 def _best_published_match(question: str, variants: list[dict]) -> tuple[int | None, float]:
@@ -113,12 +130,14 @@ async def seed_pending_questions(
 
     validated = _validate_specs(specs)
     existing = await _existing_questions(session)
-    published_variants = await _published_variants(session)
+    name_context = await load_name_context(session)
+    published_variants = await _published_variants(session, name_context)
     items: list[dict] = []
 
     for spec, normalized in validated:
-        published_question_id, similarity = _best_published_match(
-            spec.question,
+        displayed_question, _ = name_context.project(spec.question)
+        published_question_id, similarity = (None, 0.0) if name_context.ambiguous_query(spec.question) else _best_published_match(
+            displayed_question,
             published_variants,
         )
         question_id: int | None = None

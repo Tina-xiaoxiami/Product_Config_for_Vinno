@@ -30,6 +30,7 @@ Thumbs.db
 *.sqlite3
 registration_artifacts/
 registration_sources/
+release_attachments/
 
 # Logs
 *.log
@@ -40,3 +41,12 @@ registration_sources/
 # Environment
 .env
 .env.local
+backend/config/release_workbench.local.json
+backend/config/knowledge_evidence.local.json
+
+# Detached local service state
+.runtime/
+
+# Browser verification artifacts
+frontend/playwright-report/
+frontend/test-results/

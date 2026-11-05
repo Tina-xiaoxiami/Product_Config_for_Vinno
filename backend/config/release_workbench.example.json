@@ -1,0 +1,8 @@
+{
+  "database": "data/release_workbench.db",
+  "workbench": {
+    "home": false
+  },
+  "source_roots": [],
+  "controlled_extraction_roots": []
+}

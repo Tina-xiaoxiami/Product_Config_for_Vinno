@@ -28,10 +28,12 @@ compatibility: Requires local access to the Product_Config_for_Vinno project and
 ## 受控原文件
 
 - 说明书、白皮书和 Release Note 的登记路径必须指向本地 Obsidian 受控材料副本，不得直接指向 iCloud 来源文件。
-- 目标结构为 `<Obsidian 受控材料根目录>/<类型目录>/<原文件名>`；类型目录使用 `说明书`、`白皮书`和 `发布记录`。
+- 受控材料根目录固定为 `/Users/xiami/Documents/Obsidian Vault/产品配置管理系统/受控材料`。注意 `Obsidian Vault` 中间**有空格**；不要写成 `Obsidian`——迁移时误建的那个缺 `Vault` 的旁支目录已删除，任何缺 `Vault` 的路径都是错的。代码侧只认 `app/services/controlled_material_import.py` 的 `CONTROLLED_MATERIALS_ROOT`，不要另行硬编码。
+- 目标结构为 `<受控材料根目录>/<类型目录>/<原文件名>`；类型目录使用 `说明书`、`白皮书`和 `发布记录`。
 - 先复制或收纳文件，再计算 SHA-256；只有受控副本存在且哈希与来源一致时才可登记或更新路径。
 - 已指向受控目录的相同文件应幂等复用。目标缺失、哈希不符或同名不同内容时停止登记并集中报告。
 - 历史 iCloud 路径迁移时，先运行 `backend/scripts/migrate_knowledge_document_paths.py` 默认 dry-run；只有审查结果无误后才用 `--apply`。
+- 登记与迁移脚本会先校验根目录位于真实 Obsidian 库内（向上能找到 `.obsidian/`），否则直接报错退出；遇到该报错不要绕过，先确认路径是否缺了 `Vault`。
 
 ## 已确认解释规则
 

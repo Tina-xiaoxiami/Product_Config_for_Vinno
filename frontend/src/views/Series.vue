@@ -53,7 +53,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getSeriesList, createSeries, updateSeries, deleteSeries } from '../api/data'
@@ -149,9 +150,7 @@ const handleDelete = async (row) => {
   }
 }
 
-onMounted(() => {
-  loadData()
-})
+useWorkspaceRefresh(loadData)
 </script>
 
 <style scoped>

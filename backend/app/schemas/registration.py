@@ -76,6 +76,8 @@ class RegistrationDifferenceSummary(BaseModel):
     version_id: int
     total_models: int
     total_probes: int
+    all_applicable_probes: int = 0
+    different_probes: int = 0
     models: list[RegistrationDifferenceModel] = Field(default_factory=list)
 
 
@@ -90,6 +92,7 @@ class RegistrationProbeStrategyItem(BaseModel):
     effective_status: str
     status_source: str
     strategy_is_formal: bool
+    current_config_note: str | None = None
     conflict: bool
     config_item_id: int | None = None
     config_name: str | None = None
@@ -203,3 +206,132 @@ class RegistrationPackagePublishRequest(BaseModel):
 class RegistrationPackageEnableUpdate(BaseModel):
     is_enabled: bool
     updated_by: str = Field(min_length=1, max_length=100)
+
+
+class OverseasRegistrationCountry(BaseModel):
+    country_code: str
+    relation_count: int
+
+
+class OverseasRegistrationCountryList(BaseModel):
+    items: list[OverseasRegistrationCountry] = Field(default_factory=list)
+    total: int
+
+
+class OverseasRegistrationSnapshotItem(BaseModel):
+    """海外注册快照（含未发布的草稿）。"""
+
+    id: int
+    source_document_id: int
+    source_file_name: str
+    snapshot_date: str | None = None
+    status: str
+    relation_count: int = 0
+    country_count: int = 0
+    model_count: int = 0
+    probe_count: int = 0
+    # 同一份原件的第几版：0 是首次导入，之后每次「基于现有快照重建草稿」+1。
+    revision: int = 0
+    # 由哪条快照重建而来；首次导入为空。
+    derived_from_snapshot_id: int | None = None
+    created_at: str | None = None
+    published_at: str | None = None
+    confirmed_by: str | None = None
+
+
+class OverseasNameMappingItem(BaseModel):
+    """人工确认的「原表写法 → 系统名称」映射。"""
+
+    entity_type: str
+    source_name: str
+    target_name: str
+    confirmed_by: str
+    change_note: str | None = None
+
+
+class OverseasNameMappingList(BaseModel):
+    items: list[OverseasNameMappingItem] = Field(default_factory=list)
+    total: int
+
+
+class OverseasNameMappingCreate(BaseModel):
+    entity_type: str = Field(pattern="^(model|probe)$")
+    source_name: str = Field(min_length=1, max_length=200)
+    target_name: str = Field(min_length=1, max_length=200)
+    confirmed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=500)
+
+
+class OverseasNameMappingDeleteResult(BaseModel):
+    deleted: bool
+
+
+class OverseasSeriesMappingItem(BaseModel):
+    """人工确认的「系列 → 机型清单」；导入/重建时自动展开。"""
+
+    source_name: str
+    target_models: list[str] = Field(default_factory=list)
+    confirmed_by: str
+    change_note: str | None = None
+
+
+class OverseasSeriesMappingList(BaseModel):
+    items: list[OverseasSeriesMappingItem] = Field(default_factory=list)
+    total: int
+
+
+class OverseasSeriesMappingCreate(BaseModel):
+    source_name: str = Field(min_length=1, max_length=200)
+    target_models: list[str] = Field(min_length=1)
+    confirmed_by: str = Field(min_length=1, max_length=100)
+    change_note: str | None = Field(default=None, max_length=500)
+
+
+class OverseasSeriesMappingDeleteResult(BaseModel):
+    deleted: bool
+
+
+class OverseasRegistrationSnapshotList(BaseModel):
+    items: list[OverseasRegistrationSnapshotItem] = Field(default_factory=list)
+    total: int
+
+
+class OverseasRegistrationRelationItem(BaseModel):
+    id: int
+    country_code: str
+    model_name: str
+    probe_model: str
+    registration_status: str
+    address_version: str
+    source_ref: str | None = None
+    model_match_status: str
+    product_model_id: int | None = None
+    probe_match_status: str
+    probe_model_id: int | None = None
+    snapshot_id: int
+    snapshot_date: str | None = None
+    source_document_id: int
+    data_scope: str
+    visible_in_current_config: bool
+
+
+class OverseasRegistrationRelationList(BaseModel):
+    items: list[OverseasRegistrationRelationItem] = Field(default_factory=list)
+    total: int
+    skip: int
+    limit: int
+
+
+class OverseasRegistrationDraftRequest(BaseModel):
+    source_document_id: int = Field(ge=1)
+
+
+class RegistrationArtifactSheet(BaseModel):
+    name: str
+    rows: list[list[str]] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class RegistrationArtifactWorkbook(BaseModel):
+    file_name: str
+    sheets: list[RegistrationArtifactSheet] = Field(default_factory=list)

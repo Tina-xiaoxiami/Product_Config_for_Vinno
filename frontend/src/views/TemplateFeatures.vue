@@ -1,40 +1,40 @@
 <template>
-  <div class="page">
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>模板配置管理</span>
-          <div style="display:flex;gap:12px">
-            <template v-if="editMode">
-              <el-tag type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
-              <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
-              <el-button size="small" @click="cancelEdit">取消</el-button>
-            </template>
-            <template v-else>
-              <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
-              <el-button size="small" @click="refreshData">刷新</el-button>
-              <el-button size="small" @click="openVersions">版本历史</el-button>
-            </template>
-          </div>
-          <!-- Draft bar -->
-          <div v-if="draftTotal > 0 && !editMode" class="draft-bar" style="margin-top:12px">
-            <span><strong>{{ draftTotal }}</strong> 条草稿待提交</span>
-            <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
-            <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
-          </div>
-        </div>
-      </template>
+  <div class="page template-matrix-page">
+    <ProbeManagementActions path="/template-features">
+        <span v-if="featureCatalog" class="management-meta">功能库 {{ featureCatalog.total }} · 已入模板 {{ features.filter(feature => !feature.pending).length }}</span>
+        <el-button size="small" :disabled="loading || !!loadError || !featureCatalog" @click="openTemplateCatalog">从功能库添加</el-button>
+        <template v-if="editMode">
+          <el-tag size="small" type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
+          <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
+          <el-button size="small" @click="cancelEdit">取消</el-button>
+        </template>
+        <template v-else>
+          <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
+          <el-button size="small" @click="refreshData">刷新</el-button>
+          <el-button size="small" @click="openVersions">版本历史</el-button>
+        </template>
+    </ProbeManagementActions>
+    <el-alert v-if="loadError" type="error" :closable="false" class="catalog-load-error"><template #title>{{ loadError }} <el-button link size="small" @click="refreshData">重试读取</el-button></template></el-alert>
+    <TemplateFeatureCatalogDialog ref="catalogDialog" :catalog="featureCatalog" :categories="categories" :refresh-after-save="refreshCatalogPreview" />
+    <el-card shadow="never" class="template-card">
+      <div v-if="(draftTotal > 0 || catalogAdditionCount > 0) && !editMode" class="draft-bar">
+        <span><strong>{{ draftTotal }}</strong> 条配置草稿待提交<span v-if="catalogAdditionCount"> · 新增功能 {{ catalogAdditionCount }} 项</span></span>
+        <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
+        <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
+      </div>
 
       <div class="matrix-container" v-loading="loading">
         <div class="toolbar-row">
           <div class="legend">
             <span class="legend-item"><span class="dot supported"></span> 支持</span>
             <span class="legend-item"><span class="dot unsupported"></span> 不支持</span>
+            <span v-if="catalogAdditionCount" class="legend-item catalog-preview-legend">待提交预览 {{ catalogAdditionCount }} 项功能</span>
             <span v-if="editMode" class="legend-item"><span class="dot pending"></span> 待保存</span>
           </div>
           <div class="toolbar-right">
             <el-switch v-model="showRegular" size="small" active-text="常规" inactive-text="常规" style="margin-right:4px" />
             <el-switch v-model="showPOC" size="small" active-text="POC" inactive-text="POC" style="margin-right:4px" />
+            <TableColumnSettings :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
             <div class="view-toggle" v-if="!editMode">
               <el-radio-group v-model="showMode" size="small">
                 <el-radio value="auto">智能</el-radio>
@@ -45,7 +45,7 @@
           </div>
         </div>
         <div class="filter-row">
-          <el-input v-model="featureSearch" placeholder="搜索功能名称" size="small" clearable style="width:160px" />
+          <el-input v-model="featureSearch" placeholder="搜索功能名称或IPN" size="small" clearable style="width:160px" />
           <el-checkbox v-model="selectAllGroups" :indeterminate="groupIndeterminate" size="small">全选</el-checkbox>
           <el-checkbox-group v-model="selectedGroupIds" size="small" class="group-filter-compact">
             <el-checkbox v-for="g in featureGroups" :key="g.id" :label="g.id" :value="g.id" size="small">{{ g.name }}</el-checkbox>
@@ -53,34 +53,36 @@
           <el-button v-if="featureSearch && searchMatchGroups.length && searchMatchGroups.length !== selectedGroupIds.length" size="small" text type="primary" @click="selectSearchResults">选中搜索结果</el-button>
         </div>
 
-        <div class="table-wrap">
-          <el-table :data="categories" border stripe size="small" :max-height="600" style="width:100%" :header-cell-style="headerCellStyle">
-            <el-table-column label="探头类别" width="120" fixed>
+        <div class="matrix-scroll-tools">
+          <span>{{ categories.length }} 个探头类别 · {{ filteredFeatures.length }} 个功能（可在列设置中显示或隐藏）</span>
+          <el-button size="small" aria-label="向左查看功能" @click="scrollFeatures(-1)">←</el-button>
+          <el-button size="small" aria-label="向右查看功能" @click="scrollFeatures(1)">→</el-button>
+        </div>
+        <div ref="tableWrap" class="table-wrap" role="region" aria-label="探头功能模板矩阵" tabindex="0" @keydown.left.self.prevent="scrollFeatures(-1)" @keydown.right.self.prevent="scrollFeatures(1)">
+          <el-table ref="matrixTable" :data="categories" border stripe size="small" height="100%" :fit="false" scrollbar-always-on style="width:100%" :header-cell-style="headerCellStyle" @header-dragend="resizeColumn">
+            <template v-for="section in matrixSections" :key="section.key">
+            <el-table-column v-if="section.kind === 'base'" :column-key="section.key" :prop="section.key" :label="section.label" :width="section.width" :fixed="section.fixed" show-overflow-tooltip>
               <template #default="{ row: cat }">
-                <div class="cat-name">{{ cat.name }}</div>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="showRegular" label="常规应用" width="140" fixed>
-              <template #default="{ row: cat }">
-                <div v-if="categoryAppsMap[cat.id]" class="cat-apps">
-                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.regular||[])" :key="a.id" size="small" class="app-tag">{{ a.name }}</el-tag>
+                <div v-if="section.key === 'category'" class="cat-name" :title="cat.name">{{ cat.name }}</div>
+                <div v-else class="cat-apps">
+                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.[section.key] || [])" :key="a.id" size="small" class="app-tag" :type="section.key === 'poc' ? 'warning' : 'primary'" :title="a.name">{{ a.name }}</el-tag>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column v-if="showPOC" label="POC 应用" width="140" fixed>
-              <template #default="{ row: cat }">
-                <div v-if="categoryAppsMap[cat.id]" class="cat-apps">
-                  <el-tag v-for="a in (categoryAppsMap[cat.id]?.poc||[])" :key="'poc-'+a.id" size="small" type="warning" class="app-tag">{{ a.name }}</el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column v-for="g in visibleGroups" :key="g.id" :label="g.name" align="center">
-              <el-table-column v-for="f in getGroupFeatures(g.id)" :key="f.id" :label="f.name" min-width="72" align="center">
+            <el-table-column v-else :label="section.label" :fixed="section.fixed" align="center">
+              <el-table-column v-for="column in section.columns" :key="column.key" :column-key="column.key" :prop="column.key" :label="column.label" :width="column.width" align="center">
+                <template #header>
+                  <span class="matrix-feature-header">
+                    <span class="matrix-feature-label" :title="column.label">{{ column.label }}</span>
+                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" />
+                    <small v-if="column.feature.pending" class="catalog-preview-badge" title="待提交">待</small>
+                  </span>
+                </template>
                 <template #default="{ row: cat }">
                   <el-popover
                     v-if="editMode"
                     trigger="click"
-                    :visible="popoverKey === `${cat.id}_${f.id}`"
+                    :visible="popoverKey === `${cat.id}_${column.feature.id}`"
                     placement="bottom"
                     :width="260"
                     @hide="popoverKey = ''"
@@ -88,12 +90,14 @@
                     <template #reference>
                       <div
                         class="tpl-cell"
-                        :class="getCellClass(cat.id, f.id)"
-                        @click="openPopover(cat.id, f.id)"
+                        :class="getCellClass(cat.id, column.feature.id)"
+                        @click="openPopover(cat.id, column.feature.id)"
                         style="cursor:pointer"
-                      ><div class="cell-apps" :class="{ 'is-all': isAllApps(cat.id, f.id) }">{{ getCellDisplay(cat.id, f.id) }}</div></div>
+                      ><div class="cell-apps" :title="getCellTooltip(cat.id, column.feature.id)" :class="{ 'is-all': isAllApps(cat.id, column.feature.id) }">{{ getCellDisplay(cat.id, column.feature.id) }}</div></div>
                     </template>
                     <div>
+                      <el-alert v-if="popUnknownExcludes.length" type="warning" :closable="false" :title="`旧排除名称无法对应：${popUnknownExcludes.join('、')}。请核对当前应用后保存。`" />
+                      <el-checkbox v-if="popUnknownExcludes.length" v-model="popReplaceUnknown" size="small">以本次所选应用替换旧排除名称</el-checkbox>
                       <div v-if="popoverKey && (popOldStatus !== popStatus)" style="font-size:11px;color:#e6a23c;margin-bottom:6px;padding:4px 8px;background:#fdf6ec;border-radius:4px">
                         修改: {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popOldStatus] || popOldStatus }} → {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popStatus] || popStatus }}
                       </div>
@@ -137,14 +141,13 @@
                       </div>
                     </div>
                   </el-popover>
-                  <el-tooltip v-else :content="getCellTooltip(cat.id, f.id)" placement="top" :disabled="!getCellTooltip(cat.id, f.id)">
-                    <div class="tpl-cell" :class="getCellClass(cat.id, f.id)">
-                      <div class="cell-apps" :class="{ 'is-all': isAllApps(cat.id, f.id) }">{{ getCellDisplay(cat.id, f.id) }}</div>
-                    </div>
+                  <el-tooltip v-else :content="getCellTooltip(cat.id, column.feature.id)" placement="top" :disabled="!getCellTooltip(cat.id, column.feature.id)">
+                    <ProbeSupportCell :class="{ 'catalog-preview-cell': column.feature.pending }" :status="_getStatus(`${cat.id}_${column.feature.id}`)" :apps="getCatAllApps(cat.id)" :excludes="_getExcludes(`${cat.id}_${column.feature.id}`)" :tender="_getTender(`${cat.id}_${column.feature.id}`)" :mode="showMode" />
                   </el-tooltip>
                 </template>
               </el-table-column>
             </el-table-column>
+            </template>
           </el-table>
         </div>
       </div>
@@ -168,13 +171,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { featureCurrentName } from '../utils/featureNameStandard'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
-import { getProbeCategories, getFeatures, getFeatureGroups, getTemplateFeatures } from '../api/data'
+import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
+import TemplateFeatureCatalogDialog from '../components/TemplateFeatureCatalogDialog.vue'
+import { catalogFeatureLabel, projectTemplateCatalog, catalogCellSource } from '../utils/templateFeatureCatalog'
 import api from '../api/index'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
+import ProbeSupportCell from '../components/ProbeSupportCell.vue'
+import TableColumnSettings from '../components/TableColumnSettings.vue'
+import { buildTemplateMatrixColumns, templateMatrixSections, normalizeColumnLayout, loadColumnLayout, saveColumnLayout } from '../utils/tableColumnLayout'
+import { expandCombinedName, parseProbeExcludes, formatProbeSupport, probeGroupColors } from '../utils/probeSupport'
 
 const categories = ref([]); const features = ref([])
 const tplMap = ref({}); const loading = ref(false)
+const featureCatalog = ref(null), pendingMatrixCells = ref({}), pendingMatrixFeatureIds = ref(new Set()), catalogAdditionCount = ref(0), loadError = ref(''), catalogDialog = ref(null)
 const editMode = ref(false); const pendingChanges = reactive({})
 const categoryAppsMap = ref({})
 const showMode = ref('auto')
@@ -183,6 +196,30 @@ const featureSearch = ref('')
 const showRegular = ref(true)
 const showPOC = ref(true)
 const selectedGroupIds = ref([])
+
+const matrixTable = ref(null)
+const tableWrap = ref(null)
+const columnStorageKey = 'template-matrix-columns-v1'
+const columnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
+const columnDefaults = computed(() => buildTemplateMatrixColumns(features.value.map(feature => ({ ...feature, name: featureCurrentName(feature.id, feature.name) }))))
+const columnLayout = ref([])
+// Only normalize once the complete catalog is available, never against search results.
+watch(features, () => {
+  columnLayout.value = loadColumnLayout(columnStorage, columnStorageKey, columnDefaults.value, message => ElMessage.warning(message))
+}, { immediate: true })
+const applyColumnLayout = columns => {
+  columnLayout.value = normalizeColumnLayout(columnDefaults.value, columns)
+  saveColumnLayout(columnStorage, columnStorageKey, columnLayout.value, message => ElMessage.warning(message))
+  nextTick(() => matrixTable.value?.doLayout())
+}
+const resizeColumn = (width, _oldWidth, column) => {
+  applyColumnLayout(columnLayout.value.map(item => item.key === column.columnKey ? { ...item, width: Math.max(30, width) } : item))
+}
+const scrollFeatures = direction => {
+  const wrap = tableWrap.value?.querySelector('.el-scrollbar__wrap')
+  if (wrap) matrixTable.value?.setScrollLeft(wrap.scrollLeft + direction * Math.max(100, wrap.clientWidth / 2))
+}
+
 
 const selectAllGroups = computed({
   get: () => selectedGroupIds.value.length === featureGroups.value.length,
@@ -198,7 +235,7 @@ const searchMatchGroups = computed(() => {
   const q = featureSearch.value.toLowerCase()
   const matched = new Set()
   for (const f of features.value) {
-    if (f.name.toLowerCase().includes(q)) matched.add(f.group_id)
+    if (catalogFeatureLabel({ ...f, name: featureCurrentName(f.id, f.name) }).toLowerCase().includes(q)) matched.add(f.group_id)
   }
   return [...matched]
 })
@@ -210,14 +247,14 @@ function selectSearchResults() {
 }
 
 const filteredFeatures = computed(() => {
-  let list = features.value
+  let list = features.value.map(feature => ({ ...feature, name: featureCurrentName(feature.id, feature.name) }))
   if (selectedGroupIds.value.length) {
     const set = new Set(selectedGroupIds.value)
     list = list.filter(f => set.has(f.group_id))
   }
   if (featureSearch.value) {
     const q = featureSearch.value.toLowerCase()
-    list = list.filter(f => f.name.toLowerCase().includes(q))
+    list = list.filter(f => catalogFeatureLabel({ ...f, name: featureCurrentName(f.id, f.name) }).toLowerCase().includes(q))
   }
   return list
 })
@@ -226,28 +263,16 @@ function getGroupFeatures(groupId) {
   return filteredFeatures.value.filter(f => f.group_id === groupId)
 }
 
-const visibleGroups = computed(() => {
-  const ids = [...new Set(filteredFeatures.value.map(f => f.group_id))]
-  return ids.map(id => {
-    const g = featureGroups.value.find(g => g.id === id)
-    return { id, name: g ? g.name : '' }
-  })
-})
+const displayColumnLayout = computed(() => columnLayout.value.map(column => ({ ...column, label: column.key.startsWith('feature:') ? featureCurrentName(column.key.slice(8), column.label) : column.label })))
+const matrixSections = computed(() => templateMatrixSections(displayColumnLayout.value, filteredFeatures.value, featureGroups.value, {
+  showRegular: showRegular.value, showPOC: showPOC.value
+}))
 
 // ---- group header coloring ----
-const groupColorMap = computed(() => {
-  const colors = ['#e3f2fd', '#e8f5e9', '#fff8e1', '#fce4ec', '#ede7f6', '#e0f2f1', '#fff3e0', '#e8eaf6', '#fbe9e7', '#f3e5f5']
-  const borderColors = ['#1976d2', '#388e3c', '#f57f17', '#c62828', '#5e35b1', '#00796b', '#e65100', '#3949ab', '#d84315', '#7b1fa2']
-  const map = {}
-  featureGroups.value.forEach((g, i) => {
-    map[g.id] = { bg: colors[i % colors.length], border: borderColors[i % borderColors.length] }
-  })
-  return map
-})
+const groupColorMap = computed(() => probeGroupColors(featureGroups.value))
 
 function headerCellStyle({ column }) {
-  // Match feature columns by label
-  const feat = features.value.find(f => f.name === column.label)
+  const feat = features.value.find(f => `feature:${f.id}` === column.property)
   if (!feat) return {}
   const c = groupColorMap.value[feat.group_id]
   if (!c) return { fontWeight: 600, fontSize: '12px' }
@@ -255,20 +280,6 @@ function headerCellStyle({ column }) {
 }
 
 // ---- helpers ----
-function expandCombinedName(name) {
-  const parts = name.split(/[\\/]/)
-  if (parts.length <= 1) return [name]
-  const last = parts[parts.length - 1].trim()
-  const suffix = last.length > 1 ? last.slice(1) : ''
-  const result = []
-  for (let i = 0; i < parts.length - 1; i++) {
-    const p = parts[i].trim()
-    if (p) result.push(p + suffix)
-  }
-  if (last) result.push(last)
-  return result
-}
-
 function getCatAllApps(catId) {
   const apps = categoryAppsMap.value[catId]
   if (!apps) return []
@@ -280,7 +291,7 @@ function getExcludedList(catId, featId) {
   if (key in pendingExcludes && pendingExcludes[key]) {
     return _parseExcludes(pendingExcludes[key]).excludes
   }
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).excludes } catch { return [] }
   }
@@ -299,29 +310,52 @@ function getSupportedList(catId, featId) {
 }
 
 // ---- cell display ----
+let templateLoadRequest = 0
 const loadData = async () => {
-  loading.value = true
+  const request = ++templateLoadRequest
+  loading.value = true; loadError.value = ''
   try {
-    const [catRes, featRes, grpRes] = await Promise.all([getProbeCategories({ limit: 200 }), getFeatures({ limit: 500 }), getFeatureGroups()])
-    categories.value = catRes.items || []; features.value = featRes.items || []
-    featureGroups.value = grpRes.items || []
+    const [catRes, catalog, drafts] = await Promise.all([
+      getProbeCategories({ limit: 200 }), getTemplateFeatureCatalog(), api.get('/template-features/drafts')
+    ])
+    const nextCategories = catRes.items || []
+    const projection = projectTemplateCatalog(catalog, drafts, nextCategories)
+    const details = await Promise.all(nextCategories.map(async cat => {
+      const [templates, apps] = await Promise.all([
+        getTemplateFeatures(cat.id), api.get(`/probe-categories/${cat.id}/apps`)
+      ])
+      return { categoryId: cat.id, templates: templates || [], apps }
+    }))
     const allTpl = {}; const allCatApps = {}
-    for (const cat of categories.value) {
-      try {
-        for (const t of (await getTemplateFeatures(cat.id)) || []) { allTpl[`${cat.id}_${t.feature_id}`] = t }
-        allCatApps[cat.id] = await api.get(`/probe-categories/${cat.id}/apps`)
-      } catch {}
+    for (const detail of details) {
+      for (const t of detail.templates) allTpl[`${detail.categoryId}_${t.feature_id}`] = t
+      allCatApps[detail.categoryId] = detail.apps
     }
+    if (request !== templateLoadRequest) return false
+    categories.value = nextCategories; features.value = projection.features
+    featureGroups.value = projection.groups; featureCatalog.value = catalog
+    pendingMatrixCells.value = projection.pendingCells; pendingMatrixFeatureIds.value = projection.pendingFeatureIds
+    draftTotal.value = projection.draftTotal; catalogAdditionCount.value = projection.catalogAdditionsCount
     tplMap.value = allTpl; categoryAppsMap.value = allCatApps
-  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+    return true
+  } catch (failure) {
+    if (request === templateLoadRequest) {
+      loadError.value = `功能库或模板数据加载失败，已保留当前矩阵。${failure?.message || '请重试'}`
+    }
+    return false
+  } finally {
+    if (request === templateLoadRequest) loading.value = false
+  }
 }
+
+const templateCell = key => catalogCellSource(key, tplMap.value, pendingMatrixCells.value, pendingMatrixFeatureIds.value)
 
 const getCellClass = (catId, featId) => {
   const key = `${catId}_${featId}`
-  let status = tplMap.value[key]?.default_support
+  let status = templateCell(key)?.default_support
   if (key in pendingChanges) status = pendingChanges[key]
   const cls = status === 'supported' ? 'supported' : status === 'conditional' ? 'conditional' : 'unsupported'
-  return key in pendingChanges ? cls + ' is-dirty' : cls
+  return `${cls}${pendingMatrixFeatureIds.value.has(featId) ? ' is-catalog-preview' : ''}${key in pendingChanges ? ' is-dirty' : ''}`
 }
 
 const getCellIcon = (catId, featId) => {
@@ -331,7 +365,7 @@ const getCellIcon = (catId, featId) => {
     if (pendingChanges[key] === 'conditional') return '△'
     return ''
   }
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_support === 'supported') return '√'
   if (t?.default_support === 'conditional') return '△'
   return ''
@@ -340,7 +374,7 @@ const getCellIcon = (catId, featId) => {
 const isAllApps = (catId, featId) => {
   const key = `${catId}_${featId}`
   if (key in pendingChanges) return pendingChanges[key] === 'supported'
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (!t || t.default_support === 'unsupported') return false
   const excluded = getResolvedExcluded(catId, featId)
   return excluded.length === 0
@@ -348,22 +382,15 @@ const isAllApps = (catId, featId) => {
 
 function _getStatus(key) {
   if (key in pendingChanges) return pendingChanges[key]
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   return t ? t.default_support : null
 }
 
-function _parseExcludes(excludesVal) {
-  if (!excludesVal) return { excludes: [], tender: [] }
-  if (typeof excludesVal === 'object' && !Array.isArray(excludesVal)) {
-    return { excludes: excludesVal.excludes || [], tender: excludesVal.tender || [] }
-  }
-  const arr = Array.isArray(excludesVal) ? excludesVal : []
-  return { excludes: arr, tender: [] }
-}
+function _parseExcludes(value) { return parseProbeExcludes(value) }
 
 function _getExcludes(key) {
   if (key in pendingExcludes) return _parseExcludes(pendingExcludes[key]).excludes
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).excludes } catch {}
   }
@@ -372,7 +399,7 @@ function _getExcludes(key) {
 
 function _getTender(key) {
   if (key in pendingExcludes) return _parseExcludes(pendingExcludes[key]).tender
-  const t = tplMap.value[key]
+  const t = templateCell(key)
   if (t?.default_excludes) {
     try { const raw = JSON.parse(t.default_excludes); return _parseExcludes(raw).tender } catch {}
   }
@@ -381,35 +408,13 @@ function _getTender(key) {
 
 const getCellDisplay = (catId, featId) => {
   const key = `${catId}_${featId}`
-  const status = _getStatus(key)
-  if (!status || status === 'unsupported') return '—'
-
-  const all = getCatAllApps(catId)
-  if (!all.length) return status === 'supported' ? 'ALL' : '△'
-
-  const excluded = _getExcludes(key).flatMap(n => expandCombinedName(n))
-  const tender = _getTender(key).flatMap(n => expandCombinedName(n))
-  const excludedSet = new Set(excluded)
-  const supported = all.filter(n => !excludedSet.has(n) && !tender.includes(n))
-
-  if (status === 'conditional' && tender.length) {
-    const parts = []
-    if (supported.length) parts.push('支:' + supported.join(','))
-    parts.push('招:' + tender.join(','))
-    return parts.join(' | ')
-  }
-
-  if (excluded.length === 0 && tender.length === 0) return 'ALL'
-
-  if (showMode.value === 'supported' || (showMode.value === 'auto' && supported.length <= excluded.length)) {
-    return supported.join(', ')
-  }
-  return '除: ' + excluded.join(', ')
+  return formatProbeSupport({ status: _getStatus(key), apps: getCatAllApps(catId), excludes: _getExcludes(key), tender: _getTender(key), mode: showMode.value })
 }
 
 const getCellTooltip = (catId, featId) => {
+  const prefix = pendingMatrixFeatureIds.value.has(featId) ? '待提交预览，提交模板版本后生效。' : ''
   const all = getCatAllApps(catId)
-  if (!all.length) return ''
+  if (!all.length) return prefix
   const key = `${catId}_${featId}`
   const status = _getStatus(key)
   const excluded = _getExcludes(key)
@@ -419,11 +424,11 @@ const getCellTooltip = (catId, featId) => {
     const supported = all.filter(n => !new Set(excluded).has(n) && !tender.includes(n))
     if (supported.length) parts.push('支:' + supported.join(','))
     parts.push('招:' + tender.join(','))
-    return parts.join('\n')
+    return [prefix, ...parts].filter(Boolean).join('\n')
   }
-  if (!excluded.length) return ''
+  if (!excluded.length) return prefix
   const supported = all.filter(n => !new Set(excluded).has(n))
-  return `支: ${supported.join(', ')}\n除: ${excluded.join(', ')}`
+  return [prefix, `支: ${supported.join(', ')}\n除: ${excluded.join(', ')}`].filter(Boolean).join('\n')
 }
 
 // ---- edit mode ----
@@ -435,20 +440,41 @@ const cancelEdit = () => {
 }
 const pendingCount = computed(() => Object.keys(pendingChanges).length)
 
+const openTemplateCatalog = () => {
+  if (pendingCount.value > 0) { ElMessage.warning('请先保存草稿或取消当前单元格修改，再从功能库添加'); return false }
+  if (loading.value || loadError.value || !featureCatalog.value) { ElMessage.warning('请先完成共用功能库读取'); return false }
+  catalogDialog.value?.open()
+  return true
+}
+const refreshCatalogPreview = async payload => {
+  if (!await loadData()) throw new Error('矩阵读取失败，可重试刷新')
+  if (selectedGroupIds.value.length && !selectedGroupIds.value.includes(payload.group_id)) {
+    selectedGroupIds.value = [...selectedGroupIds.value, payload.group_id]
+  }
+  featureSearch.value = ''
+}
+
 const popoverKey = ref(''); const popStatus = ref('unsupported'); const popExcludes = ref([])
 const popOldStatus = ref('')
 const popSupportedReg = ref([])
 const popSupportedPoc = ref([])
 const popSpecialTender = ref(false)
 const popCatApps = ref({ regular: [], poc: [] })
+const popReplaceUnknown = ref(false)
+const popUnknownExcludes = computed(() => {
+  const names = [...popCatApps.value.regular, ...popCatApps.value.poc].map(app => app.name)
+  return popExcludes.value.filter(name => !names.includes(name))
+})
 const pendingExcludes = reactive({})
 
 const openPopover = (catId, featId) => {
   const key = `${catId}_${featId}`
   popoverKey.value = key
+  popReplaceUnknown.value = false
+  popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
   // Record old values for diff
-  popOldStatus.value = tplMap.value[key]?.default_support || 'unsupported'
-  const cur = key in pendingChanges ? pendingChanges[key] : (tplMap.value[key]?.default_support || 'unsupported')
+  popOldStatus.value = templateCell(key)?.default_support || 'unsupported'
+  const cur = key in pendingChanges ? pendingChanges[key] : (templateCell(key)?.default_support || 'unsupported')
   popStatus.value = cur
   // Compute supported apps from excludes
   const apps = categoryAppsMap.value[catId]
@@ -462,9 +488,9 @@ const openPopover = (catId, featId) => {
     } else {
       ex = Array.isArray(pe) ? pe : []
     }
-  } else if (tplMap.value[key]?.default_excludes) {
+  } else if (templateCell(key)?.default_excludes) {
     try {
-      const raw = JSON.parse(tplMap.value[key].default_excludes)
+      const raw = JSON.parse(templateCell(key).default_excludes)
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         ex = raw.excludes || []; tender = raw.tender || []
       } else {
@@ -472,6 +498,8 @@ const openPopover = (catId, featId) => {
       }
     } catch { ex = [] }
   }
+  ex = ex.flatMap(expandCombinedName)
+  tender = tender.flatMap(expandCombinedName)
   popSpecialTender.value = tender.includes('__特殊应用__') || false
   if (cur === 'unsupported' || !allNames.length) {
     popSupportedReg.value = []
@@ -484,8 +512,6 @@ const openPopover = (catId, featId) => {
     popSupportedPoc.value = pocNames.filter(n => !exSet.has(n) && !tender.includes(n))
   }
   popExcludes.value = (ex || []).filter(Boolean)
-  // Sync apps for this category
-  popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
 }
 
 // Per-group computed
@@ -533,7 +559,10 @@ const applyPopover = () => {
   // Compute excludes and tender
   const allNames = [...popCatApps.value.regular.map(a => a.name), ...popCatApps.value.poc.map(a => a.name)]
   const supportedSet = new Set([...(popSupportedReg.value || []), ...(popSupportedPoc.value || [])])
-  const excludes = allNames.filter(n => !supportedSet.has(n))
+  const excludes = [...new Set([
+    ...(popReplaceUnknown.value ? [] : popUnknownExcludes.value),
+    ...allNames.filter(n => !supportedSet.has(n))
+  ])]
   const tender = popSpecialTender.value ? ['__特殊应用__'] : []
   pendingExcludes[key] = { excludes: excludes.length ? excludes : [], tender }
   popoverKey.value = ''
@@ -551,50 +580,89 @@ const saveChanges = async () => {
     }
     ElMessage.success(`已保存 ${count} 条草稿，请提交后生效`)
     editMode.value = false; Object.keys(pendingChanges).forEach(k => { delete pendingChanges[k]; delete pendingExcludes[k] })
-    await loadData(); await loadDrafts()
+    if (!await loadData()) ElMessage.warning('草稿已保存，刷新失败，可点击刷新重试')
   } catch (e) { ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message)); console.error(e) }
 }
 
 // ---- draft / version ----
 const draftTotal = ref(0); const submitting = ref(false); const versions = ref([]); const showVersions = ref(false)
-const loadDrafts = async () => { try { const r = await api.get('/template-features/drafts'); draftTotal.value = r.total || 0 } catch { draftTotal.value = 0 } }
-const submitDrafts = async () => { submitting.value = true; try { await api.post('/template-features/submit'); ElMessage.success('提交成功'); await loadData(); await loadDrafts() } catch(e) { ElMessage.error('提交失败: ' + (e.response?.data?.detail || e.message)); console.error(e) } finally { submitting.value = false } }
-const discardDrafts = async () => { try { await api.post('/template-features/discard'); ElMessage.success('已废弃'); await loadData(); await loadDrafts() } catch { ElMessage.error('废弃失败') } }
+const submitDrafts = async () => {
+  submitting.value = true
+  try {
+    await api.post('/template-features/submit'); ElMessage.success('提交成功')
+    if (!await loadData()) ElMessage.warning('提交成功，刷新失败，可点击刷新重试')
+  } catch (failure) { ElMessage.error('提交失败: ' + (failure.response?.data?.detail || failure.message)) }
+  finally { submitting.value = false }
+}
+const discardDrafts = async () => {
+  try {
+    await api.post('/template-features/discard'); ElMessage.success('已废弃')
+    if (!await loadData()) ElMessage.warning('已废弃草稿，刷新失败，可点击刷新重试')
+  } catch { ElMessage.error('废弃失败') }
+}
 const loadVersions = async () => { try { versions.value = await api.get('/template-features/versions') || [] } catch { versions.value = [] } }
 const openVersions = async () => { await loadVersions(); showVersions.value = true }
 const rollback = async (row) => {
   try { await api.post(`/template-features/rollback/${row.id}`); ElMessage.success('回滚成功'); await loadData(); await loadVersions() } catch { ElMessage.error('回滚失败') }
 }
 
-onMounted(async () => { await loadData(); await loadDrafts() })
+const refreshData = () => loadData()
+useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalogDialog.value?.isOpen })
 </script>
 
 <style scoped>
-.page { padding: 0 } .card-header { display: flex; justify-content: space-between; align-items: center }
-.matrix-container { padding-top: 12px }
-.toolbar-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px }
-.legend { display: flex; gap: 16px; font-size: 13px }
+.page { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.template-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.template-card :deep(.el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px; }
+.matrix-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.toolbar-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; flex-shrink: 0; gap: 4px 8px; margin-bottom: 6px; }
+.legend { display: flex; gap: 12px; font-size: 12px; }
 .legend-item { display: flex; align-items: center; gap: 4px }
 .dot { display: inline-block; width: 14px; height: 14px; border-radius: 3px }
 .dot.supported { background: #dcfce7; border: 1px solid #22c55e }
 .dot.unsupported { background: #f1f5f9; border: 1px solid #cbd5e1 }
 .dot.pending { background: #fef3c7; border: 2px dashed #f59e0b }
-.toolbar-right { display:flex; align-items:center; gap:12px; flex-wrap:wrap }
-.filter-row { display:flex; align-items:center; gap:8px; padding:6px 0 10px; flex-wrap:wrap }
+.toolbar-right { display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+.filter-row { display:flex; align-items:center; gap:8px; padding:0 0 6px; flex-wrap:wrap; flex-shrink:0 }
 .group-filter-compact { display:inline-flex; flex-wrap:wrap; gap:2px }
 .group-filter-compact .el-checkbox { margin-right:0; white-space:nowrap }
 .view-toggle { flex-shrink: 0 }
-.table-wrap { overflow-x: auto }
+.table-wrap { flex: 1 1 0; min-height: 120px; min-width: 0; overflow: hidden; }
+.matrix-scroll-tools { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-shrink: 0; margin-bottom: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
+.matrix-scroll-tools .el-button + .el-button { margin-left: 0; }
+.table-wrap :deep(.el-table__header .cell) { white-space: nowrap; }
+.table-wrap :deep(.probe-support-cell), .cell-apps, .cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-wrap :deep(.probe-support-cell) { box-sizing: border-box; min-height: 28px; }
+.table-wrap :deep(.el-scrollbar__bar.is-horizontal) { height: 10px; bottom: 1px; }
+.table-wrap :deep(.el-scrollbar__wrap) { padding-bottom: 10px; box-sizing: border-box; }
+.app-tag { max-width: 100%; }
+.app-tag :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .tpl-cell { width: 100%; text-align: center; transition: background .1s; min-height: 28px; display: flex; align-items: center; justify-content: center }
 .tpl-cell.supported { background: #dcfce7; color: #166534 }
 .tpl-cell.conditional { background: #fef3c7; color: #92400e }
 .tpl-cell.unsupported { background: #f1f5f9; color: #94a3b8 }
 .tpl-cell.is-dirty { outline: 2px dashed #f59e0b; outline-offset: -2px }
-.cell-apps { font-size: 11px; line-height: 1.3; padding: 2px 4px; word-break: break-all }
+.cell-apps { font-size: 11px; line-height: 1.3; padding: 2px 4px; max-width: 100%; box-sizing: border-box }
 .cell-apps.is-all { font-weight: 700; font-size: 13px }
-.draft-bar { display:flex; align-items:center; gap:12px; padding:8px 16px; background:#fef3c7; border-radius:6px }
+.draft-bar { display:flex; align-items:center; flex-wrap:wrap; flex-shrink:0; gap:6px; padding:6px 10px; margin-bottom:6px; background:#fef3c7; border-radius:4px; }
 .cat-cell { line-height:1.4 }
 .cat-name { font-weight:600; white-space:nowrap }
 .cat-apps { display:flex; flex-wrap:wrap; gap:2px; max-height:80px; overflow-y:auto }
 .app-tag { margin:0; font-size:10px }
+.catalog-load-error { flex-shrink: 0; margin-bottom: 6px; }
+.catalog-preview-badge, .catalog-preview-legend { color: #92400e; font-size: 11px; }
+.catalog-preview-badge { margin-left: 4px; white-space: nowrap; }
+.catalog-preview-cell, .tpl-cell.is-catalog-preview { outline: 1px dashed #d97706; outline-offset: -1px; }
+.matrix-feature-header {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+}
+.matrix-feature-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.matrix-feature-header :deep(.feature-name-mark), .catalog-preview-badge { flex-shrink: 0; }
+
 </style>
