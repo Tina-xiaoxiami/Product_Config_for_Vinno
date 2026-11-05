@@ -75,17 +75,17 @@
             <div class="citation-section">
               <span class="section-label">答案依据</span>
               <div v-if="qaResult.answer.citations.length" class="citation-list">
-                <button
+                <div
                   v-for="citation in qaResult.answer.citations"
                   :key="citation.id"
-                  type="button"
-                  class="citation-link"
-                  @click="openCitation(citation)"
                 >
+                <button type="button" class="citation-link" @click="openCitation(citation)">
                   <strong>{{ citation.document_title }}</strong>
                   <span v-if="citation.source_ref">{{ citation.source_ref }}</span>
                   <small v-if="citation.excerpt">{{ citation.excerpt }}</small>
                 </button>
+                <a v-if="canViewUnverifiedOriginal(citation)" :href="citation.preview_url" target="_blank" rel="noopener noreferrer" class="unverified-original">普通原件查看（未核验版本及位置）</a>
+                </div>
               </div>
               <span v-else class="empty-text">本答案由产品负责人确认，暂未绑定原文位置</span>
             </div>
@@ -289,7 +289,7 @@ import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
-import { citationRequest } from '../utils/knowledgeCitation'
+import { canViewUnverifiedOriginal } from '../utils/knowledgeCitation'
 import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
 import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
@@ -603,10 +603,7 @@ const showHistory = async (question) => {
   }
 }
 
-const openCitation = (citation) => {
-  if (citationRequest(citation)) return citationViewer.value?.open(citation)
-  if (/^\/api\/knowledge\/documents\/[1-9][0-9]*\/preview(?:#page=[1-9][0-9]*)?$/.test(citation.preview_url || '')) window.open(citation.preview_url, '_blank', 'noopener')
-}
+const openCitation = (citation) => citationViewer.value?.open(citation)
 watch(() => JSON.stringify([qaQuestion.value, qaScope]), () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => qaResult.value, () => citationViewer.value?.close(), { flush: 'sync' })
 watch(() => answerCandidates.value, () => citationViewer.value?.close(), { flush: 'sync' })
@@ -703,6 +700,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 .citation-list { display: flex; flex-direction: column; gap: 7px; flex: 1; }
 .citation-link { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 4px 12px; width: 100%; padding: 9px 11px; border: 1px solid #dbeafe; border-radius: 7px; background: #fff; color: #1d4ed8; text-align: left; cursor: pointer; }
 .citation-link small { grid-column: 1 / -1; color: #64748b; }
+.unverified-original { display:inline-block;margin-top:3px;font-size:12px;color:var(--el-text-color-secondary); }
 .qa-queue { margin-top: 16px; }
 .qa-queue :deep(.el-radio-button__inner) { color: #475569; }
 .qa-queue :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) { color: #fff; background: #1d4ed8; border-color: #1d4ed8; }
