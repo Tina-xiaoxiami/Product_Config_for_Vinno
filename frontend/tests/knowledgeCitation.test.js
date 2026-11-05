@@ -188,7 +188,7 @@ test('ordinary unverified originals require an explicit same-document safe link 
   const old = { document_id: 1, preview_url: '/api/knowledge/documents/1/preview' }
   assert.equal(canViewUnverifiedOriginal(old), true)
   assert.equal(canViewUnverifiedOriginal({ ...old, preview_url: old.preview_url + '#page=2' }), true)
-  for (const preview_url of ['https://bad.invalid', '/api/knowledge/documents/2/preview', old.preview_url + '?path=bad', old.preview_url + '#page=0']) assert.equal(canViewUnverifiedOriginal({ ...old, preview_url }), false)
+  for (const preview_url of [null, 3, { toString: 'invalid' }, 'https://bad.invalid', '/api/knowledge/documents/2/preview', old.preview_url + '?path=bad', old.preview_url + '#page=0']) assert.equal(canViewUnverifiedOriginal({ ...old, preview_url }), false)
   assert.equal(canViewUnverifiedOriginal({ ...old, ...officeCitation() }), false)
   assert.equal(canViewUnverifiedOriginal(null), false)
 })

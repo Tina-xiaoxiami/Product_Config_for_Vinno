@@ -9,6 +9,10 @@ export function citationRequest(citation) {
   if (typeof citation.quote === 'string' && citation.quote.length >= 6 && citation.quote.length <= 400) params.quote = citation.quote
   return { document_id: citation.document_id, params }
 }
+export function canViewUnverifiedOriginal(citation) {
+  if (!positive(citation?.document_id) || typeof citation.preview_url !== 'string' || citationRequest(citation)) return false
+  return new RegExp(`^/api/knowledge/documents/${citation.document_id}/preview(?:#page=[1-9][0-9]*)?$`).test(citation.preview_url || '')
+}
 export const citationVisualLabel = citation => citation?.verification_status === 'model_visual_checked' ? '模型已看原页 · 未人工确认' : '未看图或未完成图像核验 · 未人工确认'
 export function citationTextParts(text, quote) {
   if (!quote) return [{ text, highlight: false }]
@@ -36,6 +40,7 @@ function address(value) {
 }
 function range(value) {
   const parts = typeof value === 'string' ? value.split(':') : []
+  if (parts.length === 1) parts.push(parts[0])
   if (parts.length !== 2) return null
   const start = address(parts[0]), end = address(parts[1])
   return start && end && start.column <= end.column && start.row <= end.row ? { start, end } : null
