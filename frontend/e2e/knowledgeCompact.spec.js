@@ -64,7 +64,7 @@ test('knowledge query uses three scope fields and keeps status beside search', a
 
 test('Office citations reuse the source dialog with structural coordinates and conservative verification', async ({ page }) => {
   const sha = 'a'.repeat(64), documentId = 41, chunkId = 76
-  const series = await (await page.request.post('/api/series', { data: { name: 'QA-Office-Viewer' } })).json()
+  const series = await (await page.request.post('/api/series', { data: { name: 'QA-Office-Viewer-Oversea' } })).json()
   await page.request.post('/api/models', { data: { name: 'QA OFFICE VIEWER', series_id: series.id } })
   let candidate = { document_id: documentId, chunk_id: chunkId, document_title: '合成Office定位资料', version_id: sha, source_ref: '合成结构位置', excerpt: '合成资料中的位置与限制', score: 1, preview_url: `/api/knowledge/documents/${documentId}/preview` }
   const base = () => ({ document_id: documentId, chunk_id: chunkId, version_id: sha, title: candidate.document_title, source_ref: candidate.source_ref, page: null,
@@ -93,7 +93,7 @@ test('Office citations reuse the source dialog with structural coordinates and c
     await page.locator(`#${menu}`).getByRole('option', { name: option, exact: true }).click()
   }
   await choose('查询市场', '海外')
-  await choose('查询完整机型', 'QA OFFICE VIEWER · QA-Office-Viewer')
+  await choose('查询完整机型', 'QA OFFICE VIEWER · QA-Office-Viewer-Oversea')
   await page.getByRole('textbox', { name: '查询软件版本' }).fill('1.51.90')
   async function ask(question) {
     await page.getByTestId('knowledge-question-input').fill(question)
