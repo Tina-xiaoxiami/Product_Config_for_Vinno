@@ -250,13 +250,14 @@ async def get_knowledge_questions(
     product_model_id: int | None = Query(None, gt=0),
     software_version: str | None = Query(None, max_length=80),
     evidence_review: str | None = Query(None, pattern="^(all|needs_review|reviewed)$"),
+    workflow: str | None = Query(None, pattern="^(draft|unanswered)$"),
     db: AsyncSession = Depends(get_db),
 ):
     scope = {"country": country, "market": market, "product_model_id": product_model_id, "software_version": software_version}
     try:
         items, total = await list_questions(db, status=status, query=q, skip=skip, limit=limit,
                                             scope=scope if any(value is not None for value in scope.values()) else None,
-                                            evidence_review=evidence_review)
+                                            evidence_review=evidence_review, workflow=workflow)
     except KnowledgeScopeError as exc:
         raise HTTPException(status_code=503 if isinstance(exc, KnowledgeScopeUnavailable) else 422, detail=str(exc)) from exc
     return KnowledgeQuestionList(items=items, total=total, skip=skip, limit=limit)

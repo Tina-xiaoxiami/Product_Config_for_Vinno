@@ -570,6 +570,7 @@ async def list_questions(
     limit: int,
     scope: dict | None = None,
     evidence_review: str | None = None,
+    workflow: str | None = None,
 ) -> tuple[list[dict], int]:
     cleaned_query = str(query or "").strip()
     resolved_scope = await resolve_query_scope(session, scope) if scope else None
@@ -609,6 +610,20 @@ async def list_questions(
     if evidence_review:
         from app.services.knowledge_answer_review import evidence_review_filter
         filters += " AND " + await evidence_review_filter(session, evidence_review)
+    if workflow:
+        working = "0"
+        if await drafts._has_table(session, "knowledge_answer_draft_edits"):
+            working = """COALESCE((
+                SELECT edit.published_version IS NULL FROM knowledge_answer_draft_edits edit
+                WHERE edit.question_id=q.id AND (edit.published_version IS NULL OR edit.published_version>0)
+                ORDER BY edit.id DESC LIMIT 1
+            ), 0)"""
+        if workflow == "draft":
+            filters += f""" AND ({working} OR EXISTS (
+                SELECT 1 FROM knowledge_answers a WHERE a.question_id=q.id AND a.review_status='draft'
+            ))"""
+        elif workflow == "unanswered":
+            filters += f" AND NOT ({working}) AND NOT EXISTS (SELECT 1 FROM knowledge_answers a WHERE a.question_id=q.id)"
     total_statement = text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}")
     rows_statement = text(
             f"""
