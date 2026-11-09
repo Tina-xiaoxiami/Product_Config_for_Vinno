@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from pathlib import Path
+from typing import BinaryIO
 
 from openpyxl import load_workbook
 
@@ -71,7 +72,9 @@ HEADER_LABELS = frozenset({"型号", "机型", "模式", "探头", "电池", "�
                            "model", "mode", "probe", "battery", "condition", "runtime", "duration"})
 
 
-def read_cited_workbook_rows(data: bytes, suffix: str, sheets: dict[str, set[int]] | None) -> list[dict]:
+def read_cited_workbook_rows(
+    data: bytes | BinaryIO, suffix: str, sheets: dict[str, set[int]] | None, *, read_only: bool = False,
+) -> list[dict]:
     """Read original, 1-based rows including hidden rows, grouped by their source header."""
     from collections import defaultdict
     from io import BytesIO
@@ -137,8 +140,11 @@ def read_cited_workbook_rows(data: bytes, suffix: str, sheets: dict[str, set[int
                 book.release_resources()
         if suffix != ".xlsx":
             raise WorkbookPreviewError("引用表格格式暂不支持")
-        validate_office_package(data, suffix)
-        workbook = load_workbook(BytesIO(data), data_only=True, keep_links=False)
+        if read_only and not sheets:
+            raise WorkbookPreviewError("大工作簿必须指定引用行")
+        validate_office_package(data, suffix, xml_only=read_only)
+        workbook = load_workbook(BytesIO(data) if isinstance(data, bytes) else data,
+                                 data_only=True, keep_links=False, read_only=read_only)
         try:
             results = []
             for name in (sheets if sheets is not None else workbook.sheetnames):
@@ -148,9 +154,20 @@ def read_cited_workbook_rows(data: bytes, suffix: str, sheets: dict[str, set[int
                     raise WorkbookPreviewError("工作表超过预览上限")
                 grid = [[_cell_text(value) for value in row] for row in
                         sheet.iter_rows(max_row=height, values_only=True)]
-                merged = [(r.min_row - 1, r.max_row, r.min_col - 1) for r in sheet.merged_cells.ranges
-                          if r.min_row < r.max_row and r.min_col == r.max_col]
-                results.extend(groups(name, grid, lambda n: bool(getattr(sheet.row_dimensions.get(n), "hidden", False)), merged))
+                if read_only:
+                    from xml.etree.ElementTree import iterparse
+
+                    hidden = set()
+                    with sheet._get_source() as xml:
+                        for _, element in iterparse(xml, events=("end",)):
+                            if element.tag.endswith("}row") and element.get("hidden") in ("1", "true"):
+                                hidden.add(int(element.get("r")))
+                            element.clear()
+                    results.extend(groups(name, grid, hidden.__contains__, []))
+                else:
+                    merged = [(r.min_row - 1, r.max_row, r.min_col - 1) for r in sheet.merged_cells.ranges
+                              if r.min_row < r.max_row and r.min_col == r.max_col]
+                    results.extend(groups(name, grid, lambda n: bool(getattr(sheet.row_dimensions.get(n), "hidden", False)), merged))
             return results
         finally:
             workbook.close()

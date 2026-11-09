@@ -881,10 +881,15 @@ async def test_draft_question_edit_rejects_same_scope_duplicates_and_records_old
 
 
 @pytest.mark.asyncio
-async def test_spreadsheet_citations_return_registered_header_exact_rows_and_hidden_flag(tmp_path):
+@pytest.mark.parametrize("large", [False, True])
+async def test_spreadsheet_citations_return_registered_header_exact_rows_and_hidden_flag(tmp_path, monkeypatch, large):
     from hashlib import sha256
     from openpyxl import Workbook
 
+    if large:
+        from app.services import knowledge_sources
+
+        monkeypatch.setattr(knowledge_sources, "MAX_SOURCE_BYTES", 1)
     source = tmp_path / "runtime.xlsx"
     book = Workbook()
     sheet = book.active
@@ -915,7 +920,10 @@ async def test_spreadsheet_citations_return_registered_header_exact_rows_and_hid
             group, = result.json()["tables"]
             assert group["columns"] == ["机型", "模式", "探头", "放电时长"]
             assert [(r["row_number"], r["hidden"], r["cells"][-1]) for r in group["rows"]] == [(2, False, "52"), (3, True, "60")]
-            assert group["preview_url"].endswith(version)
+            if large:
+                assert group["preview_url"] is None
+            else:
+                assert group["preview_url"].endswith(version)
             source.write_bytes(b"changed")
             assert (await client.get(url)).json()["warnings"]
             assert not (await client.get(url)).json()["tables"]
