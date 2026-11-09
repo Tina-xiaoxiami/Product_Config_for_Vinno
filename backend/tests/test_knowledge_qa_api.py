@@ -621,3 +621,88 @@ async def test_revise_unscoped_draft_preserves_citations_and_rejects_stale_versi
             ]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [False, True], ids=["fresh-orm", "existing-scoped"])
+@pytest.mark.parametrize("same_question", [True, False], ids=["same-question", "different-question"])
+async def test_retired_question_id_cannot_mutate_recreated_question(tmp_path, monkeypatch, existing, same_question):
+    from app.models.knowledge import KnowledgeQuestion, KnowledgeQuestionPhrasing
+    from app.services.knowledge_scope_migration import migrate_knowledge_scopes
+
+    database = tmp_path / "question-lifecycle.db"
+    _create_qa_database(database)
+    with sqlite3.connect(database) as conn:
+        conn.executescript("DROP TABLE knowledge_question_phrasings; DROP TABLE knowledge_questions;")
+    tables = [KnowledgeQuestion.__table__, KnowledgeQuestionPhrasing.__table__]
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+    try:
+        with monkeypatch.context() as patch:
+            if existing:
+                # Reproduce databases created by the ORM before the fix.
+                patch.setitem(KnowledgeQuestion.__table__.dialect_options["sqlite"], "autoincrement", False)
+            async with engine.begin() as conn:
+                await conn.run_sync(lambda sync: KnowledgeQuestion.metadata.create_all(sync, tables=tables))
+    finally:
+        await engine.dispose()
+
+    async def ask(client, question):
+        response = await client.post("/api/knowledge/questions/ask", json={
+            "scope": TEST_QUERY_SCOPE, "question": question,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()["question_id"]
+
+    client, engine = await _client_for(database, migrate_scope=False)
+    try:
+        async with client:
+            target_id = await ask(client, "已发布的目标问题")
+            target_url = f"/api/knowledge/questions/{target_id}"
+            assert (await client.put(f"{target_url}/answer", json={"answer_text": "已发布答案"})).status_code == 200
+            old_id = await ask(client, "电池续航多久？")
+            old_url = f"/api/knowledge/questions/{old_id}"
+            with sqlite3.connect(database) as conn:
+                conn.execute("""
+                    INSERT INTO knowledge_answers(question_id,answer_text,review_status,version)
+                    VALUES (?,'旧草稿','draft',1)
+                """, (old_id,))
+            old = (await client.get(old_url)).json()
+            old_delete = {"expected_question": old["question_text"], "expected_scope": old["scope"],
+                          "expected_answer_version": 1}
+            if existing:
+                # A pre-migration process must not delete IDs it cannot retire durably.
+                blocked = await client.request("DELETE", old_url, json=old_delete)
+                assert blocked.status_code == 409, blocked.text
+                assert (await client.get(old_url)).json() == old
+                report = migrate_knowledge_scopes(database, apply=True)
+                assert report["status"] == "applied"
+                assert (await client.get(old_url)).json() == old
+
+            deleted = await client.request("DELETE", old_url, json=old_delete)
+            assert deleted.status_code == 204, deleted.text
+            replacement = old["question_text"] if same_question else "新问题的独立答案？"
+            new_id = await ask(client, replacement)
+            new_url = f"/api/knowledge/questions/{new_id}"
+            with sqlite3.connect(database) as conn:
+                conn.execute("""
+                    INSERT INTO knowledge_answers(question_id,answer_text,review_status,version)
+                    VALUES (?,'新草稿','draft',1)
+                """, (new_id,))
+            stale_delete = await client.request("DELETE", old_url, json=old_delete)
+            stale_revision = {"answer_text": "过期请求", "expected_version": 1, "change_note": "旧表单"}
+            stale_draft = await client.put(f"{old_url}/draft-answer", json=stale_revision)
+            assert (stale_delete.status_code, stale_draft.status_code) == (404, 404)
+            assert new_id > old_id
+            assert (await client.put(f"{old_url}/answer", json={"answer_text": "过期发布"})).status_code == 404
+            assert (await client.post(f"{old_url}/merge/{target_id}")).status_code == 404
+            new = (await client.get(new_url)).json()
+            assert new["answer"]["answer_text"] == "新草稿"
+            assert new["answer"]["version"] == 1
+            revised = await client.put(f"{new_url}/draft-answer", json={
+                "answer_text": "修订的新草稿", "expected_version": 1, "change_note": "已核对",
+            })
+            assert revised.status_code == 200
+            assert revised.json()["answer"]["version"] == 2
+            assert (await client.get(f"{target_url}/history")).json()["items"][0]["answer_text"] == "已发布答案"
+    finally:
+        await engine.dispose()
