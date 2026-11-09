@@ -160,6 +160,7 @@ async def _assess(db, version, origin, previous_report, rollback_target, *, rule
     market = rules.market(series_name)
     prior = await _prior_version(db, version)
     template = rules.templates.get(market)
+    has_binding = template is not None and any(anchor.series == series_name for anchor in template.anchors)
     report = {
         "ruleset": rules.version, "status": "pending", "series": series_name, "market": market,
         "origin": origin, "version": source_ref(version), "previous": source_ref(prior),
@@ -182,9 +183,9 @@ async def _assess(db, version, origin, previous_report, rollback_target, *, rule
         report["changes"] = changes(before, after, market, rules, include_models=prior is not None)
         if rules_error or (market and not rules.version):
             return {**report, "reason": "Cart 规则未配置或不可读取，无法完成核验"}, None
-        if not report["changes"] and not (template and template.fact_keys):
+        if not report["changes"] and not (has_binding and template.fact_keys):
             return {**report, "status": "checked", "reason": "已检查，未发现影响 Cart 发货资料的变更"}, None
-        if not template or series_name not in {anchor.series for anchor in template.anchors}:
+        if not has_binding:
             return {**report, "reason": "系列或市场未与 Cart 模板绑定，适用型号及页码需核对"}, None
         evidence, context = await _collect_evidence(db, template, version, after, market, rules)
         if (previous_report and previous_report["ruleset"] == rules.version and previous_report["context"]
@@ -313,13 +314,19 @@ async def _store_artifact(db, content):
     return digest
 
 
+async def _last_candidate(db, check):
+    if check is None or check.artifact_sha256:
+        return check
+    key = check.report.get("previous_candidate_key")
+    return await db.get(CartReleaseCheck, key) if key else None
+
+
 async def _same_fact_candidate(db, latest, report, digest):
     if (fact_state(latest.report.get("facts", {})) != fact_state(report["facts"])
             or latest.report.get("baseline_changes") != report["baseline_changes"]):
         return False
-    previous_key = latest.report.get("previous_candidate_key")
-    if latest.report["status"] == "checked" and previous_key and digest:
-        previous = await db.get(CartReleaseCheck, previous_key)
+    if latest.report["status"] == "checked" and digest:
+        previous = await _last_candidate(db, latest)
         return previous is not None and previous.artifact_sha256 == digest
     return (latest.artifact_sha256, latest.report["status"], latest.report.get("reason")) == (
         digest, report["status"], report["reason"],
@@ -349,10 +356,11 @@ async def refresh_cart_for_facts(db, fact_keys=None, *, version_id=None):
         if latest is not None and await _same_fact_candidate(db, latest, report, digest):
             await link_fact_impacts(db, latest)
             continue
-        if latest is not None and latest.artifact_sha256:
-            report["previous_candidate_key"] = latest.version_key
+        prior = await _last_candidate(db, latest)
+        if prior is not None:
+            report["previous_candidate_key"] = prior.version_key
             if content is not None:
-                report["affected_pages"] = _affected_pages(report, content, latest)
+                report["affected_pages"] = _affected_pages(report, content, prior)
         identity = [version_key(version), latest.version_key if latest else None, report]
         key = sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         result = CartReleaseCheck(version_key=key, version_id=version.id, report=report,

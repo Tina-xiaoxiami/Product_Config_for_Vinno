@@ -30,16 +30,21 @@ async def resolve_facts(db, market, template, context):
     return facts
 
 
+def _has_versioned_source(fact):
+    for source in fact.get("sources", []):
+        version = source.get("version_id") or source.get("sha256")
+        if (isinstance(version, str) and re.fullmatch(r"[0-9a-f]{64}", version)
+                and (source.get("locator") or source.get("reference"))):
+            return True
+    return False
+
+
 def _render_value(fact):
-    if fact["status"] != "confirmed":
+    if fact["status"] != "confirmed" or not _has_versioned_source(fact):
         return None
     # A measured value with conditions may only use the provider's full display.
     value = fact.get("display_value") if fact.get("conditions") else fact.get("value")
-    for source in fact.get("sources", []):
-        version = source.get("version_id") or source.get("sha256") or ""
-        if re.fullmatch(r"[0-9a-f]{64}", version) and (source.get("locator") or source.get("reference")):
-            return value if isinstance(value, (str, int, float)) and not isinstance(value, bool) else None
-    return None
+    return value if isinstance(value, (str, int, float)) and not isinstance(value, bool) else None
 
 
 def plan_fact_tokens(template, facts):
@@ -62,7 +67,7 @@ def plan_fact_tokens(template, facts):
                 patches.append((rule, replacement))
     for key, pages in template.watch_facts.items():
         fact = facts[key]
-        if fact["status"] != "confirmed":
+        if fact["status"] != "confirmed" or not _has_versioned_source(fact):
             issue = fact.get("issue") or {}
             gaps.append({"key": key, "pages": sorted(set(pages)), "root_key": issue.get("root_key"),
                          "kind": issue.get("kind"), "detail": issue.get("detail") or "缺少适用的原件依据"})
