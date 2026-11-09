@@ -194,6 +194,7 @@ test('saving an unscoped draft uses draft revision and does not enter the publis
     answerSaving: { value: false }, answerForm: { value: form }, answerDialogVisible: { value: true },
     parseQuestionAliases: () => [],
     citationInput: value => value,
+    draftSourceCitations: () => [],
     savedAnswerFormState: { value: '' },
     answerFormState: form => JSON.stringify(form),
     reviseKnowledgeDraft: async (...args) => {

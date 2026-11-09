@@ -261,6 +261,37 @@ async def test_changed_source_preserves_frozen_answer_and_protects_edited_draft(
 
 
 @pytest.mark.asyncio
+async def test_legacy_draft_history_and_original_citations_survive_first_publication(tmp_path):
+    path = tmp_path / "legacy-draft.db"
+    _create_qa_database(path)
+    client, engine = await _client_for(path)
+    try:
+        async with client:
+            asked = await client.post("/api/knowledge/questions/ask", json={
+                "scope": TEST_QUERY_SCOPE, "question": "如何核对旧资料？",
+            })
+            question_id = asked.json()["question_id"]
+            url = f"/api/knowledge/questions/{question_id}"
+            with sqlite3.connect(path) as db:
+                db.execute("INSERT INTO knowledge_answers(id,question_id,answer_text,review_status,version) VALUES (1,?,'旧草稿二','draft',2)", (question_id,))
+                db.execute("INSERT INTO knowledge_answer_revisions(answer_id,version,answer_text,review_status) VALUES (1,1,'旧草稿一','draft'),(1,2,'旧草稿二','draft')")
+                db.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref) VALUES (1,1,'第2页')")
+            edit = await client.put(f"{url}/draft-answer", json={
+                "expected_version": 2, "answer_text": "发布内容", "change_note": "首次发布",
+            })
+            revision = edit.json()["draft"]["revision"]
+            published = await client.put(f"{url}/answer", json={"draft_revision": revision})
+            assert published.status_code == 200, published.text
+            assert published.json()["answer"]["version"] == 1
+            history = (await client.get(f"{url}/history")).json()["items"]
+            archived = {item["legacy_version"]: item for item in history if item["legacy_version"]}
+            assert {version: item["answer_text"] for version, item in archived.items()} == {1: "旧草稿一", 2: "旧草稿二"}
+            assert archived[2]["citations"][0]["source_ref"] == "第2页"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_unknown_question_enters_pending_queue_and_repeated_ask_is_counted(tmp_path):
     database_path = tmp_path / "qa.db"
     _create_qa_database(database_path)

@@ -161,7 +161,9 @@
                   <h4>{{ questionDisplayText(row) }}</h4>
                   <p class="qa-answer-meta">{{ knowledgeScopeLabel(row.scope) }}<span v-if="row.answer && row.answer.review_status !== 'draft'"> · v{{ row.answer.version }} · {{ row.answer.updated_at }}</span><span v-else-if="row.draft || row.answer"> · 草稿</span></p>
                   <KnowledgeAnswerBody :text="answerDisplayText(queueAnswer(row)) || '此问题尚未填写答案。'" />
-                  <KnowledgeDraftCitations v-if="row.answer?.citations?.length && row.answer.review_status === 'draft'"
+                  <KnowledgeDraftCitations v-if="row.status === 'pending' && row.draft?.source_versions?.length"
+                    :question-id="row.id" :draft-revision="row.draft.revision" :citations="draftSourceCitations(row.draft)" />
+                  <KnowledgeDraftCitations v-else-if="row.answer?.citations?.length && row.answer.review_status === 'draft'"
                     :question-id="row.id" :version="row.answer.version" :citations="row.answer.citations" />
                   <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
                   <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
@@ -263,7 +265,10 @@
             </div>
           </div>
         </el-form-item>
-        <el-form-item v-if="answerForm.review_status === 'draft' && answerForm.original_citations.length" label="原有引用">
+        <el-form-item v-if="answerForm.saved_citations.length" label="草稿引用">
+          <KnowledgeDraftCitations :question-id="answerForm.question_id" :draft-revision="answerForm.draft_revision" :citations="answerForm.saved_citations" />
+        </el-form-item>
+        <el-form-item v-else-if="answerForm.review_status === 'draft' && answerForm.original_citations.length" label="原有引用">
           <KnowledgeDraftCitations :question-id="answerForm.question_id" :version="answerForm.version" :citations="answerForm.original_citations" />
         </el-form-item>
         <el-form-item v-if="answerForm.scope" label="答案依据">
@@ -456,6 +461,7 @@ const answerForm = ref({
   alias_text: '',
   citations: [],
   original_citations: [],
+  saved_citations: [],
   change_note: ''
 })
 
@@ -580,6 +586,11 @@ const insertAnswerTable = () => {
 let answerDialogSessionId = 0
 const queueQuestionText = row => row.status === 'pending' && row.draft ? row.draft.question_text : questionDisplayText(row)
 const queueAnswer = row => row.status === 'pending' && row.draft ? row.draft : row.answer
+const draftSourceCitations = draft => (draft?.source_versions || []).map((source, index) => ({
+  id: index + 1,
+  document_title: source.file_name,
+  source_ref: source.source_ref
+}))
 const citationInput = citation => ({
   document_id: citation.document_id,
   source_ref: citation.source_ref || '',
@@ -610,6 +621,7 @@ const openAnswerDialog = async (question) => {
     alias_text: (draft?.alias_questions ?? question.alias_questions ?? []).join('\n'),
     citations: (draft?.citations ?? question.answer?.citations ?? []).map(citationInput),
     original_citations: question.answer?.citations || [],
+    saved_citations: draftSourceCitations(draft),
     change_note: draft?.change_note || ''
   }
   savedAnswerFormState.value = answerFormState(answerForm.value)
@@ -672,6 +684,7 @@ const saveAnswer = async () => {
     if (dialogSession === answerDialogSessionId) {
       form.draft_revision = saved.draft.revision
       form.source_changed = saved.draft.source_changed
+      form.saved_citations = draftSourceCitations(saved.draft)
       savedAnswerFormState.value = answerFormState(form)
       ElMessage.success('草稿已保存')
     }
