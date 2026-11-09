@@ -10,6 +10,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.knowledge_names import KnowledgeNameContext, load_name_context
+from app.services.knowledge_scope_migration import has_monotonic_question_ids
 
 from app.services.knowledge_scope import (
     KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
@@ -271,6 +272,7 @@ async def delete_pending_question(
         if row is None:
             await session.rollback()
             return False
+        await _require_monotonic_question_ids(session)
         if row["status"] != "pending" or (row["answer_id"] is not None and row["review_status"] != "draft"):
             raise KnowledgeQaError("仅可删除待确认问题及未发布草稿")
         if (row["question_text"] != expected_question or row["scope_key"] != scope_key(expected_scope)
@@ -301,6 +303,14 @@ async def delete_pending_question(
     except Exception:
         await session.rollback()
         raise
+
+
+async def _require_monotonic_question_ids(session: AsyncSession) -> None:
+    schema = await session.scalar(text("""
+        SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_questions'
+    """))
+    if not has_monotonic_question_ids(schema):
+        raise KnowledgeQaError("当前问答库会复用已删除的问题编号，请完成问答库迁移后重试")
 
 
 async def revise_answer_draft(
@@ -832,6 +842,7 @@ async def merge_question(
     if source_question_id not in questions or target_question_id not in questions:
         return None
 
+    await _require_monotonic_question_ids(session)
     source = questions[source_question_id]
     target = questions[target_question_id]
     if source.scope_key != target.scope_key:

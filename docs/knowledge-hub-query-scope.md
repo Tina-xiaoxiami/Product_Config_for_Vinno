@@ -46,7 +46,9 @@ python3 backend/scripts/migrate_knowledge_scopes.py --database /path/to/product_
 python3 backend/scripts/migrate_knowledge_scopes.py --database /path/to/product_config.db --apply
 ```
 
-迁移不在应用启动时自动执行。`--apply`先取得写锁、在线备份，再在同一事务中重建，核对原列内容、ID、所有相关子表、外键、显式索引/触发器及序列高水位。存量范围均为空。未知结构、半迁移或核验失败会阻断或回滚，不部分生效。
+迁移不在应用启动时自动执行。`--apply`先取得写锁、在线备份，再在同一事务中重建并核对原列内容、ID、相关子表和外键。重建会保留显式索引、触发器和序列高水位。历史空范围继续为空，已有明确范围原样保留。未知结构、半迁移或核验失败会阻断或回滚。
+
+新建问答库使用 SQLite `AUTOINCREMENT`，以免新问题继承已删除问题的 ID。已有范围但仍会复用 ID 的库，演练会报告 `ready_question_ids`，可用同一命令迁移。迁移前，服务会拒绝删除和合并问题。
 
 部署必须同时切换匹配的服务代码与结构，不能让旧知识库写入程序继续连接已启用范围的新库。发布工作库与受控原件不需要迁移。回退前先停止写入并备份当前库；若恢复迁移前备份，须评估迁移后的新记录，不能直接删列或强退旧代码。
 

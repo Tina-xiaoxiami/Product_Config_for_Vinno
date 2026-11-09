@@ -658,7 +658,11 @@ async def test_retired_question_id_cannot_mutate_recreated_question(tmp_path, mo
         async with client:
             target_id = await ask(client, "已发布的目标问题")
             target_url = f"/api/knowledge/questions/{target_id}"
-            assert (await client.put(f"{target_url}/answer", json={"answer_text": "已发布答案"})).status_code == 200
+            published = await client.put(f"{target_url}/answer", json={
+                "answer_text": "已发布答案", "alias_questions": ["已发布问题的别名"],
+                "citations": [{"document_id": 1, "source_ref": "第12页"}],
+            })
+            assert published.status_code == 200, published.text
             old_id = await ask(client, "电池续航多久？")
             old_url = f"/api/knowledge/questions/{old_id}"
             with sqlite3.connect(database) as conn:
@@ -674,9 +678,12 @@ async def test_retired_question_id_cannot_mutate_recreated_question(tmp_path, mo
                 blocked = await client.request("DELETE", old_url, json=old_delete)
                 assert blocked.status_code == 409, blocked.text
                 assert (await client.get(old_url)).json() == old
+                assert migrate_knowledge_scopes(database)["status"] == "ready_question_ids"
                 report = migrate_knowledge_scopes(database, apply=True)
                 assert report["status"] == "applied"
+                assert migrate_knowledge_scopes(database)["status"] == "already_current"
                 assert (await client.get(old_url)).json() == old
+                assert (await client.get(target_url)).json() == published.json()
 
             deleted = await client.request("DELETE", old_url, json=old_delete)
             assert deleted.status_code == 204, deleted.text
