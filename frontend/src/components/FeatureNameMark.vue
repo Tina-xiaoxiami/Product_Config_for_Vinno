@@ -20,7 +20,7 @@
     </template>
     <button type="button" class="feature-name-mark" :class="`is-${flag.severity}`" :aria-label="'核对 ' + (flag.feature_en_name || flag.feature_cn_name) + ' 名称'" @click.stop="openFeatureNameReview(flag.feature_id)"><el-icon><component :is="icon" /></el-icon></button>
   </el-tooltip>
-  <button v-else-if="featureId" type="button" class="feature-name-mark feature-display-edit" :aria-label="'编辑显示名称 ' + (name || cn || en)" title="编辑显示名称，可选中文、英文或自定义" @click.stop="openFeatureNameReview(featureId, true)"><el-icon><EditPen /></el-icon></button>
+  <button v-else-if="featureId && showDisplayEdit" type="button" class="feature-name-mark feature-display-edit" :aria-label="'编辑显示名称 ' + (name || cn || en)" title="编辑显示名称，可选中文、英文或自定义" @click.stop="openFeatureNameReview(featureId, true)"><el-icon><EditPen /></el-icon></button>
 </template>
 
 <script setup>
@@ -33,7 +33,8 @@ const props = defineProps({
   featureId: { type: [Number, String], default: null },
   cn: { type: String, default: '' },
   en: { type: String, default: '' },
-  name: { type: String, default: '' }
+  name: { type: String, default: '' },
+  showDisplayEdit: { type: Boolean, default: true }
 })
 
 // 组件出现时确保提示标记已加载（幂等，失败静默）
