@@ -64,7 +64,7 @@ test('incomplete scope makes no ask or queue request; history uses a separate ex
   assert.ok(warnings.length)
   context.qaQueueMode.value = 'legacy'
   const loading = loadQaQuestions()
-  assert.deepEqual(queues[0].params, { status: 'pending', limit: 100, skip: 0 })
+  assert.deepEqual(queues[0].params, { status: 'pending', workflow: 'unanswered', limit: 100, skip: 0 })
   queues[0].resolve({ items: [{ id: 71, scope: null }] })
   await loading
   assert.equal(context.qaQuestions.value[0].id, 71)
