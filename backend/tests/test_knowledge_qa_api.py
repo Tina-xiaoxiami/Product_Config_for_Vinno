@@ -555,10 +555,16 @@ async def test_ask_does_not_return_answer_changed_during_lookup(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer_status,expected_version,http_status", [
-    ("draft", 1, 204), ("draft", 2, 409), ("published", 1, 409), (None, None, 204),
+@pytest.mark.parametrize("answer_status,revision_status,expected_version,http_status", [
+    ("draft", "draft", 1, 204),
+    ("draft", "draft", 2, 409),
+    ("published", "published", 1, 409),
+    ("draft", "published", 1, 409),
+    (None, None, None, 204),
 ])
-async def test_delete_pending_question_only_removes_unpublished_drafts(tmp_path, answer_status, expected_version, http_status):
+async def test_delete_pending_question_only_removes_unpublished_drafts(
+    tmp_path, answer_status, revision_status, expected_version, http_status,
+):
     database = tmp_path / "delete-question.db"
     _create_qa_database(database)
     client, engine = await _client_for(database)
@@ -570,7 +576,7 @@ async def test_delete_pending_question_only_removes_unpublished_drafts(tmp_path,
             if answer_status:
                 db.execute("INSERT INTO knowledge_answers(id, question_id, answer_text, review_status) VALUES (1,1,'内容',?)", (answer_status,))
                 db.execute("INSERT INTO knowledge_answer_citations(answer_id, document_id) VALUES (1,1)")
-                db.execute("INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status) VALUES (1,1,'内容',?)", (answer_status,))
+                db.execute("INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status) VALUES (1,1,'内容',?)", (revision_status,))
         async with client:
             result = await client.request("DELETE", "/api/knowledge/questions/1", json={
                 "expected_question": "测试草稿", "expected_scope": None, "expected_answer_version": expected_version,

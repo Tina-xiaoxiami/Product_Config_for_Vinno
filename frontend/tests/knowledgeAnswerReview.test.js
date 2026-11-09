@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { answerReviewPayload, answerReviewError, answerReviewLabel, QA_COLUMNS } from '../src/utils/knowledgeAnswerReview.js'
+import { answerReviewPayload, answerReviewError, answerReviewLabel, canDeletePendingQuestion, QA_COLUMNS } from '../src/utils/knowledgeAnswerReview.js'
 
 const question = { id: 7, answer: { version: 1 }, evidence_review: { fingerprint: 'source-v1', review_revision: 0, status: 'needs_review' } }
 const form = () => ({ action: 'record_reference', country: '', market: '', product_model_ids: [], software_version: '',
@@ -144,4 +144,34 @@ test('invalidated answers never claim document-backed review status', () => {
 
 test('new draft answers are labelled as drafts', () => {
   assert.equal(answerReviewLabel({ answer: { review_status: 'draft', citations: [{}] } }), '待确认草稿')
+})
+
+test('deleting a pending draft requires confirmation and refreshes the queue after success', async () => {
+  const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const start = source.indexOf('const deletingQuestionId =')
+  const end = source.indexOf('const onAnswerReviewSaved =', start)
+  const row = { id: 7, status: 'pending', question_text: '测试草稿', answer: { review_status: 'draft', version: 1 } }
+  const calls = []
+  let confirmed = false
+  const context = {
+    ref: value => ({ value }),
+    canDeletePendingQuestion,
+    questionDisplayText: row => row.question_text,
+    ElMessageBox: { confirm: async text => {
+      assert.match(text, /测试草稿/)
+      if (!confirmed) throw new Error('cancel')
+    } },
+    ElMessage: { success() {}, error: message => assert.fail(message) },
+    deleteKnowledgePendingQuestion: async row => calls.push(row.id),
+    qaPage: { value: 3 },
+    loadQaQuestions: async () => calls.push(context.qaPage.value)
+  }
+  const remove = new Function(...Object.keys(context), `${source.slice(start, end)}; return removePendingQuestion`)(...Object.values(context))
+  await remove(row)
+  assert.deepEqual(calls, [])
+  confirmed = true
+  await remove({ ...row, answer: { review_status: 'published' } })
+  assert.deepEqual(calls, [])
+  await remove(row)
+  assert.deepEqual(calls, [7, 1])
 })

@@ -6,6 +6,7 @@ import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -276,6 +277,8 @@ async def confirm_knowledge_answer(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        # Serialize with pending-question deletion before reading its state.
+        await db.execute(text("BEGIN IMMEDIATE"))
         item = await publish_answer(
             db,
             question_id=question_id,
@@ -299,6 +302,8 @@ async def merge_knowledge_question(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        # Serialize with pending-question deletion before reading its state.
+        await db.execute(text("BEGIN IMMEDIATE"))
         item = await merge_question(
             db,
             source_question_id=source_question_id,

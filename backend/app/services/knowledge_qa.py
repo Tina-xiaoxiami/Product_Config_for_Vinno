@@ -232,15 +232,19 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
 async def ensure_question(session: AsyncSession, question_text: str, query_scope_key: str, *, count_ask: bool) -> int:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)
-    existing = (await session.execute(text(
-        "SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope"
-    ), {"normalized": normalized, "scope": query_scope_key})).one_or_none()
+    params = {"normalized": normalized, "scope": query_scope_key}
+    if count_ask:
+        # Acquire the writer lock before deciding whether a pending question still exists.
+        existing = (await session.execute(text("""
+            UPDATE knowledge_questions
+            SET asked_count=asked_count+1, last_asked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+            WHERE normalized_question=:normalized AND scope_key=:scope RETURNING id
+        """), params)).one_or_none()
+    else:
+        existing = (await session.execute(text("""
+            SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope
+        """), params)).one_or_none()
     if existing:
-        if count_ask:
-            await session.execute(text(
-                "UPDATE knowledge_questions SET asked_count=asked_count+1,last_asked_at=CURRENT_TIMESTAMP,"
-                "updated_at=CURRENT_TIMESTAMP WHERE id=:id"
-            ), {"id": existing.id})
         return int(existing.id)
     result = await session.execute(text(
         "INSERT INTO knowledge_questions (question_text,normalized_question,status,asked_count,scope_key) "
@@ -444,13 +448,14 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     item = await get_question(session, question_id)
     from app.services.knowledge_content import find_candidate_evidence
 
-    candidates = await find_candidate_evidence(session, item["question_text"], scope=resolved_scope)
+    pending_text = item["question_text"] if item else cleaned
+    candidates = await find_candidate_evidence(session, pending_text, scope=resolved_scope)
     from app.services.knowledge_release_history import history_for_question
     history_trace = await history_for_question(session, cleaned, resolved_scope)
     return {
         "status": "pending",
-        "question_id": question_id,
-        "question": item["question_text"],
+        "question_id": question_id if item else None,
+        "question": pending_text,
         "match_type": "none",
         "similarity": best_score,
         "answer": None,
