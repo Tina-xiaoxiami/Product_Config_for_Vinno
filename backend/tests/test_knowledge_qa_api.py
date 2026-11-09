@@ -198,6 +198,10 @@ async def test_saved_draft_survives_restart_and_only_publication_advances_versio
         })
         assert second.status_code == 200, second.text
         token = second.json()["draft"]["revision"]
+        queued = await client.get("/api/knowledge/questions", params={**TEST_QUERY_SCOPE, "workflow": "draft"})
+        assert [item["id"] for item in queued.json()["items"]] == [asked.json()["question_id"]]
+        waiting = await client.get("/api/knowledge/questions", params={**TEST_QUERY_SCOPE, "workflow": "unanswered"})
+        assert waiting.json()["total"] == 0
     await engine.dispose()
 
     client, engine = await _client_for(path)
@@ -214,6 +218,8 @@ async def test_saved_draft_survives_restart_and_only_publication_advances_versio
                 assert published.json()["answer"]["version"] == 2
                 assert published.json()["answer"]["answer_text"] == "修订二"
                 assert published.json()["draft"] is None
+            queued = await client.get("/api/knowledge/questions", params={**TEST_QUERY_SCOPE, "workflow": "draft"})
+            assert queued.json()["total"] == 0
             history = (await client.get(f"{url}/history")).json()["items"]
             published = [row for row in history if row["review_status"] == "published"]
             assert [row["version"] for row in published] == [2, 1]

@@ -144,7 +144,8 @@
           </div>
           <div class="qa-table-toolbar">
             <el-radio-group v-if="qaQueueMode !== 'review'" v-model="qaStatus" size="small" aria-label="问答发布状态" @change="searchQaQuestions">
-              <el-radio-button value="pending">待确认</el-radio-button>
+              <el-radio-button value="pending">待回答</el-radio-button>
+              <el-radio-button value="draft">草稿</el-radio-button>
               <el-radio-button value="answered">已发布</el-radio-button>
             </el-radio-group>
             <el-input v-model="qaSearch" size="small" clearable placeholder="搜索问题" aria-label="搜索问答问题" @keyup.enter="searchQaQuestions" @clear="searchQaQuestions" />
@@ -550,7 +551,10 @@ const loadQaQuestions = async () => {
   qaQuestions.value = []
   qaTotal.value = 0
   try {
-    const result = await getKnowledgeQuestions({ status: mode === 'review' ? 'answered' : qaStatus.value, limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value,
+    const status = qaStatus.value
+    const result = await getKnowledgeQuestions({ limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value,
+      ...(mode === 'review' ? { status: 'answered' } : status === 'draft' ? { workflow: 'draft' } :
+        { status, ...(status === 'pending' ? { workflow: 'unanswered' } : {}) }),
       ...(qaSearch.value.trim() ? { q: qaSearch.value.trim() } : {}),
       ...(mode === 'selected' ? scope : {}),
       ...(mode === 'review' ? { evidence_review: qaEvidenceFilter.value } : {}) })
@@ -686,6 +690,7 @@ const saveAnswer = async () => {
       form.source_changed = saved.draft.source_changed
       form.saved_citations = draftSourceCitations(saved.draft)
       savedAnswerFormState.value = answerFormState(form)
+      if (qaStatus.value === 'pending') qaStatus.value = 'draft'
       ElMessage.success('草稿已保存')
     }
     await loadQaQuestions()
