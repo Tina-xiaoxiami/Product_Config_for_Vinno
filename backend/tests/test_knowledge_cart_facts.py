@@ -73,3 +73,20 @@ async def test_public_fact_confirmation_and_source_change_refresh_in_same_transa
             assert attempts == [{FACT["key"]}] * 4
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reviewed_battery_identity_is_market_scoped_and_reuses_source_locator(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'identities.db'}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(KnowledgePublicFact.__table__.create)
+        async with AsyncSession(engine) as db, db.begin():
+            fact = {**FACT, "key": "component.battery:9000000", "value": "V8BAT", "display_value": "V8BAT"}
+            await facts.apply_cart_facts(db, [fact])
+            assert await facts.reviewed_battery_identities(db, "overseas") == []
+            identity, = await facts.reviewed_battery_identities(db, "domestic")
+            assert identity["ipn"] == "9000000" and identity["name"] == "V8BAT"
+            assert "Example!A2:C2" in identity["evidence_reference"]
+    finally:
+        await engine.dispose()

@@ -365,10 +365,11 @@ async def merge_knowledge_question(
 @router.get("/questions/{question_id}/spreadsheet-citations")
 async def spreadsheet_citations(
     question_id: int, response: Response, expected_version: int | None = Query(None, ge=1),
+    draft_revision: int | None = Query(None, gt=0),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await answer_spreadsheet_citations(db, question_id, expected_version)
+        result = await answer_spreadsheet_citations(db, question_id, expected_version, draft_revision=draft_revision)
     except CitationSourceError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from error
     response.headers['Cache-Control'] = 'no-store'

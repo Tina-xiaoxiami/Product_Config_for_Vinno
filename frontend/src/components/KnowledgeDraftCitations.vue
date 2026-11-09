@@ -34,13 +34,13 @@ import { computed, ref, watch } from 'vue'
 import { getKnowledgeSpreadsheetCitations } from '../api/knowledgeEvidence'
 import { canViewUnverifiedOriginal } from '../utils/knowledgeCitation'
 
-const props = defineProps({ questionId: Number, version: Number, citations: { type: Array, required: true } })
+const props = defineProps({ questionId: Number, version: Number, draftRevision: Number, citations: { type: Array, required: true } })
 const tables = ref([]), warnings = ref([]), loading = ref(false)
 const unresolved = computed(() => {
   const displayed = new Set(tables.value.flatMap(table => table.rows.flatMap(row => row.citation_ids)))
   return props.citations.filter(citation => !displayed.has(citation.id))
 })
-watch(() => [props.questionId, props.version], async ([id, version], _, onCleanup) => {
+watch(() => [props.questionId, props.version, props.draftRevision], async ([id, version, draftRevision], _, onCleanup) => {
   const controller = new AbortController()
   onCleanup(() => controller.abort())
   tables.value = []
@@ -49,7 +49,7 @@ watch(() => [props.questionId, props.version], async ([id, version], _, onCleanu
   if (!id || !props.citations.some(citation => citation.source_ref?.startsWith('工作表'))) return
   loading.value = true
   try {
-    const result = await getKnowledgeSpreadsheetCitations(id, version, controller.signal)
+    const result = await getKnowledgeSpreadsheetCitations(id, version, controller.signal, draftRevision)
     if (!controller.signal.aborted) {
       tables.value = result.tables
       warnings.value = result.warnings

@@ -139,7 +139,10 @@ async def runtime_source(db, model_key: str) -> tuple[list[dict], str | None]:
 async def runtime_for_model(db, model_key: str, model: dict, version: dict, snapshot: dict) -> dict:
     if model["id"] not in {int(item["id"]) for item in snapshot["models"]}:
         raise ParameterError("所选配置快照不包含此完整机型")
-    batteries = battery_configuration(snapshot, model["id"], await confirmed_component_specs(db))
+    from app.services.knowledge_cart_facts import reviewed_battery_identities
+
+    specs = await confirmed_component_specs(db) + await reviewed_battery_identities(db, model["market"])
+    batteries = battery_configuration(snapshot, model["id"], specs)
     measurements, source_issue = await runtime_source(db, model_key)
     rows, issues, review_items = [], [source_issue] if source_issue else [], []
     if not batteries:

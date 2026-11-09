@@ -139,7 +139,9 @@ def worksheet_reference(source_ref: str | None) -> tuple[str, int] | None:
     return None
 
 
-async def answer_spreadsheet_citations(db, question_id: int, expected_version: int | None = None) -> dict:
+async def answer_spreadsheet_citations(
+    db, question_id: int, expected_version: int | None = None, *, draft_revision: int | None = None,
+) -> dict:
     from collections import defaultdict
     from app.services.workbook_preview import CITATION_WORKBOOK_SUFFIXES, WorkbookPreviewError, read_cited_workbook_rows
 
@@ -151,12 +153,21 @@ async def answer_spreadsheet_citations(db, question_id: int, expected_version: i
         raise CitationSourceError(404, '问题不存在')
     if expected_version is not None and current.version != expected_version:
         raise CitationSourceError(409, '答案已修订，请重新打开以查看对应引用')
-    citations = (await db.execute(text('''
+    if draft_revision is not None:
+        from app.services.knowledge_answer_drafts import latest_edit
+
+        edit = await latest_edit(db, question_id)
+        if not edit or edit["published_version"] is not None or edit["revision"] != draft_revision:
+            raise CitationSourceError(409, "草稿已修订，请重新打开以查看对应引用")
+        citations = [{**reference, "id": index, "title": reference.get("file_name")}
+                     for index, reference in enumerate(edit["source_versions"], 1) if reference.get("file_name")]
+    else:
+        citations = (await db.execute(text('''
         SELECT c.id,c.source_ref,d.id AS document_id,d.title,d.file_name,d.sha256
         FROM knowledge_answer_citations c JOIN knowledge_answers a ON a.id=c.answer_id
         JOIN knowledge_documents d ON d.id=c.document_id
         WHERE a.question_id=:id AND a.version=:version ORDER BY c.sort_order,c.id
-    '''), {'id': question_id, 'version': current.version})).mappings().all()
+        '''), {'id': question_id, 'version': current.version})).mappings().all()
     documents = defaultdict(list)
     for row in citations:
         if Path(row['file_name']).suffix.casefold() in CITATION_WORKBOOK_SUFFIXES:

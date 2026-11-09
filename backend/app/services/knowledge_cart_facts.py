@@ -14,6 +14,7 @@ _MARKETS = {"domestic", "overseas"}
 _KEY = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,159}")
 _SHA256 = re.compile(r"[a-f0-9]{64}")
 _CART_SERVICE = "app.services.cart_release"
+BATTERY_IDENTITY_PREFIX = "component.battery:"
 
 
 async def resolve_cart_fact(db, key: str, market: str, config_versions: dict) -> dict | None:
@@ -77,7 +78,33 @@ async def apply_cart_facts(db, facts: list[dict]) -> dict:
         ).returning(KnowledgePublicFact.fact_key))
         if result.scalar_one_or_none():
             changed.add(key)
+    if any(key.startswith(BATTERY_IDENTITY_PREFIX) for key in changed):
+        from app.services.knowledge_configuration_answers import refresh_configuration_answers
+
+        await refresh_configuration_answers(db, runtime=True)
     return {"changed_fact_keys": sorted(changed), "cart_impacts": await refresh_cart_impact(db, changed)}
+
+
+async def reviewed_battery_identities(db, market: str) -> list[dict]:
+    installed = (await db.execute(text("""
+        SELECT 1 FROM sqlite_master WHERE name='knowledge_public_facts' AND type='table'
+    """))).scalar_one_or_none()
+    if not installed:
+        return []
+    rows = (await db.scalars(select(KnowledgePublicFact).where(
+        KnowledgePublicFact.market == market,
+        KnowledgePublicFact.fact_key.startswith(BATTERY_IDENTITY_PREFIX),
+    ).order_by(KnowledgePublicFact.fact_key))).all()
+    result = []
+    for row in rows:
+        fact = json.loads(row.payload_json)
+        if fact["status"] != "confirmed":
+            continue
+        result.append({
+            "ipn": row.fact_key.removeprefix(BATTERY_IDENTITY_PREFIX), "name": fact["value"],
+            "evidence_reference": "；".join(f"{source.get('file_name', '')} {source['locator']}" for source in fact["sources"]),
+        })
+    return result
 
 
 async def invalidate_cart_facts(db, document_id: int, previous_hash: str) -> dict:
