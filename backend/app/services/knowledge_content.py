@@ -404,6 +404,16 @@ async def _record_source_observation(session: AsyncSession, document_id: int, ol
         text("UPDATE knowledge_documents SET sha256 = :sha256 WHERE id = :document_id"),
         {"sha256": source_sha256, "document_id": document_id},
     )
+    if old_hash and old_hash != source_sha256:
+        from app.services.knowledge_cart_facts import invalidate_cart_facts
+        from app.services.knowledge_configuration_answers import refresh_configuration_answers
+        from app.services.knowledge_runtime import BATTERY_TEST
+
+        await invalidate_cart_facts(session, document_id, old_hash)
+        file_name = (await session.execute(text("SELECT file_name FROM knowledge_documents WHERE id=:id"),
+                                           {"id": document_id})).scalar_one()
+        if Path(file_name).stem == BATTERY_TEST:
+            await refresh_configuration_answers(session, runtime=True)
 
 
 async def extract_registered_document(

@@ -76,6 +76,21 @@ async def test_runtime_tracks_config_publish_and_retains_previous_measurements(t
             assert old["rows"][0]["duration"] == "52分钟"
             again = await client.post("/api/knowledge/questions/ask", json=payload)
             assert again.json()["configuration_answers"][0]["revision_id"] == latest["revision_id"]
+            historical = await client.post("/api/knowledge/questions/ask", json={
+                **payload, "scope": {"market": "domestic", "software_version": "1.14.80"},
+            })
+            assert historical.status_code == 200, historical.text
+            earlier, = historical.json()["configuration_answers"]
+            assert earlier["snapshot"]["id"] == 1
+            assert earlier["rows"][0]["duration"] == "52分钟"
+            unknown = await client.post("/api/knowledge/questions/ask", json={
+                **payload, "scope": {"market": "domestic", "software_version": "1.14.70"},
+            })
+            no_match, = unknown.json()["configuration_answers"]
+            assert no_match["snapshot"] is None and no_match["rows"] == []
+            assert "1.14.70" in no_match["issues"][0]
+            history = await client.get("/api/knowledge/questions/configuration-history", params={"recipe": "runtime:v10", "model_id": 901})
+            assert [item["revision_id"] for item in history.json()["items"]] == [latest["revision_id"], old["revision_id"]]
     finally:
         await engine.dispose()
 

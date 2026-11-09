@@ -5,7 +5,7 @@ import json
 
 from sqlalchemy import text
 
-from app.services.knowledge_parameters import ParameterError, current_snapshot, preview
+from app.services.knowledge_parameters import ParameterError, answer_snapshot, preview
 from app.services.knowledge_runtime import runtime_for_model, runtime_models, runtime_question, series_market
 
 _TABLE = "knowledge_configuration_answer_revisions"
@@ -30,22 +30,22 @@ async def _model(db, model_id: int, market: str | None = None) -> dict | None:
     return {**row, "market": expected}
 
 
-async def _resolve(db, recipe: str, model: dict) -> dict:
+async def _resolve(db, recipe: str, model: dict, **snapshot_selection) -> dict:
+    metadata, snapshot = await answer_snapshot(db, model["series_id"], **snapshot_selection)
     kind, key = recipe.split(":", 1)
     if kind == "runtime":
-        result = await runtime_for_model(db, key, model)
+        result = await runtime_for_model(db, key, model, metadata, snapshot)
     else:
-        snapshot, _ = await current_snapshot(db, model["series_id"])
-        result = await preview(db, int(key), snapshot["id"], [model["id"]])
+        result = await preview(db, int(key), metadata["id"], [model["id"]])
         result["kind"] = "parameter"
         result["model"] = model
         result["issues"] = result["rows"][0]["issues"]
     return {**result, "recipe": recipe}
 
 
-async def _resolve_or_review(db, recipe: str, model: dict) -> dict:
+async def _resolve_or_review(db, recipe: str, model: dict, **snapshot_selection) -> dict:
     try:
-        return await _resolve(db, recipe, model)
+        return await _resolve(db, recipe, model, **snapshot_selection)
     except ParameterError as error:
         return {"recipe": recipe, "kind": recipe.split(":", 1)[0], "model": model,
                 "snapshot": None, "rows": [], "issues": [str(error)]}
@@ -67,7 +67,9 @@ async def _record(db, result: dict) -> int:
     return revision.scalar_one()
 
 
-async def configuration_answers(db, question: str, scope: dict | None, topics: list[dict]) -> list[dict] | None:
+async def configuration_answers(
+    db, question: str, scope: dict | None, topics: list[dict], *, configuration_version_id: int | None = None,
+) -> list[dict] | None:
     """Return None only for ordinary QA, or a deterministic configuration result."""
     scope = scope or {}
     model_key = runtime_question(question)
@@ -76,7 +78,10 @@ async def configuration_answers(db, question: str, scope: dict | None, topics: l
     history = await _installed(db)
     if not history:
         return None
-    await db.execute(text("BEGIN IMMEDIATE"))
+    software_version = str(scope.get("software_version") or "").strip()
+    explicit_snapshot = bool(configuration_version_id or software_version)
+    if not explicit_snapshot:
+        await db.execute(text("BEGIN IMMEDIATE"))
     try:
         if model_key:
             models = await runtime_models(db, model_key, scope)
@@ -92,31 +97,36 @@ async def configuration_answers(db, question: str, scope: dict | None, topics: l
         results = []
         for recipe in recipes:
             for model in models:
-                result = await _resolve_or_review(db, recipe, model)
-                revision_id = await _record(db, result)
-                issues = list(result["issues"])
-                requested_version = scope.get("software_version")
-                if requested_version and result["snapshot"] and requested_version != result["snapshot"]["version_number"]:
-                    issues.append(f"填写的软件版本为 {requested_version}，以下结果采用当前配置版本")
-                results.append({**result, "issues": issues, "revision_id": revision_id})
-        await db.commit()
+                result = await _resolve_or_review(
+                    db, recipe, model, configuration_version_id=configuration_version_id,
+                    software_version=software_version,
+                )
+                if not explicit_snapshot:
+                    result["revision_id"] = await _record(db, result)
+                results.append(result)
+        if not explicit_snapshot:
+            await db.commit()
         return results
     except Exception:
         await db.rollback()
         raise
 
 
-async def refresh_configuration_answers(db, series_ids: set[int]) -> None:
+async def refresh_configuration_answers(
+    db, series_ids: set[int] | None = None, *, recipes: set[str] | None = None, runtime: bool = False,
+) -> None:
     """Refresh previously resolved recipes within the configuration publication transaction."""
-    if not series_ids or not await _installed(db):
+    if (not series_ids and not recipes and not runtime) or not await _installed(db):
         return
     from sqlalchemy import bindparam
 
     statement = text(f"""
         SELECT DISTINCT r.recipe,r.model_id FROM {_TABLE} r JOIN product_models m ON m.id=r.model_id
-        WHERE m.series_id IN :series ORDER BY r.recipe,r.model_id
-    """).bindparams(bindparam("series", expanding=True))
-    bindings = (await db.execute(statement, {"series": sorted(series_ids)})).all()
+        WHERE m.series_id IN :series OR r.recipe IN :recipes OR (:runtime AND r.recipe LIKE 'runtime:%')
+        ORDER BY r.recipe,r.model_id
+    """).bindparams(bindparam("series", expanding=True), bindparam("recipes", expanding=True))
+    bindings = (await db.execute(statement, {"series": sorted(series_ids or ()),
+                                            "recipes": sorted(recipes or ()), "runtime": runtime})).all()
     for recipe, model_id in bindings:
         model = await _model(db, model_id)
         if model:
@@ -137,3 +147,24 @@ async def configuration_answer_history(db, recipe: str, model_id: int) -> list[d
         SELECT id,payload_json,created_at FROM {_TABLE} WHERE recipe=:recipe AND model_id=:model ORDER BY id DESC LIMIT 20
     """), {"recipe": recipe, "model": model_id})).all()
     return [{**json.loads(row.payload_json), "revision_id": row.id, "created_at": row.created_at} for row in rows]
+
+
+async def configuration_answer_issues(db) -> list[dict]:
+    if not await _installed(db):
+        return []
+    rows = (await db.execute(text(f"""
+        SELECT payload_json FROM {_TABLE} WHERE id IN (
+            SELECT MAX(id) FROM {_TABLE} GROUP BY recipe,model_id
+        ) ORDER BY recipe,model_id
+    """))).scalars()
+    groups = {}
+    for value in rows:
+        result = json.loads(value)
+        model = result["model"]
+        if result["recipe"] == "runtime:a5":
+            continue
+        for issue in result.get("review_items", []):
+            group = groups.setdefault(issue["root_key"], {**issue, "impacts": []})
+            group["impacts"].append({"model_id": model["id"], "model": model["name"],
+                                     "market": model["market"], "configuration_version": result["snapshot"]})
+    return list(groups.values())

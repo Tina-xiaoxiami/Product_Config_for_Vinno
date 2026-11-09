@@ -191,6 +191,12 @@ async def save_spec(db: AsyncSession, topic_id: int, payload: dict, spec_id: int
                 {**params, 'id': spec_id, 'revision': revision})
         await db.execute(text('''INSERT INTO knowledge_parameter_revisions (spec_id,revision,payload_json)
             VALUES (:id,:revision,:payload)'''), {'id': spec_id, 'revision': revision, 'payload': _json({**cleaned, 'values': values, 'is_active': active})})
+        from app.services.knowledge_configuration_answers import refresh_configuration_answers
+        from app.services.knowledge_runtime import BATTERY_LABELS
+        from app.services.knowledge_qa import normalize_question
+
+        battery_changed = any(normalize_question(spec["name"]) in BATTERY_LABELS for spec in (cleaned, old) if spec)
+        await refresh_configuration_answers(db, recipes={f"parameter:{topic_id}"}, runtime=battery_changed)
         await db.commit()
     except Exception:
         await db.rollback()
@@ -295,6 +301,26 @@ async def current_snapshot(db: AsyncSession, series_id: int) -> tuple[dict, dict
     if version_id is None:
         raise ParameterNotFound('该系列没有已发布的配置版本')
     return await _snapshot(db, version_id)
+
+
+async def answer_snapshot(
+    db: AsyncSession, series_id: int, *, configuration_version_id: int | None = None,
+    software_version: str | None = None,
+) -> tuple[dict, dict]:
+    """Resolve the configuration snapshot for a deterministic answer."""
+    if configuration_version_id is not None:
+        metadata, snapshot = await _snapshot(db, configuration_version_id)
+        if metadata["series_id"] != series_id:
+            raise ParameterError("所选配置快照不属于此机型系列")
+        return metadata, snapshot
+    if not software_version:
+        return await current_snapshot(db, series_id)
+    matches = (await db.execute(text("""
+        SELECT id FROM config_versions WHERE series_id=:series AND version_number=:version LIMIT 2
+    """), {"series": series_id, "version": software_version})).scalars().all()
+    if len(matches) != 1:
+        raise ParameterError(f"软件版本 {software_version} 未找到唯一同号配置快照，请指定配置版本")
+    return await _snapshot(db, matches[0])
 
 
 async def confirmed_component_specs(db: AsyncSession) -> list[dict]:
