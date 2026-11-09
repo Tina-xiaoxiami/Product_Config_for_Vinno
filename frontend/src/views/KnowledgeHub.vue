@@ -157,7 +157,7 @@
                   <pre>{{ answerDisplayText(row.answer) || '此问题尚未填写答案。' }}</pre>
                   <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
                   <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
-                  <el-button v-if="row.answer" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
+                  <el-button v-if="row.answer && row.answer.review_status !== 'draft'" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -171,7 +171,7 @@
                 </span>
               </template>
               <template #default="{ row }">
-                <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ answerDisplayText(row.answer) || '尚无答案' }}</p><el-button v-if="row.answer" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
+                <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ answerPreviewText(row.answer) || '尚无答案' }}</p><el-button v-if="row.answer" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
                 <el-tag v-else-if="column.key === 'evidence_review'" size="small" :type="row.evidence_review?.status === 'needs_review' ? 'warning' : 'info'" effect="plain">{{ answerReviewLabel(row) }}</el-tag>
                 <span v-else-if="column.key === 'version'">{{ row.answer ? `v${row.answer.version}` : '—' }}</span>
                 <span v-else>{{ column.key === 'question_text' ? questionDisplayText(row) : row[column.key] }}</span>
@@ -179,9 +179,11 @@
             </el-table-column>
             <el-table-column label="操作" width="160" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.answer" size="small" type="primary" link @click="openAnswerReview(row)">核对</el-button>
-                <el-button v-if="row.scope || !row.answer" size="small" type="primary" link @click="openAnswerDialog(row)">{{ row.answer ? '修订' : '回答' }}</el-button>
+                <el-button v-if="row.answer && row.answer.review_status !== 'draft'" size="small" type="primary" link @click="openAnswerReview(row)">核对</el-button>
+                <el-button v-if="row.scope || !row.answer || row.answer.review_status === 'draft'" size="small" type="primary" link @click="openAnswerDialog(row)">{{ row.answer ? '修订' : '回答' }}</el-button>
                 <el-button v-if="row.answer" size="small" link @click="showHistory(row)">记录</el-button>
+                <el-button v-if="canDeletePendingQuestion(row)" data-testid="knowledge-delete-pending" size="small" link type="danger"
+                  :loading="deletingQuestionId === row.id" :disabled="deletingQuestionId !== null" @click="removePendingQuestion(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -196,7 +198,8 @@
 
     <el-dialog
       v-model="answerDialogVisible"
-      :title="answerForm.version ? `修订答案 v${answerForm.version + 1}` : '确认答案'"
+      :title="editingDraft ? '修订答案草稿' : answerForm.version ? `修订答案 v${answerForm.version + 1}` : '确认答案'"
+      :before-close="requestAnswerClose"
       width="720px"
       destroy-on-close
     >
@@ -209,17 +212,18 @@
         data-testid="knowledge-answer-evidence-review"
       />
       <p v-if="answerForm.previous_change_note" class="answer-previous-change">上次变更说明：{{ answerForm.previous_change_note }}</p>
-      <el-form label-position="top">
+      <el-form label-position="top" :disabled="answerSaving">
         <el-form-item label="问题">
           <div class="dialog-question">{{ questionDisplayText(answerForm) }}</div>
         </el-form-item>
         <el-form-item label="适用范围">
           <span>{{ knowledgeScopeLabel(answerForm.scope) }}</span>
         </el-form-item>
-        <el-form-item :label="answerForm.display_answer_text && answerForm.display_answer_text !== answerForm.answer_text ? '正式答案（保存原文，保留历史名称）' : '正式答案'" required>
+        <el-form-item :label="editingDraft ? '草稿答案' : answerForm.display_answer_text && answerForm.display_answer_text !== answerForm.answer_text ? '正式答案（保存原文，保留历史名称）' : '正式答案'" required>
           <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
+          <p v-if="editingDraft" class="candidate-warning">第一段写直接答案，空一行后补详情。列表只显示第一段。</p>
         </el-form-item>
-        <el-form-item label="相似问法 / 曾用问题">
+        <el-form-item v-if="!editingDraft" label="相似问法 / 曾用问题">
           <el-input
             v-model="answerForm.alias_text"
             type="textarea"
@@ -243,7 +247,15 @@
             </div>
           </div>
         </el-form-item>
-        <el-form-item label="答案依据">
+        <el-form-item v-if="editingDraft && answerForm.citations.length" label="原有引用">
+          <ul>
+            <li v-for="(citation, index) in answerForm.citations" :key="index">
+              {{ citation.document_title }} · {{ citation.source_ref }}
+              <a v-if="canViewUnverifiedOriginal(citation)" :href="citation.preview_url" target="_blank" rel="noopener noreferrer">查看原件</a>
+            </li>
+          </ul>
+        </el-form-item>
+        <el-form-item v-if="!editingDraft" label="答案依据">
           <div class="citation-editor">
             <div v-for="(citation, index) in answerForm.citations" :key="index" class="citation-editor-row">
               <el-select v-model="citation.document_id" filterable placeholder="选择原始资料">
@@ -265,8 +277,10 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="answerDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="answerSaving" :disabled="!answerForm.scope" @click="saveAnswer">确认并发布</el-button>
+        <el-button :disabled="answerSaving" @click="requestAnswerClose()">取消</el-button>
+        <el-button type="primary" :loading="answerSaving" :disabled="!editingDraft && !answerForm.scope" @click="saveAnswer">
+          {{ editingDraft ? '保存草稿' : '确认并发布' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -291,24 +305,26 @@ import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspa
 import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
 import { canViewUnverifiedOriginal } from '../utils/knowledgeCitation'
 import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
-import { questionDisplayText, answerDisplayText } from '../utils/knowledgeNames'
+import { questionDisplayText, answerDisplayText, answerPreviewText } from '../utils/knowledgeNames'
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Filter, Plus, Search } from '@element-plus/icons-vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
 import KnowledgeAnswerReviewDialog from '../components/KnowledgeAnswerReviewDialog.vue'
-import { QA_COLUMNS, answerReviewLabel } from '../utils/knowledgeAnswerReview'
+import { QA_COLUMNS, answerReviewLabel, canDeletePendingQuestion } from '../utils/knowledgeAnswerReview'
 import { loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import {
   askKnowledgeQuestion,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeQuestions,
+  deleteKnowledgePendingQuestion,
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
+  reviseKnowledgeDraft,
   getModels,
   getSeriesList
 } from '../api/data'
@@ -377,6 +393,30 @@ const openAnswerReview = row => answerReviewDialog.value?.open(row)
 const loadQaReviewCount = async () => {
   try { qaReviewCount.value = (await getKnowledgeQuestions({ status: 'answered', evidence_review: 'needs_review', limit: 1 })).total }
   catch { qaReviewCount.value = null }
+}
+const deletingQuestionId = ref(null)
+const removePendingQuestion = async row => {
+  if (!canDeletePendingQuestion(row) || deletingQuestionId.value !== null) return
+  deletingQuestionId.value = row.id
+  try {
+    try {
+      await ElMessageBox.confirm(
+        `确定删除「${questionDisplayText(row)}」？问题及其草稿将被删除。`,
+        '删除待确认问题',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    await deleteKnowledgePendingQuestion(row)
+    ElMessage.success('待确认问题已删除')
+    qaPage.value = 1
+    await loadQaQuestions()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '删除待确认问题失败')
+  } finally {
+    deletingQuestionId.value = null
+  }
 }
 const onAnswerReviewSaved = async () => { qaPage.value = 1; await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
 const searchQaQuestions = () => { qaPage.value = 1; loadQaQuestions() }
@@ -519,16 +559,20 @@ const openAnswerDialog = async (question) => {
     review_status: question.answer?.review_status || '',
     previous_change_note: question.answer?.change_note || '',
     answer_text: question.answer?.answer_text || '',
+    original_answer_text: question.answer?.answer_text || '',
     alias_text: (question.alias_questions || []).join('\n'),
     citations: (question.answer?.citations || []).map(citation => ({
       document_id: citation.document_id,
       source_ref: citation.source_ref || '',
-      excerpt: citation.excerpt || ''
+      excerpt: citation.excerpt || '',
+      ...(question.answer?.review_status === 'draft' ? { document_title: citation.document_title, preview_url: citation.preview_url } : {})
     })),
     change_note: ''
   }
   answerDialogVisible.value = true
   answerCandidates.value = []
+  candidateLoading.value = false
+  if (question.answer?.review_status === 'draft') return
   candidateLoading.value = true
   try {
     const result = await getKnowledgeQuestionCandidates(question.id)
@@ -545,20 +589,38 @@ const addCitation = () => answerForm.value.citations.push({ document_id: null, s
 const removeCitation = (index) => answerForm.value.citations.splice(index, 1)
 const parseQuestionAliases = (value) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
 
+const editingDraft = computed(() => answerForm.value.review_status === 'draft')
+
+const requestAnswerClose = async (done = () => { answerDialogVisible.value = false }) => {
+  if (answerSaving.value) return
+  const session = answerDialogSessionId
+  const form = answerForm.value
+  if (editingDraft.value && (form.answer_text !== form.original_answer_text || form.change_note.trim())) {
+    try {
+      await ElMessageBox.confirm('放弃本次草稿修改？', '未保存修改', { type: 'warning' })
+    } catch {
+      return
+    }
+  }
+  if (session === answerDialogSessionId && !answerSaving.value) done()
+}
+
 const saveAnswer = async () => {
-  if (!answerForm.value.scope) {
+  if (answerSaving.value) return
+  const draft = answerForm.value.review_status === 'draft'
+  if (!draft && !answerForm.value.scope) {
     ElMessage.warning('历史范围尚未核实，请在明确范围内建立问答后发布')
     return
   }
   if (!answerForm.value.answer_text.trim()) {
-    ElMessage.warning('请填写正式答案')
+    ElMessage.warning('请填写答案')
     return
   }
   if (!answerForm.value.change_note.trim()) {
     ElMessage.warning('请填写变更说明')
     return
   }
-  if (answerForm.value.citations.some(citation => !citation.document_id)) {
+  if (!draft && answerForm.value.citations.some(citation => !citation.document_id)) {
     ElMessage.warning('请选择答案依据对应的原始资料')
     return
   }
@@ -566,6 +628,17 @@ const saveAnswer = async () => {
   const dialogSession = answerDialogSessionId
   const savedScope = knowledgeScopeFingerprint(knowledgeScopePayload(answerForm.value.scope))
   try {
+    if (draft) {
+      await reviseKnowledgeDraft(answerForm.value.question_id, {
+        answer_text: answerForm.value.answer_text.trim(),
+        change_note: answerForm.value.change_note.trim(),
+        expected_version: answerForm.value.version
+      })
+      if (dialogSession === answerDialogSessionId) answerDialogVisible.value = false
+      ElMessage.success('草稿已保存')
+      await loadQaQuestions()
+      return
+    }
     const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
       answer_text: answerForm.value.answer_text.trim(),
       alias_questions: parseQuestionAliases(answerForm.value.alias_text),
@@ -587,7 +660,7 @@ const saveAnswer = async () => {
     ElMessage.success('答案已确认发布')
     await loadQaQuestions()
   } catch (error) {
-    if (dialogSession === answerDialogSessionId) ElMessage.error(error?.response?.data?.detail || '答案发布失败')
+    if (dialogSession === answerDialogSessionId) ElMessage.error(error?.response?.data?.detail || (draft ? '草稿保存失败' : '答案发布失败'))
   } finally {
     if (dialogSession === answerDialogSessionId) answerSaving.value = false
   }

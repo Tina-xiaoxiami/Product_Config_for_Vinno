@@ -6,6 +6,7 @@ import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -32,8 +33,10 @@ from app.schemas.knowledge import (
     KnowledgeCandidateEvidenceList,
     KnowledgeDocumentArchiveResult,
     KnowledgeDocumentList,
+    KnowledgeDraftAnswerRevision,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
+    KnowledgeQuestionDelete,
     KnowledgeQuestionItem,
     KnowledgeQuestionList,
     KnowledgeQuestionResult,
@@ -69,6 +72,8 @@ from app.services.knowledge_query import (
 from app.services.knowledge_qa import (
     KnowledgeQaError,
     ask_question,
+    delete_pending_question,
+    revise_answer_draft,
     get_answer_history,
     get_question,
     list_questions,
@@ -254,6 +259,32 @@ async def get_knowledge_question(
     return KnowledgeQuestionItem(**item)
 
 
+@router.delete("/questions/{question_id}", status_code=204, response_class=Response)
+async def remove_pending_question(
+    question_id: int, data: KnowledgeQuestionDelete, db: AsyncSession = Depends(get_db),
+):
+    try:
+        deleted = await delete_pending_question(db, question_id, **data.model_dump())
+    except KnowledgeQaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return Response(status_code=204)
+
+
+@router.put("/questions/{question_id}/draft-answer", response_model=KnowledgeQuestionItem)
+async def update_answer_draft(
+    question_id: int, data: KnowledgeDraftAnswerRevision, db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await revise_answer_draft(db, question_id, **data.model_dump())
+    except KnowledgeQaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
+
+
 @router.put("/questions/{question_id}/answer", response_model=KnowledgeQuestionItem)
 async def confirm_knowledge_answer(
     question_id: int,
@@ -261,6 +292,8 @@ async def confirm_knowledge_answer(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        # Serialize with pending-question deletion before reading its state.
+        await db.execute(text("BEGIN IMMEDIATE"))
         item = await publish_answer(
             db,
             question_id=question_id,
@@ -284,6 +317,8 @@ async def merge_knowledge_question(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        # Serialize with pending-question deletion before reading its state.
+        await db.execute(text("BEGIN IMMEDIATE"))
         item = await merge_question(
             db,
             source_question_id=source_question_id,

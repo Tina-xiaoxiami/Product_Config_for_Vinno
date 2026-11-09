@@ -131,6 +131,7 @@ class KnowledgeQuestion(Base):
         UniqueConstraint("id", "scope_key", name="uq_knowledge_question_id_scope"),
         Index("ix_knowledge_questions_status", "status"),
         Index("ix_knowledge_questions_last_asked", "last_asked_at"),
+        {"sqlite_autoincrement": True},
     )
 
 

@@ -6,7 +6,12 @@ export const QA_COLUMNS = [
   { key: 'version', label: '答案版本', width: 85 }
 ].map(column => ({ visible: true, fixed: false, ...column }))
 
+export function canDeletePendingQuestion(question) {
+  return question.status === 'pending' && (!question.answer || question.answer.review_status === 'draft')
+}
+
 export function answerReviewLabel(question) {
+  if (question.answer?.review_status === 'draft') return '待确认草稿'
   if (question.answer?.review_status && question.answer.review_status !== 'published') return '依据已变化'
   const status = question.evidence_review?.status
   if (status === 'reviewed') return '已核对'
