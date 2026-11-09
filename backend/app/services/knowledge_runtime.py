@@ -8,7 +8,7 @@ import re
 from sqlalchemy import text
 
 from app.services.config_history import build_snapshot_item_comparison_index
-from app.services.knowledge_parameters import ParameterError, SELECTION_LABELS, USABLE_SELECTIONS, confirmed_component_specs, current_snapshot
+from app.services.knowledge_parameters import ParameterError, SELECTION_LABELS, USABLE_SELECTIONS, confirmed_component_specs
 from app.services.knowledge_qa import normalize_question
 from app.services.knowledge_sources import CitationSourceError, verified_original
 from app.services.workbook_preview import WorkbookPreviewError, read_cited_workbook_rows
@@ -136,8 +136,9 @@ async def runtime_source(db, model_key: str) -> tuple[list[dict], str | None]:
             for row in runtime_measurements(groups, model_key)], None
 
 
-async def runtime_for_model(db, model_key: str, model: dict) -> dict:
-    version, snapshot = await current_snapshot(db, model["series_id"])
+async def runtime_for_model(db, model_key: str, model: dict, version: dict, snapshot: dict) -> dict:
+    if model["id"] not in {int(item["id"]) for item in snapshot["models"]}:
+        raise ParameterError("所选配置快照不包含此完整机型")
     batteries = battery_configuration(snapshot, model["id"], await confirmed_component_specs(db))
     measurements, source_issue = await runtime_source(db, model_key)
     rows, issues = [], [source_issue] if source_issue else []

@@ -204,7 +204,9 @@ async def ask_knowledge_question(
     try:
         scope = data.scope.model_dump() if data.scope else None
         topics = await topics_for_question(db, data.question)
-        configured = await configuration_answers(db, data.question, scope, topics)
+        configured = await configuration_answers(
+            db, data.question, scope, topics, configuration_version_id=data.configuration_version_id,
+        )
         if configured is not None:
             return KnowledgeQuestionResult(
                 status="configuration", question=data.question, match_type="exact", similarity=1,

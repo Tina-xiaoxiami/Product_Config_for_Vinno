@@ -297,6 +297,26 @@ async def current_snapshot(db: AsyncSession, series_id: int) -> tuple[dict, dict
     return await _snapshot(db, version_id)
 
 
+async def answer_snapshot(
+    db: AsyncSession, series_id: int, *, configuration_version_id: int | None = None,
+    software_version: str | None = None,
+) -> tuple[dict, dict]:
+    """Resolve the configuration snapshot for a deterministic answer."""
+    if configuration_version_id is not None:
+        metadata, snapshot = await _snapshot(db, configuration_version_id)
+        if metadata["series_id"] != series_id:
+            raise ParameterError("所选配置快照不属于此机型系列")
+        return metadata, snapshot
+    if not software_version:
+        return await current_snapshot(db, series_id)
+    matches = (await db.execute(text("""
+        SELECT id FROM config_versions WHERE series_id=:series AND version_number=:version LIMIT 2
+    """), {"series": series_id, "version": software_version})).scalars().all()
+    if len(matches) != 1:
+        raise ParameterError(f"软件版本 {software_version} 未找到唯一同号配置快照，请指定配置版本")
+    return await _snapshot(db, matches[0])
+
+
 async def confirmed_component_specs(db: AsyncSession) -> list[dict]:
     if not await available(db):
         return []
