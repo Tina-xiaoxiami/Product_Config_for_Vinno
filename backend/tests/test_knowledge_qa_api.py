@@ -713,3 +713,80 @@ async def test_retired_question_id_cannot_mutate_recreated_question(tmp_path, mo
             assert (await client.get(f"{target_url}/history")).json()["items"][0]["answer_text"] == "已发布答案"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_draft_question_edit_rejects_same_scope_duplicates_and_records_old_wording(tmp_path):
+    database = tmp_path / "draft-question.db"
+    _create_qa_database(database)
+    client, engine = await _client_for(database)
+    try:
+        with sqlite3.connect(database) as db:
+            db.execute("INSERT INTO knowledge_questions(id,question_text,normalized_question) VALUES (1,'旧问题','旧问题'),(2,'另一个问题','另一个问题')")
+            db.execute("INSERT INTO knowledge_question_phrasings(question_id,phrasing_text,normalized_phrasing) VALUES (2,'其他问法','其他问法')")
+            db.execute("INSERT INTO knowledge_answers(id,question_id,answer_text,review_status) VALUES (1,1,'旧答案','draft')")
+            db.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref) VALUES (1,1,'第2行')")
+        async with client:
+            url = "/api/knowledge/questions/1"
+            body = {"answer_text": "| 模式 | 时长 |\n| --- | --- |\n| B | 45 分钟 |",
+                    "expected_version": 1, "change_note": "按原表修订"}
+            for name in ("另一个问题？", "其他问法？", "？"):
+                response = await client.put(f"{url}/draft-answer", json={**body, "question_text": name})
+                assert response.status_code == 409, response.text
+            before = (await client.get(url)).json()
+            assert before["question_text"] == "旧问题" and before["answer"]["version"] == 1
+            saved = await client.put(f"{url}/draft-answer", json={**body, "question_text": "V10 的续航是多少？"})
+            assert saved.status_code == 200, saved.text
+            saved = saved.json()
+            assert saved["question_text"] == "V10 的续航是多少？"
+            assert saved["answer"]["answer_text"] == body["answer_text"]
+            assert saved["answer"]["citations"] == before["answer"]["citations"]
+            history = (await client.get(f"{url}/history")).json()["items"]
+            assert [r["version"] for r in history] == [2, 1]
+            assert "旧问题" in history[0]["change_note"] and "V10 的续航是多少？" in history[0]["change_note"]
+            assert history[0]["answer_text"] == body["answer_text"]
+            assert (await client.put(f"{url}/draft-answer", json={**body, "question_text": "旧请求"})).status_code == 409
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_spreadsheet_citations_return_registered_header_exact_rows_and_hidden_flag(tmp_path):
+    from hashlib import sha256
+    from openpyxl import Workbook
+
+    source = tmp_path / "runtime.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "实测"
+    sheet.append(["机型", "模式", "探头", "放电时长"])
+    sheet.append(["V10", "B", "S1-6PV", 52])
+    sheet.append(["V10", "B", "S1-6PV", 60])
+    sheet.row_dimensions[3].hidden = True
+    sheet.append(["V6", "B", "X4-12L", 100])
+    book.save(source)
+    version = sha256(source.read_bytes()).hexdigest()
+    database = tmp_path / "citation.db"
+    _create_qa_database(database)
+    client, engine = await _client_for(database)
+    try:
+        with sqlite3.connect(database) as db:
+            db.execute("UPDATE knowledge_documents SET file_name=?,file_path=?,sha256=?,mime_type=NULL WHERE id=1",
+                       (source.name, str(source), version))
+            db.execute("INSERT INTO knowledge_questions(id,question_text,normalized_question) VALUES (1,'续航问题','续航问题')")
+            db.execute("INSERT INTO knowledge_answers(id,question_id,answer_text,review_status) VALUES (1,1,'原答案','draft')")
+            db.executemany("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref) VALUES (1,1,?)",
+                           [("工作表 实测 · 第 2 行",), ("工作表 实测 · 第 3 行（原表隐藏行）",)])
+        async with client:
+            url = "/api/knowledge/questions/1/spreadsheet-citations"
+            result = await client.get(url)
+            assert result.status_code == 200, result.text
+            group, = result.json()["tables"]
+            assert group["columns"] == ["机型", "模式", "探头", "放电时长"]
+            assert [(r["row_number"], r["hidden"], r["cells"][-1]) for r in group["rows"]] == [(2, False, "52"), (3, True, "60")]
+            assert group["preview_url"].endswith(version)
+            source.write_bytes(b"changed")
+            assert (await client.get(url)).json()["warnings"]
+            assert not (await client.get(url)).json()["tables"]
+    finally:
+        await engine.dispose()
