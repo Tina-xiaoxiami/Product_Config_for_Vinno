@@ -157,7 +157,7 @@
                   <pre>{{ answerDisplayText(row.answer) || '此问题尚未填写答案。' }}</pre>
                   <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
                   <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
-                  <el-button v-if="row.answer" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
+                  <el-button v-if="row.answer && row.answer.review_status !== 'draft'" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -179,9 +179,11 @@
             </el-table-column>
             <el-table-column label="操作" width="160" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button v-if="row.answer" size="small" type="primary" link @click="openAnswerReview(row)">核对</el-button>
+                <el-button v-if="row.answer && row.answer.review_status !== 'draft'" size="small" type="primary" link @click="openAnswerReview(row)">核对</el-button>
                 <el-button v-if="row.scope || !row.answer" size="small" type="primary" link @click="openAnswerDialog(row)">{{ row.answer ? '修订' : '回答' }}</el-button>
                 <el-button v-if="row.answer" size="small" link @click="showHistory(row)">记录</el-button>
+                <el-button v-if="canDeletePendingQuestion(row)" data-testid="knowledge-delete-pending" size="small" link type="danger"
+                  :loading="deletingQuestionId === row.id" :disabled="deletingQuestionId !== null" @click="removePendingQuestion(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -296,17 +298,18 @@ import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } 
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Filter, Plus, Search } from '@element-plus/icons-vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
 import KnowledgeAnswerReviewDialog from '../components/KnowledgeAnswerReviewDialog.vue'
-import { QA_COLUMNS, answerReviewLabel } from '../utils/knowledgeAnswerReview'
+import { QA_COLUMNS, answerReviewLabel, canDeletePendingQuestion } from '../utils/knowledgeAnswerReview'
 import { loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import {
   askKnowledgeQuestion,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeQuestions,
+  deleteKnowledgePendingQuestion,
   getKnowledgeQuestionCandidates,
   publishKnowledgeAnswer,
   getModels,
@@ -377,6 +380,30 @@ const openAnswerReview = row => answerReviewDialog.value?.open(row)
 const loadQaReviewCount = async () => {
   try { qaReviewCount.value = (await getKnowledgeQuestions({ status: 'answered', evidence_review: 'needs_review', limit: 1 })).total }
   catch { qaReviewCount.value = null }
+}
+const deletingQuestionId = ref(null)
+const removePendingQuestion = async row => {
+  if (!canDeletePendingQuestion(row) || deletingQuestionId.value !== null) return
+  deletingQuestionId.value = row.id
+  try {
+    try {
+      await ElMessageBox.confirm(
+        `确定删除「${questionDisplayText(row)}」？问题及其草稿将被删除。`,
+        '删除待确认问题',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    await deleteKnowledgePendingQuestion(row)
+    ElMessage.success('待确认问题已删除')
+    qaPage.value = 1
+    await loadQaQuestions()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || '删除待确认问题失败')
+  } finally {
+    deletingQuestionId.value = null
+  }
 }
 const onAnswerReviewSaved = async () => { qaPage.value = 1; await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
 const searchQaQuestions = () => { qaPage.value = 1; loadQaQuestions() }

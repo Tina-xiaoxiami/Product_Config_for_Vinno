@@ -249,6 +249,56 @@ async def ensure_question(session: AsyncSession, question_text: str, query_scope
     return int(result.scalar_one())
 
 
+async def delete_pending_question(
+    session: AsyncSession, question_id: int, *, expected_question: str,
+    expected_scope: dict | None, expected_answer_version: int | None,
+) -> bool:
+    """Remove one pending question and its draft data after checking the displayed version."""
+    await session.execute(text("BEGIN IMMEDIATE"))
+    try:
+        scope_column = await scope_expression(session, "q")
+        row = (await session.execute(text(f"""
+            SELECT q.question_text, q.status, {scope_column} AS scope_key,
+                   a.id AS answer_id, a.review_status, a.version
+            FROM knowledge_questions q
+            LEFT JOIN knowledge_answers a ON a.question_id=q.id
+            WHERE q.id=:id
+        """), {"id": question_id})).mappings().one_or_none()
+        if row is None:
+            await session.rollback()
+            return False
+        if row["status"] != "pending" or (row["answer_id"] is not None and row["review_status"] != "draft"):
+            raise KnowledgeQaError("仅可删除待确认问题及未发布草稿")
+        if (row["question_text"] != expected_question or row["scope_key"] != scope_key(expected_scope)
+                or row["version"] != expected_answer_version):
+            raise KnowledgeQaError("问题或草稿已变化，请刷新列表后再删除")
+        if row["answer_id"] is not None:
+            params = {"id": row["answer_id"]}
+            published_history = (await session.execute(text("""
+                SELECT 1 FROM knowledge_answer_revisions
+                WHERE answer_id=:id AND review_status!='draft' LIMIT 1
+            """), params)).first()
+            has_review_table = (await session.execute(text("""
+                SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_answer_reviews'
+            """))).first()
+            has_reviews = has_review_table and (await session.execute(text("""
+                SELECT 1 FROM knowledge_answer_reviews WHERE answer_id=:id LIMIT 1
+            """), params)).first()
+            if published_history or has_reviews:
+                raise KnowledgeQaError("此答案已有发布或核对记录，请保留历史")
+            # Existing SQLite sessions do not always enable foreign key cascades.
+            await session.execute(text("DELETE FROM knowledge_answer_citations WHERE answer_id=:id"), params)
+            await session.execute(text("DELETE FROM knowledge_answer_revisions WHERE answer_id=:id"), params)
+            await session.execute(text("DELETE FROM knowledge_answers WHERE id=:id"), params)
+        await session.execute(text("DELETE FROM knowledge_question_phrasings WHERE question_id=:id"), {"id": question_id})
+        await session.execute(text("DELETE FROM knowledge_questions WHERE id=:id"), {"id": question_id})
+        await session.commit()
+        return True
+    except Exception:
+        await session.rollback()
+        raise
+
+
 async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)

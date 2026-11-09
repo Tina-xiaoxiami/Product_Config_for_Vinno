@@ -34,6 +34,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentList,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
+    KnowledgeQuestionDelete,
     KnowledgeQuestionItem,
     KnowledgeQuestionList,
     KnowledgeQuestionResult,
@@ -69,6 +70,7 @@ from app.services.knowledge_query import (
 from app.services.knowledge_qa import (
     KnowledgeQaError,
     ask_question,
+    delete_pending_question,
     get_answer_history,
     get_question,
     list_questions,
@@ -252,6 +254,19 @@ async def get_knowledge_question(
     if item is None:
         raise HTTPException(status_code=404, detail="问题不存在")
     return KnowledgeQuestionItem(**item)
+
+
+@router.delete("/questions/{question_id}", status_code=204, response_class=Response)
+async def remove_pending_question(
+    question_id: int, data: KnowledgeQuestionDelete, db: AsyncSession = Depends(get_db),
+):
+    try:
+        deleted = await delete_pending_question(db, question_id, **data.model_dump())
+    except KnowledgeQaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return Response(status_code=204)
 
 
 @router.put("/questions/{question_id}/answer", response_model=KnowledgeQuestionItem)

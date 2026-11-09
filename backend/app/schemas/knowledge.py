@@ -100,6 +100,12 @@ class KnowledgeQueryScope(BaseModel):
     software_version: str | None = Field(default=None, max_length=80)
 
 
+class KnowledgeQuestionDelete(BaseModel):
+    expected_question: str = Field(min_length=1, max_length=500)
+    expected_scope: dict[str, Any] | None
+    expected_answer_version: int | None = Field(ge=1)
+
+
 class KnowledgeQuestionAsk(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     scope: KnowledgeQueryScope | None = None
