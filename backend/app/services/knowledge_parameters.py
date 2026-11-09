@@ -13,6 +13,7 @@ from app.services.model_identity import normalize_snapshot
 from app.services.knowledge_qa import normalize_question
 
 TABLES = {'knowledge_parameter_topics', 'knowledge_parameter_specs', 'knowledge_parameter_revisions'}
+USABLE_SELECTIONS = frozenset({'X', 'O', 'Δ', '∆'})
 SELECTION_LABELS = {'X': '标配', 'O': '选配', 'Δ': '招标支持', '∆': '招标支持', '#': '未注册或不允许支持'}
 
 
@@ -261,7 +262,7 @@ async def preview(db: AsyncSession, topic_id: int, version_id: int, model_ids: l
                 raise ParameterError('快照配置值格式无效')
             config = values.get(str(model_id), {})
             selection = str(config.get('selection_config') or '').strip()
-            usable = selection in {'X', 'O', 'Δ', '∆'}
+            usable = selection in USABLE_SELECTIONS
             label = SELECTION_LABELS.get(selection, '正式选型未明确')
             match = {'spec_id': spec['id'], 'name': spec['name'], 'ipn': spec['ipn'], 'values': spec['values'],
                      'selection_config': selection, 'selection_label': label, 'usable': usable,
@@ -284,3 +285,23 @@ async def preview(db: AsyncSession, topic_id: int, version_id: int, model_ids: l
             answer += '。待核实：' + '；'.join(issues)
         rows.append({'model_id': model_id, 'model_name': models[model_id], 'status': status, 'matches': matches, 'issues': issues, 'answer_text': answer})
     return {'topic': topic, 'snapshot': metadata, 'rows': rows, 'answer_text': '\n'.join(row['answer_text'] for row in rows)}
+
+
+async def current_snapshot(db: AsyncSession, series_id: int) -> tuple[dict, dict]:
+    """Use the same latest published snapshot ordering as configuration publication."""
+    version_id = (await db.execute(text('''
+        SELECT id FROM config_versions WHERE series_id=:series ORDER BY id DESC LIMIT 1
+    '''), {'series': series_id})).scalar_one_or_none()
+    if version_id is None:
+        raise ParameterNotFound('该系列没有已发布的配置版本')
+    return await _snapshot(db, version_id)
+
+
+async def confirmed_component_specs(db: AsyncSession) -> list[dict]:
+    if not await available(db):
+        return []
+    rows = (await db.execute(text("""
+        SELECT s.name,s.ipn,s.evidence_reference,s.confirmed_by FROM knowledge_parameter_specs s
+        WHERE s.is_active=1 AND TRIM(s.evidence_reference)<>'' AND TRIM(s.confirmed_by)<>'' ORDER BY s.id
+    """))).mappings()
+    return [dict(row) for row in rows]

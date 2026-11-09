@@ -1,4 +1,4 @@
-"""Explicit, transactional migration of legacy Q&A identities to scoped identities."""
+"""Explicit, transactional migration of Q&A scopes and durable question IDs."""
 
 from __future__ import annotations
 
@@ -25,6 +25,10 @@ TEMP_PHRASINGS = "_kh_scope_phrasings_new"
 
 class KnowledgeScopeMigrationError(ValueError):
     """The selected schema or records cannot be safely migrated automatically."""
+
+
+def has_monotonic_question_ids(table_sql: str | None) -> bool:
+    return bool(table_sql and re.search(r"\bPRIMARY\s+KEY\s+AUTOINCREMENT\b", table_sql, re.I))
 
 
 def _identifier(name: str) -> str:
@@ -76,12 +80,14 @@ def _inspect(connection: sqlite3.Connection) -> tuple[str, list[str]]:
     if {TEMP_QUESTIONS, TEMP_PHRASINGS} & tables:
         raise KnowledgeScopeMigrationError("迁移临时表已存在，请先人工核对来源")
     scope_flags = []
+    schemas = {}
     for table, legacy in [(QUESTIONS, QUESTION_COLUMNS), (PHRASINGS, PHRASING_COLUMNS)]:
         columns = {row[1] for row in connection.execute(f"PRAGMA table_info({_identifier(table)})")}
         if columns not in (set(legacy), set(legacy) | {"scope_key"}):
             raise KnowledgeScopeMigrationError(f"{table} 包含未知列或缺失列，不能自动重建")
         scope_flags.append("scope_key" in columns)
         sql = connection.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
+        schemas[table] = sql
         if re.search(r"\b(?:CHECK\s*\(|GENERATED\b|WITHOUT\s+ROWID\b)", sql, re.I):
             raise KnowledgeScopeMigrationError("存在额外表约束，需人工核对迁移方案")
     _check_foreign_keys(connection)
@@ -97,7 +103,8 @@ def _inspect(connection: sqlite3.Connection) -> tuple[str, list[str]]:
                 or phrasing_keys != {("scope_key", "normalized_phrasing")}
                 or actual_fk != expected_fk or len({row[0] for row in fks}) != 1):
             raise KnowledgeScopeMigrationError("scope_key 已存在但唯一约束或外键未完成，已停止")
-        return "already_current", _related_tables(connection, tables)
+        status = "already_current" if has_monotonic_question_ids(schemas[QUESTIONS]) else "ready_question_ids"
+        return status, _related_tables(connection, tables)
     if question_keys != {("normalized_question",)} or phrasing_keys != {("normalized_phrasing",)}:
         raise KnowledgeScopeMigrationError("发现未知唯一约束，不能自动重建")
     if {(row[2], row[3], row[4], row[6]) for row in fks} != {(QUESTIONS, "question_id", "id", "CASCADE")}:
@@ -107,10 +114,12 @@ def _inspect(connection: sqlite3.Connection) -> tuple[str, list[str]]:
     return "ready", _related_tables(connection, tables)
 
 
-def _snapshot(connection: sqlite3.Connection, tables: list[str]) -> dict[str, Counter]:
+def _snapshot(connection: sqlite3.Connection, tables: list[str], *, scoped: bool) -> dict[str, Counter]:
     result = {}
     for table in tables:
         columns = QUESTION_COLUMNS if table == QUESTIONS else PHRASING_COLUMNS if table == PHRASINGS else None
+        if columns and scoped:
+            columns += ("scope_key",)
         select = ",".join(_identifier(column) for column in columns) if columns else "*"
         result[table] = Counter(connection.execute(f"SELECT {select} FROM {_identifier(table)}").fetchall())
     return result
@@ -133,7 +142,7 @@ def _backup(database: Path) -> Path:
         raise
 
 
-def _rebuild(connection: sqlite3.Connection) -> None:
+def _rebuild(connection: sqlite3.Connection, *, scoped: bool) -> None:
     objects = connection.execute(
         "SELECT sql FROM sqlite_master WHERE tbl_name IN (?,?) "
         "AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type,name",
@@ -164,6 +173,8 @@ def _rebuild(connection: sqlite3.Connection) -> None:
         FOREIGN KEY(question_id,scope_key) REFERENCES {QUESTIONS}(id,scope_key) ON DELETE CASCADE
     )""")
     for old, new, columns in [(QUESTIONS, TEMP_QUESTIONS, QUESTION_COLUMNS), (PHRASINGS, TEMP_PHRASINGS, PHRASING_COLUMNS)]:
+        if scoped:
+            columns += ("scope_key",)
         fields = ",".join(_identifier(column) for column in columns)
         connection.execute(f"INSERT INTO {new} ({fields}) SELECT {fields} FROM {old}")
     connection.execute(f"DROP TABLE {PHRASINGS}")
@@ -176,17 +187,19 @@ def _rebuild(connection: sqlite3.Connection) -> None:
         connection.execute("UPDATE sqlite_sequence SET seq=? WHERE name=?", (sequence, table))
 
 
-def _verify_migration(connection: sqlite3.Connection, before: dict[str, Counter]) -> None:
+def _verify_migration(connection: sqlite3.Connection, before: dict[str, Counter], *, scoped: bool) -> None:
     status, _ = _inspect(connection)
-    if status != "already_current" or _snapshot(connection, list(before)) != before:
+    if status != "already_current" or _snapshot(connection, list(before), scoped=scoped) != before:
         raise KnowledgeScopeMigrationError("迁移后内容或关系核验不一致，已回滚")
+    if scoped:
+        return
     for table in (QUESTIONS, PHRASINGS):
         if connection.execute(f"SELECT COUNT(*) FROM {table} WHERE scope_key != ''").fetchone()[0]:
             raise KnowledgeScopeMigrationError("存量范围不应被推断或赋值")
 
 
 def migrate_knowledge_scopes(database_path: str | Path, *, apply: bool = False) -> dict:
-    """Inspect or migrate the explicitly selected store; legacy scopes remain empty.
+    """Inspect or migrate the selected store; preserve existing scopes and IDs.
 
     This function never runs at application startup. Every apply first locks out
     concurrent writers, makes an online backup, then rebuilds in one transaction.
@@ -203,14 +216,15 @@ def migrate_knowledge_scopes(database_path: str | Path, *, apply: bool = False) 
         connection.execute("PRAGMA foreign_keys=OFF" if apply else "PRAGMA query_only=ON")
         connection.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
         status, tables = _inspect(connection)
-        before = _snapshot(connection, tables)
+        scoped = status != "ready"
+        before = _snapshot(connection, tables, scoped=scoped)
         report = {"status": status, "counts": {table: sum(rows.values()) for table, rows in before.items()}, "backup": None}
         if not apply or status == "already_current":
             connection.rollback()
             return report
         backup = _backup(database)
-        _rebuild(connection)
-        _verify_migration(connection, before)
+        _rebuild(connection, scoped=scoped)
+        _verify_migration(connection, before, scoped=scoped)
         connection.commit()
         report.update(status="applied", backup=str(backup))
         return report

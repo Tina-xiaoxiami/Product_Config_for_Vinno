@@ -8,7 +8,7 @@ const end = view.indexOf('\nconst addCitation', start)
 
 function setup() {
   const context = {
-    answerSaving: {value:false}, answerForm: {value:{}}, answerDialogVisible:{value:false}, answerCandidates:{value:[]}, candidateLoading:{value:false},
+    ref: value => ({ value }), answerSaving: {value:false}, answerForm: {value:{}}, answerDialogVisible:{value:false}, answerCandidates:{value:[]}, candidateLoading:{value:false},
     getKnowledgeQuestionCandidates: async () => ({items:[]}), ElMessage:{error() {}}
   }
   const actions = new Function(...Object.keys(context), `${view.slice(start,end)}; return {qaReviewNotice, openAnswerDialog}`)(...Object.values(context))

@@ -1,7 +1,8 @@
+import { knowledgeScopeFingerprint, knowledgeScopePayload } from '../src/utils/knowledgeQueryScope.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { answerReviewPayload, answerReviewError, answerReviewLabel, QA_COLUMNS } from '../src/utils/knowledgeAnswerReview.js'
+import { answerReviewPayload, answerReviewError, answerReviewLabel, canDeletePendingQuestion, QA_COLUMNS } from '../src/utils/knowledgeAnswerReview.js'
 
 const question = { id: 7, answer: { version: 1 }, evidence_review: { fingerprint: 'source-v1', review_revision: 0, status: 'needs_review' } }
 const form = () => ({ action: 'record_reference', country: '', market: '', product_model_ids: [], software_version: '',
@@ -140,4 +141,65 @@ test('leaving review queue clears its status filter and hides the review-only fu
 test('invalidated answers never claim document-backed review status', () => {
   assert.equal(answerReviewLabel({ answer: { review_status: 'source_changed' }, evidence_review: { status: 'not_required' } }), '依据已变化')
   assert.equal(answerReviewLabel({ answer: { review_status: 'published', citations: [] } }), '核对状态未知')
+})
+
+test('new draft answers are labelled as drafts', () => {
+  assert.equal(answerReviewLabel({ answer: { review_status: 'draft', citations: [{}] } }), '待确认草稿')
+})
+
+test('deleting a pending draft requires confirmation and refreshes the queue after success', async () => {
+  const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const start = source.indexOf('const deletingQuestionId =')
+  const end = source.indexOf('const onAnswerReviewSaved =', start)
+  const row = { id: 7, status: 'pending', question_text: '测试草稿', answer: { review_status: 'draft', version: 1 } }
+  const calls = []
+  let confirmed = false
+  const context = {
+    ref: value => ({ value }),
+    canDeletePendingQuestion,
+    questionDisplayText: row => row.question_text,
+    ElMessageBox: { confirm: async text => {
+      assert.match(text, /测试草稿/)
+      if (!confirmed) throw new Error('cancel')
+    } },
+    ElMessage: { success() {}, error: message => assert.fail(message) },
+    deleteKnowledgePendingQuestion: async row => calls.push(row.id),
+    qaPage: { value: 3 },
+    loadQaQuestions: async () => calls.push(context.qaPage.value)
+  }
+  const remove = new Function(...Object.keys(context), `${source.slice(start, end)}; return removePendingQuestion`)(...Object.values(context))
+  await remove(row)
+  assert.deepEqual(calls, [])
+  confirmed = true
+  await remove({ ...row, answer: { review_status: 'published' } })
+  assert.deepEqual(calls, [])
+  await remove(row)
+  assert.deepEqual(calls, [7, 1])
+})
+
+test('answer preview shows the direct answer and leaves the details in full text', async () => {
+  const { answerPreviewText, answerDisplayText } = await import('../src/utils/knowledgeNames.js')
+  const answer = { answer_text: '45 分钟\n\nG1-4P 探头，B 模式' }
+  assert.equal(answerPreviewText(answer), '45 分钟')
+  assert.match(answerDisplayText(answer), /G1-4P/)
+})
+
+test('saving an unscoped draft uses draft revision and does not enter the published queue', async () => {
+  const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const start = source.indexOf('const saveAnswer =')
+  const end = source.indexOf('const showHistory =', start)
+  const form = { question_id: 7, question_text: 'V6 的续航是多少？', scope: null, review_status: 'draft', version: 2, answer_text: '49 分钟', change_note: '核对实测值' }
+  const calls = []
+  const context = {
+    answerSaving: { value: false }, answerForm: { value: form }, answerDialogVisible: { value: true },
+    knowledgeScopeFingerprint, knowledgeScopePayload,
+    reviseKnowledgeDraft: async (...args) => calls.push(args),
+    publishKnowledgeAnswer: () => assert.fail('draft must not be published'),
+    ElMessage: { success() {}, warning: assert.fail, error: assert.fail },
+    loadQaQuestions: async () => calls.push('refresh')
+  }
+  const save = new Function(...Object.keys(context), `const answerDialogSessionId = 1; ${source.slice(start, end)}; return saveAnswer`)(...Object.values(context))
+  await save()
+  assert.deepEqual(calls, [[7, { question_text: 'V6 的续航是多少？', answer_text: '49 分钟', change_note: '核对实测值', expected_version: 2 }], 'refresh'])
+  assert.equal(context.answerDialogVisible.value, false)
 })

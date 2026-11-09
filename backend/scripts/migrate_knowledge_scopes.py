@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect a selected Q&A database; --apply backs up and migrates scope identities."""
+"""Inspect a selected Q&A database; --apply backs up and migrates scopes and question IDs."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from app.services.knowledge_scope_migration import (  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, required=True, help="明确的数据库路径；无默认正式库")
-    parser.add_argument("--apply", action="store_true", help="在线备份后，在单个事务内迁移问答范围")
+    parser.add_argument("--apply", action="store_true", help="在线备份后，在单个事务内迁移问答范围及问题编号分配方式")
     args = parser.parse_args()
     try:
         print(json.dumps(migrate_knowledge_scopes(args.database, apply=args.apply), ensure_ascii=False, indent=2))

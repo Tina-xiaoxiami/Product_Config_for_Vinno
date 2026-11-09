@@ -13,6 +13,7 @@ from app.models import ConfigVersion
 from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease
 from app.services import probe_workspace as service
 from app.services.cart_release import save_cart_check
+from app.services.config_publication import commit_configuration_publication
 from app.services.probe_workbook import export_workbook, import_workbook
 
 router = APIRouter()
@@ -206,7 +207,7 @@ async def publish(workspace_id: int, data: PublishInput, db=Depends(get_db)):
                                    description=data.description, snapshot_data=service.encode(checked))
     db.add(release)
     try:
-        await db.commit()
+        await commit_configuration_publication(db, {int(sid) for sid in version_ids})
     except IntegrityError as error:
         await db.rollback()
         raise HTTPException(409, '发布版本已存在，请刷新重试') from error

@@ -255,6 +255,50 @@ def document_extractor_version(path: Path, mime_type: str | None = None) -> str:
     return OFFICE_EXTRACTOR_VERSION if path.suffix.casefold() in {".docx", ".xlsx"} else EXTRACTOR_VERSION
 
 
+def validate_office_package(data: bytes, suffix: str) -> None:
+    """Reject unsafe or oversized Office packages before parsing them."""
+    with ZipFile(BytesIO(data)) as package:
+        entries = package.infolist()
+        if (len(entries) > MAX_OFFICE_ENTRIES
+                or sum(e.file_size for e in entries) > MAX_OFFICE_EXPANDED_BYTES
+                or any(e.file_size > MAX_OFFICE_MEMBER_BYTES for e in entries)):
+            raise KnowledgeContentError("Office解压内容超过本次解析上限")
+        names = [e.filename for e in entries]
+        required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"}
+        if len(names) != len(set(names)) or not required.issubset(names) or any(e.flag_bits & 1 for e in entries):
+            raise KnowledgeContentError("Office包结构无效、重复或已加密")
+        cell_count = 0
+        merged_area = 0
+        for entry in entries:
+            if entry.filename.casefold().endswith((".xml", ".rels")):
+                # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
+                xml_data = package.read(entry)
+                xml = xml_data.replace(b"\x00", b"").upper()
+                if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
+                    raise KnowledgeContentError("Office包包含不支持的XML声明")
+                if suffix == ".xlsx":
+                    from xml.etree.ElementTree import iterparse
+                    from openpyxl.utils.cell import range_boundaries
+                    for _, element in iterparse(BytesIO(xml_data), events=("end",)):
+                        if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c":
+                            cell_count += 1
+                            if cell_count > MAX_OFFICE_CELLS:
+                                raise KnowledgeContentError("Office单元格数量超过本次解析上限")
+                        if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}dimension":
+                            left, top, right, bottom = range_boundaries(element.attrib.get("ref", "A1"))
+                            if None in (left, top, right, bottom) or (right-left+1)*(bottom-top+1) > MAX_OFFICE_CELLS:
+                                raise KnowledgeContentError("Office工作表范围超过本次解析上限")
+                        if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}mergeCell":
+                            left, top, right, bottom = range_boundaries(element.attrib.get("ref", ""))
+                            if (None in (left, top, right, bottom) or left < 1 or top < 1
+                                    or right < left or bottom < top or right > 16384 or bottom > 1048576):
+                                raise KnowledgeContentError("Office合并单元格范围无效")
+                            merged_area += (right-left+1)*(bottom-top+1)
+                            if merged_area + cell_count > MAX_OFFICE_CELLS:
+                                raise KnowledgeContentError("Office合并单元格展开面积超过本次解析上限")
+                        element.clear()
+
+
 def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None) -> list[ExtractedBlock]:
     """Replay bounded Office structure from one immutable, version-identifiable snapshot.
 
@@ -273,46 +317,7 @@ def extract_office_blocks(data: bytes, suffix: str, mime_type: str | None = None
     if len(data) > MAX_SOURCE_BYTES:
         raise KnowledgeContentError("Office原件超过本次大小上限")
     try:
-        with ZipFile(BytesIO(data)) as package:
-            entries = package.infolist()
-            if (len(entries) > MAX_OFFICE_ENTRIES
-                    or sum(e.file_size for e in entries) > MAX_OFFICE_EXPANDED_BYTES
-                    or any(e.file_size > MAX_OFFICE_MEMBER_BYTES for e in entries)):
-                raise KnowledgeContentError("Office解压内容超过本次解析上限")
-            names = [e.filename for e in entries]
-            required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"}
-            if len(names) != len(set(names)) or not required.issubset(names) or any(e.flag_bits & 1 for e in entries):
-                raise KnowledgeContentError("Office包结构无效、重复或已加密")
-            cell_count = 0
-            merged_area = 0
-            for entry in entries:
-                if entry.filename.casefold().endswith((".xml", ".rels")):
-                    # Reject DTD/entity declarations in UTF-8/16/32 before library parsers.
-                    xml_data = package.read(entry)
-                    xml = xml_data.replace(b"\x00", b"").upper()
-                    if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
-                        raise KnowledgeContentError("Office包包含不支持的XML声明")
-                    if suffix == ".xlsx":
-                        from xml.etree.ElementTree import iterparse
-                        from openpyxl.utils.cell import range_boundaries
-                        for _, element in iterparse(BytesIO(xml_data), events=("end",)):
-                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c":
-                                cell_count += 1
-                                if cell_count > MAX_OFFICE_CELLS:
-                                    raise KnowledgeContentError("Office单元格数量超过本次解析上限")
-                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}dimension":
-                                left, top, right, bottom = range_boundaries(element.attrib.get("ref", "A1"))
-                                if None in (left, top, right, bottom) or (right-left+1)*(bottom-top+1) > MAX_OFFICE_CELLS:
-                                    raise KnowledgeContentError("Office工作表范围超过本次解析上限")
-                            if element.tag == "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}mergeCell":
-                                left, top, right, bottom = range_boundaries(element.attrib.get("ref", ""))
-                                if (None in (left, top, right, bottom) or left < 1 or top < 1
-                                        or right < left or bottom < top or right > 16384 or bottom > 1048576):
-                                    raise KnowledgeContentError("Office合并单元格范围无效")
-                                merged_area += (right-left+1)*(bottom-top+1)
-                                if merged_area + cell_count > MAX_OFFICE_CELLS:
-                                    raise KnowledgeContentError("Office合并单元格展开面积超过本次解析上限")
-                            element.clear()
+        validate_office_package(data, suffix)
         blocks = _docx_blocks(BytesIO(data)) if suffix == ".docx" else _xlsx_blocks(BytesIO(data))
     except KnowledgeContentError:
         raise

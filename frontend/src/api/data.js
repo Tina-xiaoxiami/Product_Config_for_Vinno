@@ -176,6 +176,12 @@ export const extractKnowledgeDocument = (id, force = false) =>
 export const askKnowledgeQuestion = (data) => api.post('/knowledge/questions/ask', data)
 export const getKnowledgeQuestions = (params) => api.get('/knowledge/questions', { params })
 export const getKnowledgeQuestion = (id) => api.get(`/knowledge/questions/${id}`)
+export const deleteKnowledgePendingQuestion = (row) => api.delete(`/knowledge/questions/${row.id}`, { data: {
+  expected_question: row.question_text,
+  expected_scope: row.scope ?? null,
+  expected_answer_version: row.answer?.version ?? null
+} })
+export const reviseKnowledgeDraft = (id, data) => api.put(`/knowledge/questions/${id}/draft-answer`, data)
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
 export const reviewKnowledgeAnswer = (id, data) => api.post(`/knowledge/questions/${id}/review`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)

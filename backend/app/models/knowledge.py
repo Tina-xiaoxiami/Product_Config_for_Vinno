@@ -131,6 +131,7 @@ class KnowledgeQuestion(Base):
         UniqueConstraint("id", "scope_key", name="uq_knowledge_question_id_scope"),
         Index("ix_knowledge_questions_status", "status"),
         Index("ix_knowledge_questions_last_asked", "last_asked_at"),
+        {"sqlite_autoincrement": True},
     )
 
 
@@ -353,3 +354,18 @@ class DataReviewRevision(Base):
         ),
         Index("ix_data_review_revisions_item", "review_item_id"),
     )
+
+
+class KnowledgeConfigurationAnswerRevision(Base):
+    """Immutable result of an explicitly resolved configuration-dependent question."""
+
+    __tablename__ = "knowledge_configuration_answer_revisions"
+
+    id = Column(Integer, primary_key=True)
+    recipe = Column(String(100), nullable=False)
+    model_id = Column(Integer, nullable=False)
+    config_version_id = Column(Integer, nullable=True)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (Index("ix_knowledge_configuration_answer_lookup", "recipe", "model_id", "id"),)

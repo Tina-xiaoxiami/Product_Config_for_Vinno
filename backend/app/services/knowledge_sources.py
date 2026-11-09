@@ -127,3 +127,64 @@ async def citation_evidence(db, document_id: int, version_id: str, *, page: int 
         result['model_answer_eligible'] = False
         result['verification'].update(structure='matched', visual='not_checked', human='not_reviewed')
     return result
+
+
+# Legacy answer citations already record literal sheet/row coordinates.
+def worksheet_reference(source_ref: str | None) -> tuple[str, int] | None:
+    import re
+
+    match = re.fullmatch(r'工作表\s+(.+?)\s*·\s*第\s*([1-9][0-9]{0,6})\s*行(?:[（(]原表隐藏行[）)])?', source_ref or '')
+    if match and int(match[2]) <= 1048576:
+        return match[1], int(match[2])
+    return None
+
+
+async def answer_spreadsheet_citations(db, question_id: int, expected_version: int | None = None) -> dict:
+    from collections import defaultdict
+    from app.services.workbook_preview import CITATION_WORKBOOK_SUFFIXES, WorkbookPreviewError, read_cited_workbook_rows
+
+    current = (await db.execute(text('''
+        SELECT a.version FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
+        WHERE q.id=:id
+    '''), {'id': question_id})).one_or_none()
+    if current is None:
+        raise CitationSourceError(404, '问题不存在')
+    if expected_version is not None and current.version != expected_version:
+        raise CitationSourceError(409, '答案已修订，请重新打开以查看对应引用')
+    citations = (await db.execute(text('''
+        SELECT c.id,c.source_ref,d.id AS document_id,d.title,d.file_name,d.sha256
+        FROM knowledge_answer_citations c JOIN knowledge_answers a ON a.id=c.answer_id
+        JOIN knowledge_documents d ON d.id=c.document_id
+        WHERE a.question_id=:id AND a.version=:version ORDER BY c.sort_order,c.id
+    '''), {'id': question_id, 'version': current.version})).mappings().all()
+    documents = defaultdict(list)
+    for row in citations:
+        if Path(row['file_name']).suffix.casefold() in CITATION_WORKBOOK_SUFFIXES:
+            documents[row['document_id']].append(row)
+    tables, warnings = [], []
+    for document_id, rows in documents.items():
+        by_sheet = defaultdict(set)
+        refs = defaultdict(list)
+        for row in rows:
+            locator = worksheet_reference(row['source_ref'])
+            if locator:
+                sheet, number = locator
+                by_sheet[sheet].add(number)
+                refs[locator].append(row['id'])
+            else:
+                warnings.append(f"{row['title']}：引用缺少可识别的工作表或行号")
+        if not by_sheet:
+            continue
+        try:
+            first = rows[0]
+            document, data = await verified_original(db, document_id, first['sha256'])
+            groups = await asyncio.to_thread(read_cited_workbook_rows, data, Path(document['file_name']).suffix.casefold(), by_sheet)
+            for group in groups:
+                for item in group['rows']:
+                    item['citation_ids'] = refs[group['sheet_name'], item['row_number']]
+                tables.append({**group, 'document_id': document_id, 'title': document['title'],
+                               'version_id': first['sha256'],
+                               'preview_url': f"/api/knowledge/documents/{document_id}/preview?version_id={first['sha256']}"})
+        except (CitationSourceError, WorkbookPreviewError) as error:
+            warnings.append(f"{rows[0]['title']}：{error}")
+    return {'tables': tables, 'warnings': warnings}

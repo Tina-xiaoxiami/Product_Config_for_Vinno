@@ -10,6 +10,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.knowledge_names import KnowledgeNameContext, load_name_context
+from app.services.knowledge_scope_migration import has_monotonic_question_ids
 
 from app.services.knowledge_scope import (
     KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
@@ -232,21 +233,160 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
 async def ensure_question(session: AsyncSession, question_text: str, query_scope_key: str, *, count_ask: bool) -> int:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)
-    existing = (await session.execute(text(
-        "SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope"
-    ), {"normalized": normalized, "scope": query_scope_key})).one_or_none()
+    params = {"normalized": normalized, "scope": query_scope_key}
+    if count_ask:
+        # Acquire the writer lock before deciding whether a pending question still exists.
+        existing = (await session.execute(text("""
+            UPDATE knowledge_questions
+            SET asked_count=asked_count+1, last_asked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+            WHERE normalized_question=:normalized AND scope_key=:scope RETURNING id
+        """), params)).one_or_none()
+    else:
+        existing = (await session.execute(text("""
+            SELECT id FROM knowledge_questions WHERE normalized_question=:normalized AND scope_key=:scope
+        """), params)).one_or_none()
     if existing:
-        if count_ask:
-            await session.execute(text(
-                "UPDATE knowledge_questions SET asked_count=asked_count+1,last_asked_at=CURRENT_TIMESTAMP,"
-                "updated_at=CURRENT_TIMESTAMP WHERE id=:id"
-            ), {"id": existing.id})
         return int(existing.id)
     result = await session.execute(text(
         "INSERT INTO knowledge_questions (question_text,normalized_question,status,asked_count,scope_key) "
         "VALUES (:question,:normalized,'pending',:count,:scope) RETURNING id"
     ), {"question": cleaned, "normalized": normalized, "count": 1 if count_ask else 0, "scope": query_scope_key})
     return int(result.scalar_one())
+
+
+async def delete_pending_question(
+    session: AsyncSession, question_id: int, *, expected_question: str,
+    expected_scope: dict | None, expected_answer_version: int | None,
+) -> bool:
+    """Remove one pending question and its draft data after checking the displayed version."""
+    await session.execute(text("BEGIN IMMEDIATE"))
+    try:
+        scope_column = await scope_expression(session, "q")
+        row = (await session.execute(text(f"""
+            SELECT q.question_text, q.status, {scope_column} AS scope_key,
+                   a.id AS answer_id, a.review_status, a.version
+            FROM knowledge_questions q
+            LEFT JOIN knowledge_answers a ON a.question_id=q.id
+            WHERE q.id=:id
+        """), {"id": question_id})).mappings().one_or_none()
+        if row is None:
+            await session.rollback()
+            return False
+        await _require_monotonic_question_ids(session)
+        if row["status"] != "pending" or (row["answer_id"] is not None and row["review_status"] != "draft"):
+            raise KnowledgeQaError("仅可删除待确认问题及未发布草稿")
+        if (row["question_text"] != expected_question or row["scope_key"] != scope_key(expected_scope)
+                or row["version"] != expected_answer_version):
+            raise KnowledgeQaError("问题或草稿已变化，请刷新列表后再删除")
+        if row["answer_id"] is not None:
+            params = {"id": row["answer_id"]}
+            published_history = (await session.execute(text("""
+                SELECT 1 FROM knowledge_answer_revisions
+                WHERE answer_id=:id AND review_status!='draft' LIMIT 1
+            """), params)).first()
+            has_review_table = (await session.execute(text("""
+                SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_answer_reviews'
+            """))).first()
+            has_reviews = has_review_table and (await session.execute(text("""
+                SELECT 1 FROM knowledge_answer_reviews WHERE answer_id=:id LIMIT 1
+            """), params)).first()
+            if published_history or has_reviews:
+                raise KnowledgeQaError("此答案已有发布或核对记录，请保留历史")
+            # Existing SQLite sessions do not always enable foreign key cascades.
+            await session.execute(text("DELETE FROM knowledge_answer_citations WHERE answer_id=:id"), params)
+            await session.execute(text("DELETE FROM knowledge_answer_revisions WHERE answer_id=:id"), params)
+            await session.execute(text("DELETE FROM knowledge_answers WHERE id=:id"), params)
+        await session.execute(text("DELETE FROM knowledge_question_phrasings WHERE question_id=:id"), {"id": question_id})
+        await session.execute(text("DELETE FROM knowledge_questions WHERE id=:id"), {"id": question_id})
+        await session.commit()
+        return True
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def _require_monotonic_question_ids(session: AsyncSession) -> None:
+    schema = await session.scalar(text("""
+        SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_questions'
+    """))
+    if not has_monotonic_question_ids(schema):
+        raise KnowledgeQaError("当前问答库会复用已删除的问题编号，请完成问答库迁移后重试")
+
+
+async def revise_answer_draft(
+    session: AsyncSession, question_id: int, *, expected_version: int,
+    answer_text: str, change_note: str, question_text: str | None = None, commit: bool = True,
+) -> dict | None:
+    """Revise an existing unpublished draft without changing scope or evidence."""
+    body = answer_text.strip()
+    note = change_note.strip()
+    if not body or not note:
+        raise KnowledgeQaError("请填写答案和变更说明")
+    if commit:
+        await session.execute(text("BEGIN IMMEDIATE"))
+    try:
+        row = (await session.execute(text("""
+            SELECT q.status, q.question_text, a.id, a.version, a.review_status, a.answer_text, a.change_note
+            FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
+            WHERE q.id=:question_id
+        """), {"question_id": question_id})).mappings().one_or_none()
+        if row is None:
+            if commit:
+                await session.rollback()
+            return None
+        if row["status"] != "pending" or row["review_status"] != "draft" or row["version"] != expected_version:
+            raise KnowledgeQaError("草稿状态或版本已变化，请刷新列表后再修订")
+
+        if question_text is not None and question_text.strip() != row["question_text"]:
+            renamed = question_text.strip()
+            normalized = normalize_question(renamed)
+            if len(normalized) < 2:
+                raise KnowledgeQaError("问题内容过短")
+            scope_column = await scope_expression(session)
+            selected_scope = (await session.execute(text(f"""
+                SELECT {scope_column} FROM knowledge_questions WHERE id=:question_id
+            """), {"question_id": question_id})).scalar_one()
+            params = {"question_id": question_id, "normalized": normalized, "scope": selected_scope}
+            duplicate = (await session.execute(text(f"""
+                SELECT 1 FROM knowledge_questions WHERE id<>:question_id
+                    AND normalized_question=:normalized AND {scope_column}=:scope
+                UNION ALL
+                SELECT 1 FROM knowledge_question_phrasings WHERE question_id<>:question_id
+                    AND normalized_phrasing=:normalized AND {scope_column}=:scope
+                LIMIT 1
+            """), params)).first()
+            if duplicate:
+                raise KnowledgeQaError("同一范围内已有此问题或问法")
+            await session.execute(text("""
+                UPDATE knowledge_questions
+                SET question_text=:renamed, normalized_question=:normalized, updated_at=CURRENT_TIMESTAMP
+                WHERE id=:question_id
+            """), {**params, "renamed": renamed})
+            note += f'\n原问题：{row["question_text"]}\n修订后：{renamed}'
+
+        await session.execute(text("""
+            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
+            VALUES (:id, :version, :answer_text, 'draft', :change_note)
+            ON CONFLICT(answer_id, version) DO NOTHING
+        """), dict(row))
+        update = {"id": row["id"], "version": expected_version + 1, "answer_text": body, "change_note": note}
+        await session.execute(text("""
+            UPDATE knowledge_answers
+            SET version=:version, answer_text=:answer_text, change_note=:change_note, updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id
+        """), update)
+        await session.execute(text("""
+            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
+            VALUES (:id, :version, :answer_text, 'draft', :change_note)
+        """), update)
+        item = await get_question(session, question_id)
+        if commit:
+            await session.commit()
+        return item
+    except Exception:
+        if commit:
+            await session.rollback()
+        raise
 
 
 async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
@@ -394,13 +534,14 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     item = await get_question(session, question_id)
     from app.services.knowledge_content import find_candidate_evidence
 
-    candidates = await find_candidate_evidence(session, item["question_text"], scope=resolved_scope)
+    pending_text = item["question_text"] if item else cleaned
+    candidates = await find_candidate_evidence(session, pending_text, scope=resolved_scope)
     from app.services.knowledge_release_history import history_for_question
     history_trace = await history_for_question(session, cleaned, resolved_scope)
     return {
         "status": "pending",
-        "question_id": question_id,
-        "question": item["question_text"],
+        "question_id": question_id if item else None,
+        "question": pending_text,
         "match_type": "none",
         "similarity": best_score,
         "answer": None,
@@ -732,6 +873,7 @@ async def merge_question(
     if source_question_id not in questions or target_question_id not in questions:
         return None
 
+    await _require_monotonic_question_ids(session)
     source = questions[source_question_id]
     target = questions[target_question_id]
     if source.scope_key != target.scope_key:

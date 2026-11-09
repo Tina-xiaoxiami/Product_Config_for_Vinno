@@ -20,3 +20,12 @@ async def ensure_no_pending_drafts(db, series_id):
         ConfigDraft.series_id == series_id, DraftBatch.status == 'draft').limit(1))
     if pending is not None:
         raise HTTPException(400, '当前系列存在未提交草稿，请先提交或废弃草稿')
+
+
+async def commit_configuration_publication(db, series_ids: set[int]) -> None:
+    """Commit a published snapshot together with affected computed answer revisions."""
+    from app.services.knowledge_configuration_answers import refresh_configuration_answers
+
+    await db.flush()
+    await refresh_configuration_answers(db, series_ids)
+    await db.commit()
