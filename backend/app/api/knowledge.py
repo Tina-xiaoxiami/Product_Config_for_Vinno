@@ -73,7 +73,7 @@ from app.services.knowledge_qa import (
     KnowledgeQaError,
     ask_question,
     delete_pending_question,
-    revise_answer_draft,
+    save_answer_draft,
     get_answer_history,
     get_question,
     list_questions,
@@ -229,6 +229,16 @@ async def get_configuration_history(
     return {"items": await configuration_answer_history(db, recipe, model_id)}
 
 
+@router.get("/questions/configuration-issues")
+async def get_configuration_issues(db: AsyncSession = Depends(get_db)):
+    from app.services.knowledge_cart_facts import cart_fact_issues
+    from app.services.knowledge_configuration_answers import configuration_answer_issues
+
+    issues = await configuration_answer_issues(db) + await cart_fact_issues(db)
+    return {"items": [issue for issue in issues if issue["kind"] == "owner_decision"],
+            "source_gaps": [issue for issue in issues if issue["kind"] != "owner_decision"]}
+
+
 @router.get("/questions", response_model=KnowledgeQuestionList)
 async def get_knowledge_questions(
     status: str | None = Query(None, pattern="^(pending|answered)$"),
@@ -297,7 +307,7 @@ async def update_answer_draft(
     question_id: int, data: KnowledgeDraftAnswerRevision, db: AsyncSession = Depends(get_db),
 ):
     try:
-        item = await revise_answer_draft(db, question_id, **data.model_dump())
+        item = await save_answer_draft(db, question_id, **data.model_dump())
     except KnowledgeQaError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if item is None:

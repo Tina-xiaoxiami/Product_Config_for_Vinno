@@ -153,7 +153,7 @@ test('knowledge hub supports the confirmed Q&A feedback loop', () => {
   assert.match(view, /data-testid="knowledge-question-input"/)
   assert.match(view, /data-testid="ask-knowledge-question"/)
   assert.match(view, /待确认问题/)
-  assert.match(view, /确认并发布/)
+  assert.match(view, /发布草稿/)
   assert.match(view, /答案依据/)
   assert.match(view, /变更说明/)
   assert.match(view, /系统不会猜测/)

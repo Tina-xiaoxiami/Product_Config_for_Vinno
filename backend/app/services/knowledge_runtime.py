@@ -141,7 +141,7 @@ async def runtime_for_model(db, model_key: str, model: dict, version: dict, snap
         raise ParameterError("所选配置快照不包含此完整机型")
     batteries = battery_configuration(snapshot, model["id"], await confirmed_component_specs(db))
     measurements, source_issue = await runtime_source(db, model_key)
-    rows, issues = [], [source_issue] if source_issue else []
+    rows, issues, review_items = [], [source_issue] if source_issue else [], []
     if not batteries:
         issues.append("当前配置未登记可用于续航匹配的电池")
     for battery in batteries:
@@ -152,8 +152,12 @@ async def runtime_for_model(db, model_key: str, model: dict, version: dict, snap
             )
             issues.append(f"IPN {battery['ipn']}：{reason}")
             rows.append({**battery, "missing": reason})
+            if battery["battery"] is None:
+                review_items.append({"root_key": f"component.identity:{battery['ipn']}",
+                                     "kind": "owner_decision", "detail": reason})
         else:
             rows.extend({**row, **battery} for row in matches)
     return {"kind": "runtime", "model": model, "snapshot": version, "rows": rows, "issues": issues,
+            "review_items": review_items,
             "historical_rows": measurements if not any(row.get("duration") for row in rows) else [],
             "scope_note": "实测原表未登记市场和配置版本，时长仅适用于所列电池、探头和测试条件。"}

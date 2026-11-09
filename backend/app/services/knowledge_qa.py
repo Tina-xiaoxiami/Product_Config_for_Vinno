@@ -9,6 +9,7 @@ import unicodedata
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import knowledge_answer_drafts as drafts
 from app.services.knowledge_names import KnowledgeNameContext, load_name_context
 from app.services.knowledge_scope_migration import has_monotonic_question_ids
 
@@ -178,6 +179,18 @@ async def get_question(session: AsyncSession, question_id: int, *, name_context:
         {"question_id": question_id},
     )
     answer = await _answer_for_question(session, question_id)
+    edit = await drafts.latest_edit(session, question_id)
+    if edit and edit["published_version"] is None:
+        saved_sources = edit.get("source_versions", [])
+        edit["source_changed"] = saved_sources != await drafts.capture_sources(session, edit["citations"])
+    if answer and answer["review_status"] == "source_changed":
+        snapshot = (await drafts.publication_evidence(session, question_id)).get(answer["version"])
+        if snapshot and snapshot["citations"] and all(citation.get("sha256") for citation in snapshot["citations"]):
+            answer["basis_changed"] = True
+            answer["citations"] = [
+                {**citation, "version_id": citation["sha256"], "preview_url": f'{citation["preview_url"]}?version_id={citation["sha256"]}'}
+                if citation.get("sha256") else citation for citation in snapshot["citations"]
+            ]
     context = name_context if name_context is not None else await load_name_context(session)
     displayed_question, displayed_answer, bindings = context.question(question.question_text, answer['answer_text'] if answer else '')
     if answer:
@@ -192,6 +205,7 @@ async def get_question(session: AsyncSession, question_id: int, *, name_context:
         "last_asked_at": question.last_asked_at,
         "alias_questions": [row.phrasing_text for row in aliases_result],
         "answer": answer,
+        "draft": edit if edit and edit["published_version"] is None else None,
         "scope": stored_scope(question.scope_key),
         "evidence_review": await evidence_review_summary(session, question_id),
     }
@@ -199,9 +213,22 @@ async def get_question(session: AsyncSession, question_id: int, *, name_context:
 
 async def _published_candidates(session: AsyncSession, query_scope_key: str) -> list[dict]:
     keys = await compatible_scope_keys(session, stored_scope(query_scope_key))
+    reusable_snapshot = ""
+    if await drafts._has_table(session, "knowledge_answer_publication_evidence"):
+        reusable_snapshot = """
+          OR (answer.review_status='source_changed' AND EXISTS (
+              SELECT 1 FROM knowledge_answer_revisions r
+              JOIN knowledge_answer_publication_evidence e ON e.revision_id=r.id
+              WHERE r.answer_id=answer.id AND r.version=answer.version
+              AND json_array_length(json_extract(e.payload_json,'$.citations'))>0
+              AND NOT EXISTS (
+                  SELECT 1 FROM json_each(e.payload_json,'$.citations')
+                  WHERE COALESCE(json_extract(value,'$.sha256'),'')=''
+              )))
+        """
     result = await session.execute(
         text(
-            """
+            f"""
             SELECT question.id AS question_id,
                    question.scope_key,
                    question.question_text,
@@ -212,10 +239,9 @@ async def _published_candidates(session: AsyncSession, query_scope_key: str) -> 
             FROM knowledge_questions question
             JOIN knowledge_answers answer
               ON answer.question_id = question.id
-             AND answer.review_status = 'published'
             LEFT JOIN knowledge_question_phrasings phrasing
               ON phrasing.question_id = question.id
-            WHERE question.status = 'answered'
+            WHERE ((question.status = 'answered' AND answer.review_status = 'published') {reusable_snapshot})
               AND question.scope_key IN :scope_keys
               AND NOT EXISTS (
                   SELECT 1 FROM knowledge_answer_citations citation
@@ -256,7 +282,7 @@ async def ensure_question(session: AsyncSession, question_text: str, query_scope
 
 async def delete_pending_question(
     session: AsyncSession, question_id: int, *, expected_question: str,
-    expected_scope: dict | None, expected_answer_version: int | None,
+    expected_scope: dict | None, expected_answer_version: int | None, expected_draft_revision: int = 0,
 ) -> bool:
     """Remove one pending question and its draft data after checking the displayed version."""
     await session.execute(text("BEGIN IMMEDIATE"))
@@ -275,8 +301,9 @@ async def delete_pending_question(
         await _require_monotonic_question_ids(session)
         if row["status"] != "pending" or (row["answer_id"] is not None and row["review_status"] != "draft"):
             raise KnowledgeQaError("仅可删除待确认问题及未发布草稿")
+        edit = await drafts.latest_edit(session, question_id)
         if (row["question_text"] != expected_question or row["scope_key"] != scope_key(expected_scope)
-                or row["version"] != expected_answer_version):
+                or row["version"] != expected_answer_version or (edit["revision"] if edit else 0) != expected_draft_revision):
             raise KnowledgeQaError("问题或草稿已变化，请刷新列表后再删除")
         if row["answer_id"] is not None:
             params = {"id": row["answer_id"]}
@@ -296,6 +323,7 @@ async def delete_pending_question(
             await session.execute(text("DELETE FROM knowledge_answer_citations WHERE answer_id=:id"), params)
             await session.execute(text("DELETE FROM knowledge_answer_revisions WHERE answer_id=:id"), params)
             await session.execute(text("DELETE FROM knowledge_answers WHERE id=:id"), params)
+        await drafts.remove_edits(session, question_id)
         await session.execute(text("DELETE FROM knowledge_question_phrasings WHERE question_id=:id"), {"id": question_id})
         await session.execute(text("DELETE FROM knowledge_questions WHERE id=:id"), {"id": question_id})
         await session.commit()
@@ -313,79 +341,60 @@ async def _require_monotonic_question_ids(session: AsyncSession) -> None:
         raise KnowledgeQaError("当前问答库会复用已删除的问题编号，请完成问答库迁移后重试")
 
 
-async def revise_answer_draft(
-    session: AsyncSession, question_id: int, *, expected_version: int,
-    answer_text: str, change_note: str, question_text: str | None = None, commit: bool = True,
+async def _checked_question_text(session: AsyncSession, question: dict, value: str) -> str:
+    renamed = value.strip()
+    normalized = normalize_question(renamed)
+    if len(normalized) < 2:
+        raise KnowledgeQaError("问题内容过短")
+    if renamed == question["question_text"]:
+        return renamed
+    scope_column = await scope_expression(session)
+    duplicate = (await session.execute(text(f"""
+        SELECT 1 FROM knowledge_questions WHERE id<>:id
+            AND normalized_question=:normalized AND {scope_column}=:scope
+        UNION ALL
+        SELECT 1 FROM knowledge_question_phrasings WHERE question_id<>:id
+            AND normalized_phrasing=:normalized AND {scope_column}=:scope
+        LIMIT 1
+    """), {"id": question["id"], "normalized": normalized, "scope": scope_key(question["scope"])})).first()
+    if duplicate:
+        raise KnowledgeQaError("同一范围内已有此问题或问法")
+    return renamed
+
+
+async def save_answer_draft(
+    session: AsyncSession, question_id: int, *, expected_version: int, expected_draft_revision: int,
+    question_text: str | None, answer_text: str, change_note: str,
+    alias_questions: list[str] | None, citations: list[dict] | None,
 ) -> dict | None:
-    """Revise an existing unpublished draft without changing scope or evidence."""
-    body = answer_text.strip()
-    note = change_note.strip()
-    if not body or not note:
-        raise KnowledgeQaError("请填写答案和变更说明")
-    if commit:
-        await session.execute(text("BEGIN IMMEDIATE"))
+    await session.execute(text("BEGIN IMMEDIATE"))
     try:
-        row = (await session.execute(text("""
-            SELECT q.status, q.question_text, a.id, a.version, a.review_status, a.answer_text, a.change_note
-            FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
-            WHERE q.id=:question_id
-        """), {"question_id": question_id})).mappings().one_or_none()
-        if row is None:
-            if commit:
-                await session.rollback()
+        question = await get_question(session, question_id)
+        if question is None:
+            await session.rollback()
             return None
-        if row["status"] != "pending" or row["review_status"] != "draft" or row["version"] != expected_version:
-            raise KnowledgeQaError("草稿状态或版本已变化，请刷新列表后再修订")
-
-        if question_text is not None and question_text.strip() != row["question_text"]:
-            renamed = question_text.strip()
-            normalized = normalize_question(renamed)
-            if len(normalized) < 2:
-                raise KnowledgeQaError("问题内容过短")
-            scope_column = await scope_expression(session)
-            selected_scope = (await session.execute(text(f"""
-                SELECT {scope_column} FROM knowledge_questions WHERE id=:question_id
-            """), {"question_id": question_id})).scalar_one()
-            params = {"question_id": question_id, "normalized": normalized, "scope": selected_scope}
-            duplicate = (await session.execute(text(f"""
-                SELECT 1 FROM knowledge_questions WHERE id<>:question_id
-                    AND normalized_question=:normalized AND {scope_column}=:scope
-                UNION ALL
-                SELECT 1 FROM knowledge_question_phrasings WHERE question_id<>:question_id
-                    AND normalized_phrasing=:normalized AND {scope_column}=:scope
-                LIMIT 1
-            """), params)).first()
-            if duplicate:
-                raise KnowledgeQaError("同一范围内已有此问题或问法")
-            await session.execute(text("""
-                UPDATE knowledge_questions
-                SET question_text=:renamed, normalized_question=:normalized, updated_at=CURRENT_TIMESTAMP
-                WHERE id=:question_id
-            """), {**params, "renamed": renamed})
-            note += f'\n原问题：{row["question_text"]}\n修订后：{renamed}'
-
-        await session.execute(text("""
-            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
-            VALUES (:id, :version, :answer_text, 'draft', :change_note)
-            ON CONFLICT(answer_id, version) DO NOTHING
-        """), dict(row))
-        update = {"id": row["id"], "version": expected_version + 1, "answer_text": body, "change_note": note}
-        await session.execute(text("""
-            UPDATE knowledge_answers
-            SET version=:version, answer_text=:answer_text, change_note=:change_note, updated_at=CURRENT_TIMESTAMP
-            WHERE id=:id
-        """), update)
-        await session.execute(text("""
-            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
-            VALUES (:id, :version, :answer_text, 'draft', :change_note)
-        """), update)
+        answer = question["answer"] or {}
+        previous = question["draft"] or {}
+        if (answer.get("version", 0) != expected_version or previous.get("revision", 0) != expected_draft_revision):
+            raise KnowledgeQaError("草稿或正式答案已更新，请重新打开后核对修改")
+        if not answer_text.strip() or not change_note.strip():
+            raise KnowledgeQaError("请填写答案和变更说明")
+        wording = await _checked_question_text(
+            session, question, question_text if question_text is not None else previous.get("question_text", question["question_text"]),
+        )
+        payload = {
+            "question_text": wording, "answer_text": answer_text.strip(), "change_note": change_note.strip(),
+            "base_version": expected_version,
+            "alias_questions": alias_questions if alias_questions is not None else previous.get("alias_questions", question["alias_questions"]),
+            "citations": citations if citations is not None else previous.get("citations", answer.get("citations", [])),
+        }
+        payload["source_versions"] = await drafts.capture_sources(session, payload["citations"])
+        await drafts.append_edit(session, question_id, payload)
         item = await get_question(session, question_id)
-        if commit:
-            await session.commit()
+        await session.commit()
         return item
     except Exception:
-        if commit:
-            await session.rollback()
+        await session.rollback()
         raise
 
 
@@ -503,7 +512,8 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
                 )
         await session.commit()
         item = await get_question(session, best_question_id, name_context=name_context)
-        if item["status"] != "answered" or not item["answer"] or item["answer"]["review_status"] != "published":
+        answer = item["answer"] or {}
+        if not answer.get("basis_changed") and (item["status"] != "answered" or answer.get("review_status") != "published"):
             from app.services.knowledge_content import find_candidate_evidence
 
             return {
@@ -655,15 +665,39 @@ async def publish_answer(
     session: AsyncSession,
     *,
     question_id: int,
-    answer_text: str,
+    answer_text: str | None,
     alias_questions: list[str],
     citations: list[dict],
     change_note: str | None,
     commit: bool = True,
+    draft_revision: int | None = None,
 ) -> dict | None:
     question = await get_question(session, question_id)
     if question is None:
         return None
+    working = question["draft"]
+    if draft_revision is not None:
+        if not working:
+            last = await drafts.latest_edit(session, question_id)
+            if last and last["revision"] == draft_revision and last["published_version"] == (question["answer"] or {}).get("version"):
+                if commit:
+                    await session.rollback()
+                return question
+        if not working or working["revision"] != draft_revision:
+            raise KnowledgeQaError("草稿已变化，请刷新后发布")
+        if working["base_version"] != (question["answer"] or {}).get("version", 0):
+            raise KnowledgeQaError("正式答案已变化，请重新核对草稿")
+        if working["source_changed"]:
+            raise KnowledgeQaError("草稿引用的原件已变化，请核对最新原文并重新保存草稿")
+        answer_text = working["answer_text"]
+        alias_questions = working["alias_questions"]
+        citations = working["citations"]
+        change_note = working["change_note"]
+        wording = await _checked_question_text(session, question, working["question_text"])
+    elif working:
+        raise KnowledgeQaError("已有持久草稿，请从保存的草稿发布")
+    else:
+        wording = question["question_text"]
     if not question["scope"]:
         raise KnowledgeQaError("此问题的历史范围尚未核实；请先在明确范围内建立问答")
     query_scope_key = scope_key(question["scope"])
@@ -672,7 +706,7 @@ async def publish_answer(
         raise KnowledgeQaError("答案不能为空")
 
     unique_aliases: list[tuple[str, str]] = []
-    seen = {normalize_question(question["question_text"])}
+    seen = {normalize_question(wording)}
     for alias in alias_questions:
         cleaned_alias = str(alias or "").strip()
         normalized_alias = normalize_question(cleaned_alias)
@@ -682,7 +716,7 @@ async def publish_answer(
         unique_aliases.append((cleaned_alias, normalized_alias))
 
     await validate_publication_scope(session, scope=question["scope"], question_id=question_id,
-        question_text=question["question_text"], answer_text=cleaned_answer,
+        question_text=wording, answer_text=cleaned_answer,
         alias_questions=[alias for alias, _ in unique_aliases])
 
     resolved_citations: list[dict] = []
@@ -703,8 +737,9 @@ async def publish_answer(
             raise KnowledgeQaError(f"引用资料不存在：{citation['document_id']}")
         if not document_matches_scope(document._mapping, question["scope"]):
             raise KnowledgeQaError("引用资料尚未明确关联此市场、机型及软件版本，请先核实适用范围")
-        resolved_citations.append({**citation, "sort_order": index})
+        resolved_citations.append({key: citation.get(key) for key in ("document_id", "source_ref", "excerpt")} | {"sort_order": index})
 
+    await drafts.freeze_evidence(session, question)
     answer_result = await session.execute(
         text(
             """
@@ -737,7 +772,10 @@ async def publish_answer(
         answer_id = int(inserted.scalar_one())
     else:
         answer_id = int(existing_answer.id)
-        version = int(existing_answer.version) + 1
+        previous_version = int(existing_answer.version)
+        if draft_revision is not None and question["answer"]["review_status"] == "draft":
+            previous_version = await drafts.archive_legacy_draft_versions(session, question)
+        version = previous_version + 1
         await session.execute(
             text(
                 """
@@ -832,15 +870,19 @@ async def publish_answer(
         text(
             """
             UPDATE knowledge_questions
-            SET status = 'answered', updated_at = CURRENT_TIMESTAMP
+            SET status = 'answered', question_text=:wording, normalized_question=:normalized, updated_at = CURRENT_TIMESTAMP
             WHERE id = :question_id
             """
         ),
-        {"question_id": question_id},
+        {"question_id": question_id, "wording": wording, "normalized": normalize_question(wording)},
     )
+    if draft_revision is not None:
+        await drafts.mark_published(session, draft_revision, version)
+    item = await get_question(session, question_id)
+    await drafts.freeze_evidence(session, item)
     if commit:
         await session.commit()
-    return await get_question(session, question_id)
+    return item
 
 
 async def merge_question(
@@ -884,7 +926,7 @@ async def merge_question(
         text("SELECT 1 FROM knowledge_answers WHERE question_id = :question_id"),
         {"question_id": source_question_id},
     )
-    if source_answer.one_or_none() is not None:
+    if source_answer.one_or_none() is not None or await drafts.latest_edit(session, source_question_id):
         raise KnowledgeQaError("已有答案的问题不能合并，请先复核原答案")
     if target.status != "answered":
         raise KnowledgeQaError("目标问题必须已有正式发布答案")
@@ -1029,4 +1071,6 @@ async def get_answer_history(session: AsyncSession, question_id: int) -> list[di
         ),
         {"question_id": question_id},
     )
-    return [dict(row._mapping) for row in result]
+    evidence = await drafts.publication_evidence(session, question_id)
+    revisions = [{**row._mapping, **evidence.get(row.version, {})} for row in result]
+    return await drafts.edit_history(session, question_id) + revisions

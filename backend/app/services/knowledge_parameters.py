@@ -191,6 +191,12 @@ async def save_spec(db: AsyncSession, topic_id: int, payload: dict, spec_id: int
                 {**params, 'id': spec_id, 'revision': revision})
         await db.execute(text('''INSERT INTO knowledge_parameter_revisions (spec_id,revision,payload_json)
             VALUES (:id,:revision,:payload)'''), {'id': spec_id, 'revision': revision, 'payload': _json({**cleaned, 'values': values, 'is_active': active})})
+        from app.services.knowledge_configuration_answers import refresh_configuration_answers
+        from app.services.knowledge_runtime import BATTERY_LABELS
+        from app.services.knowledge_qa import normalize_question
+
+        battery_changed = any(normalize_question(spec["name"]) in BATTERY_LABELS for spec in (cleaned, old) if spec)
+        await refresh_configuration_answers(db, recipes={f"parameter:{topic_id}"}, runtime=battery_changed)
         await db.commit()
     except Exception:
         await db.rollback()

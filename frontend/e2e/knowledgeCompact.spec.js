@@ -157,8 +157,9 @@ test('draft question, answer table and original cited rows stay together when ed
   const answer = '52 分钟。\n\n| 模式 | 时长 |\n| --- | --- |\n| B | 52 分钟 |'
   await page.route(`**/api/knowledge/questions/${id}/draft-answer`, async route => {
     const body = route.request().postDataJSON()
-    expect(body).toEqual({ question_text: 'V10 的续航是多少？', answer_text: answer, expected_version: 1, change_note: '按原表修订' })
-    draft = { ...draft, question_text: body.question_text, answer: { ...draft.answer, answer_text: body.answer_text, version: 2 } }
+    expect(body).toEqual({ question_text: 'V10 的续航是多少？', answer_text: answer, expected_version: 1, expected_draft_revision: 0, change_note: '按原表修订',
+      alias_questions: [], citations: [{ document_id: citation.document_id, source_ref: citation.source_ref, excerpt: citation.excerpt || '' }] })
+    draft = { ...draft, draft: { ...body, revision: 2 } }
     await route.fulfill({ json: draft })
   })
   await page.goto('/knowledge')
@@ -174,6 +175,8 @@ test('draft question, answer table and original cited rows stay together when ed
   await expect(dialog.locator('.answer-editor-preview')).toContainText('时长')
   await dialog.getByPlaceholder('例如：产品经理首次确认；依据 1.14.80 版本修订').fill('按原表修订')
   await dialog.getByRole('button', { name: '保存草稿' }).click()
+  await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await expect(dialog).not.toBeVisible()
   await expect(page.locator('.qa-table-area')).toContainText('V10 的续航是多少？')
   await page.getByRole('button', { name: '全文', exact: true }).click()

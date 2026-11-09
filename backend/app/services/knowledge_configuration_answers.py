@@ -112,17 +112,21 @@ async def configuration_answers(
         raise
 
 
-async def refresh_configuration_answers(db, series_ids: set[int]) -> None:
+async def refresh_configuration_answers(
+    db, series_ids: set[int] | None = None, *, recipes: set[str] | None = None, runtime: bool = False,
+) -> None:
     """Refresh previously resolved recipes within the configuration publication transaction."""
-    if not series_ids or not await _installed(db):
+    if (not series_ids and not recipes and not runtime) or not await _installed(db):
         return
     from sqlalchemy import bindparam
 
     statement = text(f"""
         SELECT DISTINCT r.recipe,r.model_id FROM {_TABLE} r JOIN product_models m ON m.id=r.model_id
-        WHERE m.series_id IN :series ORDER BY r.recipe,r.model_id
-    """).bindparams(bindparam("series", expanding=True))
-    bindings = (await db.execute(statement, {"series": sorted(series_ids)})).all()
+        WHERE m.series_id IN :series OR r.recipe IN :recipes OR (:runtime AND r.recipe LIKE 'runtime:%')
+        ORDER BY r.recipe,r.model_id
+    """).bindparams(bindparam("series", expanding=True), bindparam("recipes", expanding=True))
+    bindings = (await db.execute(statement, {"series": sorted(series_ids or ()),
+                                            "recipes": sorted(recipes or ()), "runtime": runtime})).all()
     for recipe, model_id in bindings:
         model = await _model(db, model_id)
         if model:
@@ -143,3 +147,24 @@ async def configuration_answer_history(db, recipe: str, model_id: int) -> list[d
         SELECT id,payload_json,created_at FROM {_TABLE} WHERE recipe=:recipe AND model_id=:model ORDER BY id DESC LIMIT 20
     """), {"recipe": recipe, "model": model_id})).all()
     return [{**json.loads(row.payload_json), "revision_id": row.id, "created_at": row.created_at} for row in rows]
+
+
+async def configuration_answer_issues(db) -> list[dict]:
+    if not await _installed(db):
+        return []
+    rows = (await db.execute(text(f"""
+        SELECT payload_json FROM {_TABLE} WHERE id IN (
+            SELECT MAX(id) FROM {_TABLE} GROUP BY recipe,model_id
+        ) ORDER BY recipe,model_id
+    """))).scalars()
+    groups = {}
+    for value in rows:
+        result = json.loads(value)
+        model = result["model"]
+        if result["recipe"] == "runtime:a5":
+            continue
+        for issue in result.get("review_items", []):
+            group = groups.setdefault(issue["root_key"], {**issue, "impacts": []})
+            group["impacts"].append({"model_id": model["id"], "model": model["name"],
+                                     "market": model["market"], "configuration_version": result["snapshot"]})
+    return list(groups.values())
