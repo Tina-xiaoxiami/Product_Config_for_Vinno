@@ -175,3 +175,10 @@ test('deleting a pending draft requires confirmation and refreshes the queue aft
   await remove(row)
   assert.deepEqual(calls, [7, 1])
 })
+
+test('answer preview shows the direct answer and leaves the details in full text', async () => {
+  const { answerPreviewText, answerDisplayText } = await import('../src/utils/knowledgeNames.js')
+  const answer = { answer_text: '45 分钟\n\nG1-4P 探头，B 模式' }
+  assert.equal(answerPreviewText(answer), '45 分钟')
+  assert.match(answerDisplayText(answer), /G1-4P/)
+})

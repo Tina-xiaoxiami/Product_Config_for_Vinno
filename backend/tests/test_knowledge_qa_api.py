@@ -592,3 +592,32 @@ async def test_delete_pending_question_only_removes_unpublished_drafts(
                 assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == int(http_status != 204 and bool(answer_status))
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revise_unscoped_draft_preserves_citations_and_rejects_stale_version(tmp_path):
+    database = tmp_path / "draft-revision.db"
+    _create_qa_database(database)
+    client, engine = await _client_for(database)
+    try:
+        with sqlite3.connect(database) as db:
+            db.execute("INSERT INTO knowledge_questions(id,question_text,normalized_question) VALUES (1,'续航多久','续航多久')")
+            db.execute("INSERT INTO knowledge_answers(id,question_id,answer_text,review_status) VALUES (1,1,'旧草稿','draft')")
+            db.execute("INSERT INTO knowledge_answer_citations(answer_id,document_id,source_ref) VALUES (1,1,'第2行')")
+        async with client:
+            url = "/api/knowledge/questions/1/draft-answer"
+            body = {"answer_text": "45 分钟\n\nB 模式", "expected_version": 1, "change_note": "按原表修订"}
+            saved = await client.put(url, json=body)
+            assert saved.status_code == 200, saved.text
+            data = saved.json()
+            assert data["status"] == "pending" and data["scope"] is None
+            assert data["answer"]["review_status"] == "draft" and data["answer"]["version"] == 2
+            assert data["answer"]["answer_text"] == body["answer_text"]
+            assert data["answer"]["citations"][0]["source_ref"] == "第2行"
+            assert (await client.put(url, json=body)).status_code == 409
+        with sqlite3.connect(database) as db:
+            assert db.execute("SELECT version,answer_text FROM knowledge_answer_revisions ORDER BY version").fetchall() == [
+                (1, "旧草稿"), (2, body["answer_text"]),
+            ]
+    finally:
+        await engine.dispose()
