@@ -83,9 +83,8 @@ async def test_one_shared_mapping_resolves_answer_and_both_cart_candidates(tmp_p
             path = "/api/knowledge/questions/configuration-issues"
             merged = (await client.get(path)).json()["items"]
             assert len(merged) == 1 and merged[0]["root_key"] == root_key
-            impacts = merged[0]["impacts"]
-            assert {impact["market"] for impact in impacts if "archive_key" in impact} == set(markets)
-            assert [impact["model_id"] for impact in impacts if "model_id" in impact] == [1]
+            assert {impact["market"] for impact in merged[0]["cart_impacts"]} == set(markets)
+            assert [impact["model_id"] for impact in merged[0]["answer_impacts"]] == [1]
 
             async with sessions() as db:
                 confirmed = [{
