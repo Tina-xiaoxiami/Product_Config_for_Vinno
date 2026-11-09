@@ -255,13 +255,14 @@ def document_extractor_version(path: Path, mime_type: str | None = None) -> str:
     return OFFICE_EXTRACTOR_VERSION if path.suffix.casefold() in {".docx", ".xlsx"} else EXTRACTOR_VERSION
 
 
-def validate_office_package(data: bytes, suffix: str) -> None:
+def validate_office_package(data, suffix: str, *, xml_only: bool = False) -> None:
     """Reject unsafe or oversized Office packages before parsing them."""
-    with ZipFile(BytesIO(data)) as package:
+    with ZipFile(BytesIO(data) if isinstance(data, bytes) else data) as package:
         entries = package.infolist()
+        bounded_entries = [entry for entry in entries if entry.filename.casefold().endswith((".xml", ".rels"))] if xml_only else entries
         if (len(entries) > MAX_OFFICE_ENTRIES
-                or sum(e.file_size for e in entries) > MAX_OFFICE_EXPANDED_BYTES
-                or any(e.file_size > MAX_OFFICE_MEMBER_BYTES for e in entries)):
+                or sum(e.file_size for e in bounded_entries) > MAX_OFFICE_EXPANDED_BYTES
+                or any(e.file_size > MAX_OFFICE_MEMBER_BYTES for e in bounded_entries)):
             raise KnowledgeContentError("Office解压内容超过本次解析上限")
         names = [e.filename for e in entries]
         required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml" if suffix == ".docx" else "xl/workbook.xml"}

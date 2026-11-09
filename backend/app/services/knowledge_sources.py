@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from io import BytesIO
+import os
 from pathlib import Path
 
 from sqlalchemy import text
@@ -35,16 +36,43 @@ def _snapshot(path: Path, expected: str) -> bytes:
     return data
 
 
-async def verified_original(db, document_id: int, version_id: str) -> tuple[dict, bytes]:
+async def _registered_original(db, document_id: int, version_id: str) -> dict:
     row = (await db.execute(text('''SELECT id,title,file_name,file_path,mime_type,sha256
         FROM knowledge_documents WHERE id=:id AND source_status='active' '''), {'id': document_id})).mappings().one_or_none()
     if row is None:
         raise CitationSourceError(404, '资料不存在或已退役，请重新查询')
     if not row['sha256'] or row['sha256'] != version_id:
         raise CitationSourceError(409, '引用版本与当前登记不一致，请重新查询；未打开其他版本')
-    document = dict(row)
+    return dict(row)
+
+
+async def verified_original(db, document_id: int, version_id: str) -> tuple[dict, bytes]:
+    document = await _registered_original(db, document_id, version_id)
     data = await asyncio.to_thread(_snapshot, Path(document['file_path']), version_id)
     return document, data
+
+
+def _large_workbook_rows(document: dict, sheets: dict[str, set[int]]) -> list[dict]:
+    from app.services.workbook_preview import read_cited_workbook_rows
+
+    path = Path(document["file_path"])
+    try:
+        if not path.is_absolute():
+            raise OSError("unregistered path")
+        with path.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            if before.st_size > 512 * 1024 * 1024:
+                raise CitationSourceError(422, "工作簿超过原表行核验上限")
+            if hashlib.file_digest(stream, "sha256").hexdigest() != document["sha256"]:
+                raise CitationSourceError(409, "原件版本已变化，请重新核对引用")
+            stream.seek(0)
+            groups = read_cited_workbook_rows(stream, ".xlsx", sheets, read_only=True)
+            after = os.fstat(stream.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise CitationSourceError(409, "原件在读取过程中变化，请重新核对引用")
+            return groups
+    except OSError as error:
+        raise CitationSourceError(410, "原件不可用，请检查资料同步") from error
 
 
 def _pdf_page_count(data: bytes) -> int:
@@ -188,14 +216,23 @@ async def answer_spreadsheet_citations(
             continue
         try:
             first = rows[0]
-            document, data = await verified_original(db, document_id, first['sha256'])
-            groups = await asyncio.to_thread(read_cited_workbook_rows, data, Path(document['file_name']).suffix.casefold(), by_sheet)
+            document = await _registered_original(db, document_id, first['sha256'])
+            suffix = Path(document['file_name']).suffix.casefold()
+            path = Path(document['file_path'])
+            large_workbook = suffix == ".xlsx" and path.is_file() and path.stat().st_size > MAX_SOURCE_BYTES
+            if large_workbook:
+                groups = await asyncio.to_thread(_large_workbook_rows, document, by_sheet)
+            else:
+                data = await asyncio.to_thread(_snapshot, path, first['sha256'])
+                groups = await asyncio.to_thread(read_cited_workbook_rows, data, suffix, by_sheet)
             for group in groups:
                 for item in group['rows']:
                     item['citation_ids'] = refs[group['sheet_name'], item['row_number']]
                 tables.append({**group, 'document_id': document_id, 'title': document['title'],
                                'version_id': first['sha256'],
-                               'preview_url': f"/api/knowledge/documents/{document_id}/preview?version_id={first['sha256']}"})
+                               'preview_url': None if large_workbook else f"/api/knowledge/documents/{document_id}/preview?version_id={first['sha256']}"})
+        except OSError:
+            warnings.append(f"{rows[0]['title']}：原件不可用，请检查资料同步")
         except (CitationSourceError, WorkbookPreviewError) as error:
             warnings.append(f"{rows[0]['title']}：{error}")
     return {'tables': tables, 'warnings': warnings}

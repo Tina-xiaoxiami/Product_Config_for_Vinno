@@ -6,7 +6,8 @@
       <header>
         <strong>{{ table.title }}</strong><span>工作表 {{ table.sheet_name }}</span>
         <span>{{ table.header_row ? `表头第 ${table.header_row} 行` : '按原表列字母显示' }}</span>
-        <a :href="table.preview_url" target="_blank" rel="noopener noreferrer">查看原件</a>
+        <a v-if="table.preview_url" :href="table.preview_url" target="_blank" rel="noopener noreferrer">查看原件</a>
+        <span v-else>已按原件哈希核验引用行</span>
       </header>
       <el-table :data="table.rows" size="small" border max-height="300" row-key="row_number" aria-label="引用原表">
         <el-table-column label="原表行" width="112" fixed>
