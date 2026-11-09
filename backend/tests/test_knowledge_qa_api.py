@@ -169,6 +169,57 @@ async def _client_for(database_path, *, migrate_scope=True):
 
 
 @pytest.mark.asyncio
+async def test_saved_draft_survives_restart_and_only_publication_advances_version(tmp_path):
+    path = tmp_path / "persistent-draft.db"
+    _create_qa_database(path)
+    client, engine = await _client_for(path)
+    question = {"scope": TEST_QUERY_SCOPE, "question": "针增益功能适用什么配置？"}
+    async with client:
+        asked = await client.post("/api/knowledge/questions/ask", json=question)
+        url = f"/api/knowledge/questions/{asked.json()['question_id']}"
+        original = await client.put(f"{url}/answer", json={
+            "answer_text": "首次发布", "citations": [{"document_id": 1, "source_ref": "第2页"}],
+        })
+        assert original.json()["answer"]["version"] == 1
+        form = {"expected_version": 1, "expected_draft_revision": 0, "answer_text": "修订一", "change_note": "核对原文"}
+        first = await client.put(f"{url}/draft-answer", json=form)
+        assert first.status_code == 200, first.text
+        token = first.json()["draft"]["revision"]
+        assert first.json()["answer"]["answer_text"] == "首次发布"
+        assert (await client.put(f"{url}/draft-answer", json=form)).status_code == 409
+        second = await client.put(f"{url}/draft-answer", json={
+            **form, "expected_draft_revision": token, "answer_text": "修订二",
+            "citations": [{"document_id": 1, "source_ref": "第3页"}],
+        })
+        assert second.status_code == 200, second.text
+        token = second.json()["draft"]["revision"]
+    await engine.dispose()
+
+    client, engine = await _client_for(path)
+    try:
+        async with client:
+            restored = (await client.get(url)).json()
+            assert restored["answer"]["version"] == 1
+            assert restored["draft"]["revision"] == token
+            assert restored["draft"]["answer_text"] == "修订二"
+            assert (await client.post("/api/knowledge/questions/ask", json=question)).json()["answer"]["version"] == 1
+            for _ in range(2):
+                published = await client.put(f"{url}/answer", json={"draft_revision": token})
+                assert published.status_code == 200, published.text
+                assert published.json()["answer"]["version"] == 2
+                assert published.json()["answer"]["answer_text"] == "修订二"
+                assert published.json()["draft"] is None
+            history = (await client.get(f"{url}/history")).json()["items"]
+            published = [row for row in history if row["review_status"] == "published"]
+            assert [row["version"] for row in published] == [2, 1]
+            assert published[0]["citations"][0]["source_ref"] == "第3页"
+            assert published[1]["citations"][0]["source_ref"] == "第2页"
+            assert [row["answer_text"] for row in history if row["review_status"] == "draft"] == ["修订二", "修订一"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_unknown_question_enters_pending_queue_and_repeated_ask_is_counted(tmp_path):
     database_path = tmp_path / "qa.db"
     _create_qa_database(database_path)
