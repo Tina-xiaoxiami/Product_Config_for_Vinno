@@ -16,8 +16,10 @@ from app.models import (
     CartReleaseArtifact, CartReleaseCheck, ConfigVersion, KnowledgeDocument, ProductSeries,
 )
 from app.services.cart_release_diff import changes, plan_tokens, snapshot_view
-from app.services.cart_release_ppt import replace_tokens
+from app.services.cart_release_facts import fact_state, link_fact_impacts, plan_fact_tokens, resolve_facts
+from app.services.cart_release_ppt import build_candidate
 from app.services.cart_release_rules import MARKET_FOLDERS, Rules, load_rules
+from app.services.cart_release_scope import excluded_series
 from app.services.knowledge_sources import CitationSourceError, read_verified_source, verified_original
 from app.services.version_comparison import normalize_comparison_snapshot
 from app.utils.time import utcnow
@@ -130,25 +132,31 @@ async def _review_rules():
 
 async def has_cart_changes(before, after, series_name):
     """Allow Cart metadata-only saves through the normal version no-op check."""
+    if excluded_series(series_name):
+        return False
     rules, _ = await _review_rules()
     return bool(changes(snapshot_view(before, rules), snapshot_view(after, rules), rules.market(series_name), rules))
 
 
-async def _previous_candidate(db, version, market, template):
+async def _previous_check(db, version, market, template, *, artifact_only):
     version_time = CartReleaseCheck.report["version"]["created_at"].as_string()
-    return await db.scalar(select(CartReleaseCheck).where(
+    query = select(CartReleaseCheck).where(
         or_(CartReleaseCheck.version_id < version.id,
             and_(CartReleaseCheck.version_id == version.id, version_time < _version_time(version))),
         CartReleaseCheck.report["market"].as_string() == market,
         CartReleaseCheck.report["template"]["sha256"].as_string() == template.sha256,
-        CartReleaseCheck.artifact_sha256.is_not(None),
-    ).order_by(CartReleaseCheck.version_id.desc(), version_time.desc()).limit(1))
+    )
+    if artifact_only:
+        query = query.where(CartReleaseCheck.artifact_sha256.is_not(None))
+    return await db.scalar(query.order_by(
+        CartReleaseCheck.version_id.desc(), version_time.desc(), CartReleaseCheck.checked_at.desc(),
+    ).limit(1))
 
 
-async def _assess(db, version, origin, previous_report, rollback_target):
+async def _assess(db, version, origin, previous_report, rollback_target, *, rules_result=None):
     series = await db.get(ProductSeries, version.series_id)
     series_name = series.name if series else f"系列 #{version.series_id}"
-    rules, rules_error = await _review_rules()
+    rules, rules_error = rules_result or await _review_rules()
     market = rules.market(series_name)
     prior = await _prior_version(db, version)
     template = rules.templates.get(market)
@@ -160,7 +168,10 @@ async def _assess(db, version, origin, previous_report, rollback_target):
             "file": template.filename, "sha256": template.sha256, "review_notes": template.review_notes,
         } if template else None,
         "changes": [], "baseline_changes": [], "updates": [], "context": {}, "reason": None,
+        "facts": {}, "fact_gaps": [], "layout_gaps": [], "affected_pages": [],
     }
+    if excluded_series(series_name):
+        return {**report, "status": "checked", "reason": "本系列不在 Cart 维护范围"}, None
     if previous_report:
         prior_key = report["previous"]["key"] if prior else None
         frozen = previous_report["previous"]
@@ -171,7 +182,7 @@ async def _assess(db, version, origin, previous_report, rollback_target):
         report["changes"] = changes(before, after, market, rules, include_models=prior is not None)
         if rules_error or (market and not rules.version):
             return {**report, "reason": "Cart 规则未配置或不可读取，无法完成核验"}, None
-        if not report["changes"]:
+        if not report["changes"] and not (template and template.fact_keys):
             return {**report, "status": "checked", "reason": "已检查，未发现影响 Cart 发货资料的变更"}, None
         if not template or series_name not in {anchor.series for anchor in template.anchors}:
             return {**report, "reason": "系列或市场未与 Cart 模板绑定，适用型号及页码需核对"}, None
@@ -187,13 +198,30 @@ async def _assess(db, version, origin, previous_report, rollback_target):
         if len(evidence) != len(template.anchors):
             return {**report, "reason": "缺少完整的市场快照基线，或所选版本早于已核验基线"}, None
         patches, uncovered = plan_tokens(template, evidence, rules.known_codes)
-        if uncovered:
-            for change in report["baseline_changes"]:
-                change["needs_review"] = (change["series"], tuple(change["identity"])) in uncovered
+        for change in report["baseline_changes"]:
+            if (change["series"], tuple(change["identity"])) in uncovered:
+                change["needs_review"] = True
+        if template.fact_keys:
+            facts = await resolve_facts(db, market, template, context)
+            fact_patches, report["fact_gaps"] = plan_fact_tokens(template, facts)
+            report["facts"] = facts
+            patches.extend(fact_patches)
+        incomplete = bool(uncovered or report["fact_gaps"])
+        if uncovered and not patches:
             return {**report, "reason": "有配置或型号变更缺少可核验映射，或同市场快照证据不一致"}, None
+
         restoring = []
+        candidate = await _previous_check(db, version, market, template, artifact_only=True)
+        if candidate:
+            report["previous_candidate_key"] = candidate.version_key
+        if origin != "facts" and not report["changes"] and template.fact_keys:
+            prior_check = await _previous_check(db, version, market, template, artifact_only=False)
+            if (prior_check and prior_check.report.get("baseline_changes") == report["baseline_changes"]
+                    and fact_state(prior_check.report.get("facts", {})) == fact_state(report["facts"])):
+                return {**report, "status": "checked", "reason": "已检查，本版本无需更新 Cart 文稿"}, None
         if not patches:
-            candidate = await _previous_candidate(db, version, market, template)
+            if incomplete:
+                return {**report, "reason": "Cart 事实或适用关系待核"}, None
             if candidate is None or candidate.artifact_sha256 == template.sha256:
                 return {**report, "status": "checked", "reason": "配置与已绑定快照一致，沿用原模板"}, None
             restoring = [
@@ -204,20 +232,43 @@ async def _assess(db, version, origin, previous_report, rollback_target):
         logger.warning("Cart check for version %s could not read snapshot evidence: %s", version.id, error)
         return {**report, "reason": "快照或机型身份无法安全核验"}, None
 
+    try:
+        original = await _template_bytes(db, market, template)
+        content, patches, report["layout_gaps"] = await asyncio.to_thread(build_candidate, original, patches)
+    except (CitationSourceError, BadZipFile, XMLSyntaxError, ValueError) as error:
+        return {**report, "reason": str(error)}, None
+    if content is None:
+        return {**report, "reason": "受影响条目的版面定位或文字空间待核"}, None
+    incomplete = incomplete or bool(report["layout_gaps"])
     report["updates"] = [
         {"before": rule.original, "after": replacement, "pages": [page for page, _ in rule.targets]}
         for rule, replacement in patches
     ] + restoring
-    try:
-        original = await _template_bytes(db, market, template)
-        content = await asyncio.to_thread(replace_tokens, original, patches)
-    except (CitationSourceError, BadZipFile, XMLSyntaxError, ValueError) as error:
-        return {**report, "reason": str(error)}, None
+    report["affected_pages"] = _affected_pages(report, content, candidate)
+    if incomplete:
+        return {**report, "status": "partial", "reason": "已生成已核实条目的候选，部分条目待核"}, content
     return {**report, "status": "generated", "reason": "已生成供核对的 PPT 候选"}, content
 
 
+def _affected_pages(report, content, prior):
+    if prior and prior.artifact_sha256 == sha256(content).hexdigest():
+        return []
+    def updates(value):
+        return {(item["before"], item["after"], tuple(item["pages"])) for item in value.get("updates", [])}
+    old = updates(prior.report) if prior else set()
+    return sorted({page for _, _, pages in updates(report) ^ old for page in pages})
+
+
 async def get_cart_check(db, version):
-    return await db.get(CartReleaseCheck, version_key(version), populate_existing=True)
+    rows = await cart_check_history(db, version, 1)
+    return rows[0] if rows else None
+
+
+async def cart_check_history(db, version, limit):
+    return (await db.scalars(select(CartReleaseCheck).where(
+        CartReleaseCheck.version_id == version.id,
+        CartReleaseCheck.report["version"]["key"].as_string() == version_key(version),
+    ).order_by(CartReleaseCheck.checked_at.desc(), CartReleaseCheck.version_key).limit(limit))).all()
 
 
 async def reserve_cart_backfill(db):
@@ -231,16 +282,16 @@ async def save_cart_check(db, version, origin, *, rollback_target=None):
     """Persist the check and any PPT in the same transaction as its snapshot."""
     await db.flush()
     key = version_key(version)
-    existing = await get_cart_check(db, version)
-    if existing is not None and existing.report["status"] != "pending":
+    existing = await db.get(CartReleaseCheck, key, populate_existing=True)
+    if origin == "backfill":
+        latest = await get_cart_check(db, version)
+        if latest is not None and latest.version_key != key:
+            return latest
+    if existing is not None and (existing.artifact_sha256 or existing.report["status"] != "pending"):
         return existing
     report, content = await _assess(db, version, existing.report["origin"] if existing else origin,
                                     existing.report if existing else None, rollback_target)
-    digest = None
-    if content is not None:
-        digest = sha256(content).hexdigest()
-        await db.execute(insert(CartReleaseArtifact).values(sha256=digest, data=content)
-                         .on_conflict_do_nothing(index_elements=["sha256"]))
+    digest = await _store_artifact(db, content)
     if existing is None:
         existing = CartReleaseCheck(version_key=key, version_id=version.id, report=report, artifact_sha256=digest)
         db.add(existing)
@@ -249,12 +300,74 @@ async def save_cart_check(db, version, origin, *, rollback_target=None):
         existing.artifact_sha256 = digest
         existing.checked_at = utcnow()
     await db.flush()
+    await link_fact_impacts(db, existing)
     return existing
+
+
+async def _store_artifact(db, content):
+    if content is None:
+        return None
+    digest = sha256(content).hexdigest()
+    await db.execute(insert(CartReleaseArtifact).values(sha256=digest, data=content)
+                     .on_conflict_do_nothing(index_elements=["sha256"]))
+    return digest
+
+
+async def _same_fact_candidate(db, latest, report, digest):
+    if (fact_state(latest.report.get("facts", {})) != fact_state(report["facts"])
+            or latest.report.get("baseline_changes") != report["baseline_changes"]):
+        return False
+    previous_key = latest.report.get("previous_candidate_key")
+    if latest.report["status"] == "checked" and previous_key and digest:
+        previous = await db.get(CartReleaseCheck, previous_key)
+        return previous is not None and previous.artifact_sha256 == digest
+    return (latest.artifact_sha256, latest.report["status"], latest.report.get("reason")) == (
+        digest, report["status"], report["reason"],
+    )
+
+
+async def refresh_cart_for_facts(db, fact_keys=None, *, version_id=None):
+    """Refresh the affected current regional candidates in the caller's transaction."""
+    rules, rules_error = await _review_rules()
+    if rules_error:
+        return []
+    await db.flush()
+    fact_keys = None if fact_keys is None else frozenset(fact_keys)
+    results = []
+    for market, template in rules.templates.items():
+        if not template.fact_keys or (fact_keys is not None and template.fact_keys.isdisjoint(fact_keys)):
+            continue
+        names = [anchor.series for anchor in template.anchors if not excluded_series(anchor.series)]
+        version = await db.scalar(select(ConfigVersion).join(ProductSeries).where(
+            ProductSeries.name.in_(names)
+        ).order_by(ConfigVersion.id.desc()).limit(1))
+        if version is None or (version_id is not None and version.id != version_id):
+            continue
+        latest = await get_cart_check(db, version)
+        report, content = await _assess(db, version, "facts", None, None, rules_result=(rules, rules_error))
+        digest = sha256(content).hexdigest() if content is not None else None
+        if latest is not None and await _same_fact_candidate(db, latest, report, digest):
+            await link_fact_impacts(db, latest)
+            continue
+        if latest is not None and latest.artifact_sha256:
+            report["previous_candidate_key"] = latest.version_key
+            if content is not None:
+                report["affected_pages"] = _affected_pages(report, content, latest)
+        identity = [version_key(version), latest.version_key if latest else None, report]
+        key = sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+        result = CartReleaseCheck(version_key=key, version_id=version.id, report=report,
+                                  artifact_sha256=await _store_artifact(db, content))
+        db.add(result)
+        await db.flush()
+        await link_fact_impacts(db, result)
+        results.append(check_payload(result))
+    return results
 
 
 def check_payload(check):
     return {
         **check.report,
+        "archive_key": check.version_key,
         "artifact_sha256": check.artifact_sha256,
         "checked_at": check.checked_at.isoformat(),
     }

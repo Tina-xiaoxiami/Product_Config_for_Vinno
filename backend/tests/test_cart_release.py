@@ -117,7 +117,7 @@ async def test_version_check_cross_series_retry_rollback_and_history(tmp_path, m
                 second_data = json.dumps(second_snapshot)
                 db.add_all([first, ConfigVersion(series_id=2, version_number="1.0.0", snapshot_data=second_data)])
                 await db.commit()
-            revised = rules.model_dump()
+            revised = rules.model_dump(mode="json")
             revised["templates"]["overseas"]["anchors"][1]["sha256"] = sha256(second_data.encode()).hexdigest()
             path.write_text(json.dumps(revised))
 
@@ -188,3 +188,190 @@ async def test_version_check_cross_series_retry_rollback_and_history(tmp_path, m
             assert (await client.get(f"{archive}/presentation")).content == result.content
     finally:
         await engine.dispose()
+
+
+def test_a_series_filter_keeps_non_a_rows_of_a_mixed_snapshot():
+    from app.services.cart_release_scope import excluded_model, excluded_series
+
+    assert excluded_series("A series-China") and excluded_series("VINNO A系列")
+    assert excluded_model("VINNO A5PRO") and excluded_model("A6-INT")
+    assert not excluded_model("Aplio 500")
+    rules = Rules(excluded_codes=["V70002"])
+    mixed = config()
+    mixed["models"].append({"id": 31, "name": "VINNO A5"})
+    mixed["items"][0]["values"]["31"] = {"final_config": "O"}
+    mixed["items"].append({
+        "id": 11, "v_code": "V70002", "ipn": "7000002", "en_desc": "Dedicated Cart",
+        "values": {"30": {"final_config": "O"}, "31": {"final_config": "O"}},
+    })
+    mixed["items"].append({
+        "id": 12, "ipn": "7000003", "en_desc": "Auxiliary Cart",
+        "values": {"31": {"final_config": "O"}},
+    })
+    earlier = config()
+    earlier["items"].append({**mixed["items"][-1], "values": {}})
+    assert changes(snapshot_view(earlier, rules), snapshot_view(mixed, rules), "domestic", rules) == []
+    mixed["items"][0]["values"]["30"]["final_config"] = "X"
+    delta, = changes(snapshot_view(config(), rules), snapshot_view(mixed, rules), "domestic", rules)
+    assert delta["models"] == ["Example 10"]
+    assert delta["after"]["values"][0]["final_config"] == "X"
+
+
+@pytest.mark.asyncio
+async def test_source_changes_refresh_only_mapped_pages_and_preserve_cart_history(tmp_path, monkeypatch):
+    from hashlib import sha256
+    import json
+    from types import SimpleNamespace
+
+    from sqlalchemy import func, select
+
+    from app.models import CartReleaseArtifact, ConfigVersion, ProductSeries
+    from app.services import cart_release_facts
+    from app.services.cart_release import refresh_cart_for_facts, save_cart_check
+    from test_versions_api import _versions_harness
+
+    source = BytesIO()
+    old = "Confirm component identity and ordering."
+    def slide(text):
+        return f"""<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:sp><p:nvSpPr>
+        <p:cNvPr id="4"/></p:nvSpPr><p:txBody><a:p><a:r><a:t>{text}</a:t></a:r>
+        </a:p></p:txBody></p:sp></p:sld>""".encode()
+    with ZipFile(source, "w") as archive:
+        archive.writestr("ppt/slides/slide2.xml", slide("Example A Cart"))
+        archive.writestr("ppt/slides/slide5.xml", slide(old))
+        archive.writestr("ppt/slides/slide7.xml", slide(old))
+    folder = tmp_path / "国内"
+    folder.mkdir()
+    (folder / "example.pptx").write_bytes(source.getvalue())
+    snapshot_data = json.dumps(config())
+    rules = Rules(version="example", templates={"domestic": {
+        "filename": "example.pptx", "sha256": sha256(source.getvalue()).hexdigest(),
+        "anchors": [{"series": "Example-China", "version": "1.0.0",
+                     "sha256": sha256(snapshot_data.encode()).hexdigest()}],
+        "facts": [{"facts": {"part": key}, "original": old, "replacement": "IPN {part}.", "targets": [[page, "4"]]}
+                  for key, page in [("example.identity", 5), ("example.spec", 7)]],
+        "excluded_pages": [2],
+        "watch_facts": {"example.identity": [7]},
+    }})
+    path = tmp_path / "rules.json"
+    path.write_text(rules.model_dump_json())
+    monkeypatch.setenv("CART_RELEASE_RULES_FILE", str(path))
+    monkeypatch.setenv("CART_RELEASE_TEMPLATE_ROOT", str(tmp_path))
+    source_versions = {"example.spec": "a" * 64}
+    decisions = {}
+
+    async def resolve(db, key, market, versions):
+        assert market == "domestic"
+        assert versions["Example-China"]["number"] in {"1.0.0", "1.0.1"}
+        if key not in source_versions:
+            return {"key": key, "status": "pending",
+                    "issue": {"root_key": "component:identity", "detail": "缺少适用部件映射"}}
+        return {"key": key, "status": "confirmed", "value": "7000011" if key.endswith("identity") else "7000012",
+                "sources": [{"document_id": 1, "version_id": source_versions[key], "locator": "Parts!A1"}]}
+
+    async def link(db, root, impact):
+        decisions.setdefault(root, {})[impact["market"]] = impact
+
+    monkeypatch.setattr(cart_release_facts, "_provider", lambda: SimpleNamespace(
+        resolve_cart_fact=resolve, link_cart_fact_impact=link,
+    ))
+    client, session_factory, engine = await _versions_harness(tmp_path)
+    try:
+        async with client:
+            async with session_factory() as db:
+                db.add(ProductSeries(id=1, name="Example-China"))
+                db.add(ConfigVersion(id=1, series_id=1, version_number="1.0.0", snapshot_data=snapshot_data))
+                await db.commit()
+            async with session_factory() as db:
+                assert await refresh_cart_for_facts(db, {"unrelated"}) == []
+                first, = await refresh_cart_for_facts(db, {"example.identity", "example.spec"})
+                assert first["status"] == "partial"
+                assert first["updates"][0]["pages"] == [7]
+                assert first["affected_pages"] == [7]
+                assert await refresh_cart_for_facts(db, {"example.identity"}) == []
+                await db.commit()
+            assert decisions["component:identity"]["domestic"]["pages"] == [5, 7]
+            assert len(decisions) == 1
+            source_versions["example.identity"] = "b" * 64
+            async with session_factory() as db:
+                second, = await refresh_cart_for_facts(db, {"example.identity"})
+                assert second["status"] == "generated"
+                assert second["previous_candidate_key"] == first["archive_key"]
+                assert second["affected_pages"] == [5]
+                assert await refresh_cart_for_facts(db, {"example.identity"}) == []
+                await db.commit()
+            endpoint = "/api/versions/cart-release/archive"
+            older = await client.get(f"{endpoint}/{first['archive_key']}/presentation")
+            newer = await client.get(f"{endpoint}/{second['archive_key']}/presentation")
+            with ZipFile(BytesIO(older.content)) as before, ZipFile(BytesIO(newer.content)) as after:
+                assert {name for name in before.namelist() if before.read(name) != after.read(name)} == {
+                    "ppt/slides/slide5.xml"
+                }
+                assert after.read("ppt/slides/slide2.xml") == slide("Example A Cart")
+            history = (await client.get("/api/versions/1/cart-release/history")).json()["items"]
+            assert [row["key"] for row in history] == [second["archive_key"], first["archive_key"]]
+            source_versions["example.identity"] = "c" * 64
+            async with session_factory() as db:
+                third, = await refresh_cart_for_facts(db, {"example.identity"})
+                assert third["artifact_sha256"] == second["artifact_sha256"]
+                assert third["affected_pages"] == []
+                assert third["archive_key"] != second["archive_key"]
+                assert await db.scalar(select(func.count()).select_from(CartReleaseArtifact)) == 2
+                unrelated = config()
+                unrelated["items"].append({"id": 99, "ipn": "9999999", "en_desc": "Unrelated feature",
+                                           "values": {"30": {"final_config": "O"}}})
+                version = ConfigVersion(series_id=1, version_number="1.0.1", snapshot_data=json.dumps(unrelated))
+                db.add(version)
+                unchanged = await save_cart_check(db, version, "save")
+                assert unchanged.report["status"] == "checked"
+                assert unchanged.report["previous_candidate_key"] == third["archive_key"]
+                assert await refresh_cart_for_facts(db, {"example.identity"}) == []
+                await db.commit()
+    finally:
+        await engine.dispose()
+
+
+def test_one_layout_failure_preserves_independent_verified_text():
+    from app.services.cart_release_ppt import build_candidate
+    from app.services.cart_release_rules import FactRule
+
+    data = BytesIO()
+    with ZipFile(data, "w") as archive:
+        for page in (5, 7):
+            archive.writestr(f"ppt/slides/slide{page}.xml", """<p:sld
+              xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+              xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:sp><p:nvSpPr>
+              <p:cNvPr id="4"/></p:nvSpPr><p:txBody><a:p><a:r><a:t>Short field</a:t></a:r>
+              </a:p></p:txBody></p:sp></p:sld>""")
+    good, bad = [FactRule(facts={"value": "example.field"}, original="Short field",
+                          replacement="{value}", targets=((page, "4"),)) for page in (5, 7)]
+    output, applied, gaps = build_candidate(data.getvalue(), [
+        (good, "Verified"), (bad, "This replacement cannot fit in the reviewed field"),
+    ])
+    assert applied == [(good, "Verified")]
+    assert gaps[0]["pages"] == [7]
+    with ZipFile(BytesIO(output)) as after, ZipFile(data) as before:
+        assert b"Verified" in after.read("ppt/slides/slide5.xml")
+        assert after.read("ppt/slides/slide7.xml") == before.read("ppt/slides/slide7.xml")
+
+
+def test_selection_change_requires_complete_market_and_only_updates_its_bound_page():
+    from app.services.cart_release_diff import plan_tokens
+    from app.services.cart_release_rules import Template
+
+    rules = Rules(market_pages={"domestic": {"V70001": [7]}})
+    template = Template(filename="example.pptx", sha256="a" * 64,
+                        anchors=[{"series": name, "version": "1", "sha256": "b" * 64} for name in ("A", "B")],
+                        selection_rules=[{"series": ["A", "B"], "code": "V70001", "ipn": "7000001-1",
+                                          "baseline": "X", "original": "standard", "replacement": "optional",
+                                          "targets": [[7, "4"]]}])
+    before = snapshot_view(config(final="X"), rules)
+    after = snapshot_view(config(final="O"), rules)
+    delta = changes(before, after, "domestic", rules)
+    proposed = (before, after, delta)
+    patches, uncovered = plan_tokens(template, {"A": proposed, "B": (before, before, [])}, rules.known_codes)
+    assert patches == [] and uncovered
+    patches, uncovered = plan_tokens(template, {"A": proposed, "B": proposed}, rules.known_codes)
+    assert patches == [(template.selection_rules[0], "optional")]
+    assert not uncovered

@@ -25,6 +25,7 @@ export const batchUpdateConfigValues = (data) => api.post('/config/batch-update'
 // ==================== 版本管理 ====================
 export const getVersions = (seriesId, params) => api.get('/versions', { params: { series_id: seriesId, ...params } })
 export const getCartReleaseCheck = (id) => api.get(`/versions/${id}/cart-release`)
+export const getCartReleaseHistory = (id) => api.get(`/versions/${id}/cart-release/history`)
 export const retryCartReleaseCheck = (id) => api.post(`/versions/${id}/cart-release`)
 export const getVersion = (id) => api.get(`/versions/${id}`)
 export const createVersion = (data) => api.post('/versions', data)

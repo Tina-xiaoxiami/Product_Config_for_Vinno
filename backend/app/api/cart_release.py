@@ -6,7 +6,9 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import CartReleaseArtifact, CartReleaseCheck, ConfigVersion
-from app.services.cart_release import check_payload, get_cart_check, reserve_cart_backfill, save_cart_check
+from app.services.cart_release import (
+    cart_check_history, check_payload, get_cart_check, refresh_cart_for_facts, reserve_cart_backfill, save_cart_check,
+)
 
 
 router = APIRouter()
@@ -40,10 +42,25 @@ def _report(check, download):
 @router.post("/{version_id}/cart-release")
 async def retry_check(version_id: int, db=Depends(get_db)):
     await reserve_cart_backfill(db)
-    check = await save_cart_check(db, await _version(db, version_id), "backfill")
+    version = await _version(db, version_id)
+    check = await get_cart_check(db, version)
+    if check and check.report.get("facts"):
+        await refresh_cart_for_facts(db, check.report["facts"], version_id=version_id)
+        check = await get_cart_check(db, version)
+    else:
+        check = await save_cart_check(db, version, "backfill")
     result = check_payload(check)
     await db.commit()
     return result
+
+
+@router.get("/{version_id}/cart-release/history")
+async def read_history(version_id: int, limit: int = Query(20, ge=1, le=100), db=Depends(get_db)):
+    checks = await cart_check_history(db, await _version(db, version_id), limit)
+    return {"items": [{
+        "key": check.version_key, "origin": check.report["origin"], "status": check.report["status"],
+        "artifact_sha256": check.artifact_sha256, "checked_at": check.checked_at.isoformat(),
+    } for check in checks]}
 
 
 @router.get("/{version_id}/cart-release/presentation")

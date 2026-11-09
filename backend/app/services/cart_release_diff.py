@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 
 from app.services.cart_release_rules import CART_TEXT
+from app.services.cart_release_scope import excluded_material, excluded_model
 from app.services.config_history import (
     build_snapshot_item_comparison_index, build_snapshot_semantic_value_index,
 )
@@ -19,6 +20,7 @@ class SnapshotView:
     models: dict
     rows: dict
     relevant: set
+    excluded: set
 
 
 def snapshot_view(snapshot, rules):
@@ -28,8 +30,10 @@ def snapshot_view(snapshot, rules):
         str(model["id"]): model.get("_comparison_name", model.get("name")) or f"机型 #{model['id']}"
         for model in snapshot.get("models", [])
     }
+    excluded_ids = {mid for mid, name in models.items() if excluded_model(name)}
+    models = {mid: name for mid, name in models.items() if mid not in excluded_ids}
     rows = {}
-    relevant = set()
+    relevant, excluded = set(), set()
     known_codes, known_ipns = rules.known_codes, rules.known_ipns
     for identity, item in items.items():
         values = {
@@ -38,11 +42,15 @@ def snapshot_view(snapshot, rules):
             if any(value.get(field) is not None for field in SHIPPING_FIELDS)
         }
         metadata = {field: str(item.get(field) or "").strip() or None for field in METADATA_FIELDS}
-        rows[identity] = {**metadata, "values": values}
+        in_scope = {mid: value for mid, value in values.items() if mid not in excluded_ids}
+        if excluded_material(metadata, rules, in_scope, values.keys() & excluded_ids):
+            excluded.add(identity)
+            continue
+        rows[identity] = {**metadata, "values": in_scope}
         if (metadata["v_code"] in known_codes or metadata["ipn"] in known_ipns
                 or CART_TEXT.search(" ".join(value for value in metadata.values() if value))):
             relevant.add(identity)
-    return SnapshotView(models, rows, relevant)
+    return SnapshotView(models, rows, relevant, excluded)
 
 
 def _pages(row, market, rules):
@@ -71,6 +79,9 @@ def changes(before, after, market, rules, *, include_models=True):
     for identity in sorted(before.relevant | after.relevant, key=str):
         old, new = before.rows.get(identity), after.rows.get(identity)
         if old == new:
+            continue
+        if (identity in before.excluded and not (new or {}).get("values")
+                or identity in after.excluded and not (old or {}).get("values")):
             continue
         old_values = old["values"] if old else {}
         new_values = new["values"] if new else {}
@@ -121,7 +132,31 @@ def plan_tokens(template, evidence, known_codes):
             continue
         uncovered -= covered
         patches.append((rule, replacement))
+    for rule in template.selection_rules:
+        identity = ("ipn", rule.ipn)
+        if all(_selection_matches(rule, *evidence[series][:2]) for series in rule.series):
+            covered = {(series, identity) for series in rule.series}
+            if covered & uncovered:
+                uncovered -= covered
+                patches.append((rule, rule.replacement))
     return patches, uncovered
+
+
+def _selection_matches(rule, before, after):
+    identity = ("ipn", rule.ipn)
+    old, new = before.rows.get(identity), after.rows.get(identity)
+    if not old or not new or old["v_code"] != rule.code or not old["values"]:
+        return False
+    if any(old[field] != new[field] for field in METADATA_FIELDS):
+        return False
+    if old["values"].keys() != new["values"].keys() or old["values"].keys() - before.models.keys():
+        return False
+    target = "O" if rule.baseline == "X" else "X"
+    expected = dict.fromkeys(SHIPPING_FIELDS, rule.baseline)
+    proposed = dict.fromkeys(SHIPPING_FIELDS, target)
+    return all(value == expected for value in old["values"].values()) and all(
+        value == proposed for value in new["values"].values()
+    )
 
 
 def _rule_match(rule, before, after, known_codes):

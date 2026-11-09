@@ -12,7 +12,7 @@
           配置来源 {{ report.series }} · {{ report.previous?.number || '无前版' }} → {{ report.version.number }}
         </p>
         <p v-if="report.rollback_target">回滚目标 {{ report.rollback_target.number }}</p>
-        <p v-if="report.template">模板 {{ report.template.file }}</p>
+        <p v-if="report.template">当前成品依据 {{ report.template.file }} · {{ report.template.sha256?.slice(0, 12) }}</p>
         <ul v-if="report.template?.review_notes?.length" class="cart-notes">
           <li v-for="note in report.template.review_notes" :key="note">{{ note }}</li>
         </ul>
@@ -24,6 +24,42 @@
             </li>
           </ul>
         </details>
+        <details v-if="Object.keys(report.facts || {}).length">
+          <summary>公共事实及资料版本</summary>
+          <ul class="cart-notes">
+            <li v-for="(fact, key) in report.facts" :key="key">
+              {{ fact.label || key }} · {{ fact.display_value ?? fact.value ?? '待核' }}
+              <span v-for="source in fact.sources || []" :key="JSON.stringify(source)">
+                · {{ source.title || source.document_id }} {{ source.locator || source.reference }}（{{ (source.version_id || source.sha256 || '').slice(0, 12) }}）
+              </span>
+            </li>
+          </ul>
+        </details>
+        <ul v-if="report.fact_gaps?.length" class="cart-notes">
+          <li v-for="gap in report.fact_gaps" :key="JSON.stringify(gap)">
+            第 {{ gap.pages.join('、') }} 页 · {{ gap.detail }}
+            <span v-if="gap.root_key"> · {{ gap.kind === 'source_gap' ? '资料缺口' : '待决关系' }}</span>
+          </li>
+        </ul>
+        <ul v-if="report.layout_gaps?.length" class="cart-notes">
+          <li v-for="gap in report.layout_gaps" :key="JSON.stringify(gap)">
+            第 {{ gap.pages.join('、') }} 页 · {{ gap.detail }}
+          </li>
+        </ul>
+        <details v-if="report.version" @toggle="loadHistory">
+          <summary>检查与候选历史</summary>
+          <p v-if="historyError">{{ historyError }}</p>
+          <ul v-if="history.length" class="cart-notes">
+            <li v-for="entry in history" :key="entry.key">
+              <a :href="`/api/versions/cart-release/archive/${entry.key}?download=true`">
+                {{ formatTime(entry.checked_at) }} · {{ labels[entry.status] }}
+              </a>
+              <a v-if="entry.artifact_sha256" :href="`/api/versions/cart-release/archive/${entry.key}/presentation`"> · PPT 候选</a>
+            </li>
+          </ul>
+        </details>
+        <a v-if="report.previous_candidate_key" :href="`/api/versions/cart-release/archive/${report.previous_candidate_key}/presentation`">下载上一候选</a>
+        <p v-if="report.affected_pages?.length">本次更新第 {{ report.affected_pages.join('、') }} 页</p>
         <p v-for="update in report.updates || []" :key="update.before + update.after">
           {{ update.before }} → {{ update.after }} · 第 {{ update.pages.join('、') }} 页
         </p>
@@ -57,7 +93,7 @@
     </div>
     <template #footer>
       <div class="cart-actions">
-        <el-button v-if="error || report?.status === 'not_checked' || report?.status === 'pending'"
+        <el-button v-if="error || report?.status === 'not_checked' || ['pending', 'partial'].includes(report?.status)"
           size="small" type="primary" :loading="busy" @click="load(!error)">
           {{ error ? '重新载入' : report.status === 'not_checked' ? '补跑检查' : '重新检查' }}
         </el-button>
@@ -71,19 +107,23 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { getCartReleaseCheck, retryCartReleaseCheck } from '../api/data'
+import { getCartReleaseCheck, getCartReleaseHistory, retryCartReleaseCheck } from '../api/data'
+
+import { formatTime } from '../utils/modelHelpers'
 
 const props = defineProps({ version: Object })
 const visible = defineModel({ type: Boolean })
 const report = ref(null)
 const error = ref('')
 const busy = ref(false)
+const history = ref([])
+const historyError = ref('')
 let request = 0
 const marketLabels = { domestic: '国内', overseas: '海外' }
-const labels = { checked: '已检查', generated: '已生成候选', pending: '待核', not_checked: '未检查' }
+const labels = { checked: '已检查', generated: '已生成候选', partial: '部分待核', pending: '待核', not_checked: '未检查' }
 const statusLabel = computed(() => labels[report.value?.status])
-const statusType = computed(() => ({ checked: 'success', generated: 'success', pending: 'warning' })[report.value?.status] || 'info')
-const archiveUrl = computed(() => `/api/versions/cart-release/archive/${report.value?.version?.key}`)
+const statusType = computed(() => ({ checked: 'success', generated: 'success', partial: 'warning', pending: 'warning' })[report.value?.status] || 'info')
+const archiveUrl = computed(() => `/api/versions/cart-release/archive/${(report.value?.archive_key || report.value?.version?.key)}`)
 const groups = computed(() => [
   { title: '本版本变更', changes: report.value?.changes || [] },
   { title: '相对模板基线的累计变更', changes: report.value?.baseline_changes || [] }
@@ -111,9 +151,23 @@ const load = async (retry = false) => {
   }
 }
 
+const loadHistory = async event => {
+  if (!event.target.open || !props.version?.id) return
+  const current = request
+  historyError.value = ''
+  try {
+    const result = await getCartReleaseHistory(props.version.id)
+    if (request === current) history.value = result.items || []
+  } catch {
+    if (request === current) historyError.value = '候选历史载入失败'
+  }
+}
+
 watch([visible, () => props.version?.id], ([opened]) => {
   ++request
   report.value = null
+  history.value = []
+  historyError.value = ''
   error.value = ''
   busy.value = false
   if (opened) void load()
