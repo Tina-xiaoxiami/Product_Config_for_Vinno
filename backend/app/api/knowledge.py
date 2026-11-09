@@ -231,10 +231,10 @@ async def get_configuration_history(
 
 @router.get("/questions/configuration-issues")
 async def get_configuration_issues(db: AsyncSession = Depends(get_db)):
-    from app.services.knowledge_cart_facts import cart_fact_issues
+    from app.services.knowledge_cart_facts import cart_fact_issues, merge_configuration_issues
     from app.services.knowledge_configuration_answers import configuration_answer_issues
 
-    issues = await configuration_answer_issues(db) + await cart_fact_issues(db)
+    issues = merge_configuration_issues(await configuration_answer_issues(db), await cart_fact_issues(db))
     return {"items": [issue for issue in issues if issue["kind"] == "owner_decision"],
             "source_gaps": [issue for issue in issues if issue["kind"] != "owner_decision"]}
 
