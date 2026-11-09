@@ -56,8 +56,8 @@
         <article v-if="qaResult" class="qa-result" :class="qaResult.status">
           <div class="qa-result-heading">
             <div>
-              <el-tag :type="qaResult.status === 'answered' ? 'success' : 'warning'" effect="dark">
-                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '等待确认' }}
+              <el-tag :type="['answered', 'configuration'].includes(qaResult.status) ? 'success' : 'warning'" effect="dark">
+                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'configuration' ? '当前配置查询' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '等待确认' }}
               </el-tag>
               <span v-if="qaResult.match_type === 'similar'" class="similarity-note">
                 相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
@@ -65,8 +65,12 @@
             </div>
             <span class="qa-question-text">{{ questionDisplayText(qaResult) }}</span>
           </div>
-          <template v-if="qaResult.answer">
-            <p class="qa-answer-text">{{ answerDisplayText(qaResult.answer) }}</p>
+          <template v-if="qaResult.configuration_answers?.length">
+            <KnowledgeConfigurationAnswer v-for="(result, index) in qaResult.configuration_answers"
+              :key="result.revision_id || index" :result="result" />
+          </template>
+          <template v-else-if="qaResult.answer">
+            <KnowledgeAnswerBody class="qa-answer-text" :text="answerDisplayText(qaResult.answer)" />
             <div class="answer-meta">
               <span>版本 v{{ qaResult.answer.version }}</span>
               <span v-if="qaResult.matched_scope?.country">答案来源国家 {{ qaResult.matched_scope.country }}</span>
@@ -154,7 +158,9 @@
                 <div class="qa-expanded-answer" data-testid="qa-answer-full">
                   <h4>{{ questionDisplayText(row) }}</h4>
                   <p class="qa-answer-meta">{{ knowledgeScopeLabel(row.scope) }}<span v-if="row.answer"> · v{{ row.answer.version }} · {{ row.answer.updated_at }}</span></p>
-                  <pre>{{ answerDisplayText(row.answer) || '此问题尚未填写答案。' }}</pre>
+                  <KnowledgeAnswerBody :text="answerDisplayText(row.answer) || '此问题尚未填写答案。'" />
+                  <KnowledgeDraftCitations v-if="row.answer?.citations?.length && row.answer.review_status === 'draft'"
+                    :question-id="row.id" :version="row.answer.version" :citations="row.answer.citations" />
                   <div v-if="row.answer?.change_note" class="qa-expanded-note"><strong>已有确认 / 上次变更：</strong>{{ row.answer.change_note }}</div>
                   <div v-if="row.evidence_review?.latest" class="qa-expanded-note"><strong>最近核对：</strong>{{ row.evidence_review.latest.confirmed_by }} · {{ row.evidence_review.latest.reviewed_at }}<br />{{ row.evidence_review.latest.evidence_reference }}<br />{{ row.evidence_review.latest.note }}</div>
                   <el-button v-if="row.answer && row.answer.review_status !== 'draft'" size="small" type="primary" @click="openAnswerReview(row)">核对答案与范围</el-button>
@@ -200,7 +206,7 @@
       v-model="answerDialogVisible"
       :title="editingDraft ? '修订答案草稿' : answerForm.version ? `修订答案 v${answerForm.version + 1}` : '确认答案'"
       :before-close="requestAnswerClose"
-      width="720px"
+      class="knowledge-draft-dialog" top="4vh" width="min(900px, 94vw)"
       destroy-on-close
     >
       <el-alert
@@ -214,14 +220,22 @@
       <p v-if="answerForm.previous_change_note" class="answer-previous-change">上次变更说明：{{ answerForm.previous_change_note }}</p>
       <el-form label-position="top" :disabled="answerSaving">
         <el-form-item label="问题">
-          <div class="dialog-question">{{ questionDisplayText(answerForm) }}</div>
+          <el-input v-if="editingDraft" v-model="answerForm.question_text" maxlength="500" show-word-limit aria-label="问题" />
+          <div v-else class="dialog-question">{{ questionDisplayText(answerForm) }}</div>
         </el-form-item>
         <el-form-item label="适用范围">
           <span>{{ knowledgeScopeLabel(answerForm.scope) }}</span>
         </el-form-item>
         <el-form-item :label="editingDraft ? '草稿答案' : answerForm.display_answer_text && answerForm.display_answer_text !== answerForm.answer_text ? '正式答案（保存原文，保留历史名称）' : '正式答案'" required>
           <el-input v-model="answerForm.answer_text" type="textarea" :rows="5" maxlength="20000" show-word-limit />
-          <p v-if="editingDraft" class="candidate-warning">第一段写直接答案，空一行后补详情。列表只显示第一段。</p>
+          <div v-if="editingDraft" class="answer-edit-tools">
+            <el-button size="small" @click="insertAnswerTable">插入表格模板</el-button>
+            <el-button size="small" :aria-expanded="answerPreviewVisible" @click="answerPreviewVisible = !answerPreviewVisible">
+              {{ answerPreviewVisible ? '收起预览' : '预览答案' }}
+            </el-button>
+            <span>第一段写直接答案，空一行后补详情。表格用竖线分隔列。</span>
+          </div>
+          <KnowledgeAnswerBody v-if="editingDraft && answerPreviewVisible" class="answer-editor-preview" :text="answerForm.answer_text" />
         </el-form-item>
         <el-form-item v-if="!editingDraft" label="相似问法 / 曾用问题">
           <el-input
@@ -248,12 +262,7 @@
           </div>
         </el-form-item>
         <el-form-item v-if="editingDraft && answerForm.citations.length" label="原有引用">
-          <ul>
-            <li v-for="(citation, index) in answerForm.citations" :key="index">
-              {{ citation.document_title }} · {{ citation.source_ref }}
-              <a v-if="canViewUnverifiedOriginal(citation)" :href="citation.preview_url" target="_blank" rel="noopener noreferrer">查看原件</a>
-            </li>
-          </ul>
+          <KnowledgeDraftCitations :question-id="answerForm.question_id" :version="answerForm.version" :citations="answerForm.citations" />
         </el-form-item>
         <el-form-item v-if="!editingDraft" label="答案依据">
           <div class="citation-editor">
@@ -288,8 +297,8 @@
     <el-dialog v-model="historyVisible" title="答案变更记录" width="650px">
       <el-timeline v-if="answerHistory.length">
         <el-timeline-item v-for="revision in answerHistory" :key="revision.version" :timestamp="revision.created_at">
-          <strong>v{{ revision.version }} · {{ revision.change_note || '未填写变更说明' }}</strong>
-          <p>{{ revision.answer_text }}</p>
+          <strong class="revision-note">v{{ revision.version }} · {{ revision.change_note || '未填写变更说明' }}</strong>
+          <KnowledgeAnswerBody :text="revision.answer_text" />
         </el-timeline-item>
       </el-timeline>
       <el-empty v-else description="暂无变更记录" />
@@ -303,6 +312,9 @@ import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
+import KnowledgeAnswerBody from '../components/KnowledgeAnswerBody.vue'
+import KnowledgeConfigurationAnswer from '../components/KnowledgeConfigurationAnswer.vue'
+import KnowledgeDraftCitations from '../components/KnowledgeDraftCitations.vue'
 import { canViewUnverifiedOriginal } from '../utils/knowledgeCitation'
 import KnowledgeEvidenceAnswer from '../components/KnowledgeEvidenceAnswer.vue'
 import { questionDisplayText, answerDisplayText, answerPreviewText } from '../utils/knowledgeNames'
@@ -479,7 +491,11 @@ const askQuestion = async () => {
     ElMessage.warning('请输入问题')
     return
   }
-  const scope = knowledgeScopePayload(qaScope)
+  const runtimeQuestion = /^(?:vinno)?(?:v10|v8|v6iq|v5iq|v6|v5|a5)的?(?:实测)?续航(?:时长)?(?:是多少|有多久|是多久|多久)?$/i
+    .test(question.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, ''))
+  const scope = knowledgeScopePayload(qaScope) || (runtimeQuestion ? {
+    market: qaScope.market || null, product_model_id: qaScope.product_model_id || null
+  } : null)
   if (!scope) {
     ElMessage.warning('请补齐市场、完整机型和软件版本')
     return
@@ -492,6 +508,7 @@ const askQuestion = async () => {
     const result = await askKnowledgeQuestion({ question, scope })
     if (requestId !== qaAskRequestId || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaResult.value = result
+    if (result.status === 'configuration') return
     qaQueueMode.value = 'selected'
     qaEvidenceFilter.value = 'all'
     qaPage.value = 1
@@ -545,13 +562,27 @@ const qaReviewNotice = (status) => ({
   evidence_changed: '引用原文和适用范围均已变化，请核对依据后重新确认答案。'
 }[status] || '')
 
+const answerPreviewVisible = ref(false)
+const answerTableTemplate = '| 项目 | 数值 |\n| --- | --- |\n| 测试条件 | 结果 |'
+const insertAnswerTable = () => {
+  const body = answerForm.value.answer_text.trimEnd()
+  const updated = body ? `${body}\n\n${answerTableTemplate}` : answerTableTemplate
+  if (updated.length > 20000) {
+    ElMessage.warning('已达到答案长度上限')
+    return
+  }
+  answerForm.value.answer_text = updated
+  answerPreviewVisible.value = true
+}
 let answerDialogSessionId = 0
 const openAnswerDialog = async (question) => {
   const dialogSession = ++answerDialogSessionId
   answerSaving.value = false
+  answerPreviewVisible.value = false
   answerForm.value = {
     question_id: question.id,
     question_text: question.question_text,
+    original_question_text: question.question_text,
     display_question_text: question.display_question_text,
     display_answer_text: question.answer?.display_answer_text,
     scope: question.scope || null,
@@ -565,7 +596,7 @@ const openAnswerDialog = async (question) => {
       document_id: citation.document_id,
       source_ref: citation.source_ref || '',
       excerpt: citation.excerpt || '',
-      ...(question.answer?.review_status === 'draft' ? { document_title: citation.document_title, preview_url: citation.preview_url } : {})
+      ...(question.answer?.review_status === 'draft' ? { id: citation.id, document_title: citation.document_title, preview_url: citation.preview_url } : {})
     })),
     change_note: ''
   }
@@ -595,7 +626,7 @@ const requestAnswerClose = async (done = () => { answerDialogVisible.value = fal
   if (answerSaving.value) return
   const session = answerDialogSessionId
   const form = answerForm.value
-  if (editingDraft.value && (form.answer_text !== form.original_answer_text || form.change_note.trim())) {
+  if (editingDraft.value && (form.question_text !== form.original_question_text || form.answer_text !== form.original_answer_text || form.change_note.trim())) {
     try {
       await ElMessageBox.confirm('放弃本次草稿修改？', '未保存修改', { type: 'warning' })
     } catch {
@@ -610,6 +641,10 @@ const saveAnswer = async () => {
   const draft = answerForm.value.review_status === 'draft'
   if (!draft && !answerForm.value.scope) {
     ElMessage.warning('历史范围尚未核实，请在明确范围内建立问答后发布')
+    return
+  }
+  if (draft && answerForm.value.question_text.trim().length < 2) {
+    ElMessage.warning('请填写问题')
     return
   }
   if (!answerForm.value.answer_text.trim()) {
@@ -630,6 +665,7 @@ const saveAnswer = async () => {
   try {
     if (draft) {
       await reviseKnowledgeDraft(answerForm.value.question_id, {
+        question_text: answerForm.value.question_text.trim(),
         answer_text: answerForm.value.answer_text.trim(),
         change_note: answerForm.value.change_note.trim(),
         expected_version: answerForm.value.version
@@ -712,6 +748,13 @@ onBeforeUnmount(() => { window.removeEventListener('resize', updateQaTableHeight
 </script>
 
 <style scoped>
+:global(.knowledge-draft-dialog) { display:flex; flex-direction:column; max-height:92vh; }
+:global(.knowledge-draft-dialog .el-dialog__body) { min-height:0; overflow:auto; }
+.revision-note { white-space:pre-wrap; overflow-wrap:anywhere; }
+.answer-edit-tools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px; width:100%; }
+.answer-edit-tools .el-button + .el-button { margin-left:0; }
+.answer-edit-tools span { font-size:12px; color:var(--el-text-color-secondary); }
+.answer-editor-preview { margin-top:8px; padding:8px; border:1px solid var(--el-border-color-light); box-sizing:border-box; }
 .qa-table-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
 .qa-table-toolbar > .el-input { max-width: 300px; min-width: 160px; flex: 1; }
 .qa-table-toolbar > .el-button + .el-button { margin-left: 0; }

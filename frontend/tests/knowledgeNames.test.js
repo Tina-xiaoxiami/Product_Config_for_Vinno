@@ -38,7 +38,7 @@ test('all current knowledge reading paths use shared name projections and revisi
 
 test('answer editor shows the current question label while editing saved text without implicit changes', async () => {
   const view = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
-  const context = { answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
+  const context = { ref: value => ({ value }), answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
     answerCandidates: { value: [] }, candidateLoading: { value: false },
     getKnowledgeQuestionCandidates: async () => ({ items: [] }), ElMessage: { error() {} } }
   const start = view.indexOf('const qaReviewNotice =')

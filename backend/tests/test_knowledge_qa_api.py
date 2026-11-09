@@ -730,7 +730,7 @@ async def test_draft_question_edit_rejects_same_scope_duplicates_and_records_old
             url = "/api/knowledge/questions/1"
             body = {"answer_text": "| 模式 | 时长 |\n| --- | --- |\n| B | 45 分钟 |",
                     "expected_version": 1, "change_note": "按原表修订"}
-            for name in ("另一个问题？", "其他问法？", "？"):
+            for name in ("另一个问题？", "其他问法？", "？？"):
                 response = await client.put(f"{url}/draft-answer", json={**body, "question_text": name})
                 assert response.status_code == 409, response.text
             before = (await client.get(url)).json()
@@ -779,7 +779,8 @@ async def test_spreadsheet_citations_return_registered_header_exact_rows_and_hid
                            [("工作表 实测 · 第 2 行",), ("工作表 实测 · 第 3 行（原表隐藏行）",)])
         async with client:
             url = "/api/knowledge/questions/1/spreadsheet-citations"
-            result = await client.get(url)
+            assert (await client.get(url, params={"expected_version": 2})).status_code == 409
+            result = await client.get(url, params={"expected_version": 1})
             assert result.status_code == 200, result.text
             group, = result.json()["tables"]
             assert group["columns"] == ["机型", "模式", "探头", "放电时长"]

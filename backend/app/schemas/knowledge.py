@@ -118,6 +118,7 @@ class KnowledgeAnswerCitationInput(BaseModel):
 
 
 class KnowledgeDraftAnswerRevision(BaseModel):
+    question_text: str | None = Field(default=None, min_length=2, max_length=500)
     expected_version: int = Field(ge=1)
     answer_text: str = Field(min_length=1, max_length=20000)
     change_note: str = Field(min_length=1, max_length=1000)
@@ -227,6 +228,7 @@ class KnowledgeParameterTopicCandidate(BaseModel):
 
 
 class KnowledgeQuestionResult(BaseModel):
+    configuration_answers: list[dict] = Field(default_factory=list)
     history_trace: dict | None = None
     status: str
     question_id: int | None = None

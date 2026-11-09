@@ -315,25 +315,54 @@ async def _require_monotonic_question_ids(session: AsyncSession) -> None:
 
 async def revise_answer_draft(
     session: AsyncSession, question_id: int, *, expected_version: int,
-    answer_text: str, change_note: str,
+    answer_text: str, change_note: str, question_text: str | None = None, commit: bool = True,
 ) -> dict | None:
     """Revise an existing unpublished draft without changing scope or evidence."""
     body = answer_text.strip()
     note = change_note.strip()
     if not body or not note:
         raise KnowledgeQaError("请填写答案和变更说明")
-    await session.execute(text("BEGIN IMMEDIATE"))
+    if commit:
+        await session.execute(text("BEGIN IMMEDIATE"))
     try:
         row = (await session.execute(text("""
-            SELECT q.status, a.id, a.version, a.review_status, a.answer_text, a.change_note
+            SELECT q.status, q.question_text, a.id, a.version, a.review_status, a.answer_text, a.change_note
             FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
             WHERE q.id=:question_id
         """), {"question_id": question_id})).mappings().one_or_none()
         if row is None:
-            await session.rollback()
+            if commit:
+                await session.rollback()
             return None
         if row["status"] != "pending" or row["review_status"] != "draft" or row["version"] != expected_version:
             raise KnowledgeQaError("草稿状态或版本已变化，请刷新列表后再修订")
+
+        if question_text is not None and question_text.strip() != row["question_text"]:
+            renamed = question_text.strip()
+            normalized = normalize_question(renamed)
+            if len(normalized) < 2:
+                raise KnowledgeQaError("问题内容过短")
+            scope_column = await scope_expression(session)
+            selected_scope = (await session.execute(text(f"""
+                SELECT {scope_column} FROM knowledge_questions WHERE id=:question_id
+            """), {"question_id": question_id})).scalar_one()
+            params = {"question_id": question_id, "normalized": normalized, "scope": selected_scope}
+            duplicate = (await session.execute(text(f"""
+                SELECT 1 FROM knowledge_questions WHERE id<>:question_id
+                    AND normalized_question=:normalized AND {scope_column}=:scope
+                UNION ALL
+                SELECT 1 FROM knowledge_question_phrasings WHERE question_id<>:question_id
+                    AND normalized_phrasing=:normalized AND {scope_column}=:scope
+                LIMIT 1
+            """), params)).first()
+            if duplicate:
+                raise KnowledgeQaError("同一范围内已有此问题或问法")
+            await session.execute(text("""
+                UPDATE knowledge_questions
+                SET question_text=:renamed, normalized_question=:normalized, updated_at=CURRENT_TIMESTAMP
+                WHERE id=:question_id
+            """), {**params, "renamed": renamed})
+            note += f'\n原问题：{row["question_text"]}\n修订后：{renamed}'
 
         await session.execute(text("""
             INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
@@ -351,10 +380,12 @@ async def revise_answer_draft(
             VALUES (:id, :version, :answer_text, 'draft', :change_note)
         """), update)
         item = await get_question(session, question_id)
-        await session.commit()
+        if commit:
+            await session.commit()
         return item
     except Exception:
-        await session.rollback()
+        if commit:
+            await session.rollback()
         raise
 
 

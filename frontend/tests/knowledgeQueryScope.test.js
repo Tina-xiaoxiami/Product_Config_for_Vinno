@@ -111,7 +111,7 @@ test('saving an earlier-scope answer cannot replace the current-scope result', a
 test('candidate response from an earlier answer dialog cannot cross into the next scope', async () => {
   const requests = []
   const context = {
-    answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
+    ref: value => ({ value }), answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
     answerCandidates: { value: [] }, candidateLoading: { value: false },
     getKnowledgeQuestionCandidates: id => new Promise(resolve => requests.push({ id, resolve })),
     ElMessage: { error() {} }
