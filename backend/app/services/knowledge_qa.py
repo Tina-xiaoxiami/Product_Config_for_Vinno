@@ -303,6 +303,51 @@ async def delete_pending_question(
         raise
 
 
+async def revise_answer_draft(
+    session: AsyncSession, question_id: int, *, expected_version: int,
+    answer_text: str, change_note: str,
+) -> dict | None:
+    """Revise an existing unpublished draft without changing scope or evidence."""
+    body = answer_text.strip()
+    note = change_note.strip()
+    if not body or not note:
+        raise KnowledgeQaError("请填写答案和变更说明")
+    await session.execute(text("BEGIN IMMEDIATE"))
+    try:
+        row = (await session.execute(text("""
+            SELECT q.status, a.id, a.version, a.review_status, a.answer_text, a.change_note
+            FROM knowledge_questions q LEFT JOIN knowledge_answers a ON a.question_id=q.id
+            WHERE q.id=:question_id
+        """), {"question_id": question_id})).mappings().one_or_none()
+        if row is None:
+            await session.rollback()
+            return None
+        if row["status"] != "pending" or row["review_status"] != "draft" or row["version"] != expected_version:
+            raise KnowledgeQaError("草稿状态或版本已变化，请刷新列表后再修订")
+
+        await session.execute(text("""
+            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
+            VALUES (:id, :version, :answer_text, 'draft', :change_note)
+            ON CONFLICT(answer_id, version) DO NOTHING
+        """), dict(row))
+        update = {"id": row["id"], "version": expected_version + 1, "answer_text": body, "change_note": note}
+        await session.execute(text("""
+            UPDATE knowledge_answers
+            SET version=:version, answer_text=:answer_text, change_note=:change_note, updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id
+        """), update)
+        await session.execute(text("""
+            INSERT INTO knowledge_answer_revisions(answer_id, version, answer_text, review_status, change_note)
+            VALUES (:id, :version, :answer_text, 'draft', :change_note)
+        """), update)
+        item = await get_question(session, question_id)
+        await session.commit()
+        return item
+    except Exception:
+        await session.rollback()
+        raise
+
+
 async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)

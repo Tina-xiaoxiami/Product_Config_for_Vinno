@@ -117,6 +117,12 @@ class KnowledgeAnswerCitationInput(BaseModel):
     excerpt: str | None = Field(default=None, max_length=4000)
 
 
+class KnowledgeDraftAnswerRevision(BaseModel):
+    expected_version: int = Field(ge=1)
+    answer_text: str = Field(min_length=1, max_length=20000)
+    change_note: str = Field(min_length=1, max_length=1000)
+
+
 class KnowledgeAnswerPublish(BaseModel):
     answer_text: str = Field(min_length=1, max_length=20000)
     alias_questions: list[str] = Field(default_factory=list, max_length=50)

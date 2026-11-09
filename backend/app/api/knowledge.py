@@ -33,6 +33,7 @@ from app.schemas.knowledge import (
     KnowledgeCandidateEvidenceList,
     KnowledgeDocumentArchiveResult,
     KnowledgeDocumentList,
+    KnowledgeDraftAnswerRevision,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
     KnowledgeQuestionDelete,
@@ -72,6 +73,7 @@ from app.services.knowledge_qa import (
     KnowledgeQaError,
     ask_question,
     delete_pending_question,
+    revise_answer_draft,
     get_answer_history,
     get_question,
     list_questions,
@@ -268,6 +270,19 @@ async def remove_pending_question(
     if not deleted:
         raise HTTPException(status_code=404, detail="问题不存在")
     return Response(status_code=204)
+
+
+@router.put("/questions/{question_id}/draft-answer", response_model=KnowledgeQuestionItem)
+async def update_answer_draft(
+    question_id: int, data: KnowledgeDraftAnswerRevision, db: AsyncSession = Depends(get_db),
+):
+    try:
+        item = await revise_answer_draft(db, question_id, **data.model_dump())
+    except KnowledgeQaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
 
 
 @router.put("/questions/{question_id}/answer", response_model=KnowledgeQuestionItem)

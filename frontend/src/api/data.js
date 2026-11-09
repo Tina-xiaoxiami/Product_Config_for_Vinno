@@ -178,6 +178,7 @@ export const deleteKnowledgePendingQuestion = (row) => api.delete(`/knowledge/qu
   expected_scope: row.scope ?? null,
   expected_answer_version: row.answer?.version ?? null
 } })
+export const reviseKnowledgeDraft = (id, data) => api.put(`/knowledge/questions/${id}/draft-answer`, data)
 export const publishKnowledgeAnswer = (id, data) => api.put(`/knowledge/questions/${id}/answer`, data)
 export const reviewKnowledgeAnswer = (id, data) => api.post(`/knowledge/questions/${id}/review`, data)
 export const getKnowledgeAnswerHistory = (id) => api.get(`/knowledge/questions/${id}/history`)

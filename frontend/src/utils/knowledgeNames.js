@@ -3,3 +3,5 @@
 export const questionDisplayText = item => item?.display_question_text || item?.display_question || item?.question_text || item?.question || ''
 export const answerDisplayText = answer => answer?.display_answer_text || answer?.answer_text || ''
 export const featureDisplayName = feature => feature?.display_cn_name || feature?.primary_cn_name || feature?.legacy_name || ''
+
+export const answerPreviewText = answer => answerDisplayText(answer).trim().split(/\r?\n[ \t]*\r?\n/, 1)[0]

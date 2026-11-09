@@ -182,3 +182,23 @@ test('answer preview shows the direct answer and leaves the details in full text
   assert.equal(answerPreviewText(answer), '45 分钟')
   assert.match(answerDisplayText(answer), /G1-4P/)
 })
+
+test('saving an unscoped draft uses draft revision and does not enter the published queue', async () => {
+  const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  const start = source.indexOf('const saveAnswer =')
+  const end = source.indexOf('const showHistory =', start)
+  const form = { question_id: 7, scope: null, review_status: 'draft', version: 2, answer_text: '49 分钟', change_note: '核对实测值' }
+  const calls = []
+  const context = {
+    answerSaving: { value: false }, answerForm: { value: form }, answerDialogVisible: { value: true },
+    knowledgeScopeFingerprint: () => '', knowledgeScopePayload: () => null,
+    reviseKnowledgeDraft: async (...args) => calls.push(args),
+    publishKnowledgeAnswer: () => assert.fail('draft must not be published'),
+    ElMessage: { success() {}, warning: assert.fail, error: assert.fail },
+    loadQaQuestions: async () => calls.push('refresh')
+  }
+  const save = new Function(...Object.keys(context), `const answerDialogSessionId = 1; ${source.slice(start, end)}; return saveAnswer`)(...Object.values(context))
+  await save()
+  assert.deepEqual(calls, [[7, { answer_text: '49 分钟', change_note: '核对实测值', expected_version: 2 }], 'refresh'])
+  assert.equal(context.answerDialogVisible.value, false)
+})
