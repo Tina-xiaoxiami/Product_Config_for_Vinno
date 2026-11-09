@@ -22,6 +22,7 @@ from app.schemas.draft import (
 )
 from app.utils import generate_next_version
 from app.services.config_publication import resolve_version_number as _resolve_version_number
+from app.services.config_publication import commit_configuration_publication
 
 from app.services.config_history import (
     build_series_snapshot,
@@ -724,7 +725,7 @@ async def submit_draft_batch(
         batch.submitted_at = utcnow()
     # 有剩余草稿时保持 draft 状态
 
-    await db.commit()
+    await commit_configuration_publication(db, {batch.series_id})
     await db.refresh(version)
 
     return {
@@ -925,7 +926,7 @@ async def batch_submit_drafts(
                 expected_signature=data.expected_signatures.get(batch_id) if data.expected_signatures is not None else None
             )
             if result["success"]:
-                await db.commit()
+                await commit_configuration_publication(db, {result["series_id"]})
                 results.append(BatchSubmitResult(
                     batch_id=batch_id,
                     series_id=result["series_id"],

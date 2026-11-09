@@ -64,7 +64,7 @@ test('incomplete scope makes no ask or queue request; history uses a separate ex
   assert.ok(warnings.length)
   context.qaQueueMode.value = 'legacy'
   const loading = loadQaQuestions()
-  assert.deepEqual(queues[0].params, { status: 'pending', limit: 100, skip: 0 })
+  assert.deepEqual(queues[0].params, { status: 'pending', workflow: 'unanswered', limit: 100, skip: 0 })
   queues[0].resolve({ items: [{ id: 71, scope: null }] })
   await loading
   assert.equal(context.qaQuestions.value[0].id, 71)
@@ -89,17 +89,17 @@ test('saving an earlier-scope answer cannot replace the current-scope result', a
   let finish
   const current = { status: 'answered', answer: { answer_text: 'current scope' } }
   const context = {
-    answerForm: { value: { question_id: 1, scope: scope(), answer_text: 'edited', change_note: 'test', alias_text: '', citations: [] } },
+    answerForm: { value: { question_id: 1, scope: scope(), draft_revision: 5, answer_text: 'edited', change_note: 'test', alias_text: '', citations: [] } },
     answerSaving: { value: false }, answerDialogVisible: { value: true },
     qaScope: scope(), qaStatus: { value: 'answered' }, qaResult: { value: null },
-    parseQuestionAliases: () => [], knowledgeScopePayload, knowledgeScopeFingerprint,
+    answerDirty: { value: false }, knowledgeScopePayload, knowledgeScopeFingerprint,
     answerDialogSessionId: 1,
     publishKnowledgeAnswer: () => new Promise(resolve => { finish = resolve }),
     loadQaQuestions: async () => {}, ElMessage: { warning() {}, error() {}, success() {} }
   }
   const start = source.indexOf('const saveAnswer =')
   const end = source.indexOf('\nconst showHistory', start)
-  const save = new Function(...Object.keys(context), `${source.slice(start, end)}; return saveAnswer`)(...Object.values(context))
+  const save = new Function(...Object.keys(context), `${source.slice(start, end)}; return publishSavedAnswer`)(...Object.values(context))
   const pending = save()
   context.qaScope.software_version = '1.14.81'
   context.qaResult.value = current
@@ -111,7 +111,7 @@ test('saving an earlier-scope answer cannot replace the current-scope result', a
 test('candidate response from an earlier answer dialog cannot cross into the next scope', async () => {
   const requests = []
   const context = {
-    answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
+    computed: () => null, ref: value => ({ value }), answerSaving: { value: false }, answerForm: { value: {} }, answerDialogVisible: { value: false },
     answerCandidates: { value: [] }, candidateLoading: { value: false },
     getKnowledgeQuestionCandidates: id => new Promise(resolve => requests.push({ id, resolve })),
     ElMessage: { error() {} }
@@ -133,17 +133,17 @@ test('candidate response from an earlier answer dialog cannot cross into the nex
 test('an earlier save cannot close or reset a newer answer editor', async () => {
   let finish
   const context = {
-    answerForm: { value: { question_id: 1, scope: scope(), answer_text: 'A', change_note: 'test', alias_text: '', citations: [] } },
+    answerForm: { value: { question_id: 1, scope: scope(), draft_revision: 5, answer_text: 'A', change_note: 'test', alias_text: '', citations: [] } },
     answerSaving: { value: false }, answerDialogVisible: { value: true },
     qaScope: scope(), qaStatus: { value: 'answered' }, qaResult: { value: null },
-    parseQuestionAliases: () => [], knowledgeScopePayload, knowledgeScopeFingerprint,
+    answerDirty: { value: false }, knowledgeScopePayload, knowledgeScopeFingerprint,
     publishKnowledgeAnswer: () => new Promise(resolve => { finish = resolve }),
     loadQaQuestions: async () => {}, ElMessage: { warning() {}, error() {}, success() {} }
   }
   const start = source.indexOf('const saveAnswer =')
   const end = source.indexOf('\nconst showHistory', start)
-  const actions = new Function(...Object.keys(context), `let answerDialogSessionId = 1; ${source.slice(start, end)}; return { saveAnswer, nextSession: () => { answerDialogSessionId += 1 } }`)(...Object.values(context))
-  const first = actions.saveAnswer()
+  const actions = new Function(...Object.keys(context), `let answerDialogSessionId = 1; ${source.slice(start, end)}; return { publishSavedAnswer, nextSession: () => { answerDialogSessionId += 1 } }`)(...Object.values(context))
+  const first = actions.publishSavedAnswer()
   actions.nextSession()
   context.answerForm.value = { question_id: 2, scope: { ...scope(), software_version: '1.14.81' }, answer_text: 'unsaved B' }
   context.answerSaving.value = true

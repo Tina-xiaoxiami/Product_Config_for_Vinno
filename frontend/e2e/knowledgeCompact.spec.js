@@ -132,3 +132,55 @@ test('Office citations reuse the source dialog with structural coordinates and c
   await expect(dialog).toContainText('缺少版本或准确位置')
   expect(evidenceCalls).toBe(callsBefore); expect(popups).toHaveLength(0); expect(modelPosts).toBe(0)
 })
+
+
+test('draft question, answer table and original cited rows stay together when edited', async ({ page }) => {
+  const id = 785, documentId = 41, sha = 'a'.repeat(64)
+  const citation = {
+    id: 1, document_id: documentId, document_title: '续航实测表', source_ref: '工作表 实测 · 第 3 行（原表隐藏行）',
+    preview_url: `/api/knowledge/documents/${documentId}/preview`
+  }
+  let draft = {
+    id, question_text: '旧续航问题', status: 'pending', scope: null, asked_count: 0,
+    answer: { id, answer_text: '旧纯文本答案', version: 1, review_status: 'draft', citations: [citation] }
+  }
+  await page.route(/\/api\/knowledge\/questions\?/, route => route.fulfill({
+    json: { items: [draft], total: 1, skip: 0, limit: 20 }
+  }))
+  await page.route(`**/api/knowledge/questions/${id}/spreadsheet-citations?*`, route => route.fulfill({
+    json: { warnings: [], tables: [{
+      title: citation.document_title, sheet_name: '实测', header_row: 1, columns: ['模式', '时长'], column_letters: ['B', 'C'],
+      preview_url: `${citation.preview_url}?version_id=${sha}`,
+      rows: [{ row_number: 3, hidden: true, cells: ['B', '52 分钟'], citation_ids: [citation.id] }]
+    }] }
+  }))
+  const answer = '52 分钟。\n\n| 模式 | 时长 |\n| --- | --- |\n| B | 52 分钟 |'
+  await page.route(`**/api/knowledge/questions/${id}/draft-answer`, async route => {
+    const body = route.request().postDataJSON()
+    expect(body).toEqual({ question_text: 'V10 的续航是多少？', answer_text: answer, expected_version: 1, expected_draft_revision: 0, change_note: '按原表修订',
+      alias_questions: [], citations: [{ document_id: citation.document_id, source_ref: citation.source_ref, excerpt: citation.excerpt || '' }] })
+    draft = { ...draft, draft: { ...body, revision: 2 } }
+    await route.fulfill({ json: draft })
+  })
+  await page.goto('/knowledge')
+  await page.getByText('历史范围待核实', { exact: true }).first().click()
+  await expect(page.getByTestId('qa-answer-preview')).toContainText('旧纯文本答案')
+  await page.getByRole('button', { name: '修订', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '修订答案草稿' })
+  await expect(dialog.getByText('原表隐藏行', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('link', { name: '查看原件' })).toHaveAttribute('href', `${citation.preview_url}?version_id=${sha}`)
+  await dialog.getByRole('textbox', { name: '问题', exact: true }).fill('V10 的续航是多少？')
+  await dialog.locator('textarea').fill(answer)
+  await dialog.getByRole('button', { name: '预览答案', exact: true }).click()
+  await expect(dialog.locator('.answer-editor-preview')).toContainText('时长')
+  await dialog.getByPlaceholder('例如：产品经理首次确认；依据 1.14.80 版本修订').fill('按原表修订')
+  await dialog.getByRole('button', { name: '保存草稿' }).click()
+  await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('.qa-table-area')).toContainText('V10 的续航是多少？')
+  await page.getByRole('button', { name: '全文', exact: true }).click()
+  const details = page.getByTestId('qa-answer-full')
+  await expect(details).toContainText('52 分钟')
+  await expect(details).toContainText('原表隐藏行')
+})

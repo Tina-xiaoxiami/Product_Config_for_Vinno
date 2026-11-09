@@ -527,7 +527,8 @@ async def test_changed_source_requires_review_preserving_answer_and_history(tmp_
         assert detail.json()['answer']['answer_text'] == '原答案'
         assert detail.json()['answer']['change_note'] == '原审核说明'
         assert detail.json()['answer']['citations'][0]['excerpt'] == '原文一'
-        assert query.json()['status'] == 'pending' and query.json()['answer'] is None
+        assert query.json()['status'] == 'answered' and query.json()['answer']['basis_changed']
+        assert query.json()['answer']['answer_text'] == '原答案'
         confirmed = await client.put(f'/api/knowledge/questions/{question_id}/answer', json=payload)
         repeated = await client.post('/api/knowledge/documents/1/extract?force=true')
         detail_again = await client.get(f'/api/knowledge/questions/{question_id}')

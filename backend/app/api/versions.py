@@ -26,6 +26,7 @@ from app.schemas.version import (
 )
 from app.utils import generate_next_version
 from app.services.config_publication import ensure_no_pending_drafts as _ensure_no_pending_drafts
+from app.services.config_publication import commit_configuration_publication
 
 from app.services.config_history import (
     build_series_snapshot,
@@ -353,7 +354,7 @@ async def create_version(
 
     db.add(version)
     try:
-        await db.commit()
+        await commit_configuration_publication(db, {data.series_id})
     except IntegrityError as error:
         await db.rollback()
         raise HTTPException(
@@ -487,8 +488,9 @@ async def delete_version(
     if not version:
         raise HTTPException(status_code=404, detail="版本不存在")
 
+    series_id = version.series_id
     await db.delete(version)
-    await db.commit()
+    await commit_configuration_publication(db, {series_id})
     return {"message": "删除成功"}
 
 
@@ -524,7 +526,7 @@ async def update_version(
     if description is not None:
         version.description = description
 
-    await db.commit()
+    await commit_configuration_publication(db, {version.series_id})
     await db.refresh(version)
     return version
 
@@ -574,7 +576,7 @@ async def rollback_version(
     )
     db.add(new_version)
 
-    await db.commit()
+    await commit_configuration_publication(db, {target_version.series_id})
     await db.refresh(new_version)
 
     return {

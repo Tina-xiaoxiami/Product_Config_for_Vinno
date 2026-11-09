@@ -104,11 +104,13 @@ class KnowledgeQuestionDelete(BaseModel):
     expected_question: str = Field(min_length=1, max_length=500)
     expected_scope: dict[str, Any] | None
     expected_answer_version: int | None = Field(ge=1)
+    expected_draft_revision: int = Field(default=0, ge=0)
 
 
 class KnowledgeQuestionAsk(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     scope: KnowledgeQueryScope | None = None
+    configuration_version_id: int | None = Field(default=None, gt=0)
 
 
 class KnowledgeAnswerCitationInput(BaseModel):
@@ -118,13 +120,18 @@ class KnowledgeAnswerCitationInput(BaseModel):
 
 
 class KnowledgeDraftAnswerRevision(BaseModel):
-    expected_version: int = Field(ge=1)
+    question_text: str | None = Field(default=None, min_length=2, max_length=500)
+    expected_version: int = Field(ge=0)
+    expected_draft_revision: int = Field(default=0, ge=0)
     answer_text: str = Field(min_length=1, max_length=20000)
     change_note: str = Field(min_length=1, max_length=1000)
+    alias_questions: list[str] | None = Field(default=None, max_length=50)
+    citations: list[KnowledgeAnswerCitationInput] | None = Field(default=None, max_length=50)
 
 
 class KnowledgeAnswerPublish(BaseModel):
-    answer_text: str = Field(min_length=1, max_length=20000)
+    answer_text: str | None = Field(default=None, min_length=1, max_length=20000)
+    draft_revision: int | None = Field(default=None, gt=0)
     alias_questions: list[str] = Field(default_factory=list, max_length=50)
     citations: list[KnowledgeAnswerCitationInput] = Field(default_factory=list, max_length=50)
     change_note: str | None = Field(default=None, max_length=1000)
@@ -137,6 +144,7 @@ class KnowledgeAnswerCitationItem(BaseModel):
     source_ref: str | None = None
     excerpt: str | None = None
     preview_url: str
+    version_id: str | None = None
 
 
 class KnowledgeAnswerItem(BaseModel):
@@ -147,6 +155,7 @@ class KnowledgeAnswerItem(BaseModel):
     version: int
     change_note: str | None = None
     updated_at: str
+    basis_changed: bool = False
     citations: list[KnowledgeAnswerCitationItem] = Field(default_factory=list)
 
 
@@ -160,6 +169,7 @@ class KnowledgeQuestionItem(BaseModel):
     last_asked_at: str
     alias_questions: list[str] = Field(default_factory=list)
     answer: KnowledgeAnswerItem | None = None
+    draft: dict | None = None
     scope: dict | None = None
     evidence_review: dict | None = None
 
@@ -227,6 +237,7 @@ class KnowledgeParameterTopicCandidate(BaseModel):
 
 
 class KnowledgeQuestionResult(BaseModel):
+    configuration_answers: list[dict] = Field(default_factory=list)
     history_trace: dict | None = None
     status: str
     question_id: int | None = None
@@ -243,11 +254,16 @@ class KnowledgeQuestionResult(BaseModel):
 
 
 class KnowledgeAnswerRevisionItem(BaseModel):
-    version: int
+    version: int | None
+    draft_revision: int | None = None
+    legacy_version: int | None = None
     answer_text: str
     review_status: str
     change_note: str | None = None
     created_at: str
+    citations: list[dict] = Field(default_factory=list)
+    scope: dict | None = None
+    question_text: str | None = None
 
 
 class KnowledgeAnswerHistory(BaseModel):

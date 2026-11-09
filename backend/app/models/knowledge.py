@@ -217,6 +217,45 @@ class KnowledgeAnswerRevision(Base):
     )
 
 
+class KnowledgeAnswerDraftEdit(Base):
+    """Saved edits of the one working draft for a question."""
+
+    __tablename__ = "knowledge_answer_draft_edits"
+    id = Column(Integer, primary_key=True)
+    question_id = Column(Integer, ForeignKey("knowledge_questions.id", ondelete="CASCADE"), nullable=False, index=True)
+    payload_json = Column(Text, nullable=False)
+    published_version = Column(Integer)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    __table_args__ = {"sqlite_autoincrement": True}
+
+
+class KnowledgeAnswerPublicationEvidence(Base):
+    """Evidence and scope frozen alongside a formal answer revision."""
+
+    __tablename__ = "knowledge_answer_publication_evidence"
+    revision_id = Column(Integer, ForeignKey("knowledge_answer_revisions.id", ondelete="CASCADE"), primary_key=True)
+    payload_json = Column(Text, nullable=False)
+
+
+class KnowledgePublicFact(Base):
+    """A reviewed reusable fact or a source gap keyed by business scope."""
+
+    __tablename__ = "knowledge_public_facts"
+    fact_key = Column(String(160), primary_key=True)
+    market = Column(String(20), primary_key=True)
+    payload_json = Column(Text, nullable=False)
+
+
+class KnowledgeFactImpact(Base):
+    """Locations affected by the same unresolved fact across Cart markets."""
+
+    __tablename__ = "knowledge_fact_impacts"
+    root_key = Column(String(160), primary_key=True)
+    market = Column(String(20), primary_key=True)
+    archive_key = Column(String(64), primary_key=True)
+    pages_json = Column(Text, nullable=False)
+
+
 class KnowledgeAnswerReview(Base):
     """Append-only owner decisions about one exact answer/evidence revision."""
 
@@ -354,3 +393,18 @@ class DataReviewRevision(Base):
         ),
         Index("ix_data_review_revisions_item", "review_item_id"),
     )
+
+
+class KnowledgeConfigurationAnswerRevision(Base):
+    """Immutable result of an explicitly resolved configuration-dependent question."""
+
+    __tablename__ = "knowledge_configuration_answer_revisions"
+
+    id = Column(Integer, primary_key=True)
+    recipe = Column(String(100), nullable=False)
+    model_id = Column(Integer, nullable=False)
+    config_version_id = Column(Integer, nullable=True)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    __table_args__ = (Index("ix_knowledge_configuration_answer_lookup", "recipe", "model_id", "id"),)
