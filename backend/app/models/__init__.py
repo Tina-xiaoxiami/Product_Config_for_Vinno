@@ -1,7 +1,10 @@
 """
 数据模型初始化
 """
+from app.models.knowledge_release_history import KnowledgeReleaseBinding
+from app.models.knowledge_parameters import KnowledgeParameterTopic, KnowledgeParameterSpec, KnowledgeParameterRevision
 from app.models.series import ProductSeries
+from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease, ProbeWorkspaceMember
 from app.models.product_model import ProductModel
 from app.models.config import ConfigItem, ConfigValue
 from app.models.version import ConfigVersion, ChangeLog
@@ -14,6 +17,9 @@ from app.models.probe import (
     ProductProbeModel, ProbeModelApp, ProductProbeConfig,
     ProbeConfigDraft, ProbeConfigVersion,
 )
+from app.models.feature_standard import FeatureNameStandard, FeatureNameReview, FeatureDisplayName
+from app.models.measurement_workspace import MeasurementWorkspace, MeasurementWorkspaceVersion
+from app.models.measurement import (MeasurementBatch, MeasurementEntry, MeasurementEnrichmentCandidate, MeasurementEnrichmentReview)
 from app.models.knowledge import (
     FeatureName,
     FeatureRelation,
@@ -26,6 +32,16 @@ from app.models.knowledge import (
     KnowledgeAnswerRevision,
     KnowledgeDocumentExtraction,
     KnowledgeDocumentChunk,
+    DataReviewItem,
+    DataReviewRevision,
+)
+from app.models.release import (
+    FeatureVersion,
+    FeatureVersionRevision,
+    ReleaseDocumentTemplate,
+    ReleaseIntroduction,
+    ReleaseIntroductionRevision,
+    ReleaseIntroductionAttachment,
 )
 from app.models.registration import (
     RegistrationImportBatch,
@@ -35,9 +51,12 @@ from app.models.registration import (
     RegistrationProbe,
     RegistrationModelProbe,
     ProductRegistrationModelLink,
+    OverseasRegistrationSnapshot,
+    OverseasRegistrationRelation,
 )
 
 __all__ = [
+    "KnowledgeReleaseBinding", "KnowledgeParameterTopic", "KnowledgeParameterSpec", "KnowledgeParameterRevision",
     "ProductSeries",
     "ProductModel",
     "ConfigItem",
@@ -63,6 +82,15 @@ __all__ = [
     "TemplateDraft",
     "TemplateVersion",
     "FeatureName",
+    "FeatureNameStandard",
+    "FeatureNameReview",
+    "FeatureDisplayName",
+    "MeasurementWorkspace",
+    "MeasurementWorkspaceVersion",
+    "MeasurementBatch",
+    "MeasurementEntry",
+    "MeasurementEnrichmentCandidate",
+    "MeasurementEnrichmentReview",
     "FeatureRelation",
     "FeatureConfigItemLink",
     "KnowledgeDocument",
@@ -73,6 +101,8 @@ __all__ = [
     "KnowledgeAnswerRevision",
     "KnowledgeDocumentExtraction",
     "KnowledgeDocumentChunk",
+    "DataReviewItem",
+    "DataReviewRevision",
     "RegistrationImportBatch",
     "RegistrationPackage",
     "RegistrationPackageVersion",
@@ -80,4 +110,12 @@ __all__ = [
     "RegistrationProbe",
     "RegistrationModelProbe",
     "ProductRegistrationModelLink",
+    "OverseasRegistrationSnapshot",
+    "OverseasRegistrationRelation",
+    "FeatureVersion",
+    "FeatureVersionRevision",
+    "ReleaseIntroduction",
+    "ReleaseIntroductionRevision",
+    "ReleaseIntroductionAttachment",
+    "ReleaseDocumentTemplate",
 ]

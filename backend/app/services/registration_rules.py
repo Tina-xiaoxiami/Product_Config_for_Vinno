@@ -41,6 +41,7 @@ class ProbeAvailability:
     status_source: str
     is_formal: bool
     conflict: bool = False
+    current_config_note: str | None = None
 
 
 def normalize_business_name(value: object) -> str:
@@ -181,32 +182,34 @@ def evaluate_probe_availability(
     selection_config: object,
     current_config: object,
 ) -> ProbeAvailability:
-    """先执行注册红线，再使用正式选型，最后才参考研发当前配置。"""
+    """最终判定只取自注册红线与正式选型类别；研发当前配置仅作备注。"""
 
     selection = _normalize_strategy_value(selection_config)
     current = _normalize_strategy_value(current_config)
+    note = (
+        f"研发当前配置为 {current}，仅作备注，不参与判定"
+        if current in _FORMAL_STRATEGY_VALUES
+        else None
+    )
     if not registered:
         return ProbeAvailability(
             effective_status="#",
             status_source="registration_redline",
             is_formal=True,
             conflict=selection in _FORMAL_STRATEGY_VALUES,
+            current_config_note=note,
         )
     if selection in _FORMAL_STRATEGY_VALUES:
         return ProbeAvailability(
             effective_status=selection,
             status_source="selection_config",
             is_formal=True,
-        )
-    if current in _FORMAL_STRATEGY_VALUES:
-        return ProbeAvailability(
-            effective_status=current,
-            status_source="current_config_aux",
-            is_formal=False,
+            current_config_note=note,
         )
     return ProbeAvailability(
         effective_status="未定义",
         status_source="missing",
         is_formal=False,
         conflict=selection == "#",
+        current_config_note=note,
     )

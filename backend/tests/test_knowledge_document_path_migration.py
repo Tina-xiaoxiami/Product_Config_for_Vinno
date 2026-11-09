@@ -6,6 +6,7 @@ import sqlite3
 
 from app.services.knowledge_document_path_migration import (
     migrate_knowledge_document_paths,
+    migrate_registration_artifact_paths,
 )
 
 
@@ -248,3 +249,163 @@ def test_apply_updates_only_verified_targets_and_is_idempotent(tmp_path: Path) -
     assert repeated.counts["updated"] == 0
     assert repeated.counts["already_migrated"] == 1
     assert repeated.items[0].status == "already_migrated"
+
+
+def _create_registration_database(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE registration_package_versions (
+                id INTEGER PRIMARY KEY,
+                certificate_artifact_path TEXT,
+                certificate_sha256 TEXT,
+                difference_artifact_path TEXT,
+                difference_sha256 TEXT
+            )
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _insert_package_version(
+    database: Path,
+    *,
+    version_id: int,
+    certificate_path: Path | None,
+    certificate_sha: str | None,
+    difference_path: Path | None,
+    difference_sha: str | None,
+) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            """
+            INSERT INTO registration_package_versions (
+                id, certificate_artifact_path, certificate_sha256,
+                difference_artifact_path, difference_sha256
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                str(certificate_path) if certificate_path else None,
+                certificate_sha,
+                str(difference_path) if difference_path else None,
+                difference_sha,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _registered_artifacts(database: Path, version_id: int) -> tuple[str, str]:
+    connection = sqlite3.connect(database)
+    try:
+        row = connection.execute(
+            """
+            SELECT certificate_artifact_path, difference_artifact_path
+            FROM registration_package_versions WHERE id = ?
+            """,
+            (version_id,),
+        ).fetchone()
+        assert row is not None
+        return str(row[0]), str(row[1])
+    finally:
+        connection.close()
+
+
+def test_registration_artifacts_migrate_by_relative_path(tmp_path: Path) -> None:
+    """注册包原件按相对路径迁移；目标缺失或 sha 不符时一律不动。"""
+
+    database = tmp_path / "product_config.db"
+    source_root = tmp_path / "obsidian" / "受控材料"
+    target_root = tmp_path / "obsidian-vault" / "受控材料"
+    _create_registration_database(database)
+
+    # v1：新库同相对路径下文件齐备且内容一致 → 可迁移（注册资料相对路径是嵌套的）
+    v1_certificate = Path("注册资料") / "CN" / "湘械注准20222062053" / "注册变更.pdf"
+    v1_difference = Path("注册资料") / "CN" / "湘械注准20222062053" / "差异表.xlsx"
+    for relative, content in ((v1_certificate, b"certificate"), (v1_difference, b"difference")):
+        target = target_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    _insert_package_version(
+        database,
+        version_id=1,
+        certificate_path=source_root / v1_certificate,
+        certificate_sha=_sha256(b"certificate"),
+        difference_path=source_root / v1_difference,
+        difference_sha=_sha256(b"difference"),
+    )
+
+    # v2：新库两个目标都不存在 → target_missing
+    v2_certificate = Path("注册资料") / "CN" / "苏械注准20232061322" / "注册证.pdf"
+    v2_difference = Path("注册资料") / "CN" / "苏械注准20232061322" / "差异表.xlsx"
+    _insert_package_version(
+        database,
+        version_id=2,
+        certificate_path=source_root / v2_certificate,
+        certificate_sha=_sha256(b"certificate-2"),
+        difference_path=source_root / v2_difference,
+        difference_sha=_sha256(b"difference-2"),
+    )
+
+    # v3：新库有文件但内容与登记 sha 不符 → hash_mismatch
+    v3_difference = Path("注册资料") / "CN" / "湘械注准20242061214" / "差异表.xlsx"
+    v3_target = target_root / v3_difference
+    v3_target.parent.mkdir(parents=True, exist_ok=True)
+    v3_target.write_bytes(b"tampered")
+    _insert_package_version(
+        database,
+        version_id=3,
+        certificate_path=None,
+        certificate_sha=None,
+        difference_path=source_root / v3_difference,
+        difference_sha=_sha256(b"original"),
+    )
+
+    # v4：登记路径已在目标目录下 → already_migrated
+    _insert_package_version(
+        database,
+        version_id=4,
+        certificate_path=None,
+        certificate_sha=None,
+        difference_path=target_root / "注册资料" / "CN" / "已迁移" / "差异表.xlsx",
+        difference_sha=_sha256(b"whatever"),
+    )
+
+    dry_run = migrate_registration_artifact_paths(
+        database,
+        source_root=source_root,
+        target_root=target_root,
+        apply=False,
+    )
+
+    assert dry_run.counts == {
+        "scanned": 6,
+        "ready": 2,
+        "updated": 0,
+        "already_migrated": 1,
+        "target_missing": 2,
+        "hash_mismatch": 1,
+    }
+    assert _registered_artifacts(database, 1)[0] == str(source_root / v1_certificate)
+
+    applied = migrate_registration_artifact_paths(
+        database,
+        source_root=source_root,
+        target_root=target_root,
+        apply=True,
+    )
+
+    assert applied.counts["updated"] == 2
+    assert _registered_artifacts(database, 1) == (
+        str((target_root / v1_certificate).resolve()),
+        str((target_root / v1_difference).resolve()),
+    )
+    # 未通过校验的目标一律不动
+    assert _registered_artifacts(database, 2)[1] == str(source_root / v2_difference)
+    assert _registered_artifacts(database, 3)[1] == str(source_root / v3_difference)

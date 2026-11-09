@@ -100,10 +100,15 @@ async def save_feature_master_data(
 async def list_features(
     group_id: int = None,
     skip: int = 0, limit: int = 200,
+    probe_matrix_only: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     q = select(Feature)
     cq = select(func.count()).select_from(Feature)
+    if probe_matrix_only:
+        from app.services.feature_catalog import probe_matrix_scope
+        q = q.where(probe_matrix_scope())
+        cq = cq.where(probe_matrix_scope())
     if group_id:
         q = q.where(Feature.group_id == group_id)
         cq = cq.where(Feature.group_id == group_id)

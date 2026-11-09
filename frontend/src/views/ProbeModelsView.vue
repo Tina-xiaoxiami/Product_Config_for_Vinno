@@ -1,11 +1,14 @@
 <template>
   <div class="page">
+    <ProbeManagementActions path="/probe-models">
+      <el-button size="small" @click="refreshData">刷新</el-button>
+    </ProbeManagementActions>
     <div class="panel-layout">
       <!-- Left: Category Panel -->
       <div class="panel panel-left">
         <div class="panel-header">
           <span class="panel-title">探头类别</span>
-          <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增</el-button>
+          <el-button size="small" type="primary" plain :icon="Plus" @click="handleCreateCategory">新增类别</el-button>
         </div>
         <div class="panel-body" v-loading="loading">
           <div
@@ -17,7 +20,7 @@
           >
             <div class="category-info">
               <span class="category-name">{{ cat.name }}</span>
-              <span class="category-count">{{ (modelMap[cat.id] || []).length }} 型</span>
+              <span class="category-count">{{ (modelMap[cat.id] || []).length }} 型 <span class="app-counts">常规 {{ applicationCounts[cat.id]?.regular ?? '—' }} · POC {{ applicationCounts[cat.id]?.poc ?? '—' }}</span></span>
             </div>
             <div class="category-actions" @click.stop>
               <el-button size="small" text @click="handleEditCategory(cat)">编辑</el-button>
@@ -28,73 +31,53 @@
         </div>
       </div>
 
-      <!-- Right: Models Panel -->
-      <div class="panel panel-right">
-        <div class="panel-header">
-          <template v-if="selectedCategory">
-            <span class="panel-title">{{ selectedCategory.name }} — 探头型号</span>
-            <div class="panel-header-actions">
-              <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
-              <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置自动填充</el-button>
-              <el-upload
-                :show-file-list="false"
-                :auto-upload="false"
-                :on-change="h => importAllVariants(h.raw)"
-                accept=".xlsx,.xls"
-                style="display:inline-block"
-              >
-                <el-button size="small" @click="">导入变体</el-button>
-              </el-upload>
+      <!-- Both sections stay mounted and share the selected category. -->
+      <div class="panel panel-right unified-right">
+        <section ref="applicationsSection" class="applications-zone" aria-label="类别应用" tabindex="-1">
+          <ApplicationsView ref="applicationsPanel" embedded :categories="categories" :category-id="selectedCategory?.id"
+            @counts="applicationCounts = $event" @editor-state="applicationState = $event" @changed="onApplicationsChanged" />
+        </section>
+        <section class="models-zone" aria-label="探头型号">
+          <div class="models-heading">
+            <strong>探头型号</strong><span>{{ currentModels.length }} 型</span>
+            <div v-if="selectedCategory" class="models-actions">
               <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
+              <el-tooltip content="读取配置管理中的 Probes 配置项，按对外型号匹配现有探头，补齐研发内部型号和 IPN 变体；不会新增探头型号。批量作用于全部类别。" placement="top">
+                <el-button size="small" type="warning" @click="autoPopulate" :loading="populating">从配置补齐变体</el-button>
+              </el-tooltip>
+              <el-popover trigger="click" placement="bottom-end" :width="200">
+                <template #reference><el-button size="small">批量变体 ▾</el-button></template>
+                <div class="bulk-variant-actions">
+                  <p>跨型号批量维护；当前型号可使用行内「变体」。</p>
+                  <el-button size="small" @click="exportAllVariants" :loading="exportingAll">导出所有变体</el-button>
+                  <el-upload :show-file-list="false" :auto-upload="false" :on-change="h => importAllVariants(h.raw)" accept=".xlsx,.xls">
+                    <el-button size="small">导入所有变体</el-button>
+                  </el-upload>
+                </div>
+              </el-popover>
             </div>
-          </template>
-          <span v-else class="panel-title placeholder">请选择一个探头类别</span>
-        </div>
-        <div class="panel-body" v-loading="loading">
-          <template v-if="selectedCategory">
-            <el-table :data="currentModels" border stripe size="small" style="width:100%" max-height="560" v-if="currentModels.length">
-              <el-table-column type="index" label="#" width="40" />
-              <el-table-column prop="model_number" label="型号" width="130" />
-              <el-table-column label="内部型号 / IPN" min-width="240">
-                <template #default="{row:m}">
-                  <div v-if="!m._variants?.length" class="no-data">无</div>
-                  <div v-else class="variant-tags">
-                    <el-tag
-                      v-for="v in m._variants"
-                      :key="v.id"
-                      size="small"
-                      type="info"
-                      style="margin:2px 4px 2px 0"
-                    >
-                      {{ v.internal_model }}<template v-if="v.ipn"> / {{ v.ipn }}</template>
-                    </el-tag>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="应用" width="60" align="center">
-                <template #default="{row:m}">{{ m._appCount ?? '-' }}</template>
-              </el-table-column>
-              <el-table-column label="排序" width="60" align="center">
-                <template #default="{row:m}">{{ m.sort_order ?? 0 }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="300" fixed="right">
-                <template #default="{ row: m }">
-                  <el-button size="small" text @click="openVariantDialog(m)">变体</el-button>
-                  <el-button size="small" text @click="openAppDialog(m)">应用</el-button>
-                  <el-button size="small" text @click="handleEditModel(m, selectedCategory.id)">编辑</el-button>
-                  <el-button size="small" text type="danger" @click="handleDeleteModel(m)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else description="该类别下暂无探头型号" :image-size="80">
-              <el-button size="small" type="primary" :icon="Plus" @click="addModelToCat(selectedCategory.id)">新增型号</el-button>
-            </el-empty>
-          </template>
-          <div v-else class="placeholder-content">
-            <el-icon :size="48" color="#c0c4cc"><FolderOpened /></el-icon>
-            <p>从左侧选择一个探头类别以查看型号</p>
           </div>
-        </div>
+          <ProbeDataTable v-if="selectedCategory" :rows="modelRows" :columns="modelColumns" table-id="probe-applications-models"
+            fill-height :actions-width="260" auto-apply-filters>
+            <template #cell="{row, column}">
+              <div v-if="column.key === 'variant_values'" class="variant-tags">
+                <el-tag v-for="variant in row._variants" :key="variant.id" size="small" type="info"
+                  :title="[variant.notes, variant.history_ids.length > 1 ? `${variant.history_ids.length} 条相同物料历史记录` : ''].filter(Boolean).join(' · ')">
+                  {{ variant.internal_model }}<template v-if="variant.ipn"> / {{ variant.ipn }}</template>
+                  <small v-if="variant.history_ids.length > 1"> · 历史 {{ variant.history_ids.length }}</small>
+                </el-tag><span v-if="!row._variants?.length" class="no-data">无</span>
+              </div>
+              <span v-else>{{ row[column.key] ?? '—' }}</span>
+            </template>
+            <template #actions="{row}">
+              <el-button size="small" text @click="openVariantDialog(row)">变体</el-button>
+              <el-button size="small" text @click="openAppDialog(row)">类别应用</el-button>
+              <el-button size="small" text @click="handleEditModel(row, selectedCategory.id)">编辑</el-button>
+              <el-button size="small" text type="danger" @click="handleDeleteModel(row)">删除</el-button>
+            </template>
+          </ProbeDataTable>
+          <el-empty v-else description="从左侧选择探头类别" :image-size="50" />
+        </section>
       </div>
     </div>
 
@@ -124,18 +107,6 @@
       <template #footer>
         <el-button @click="modelDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveModel" :loading="saving">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- Application Assignment Dialog -->
-    <el-dialog v-model="appDialogVisible" title="管理探头应用" width="500px">
-      <div class="dialog-info">探头型号：<strong>{{ appTarget?.model_number }}</strong></div>
-      <el-checkbox-group v-model="selectedAppIds" style="margin-top:12px">
-        <el-checkbox v-for="a in allApps" :key="a.id" :label="a.id" :value="a.id">{{ a.name }}</el-checkbox>
-      </el-checkbox-group>
-      <template #footer>
-        <el-button @click="appDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveApps" :loading="appSaving">保存</el-button>
       </template>
     </el-dialog>
 
@@ -191,54 +162,67 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, FolderOpened } from '@element-plus/icons-vue'
-import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, getApplications, getProbeModelApps, setProbeModelApps, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
+import { getProbeCategories, createProbeCategory, updateProbeCategory, deleteProbeCategory, getProbeModels, createProbeModel, updateProbeModel, deleteProbeModel, exportVariantsExcel, importVariantsExcel, exportModelVariantsExcel, importModelVariantsExcel, autoPopulateVariants } from '../api/data'
 import api from '../api/index'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
+import { groupProbeVariants } from '../utils/probeMatrix'
+import ProbeManagementActions from '../components/ProbeManagementActions.vue'
 
+import ApplicationsView from './ApplicationsView.vue'
+import ProbeDataTable from '../components/ProbeDataTable.vue'
+import { resolveProbeCategory, applicationEditorState, probeContextBlock, probeModelRows, createApplicationDraftStore } from '../utils/probeApplications'
+
+const route = useRoute()
 const loading = ref(false)
 const categories = ref([])
 const modelMap = ref({})
 const selectedCategory = ref(null)
+const applicationsPanel = ref(), applicationsSection = ref()
+const applicationCounts = ref({}), applicationState = ref(applicationEditorState())
+let requestedCategoryId = Number(route.query.category_id) || createApplicationDraftStore({ getItem: key => localStorage.getItem(key) }).restore().categoryId
+const modelColumns = [
+  { key: 'position', label: '#', width: 42, fixed: true, filter: false },
+  { key: 'model_number', label: '型号', width: 135, fixed: true },
+  { key: 'variant_values', label: '内部型号 / IPN', width: 340, multiValue: true },
+  { key: 'application_count', label: '应用', width: 65 },
+  { key: 'sort_order', label: '排序', width: 65 }
+].map(column => ({ visible: true, fixed: false, ...column }))
 
 const catDialogVisible = ref(false); const editingCatId = ref(null)
 const modelDialogVisible = ref(false); const editingModelId = ref(null); const saving = ref(false)
 const catForm = reactive({ name: '', sort_order: 0 })
 const modelForm = reactive({ category_id: null, model_number: '', sort_order: 0 })
 
+let dataLoadRequest = 0
 const loadData = async () => {
+  const request = ++dataLoadRequest
   loading.value = true
   try {
     const [catRes, modelRes] = await Promise.all([
       getProbeCategories({ limit: 200 }),
-      getProbeModels({ limit: 2000 })
+      getProbeModels({ limit: 2000, include_details: true })
     ])
-    categories.value = catRes.items || []
-    const models = modelRes.items || []
-
-    const mm = {}; models.forEach(m => { if (!mm[m.category_id]) mm[m.category_id] = []; mm[m.category_id].push(m) })
-    modelMap.value = mm
-
-    // Load app counts and variants for current category's models
-    const curModels = selectedCategory.value ? (mm[selectedCategory.value.id] || []) : []
-    const appCounts = {};
-    const varMap = {};
-    await Promise.all(curModels.map(async m => {
-      try { appCounts[m.id] = (await getProbeModelApps(m.id)).length } catch { appCounts[m.id] = 0 }
-      try { varMap[m.id] = await api.get(`/probe-models/${m.id}/variants`) } catch { varMap[m.id] = [] }
-    }))
-    // Rebuild modelMap with enriched data
-    const enriched = {}
-    for (const cid of Object.keys(mm)) {
-      enriched[cid] = mm[cid].map(m => ({
-        ...m,
-        _appCount: appCounts[m.id] || 0,
-        _variants: varMap[m.id] || []
-      }))
+    if (request !== dataLoadRequest) return
+    const nextCategories = catRes.items || []
+    const nextMap = {}
+    for (const model of modelRes.items || []) {
+      const row = { ...model, _appCount: model.application_count || 0, _variants: groupProbeVariants(model.id, model.variant_items) }
+      if (!nextMap[model.category_id]) nextMap[model.category_id] = []
+      nextMap[model.category_id].push(row)
     }
-    modelMap.value = enriched
-  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+    categories.value = nextCategories
+    modelMap.value = nextMap
+    selectedCategory.value = resolveProbeCategory(nextCategories, selectedCategory.value?.id, requestedCategoryId)
+    requestedCategoryId = null
+  } catch {
+    if (request === dataLoadRequest) ElMessage.error('加载失败')
+  } finally {
+    if (request === dataLoadRequest) loading.value = false
+  }
 }
 
 const currentModels = computed(() => {
@@ -246,9 +230,32 @@ const currentModels = computed(() => {
   return modelMap.value[selectedCategory.value.id] || []
 })
 
-const selectCategory = (cat) => {
+const modelRows = computed(() => probeModelRows(currentModels.value))
+const metadataOpen = () => catDialogVisible.value || modelDialogVisible.value || variantDialogVisible.value
+const selectCategory = cat => {
+  if (metadataOpen() || probeContextBlock(applicationState.value)) {
+    ElMessage.warning('请先完成当前编辑或提交，再切换探头类别'); return false
+  }
   selectedCategory.value = cat
-  loadData()
+  return true
+}
+watch(() => route.query.category_id, value => {
+  const category = categories.value.find(row => row.id === Number(value))
+  if (category) selectCategory(category)
+  else if (!categories.value.length) requestedCategoryId = Number(value) || null
+})
+const focusApplications = async () => {
+  await nextTick()
+  applicationsSection.value?.scrollIntoView({ block: 'nearest' })
+  applicationsSection.value?.focus({ preventScroll: true })
+  await applicationsPanel.value?.focusAdd()
+}
+watch(() => route.query.focus, value => { if (value === 'applications') focusApplications() }, { immediate: true })
+const onApplicationsChanged = () => loadData()
+const refreshData = async () => {
+  if (metadataOpen() || !applicationState.value.canRefresh) { ElMessage.warning('请先提交或撤销当前编辑，再刷新'); return false }
+  await loadData()
+  return applicationsPanel.value?.refresh()
 }
 
 // Category CRUD
@@ -263,6 +270,7 @@ const saveCategory = async () => {
   } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 const handleDeleteCategory = async (row) => {
+  if (probeContextBlock(applicationState.value, true)) return ElMessage.warning('请先提交或撤销应用编辑，再删除类别')
   try {
     await ElMessageBox.confirm(`确认删除"${row.name}"及其所有型号？`, '确认', { type: 'warning' })
     await deleteProbeCategory(row.id); ElMessage.success('删除成功')
@@ -299,19 +307,12 @@ const handleDeleteModel = async (row) => {
   } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
 }
 
-// App management
-const allApps = ref([]); const appDialogVisible = ref(false); const appTarget = ref(null)
-const selectedAppIds = ref([]); const appSaving = ref(false)
-
-const openAppDialog = async (m) => {
-  appTarget.value = m; selectedAppIds.value = []
-  try { selectedAppIds.value = ((await getProbeModelApps(m.id)) || []).map(a => a.id) } catch { selectedAppIds.value = [] }
-  appDialogVisible.value = true
-}
-const saveApps = async () => {
-  appSaving.value = true
-  try { await setProbeModelApps(appTarget.value.id, selectedAppIds.value); ElMessage.success('保存成功'); appDialogVisible.value = false; await loadData() }
-  catch { ElMessage.error('保存失败') } finally { appSaving.value = false }
+// Applications are maintained once per category, including regular and POC tracks.
+const openAppDialog = async model => {
+  const category = categories.value.find(row => row.id === model.category_id)
+  if (category && !selectCategory(category)) return false
+  await focusApplications()
+  return true
 }
 
 // Variant management
@@ -394,70 +395,77 @@ const importAllVariants = async (file) => {
   } catch { ElMessage.error('导入失败') }
 }
 
-onMounted(async () => {
-  allApps.value = ((await getApplications({ limit: 500 })).items || [])
-  await loadData()
-  if (categories.value.length) selectedCategory.value = categories.value[0]
-})
+const metadataBusy = () => saving.value || importing.value || populating.value
+const metadataDirty = () => catDialogVisible.value || modelDialogVisible.value || (variantDialogVisible.value && Boolean(newVariant.internal_model || newVariant.ipn || newVariant.notes))
+const requestLeave = async () => {
+  if (metadataBusy() || applicationState.value.busy) return false
+  if (metadataDirty() || applicationState.value.hasUnsavedChanges) {
+    try { await ElMessageBox.confirm('探头或应用编辑尚未保存或提交，是否放弃并离开？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+    catch { return false }
+    if (applicationState.value.hasUnsavedChanges && applicationsPanel.value?.discardLocal() === false) return false
+  }
+  catDialogVisible.value = false; modelDialogVisible.value = false; variantDialogVisible.value = false
+  return true
+}
+const beforeUnload = event => {
+  if (metadataBusy() || metadataDirty() || applicationState.value.protected) { event.preventDefault(); event.returnValue = '' }
+}
+onBeforeRouteLeave(requestLeave)
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => { dataLoadRequest += 1; window.removeEventListener('beforeunload', beforeUnload) })
+useWorkspaceRefresh(loadData, { canRefresh: () => !metadataOpen() && applicationState.value.canRefresh })
 </script>
 
 <style scoped>
-.page { padding: 0; height: calc(100vh - 120px); }
+.page { padding: 0; flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 
 .panel-layout {
   display: flex;
-  gap: 16px;
-  height: 100%;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel {
   background: #fff;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .panel-left {
-  width: 280px;
-  min-width: 240px;
+  width: 220px;
+  min-width: 200px;
   flex-shrink: 0;
 }
 
 .panel-right {
   flex: 1;
+  min-width: 0;
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid #e4e7ed;
   background: #fafafa;
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #303133;
 }
 
-.panel-title.placeholder {
-  color: #c0c4cc;
-  font-weight: 400;
-}
-
-.panel-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .panel-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 /* Category items */
@@ -465,7 +473,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
@@ -479,7 +487,7 @@ onMounted(async () => {
 .category-item.active {
   background: #ecf5ff;
   border-left: 3px solid #409eff;
-  padding-left: 9px;
+  padding-left: 7px;
 }
 
 .category-info {
@@ -522,7 +530,7 @@ onMounted(async () => {
 }
 
 .placeholder-content p {
-  font-size: 14px;
+  font-size: 13px;
   margin: 0;
 }
 
@@ -540,7 +548,7 @@ onMounted(async () => {
 
 /* Dialog styles */
 .dialog-info {
-  font-size: 14px;
+  font-size: 13px;
   color: #606266;
 }
 
@@ -557,4 +565,16 @@ onMounted(async () => {
   padding-top: 12px;
   border-top: 1px solid #e4e7ed;
 }
+.unified-right { padding: 8px; gap: 8px; }
+.applications-zone { flex-shrink: 0; min-height: 0; max-height: 45%; overflow: auto; outline: none; }
+.models-zone { flex: 1; display: flex; flex-direction: column; min-height: 160px; overflow: hidden; }
+.models-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13px; margin-bottom: 6px; }
+.models-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.models-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.bulk-variant-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.bulk-variant-actions p { font-size: 12px; color: #64748b; margin: 0 0 4px; }
+.bulk-variant-actions :deep(.el-upload), .bulk-variant-actions :deep(.el-button) { width: 100%; }
+.models-heading span, .app-counts { color: #909399; font-size: 11px; }
+.app-counts { white-space: nowrap; }
+@media (max-width: 760px) { .panel-left { width: 160px; min-width: 140px; }.unified-right { padding: 6px; } }
 </style>

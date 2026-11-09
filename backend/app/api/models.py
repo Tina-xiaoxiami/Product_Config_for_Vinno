@@ -1,14 +1,24 @@
 """
 产品型号 API
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import bindparam, select, func, text
 from typing import List
 
 from app.database import get_db
 from app.models import ProductSeries, ProductModel
-from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate
+from app.schemas.model import ProductModelCreate, ProductModelResponse, ProductModelListResponse, ProductModelUpdate, ProductModelEnabledUpdate
+
+from app.services.model_identity import (
+    active_model_filter, model_identity_metadata, rename_model, validate_manual_model_name,
+)
+from app.services.write_serialization import serialize_catalog_write
+
+from app.services.whitepaper_subseries import (
+    read_subseries, get_subseries_editor, save_subseries_editor,
+    SubseriesSourceError, SubseriesConflictError,
+)
 
 router = APIRouter()
 
@@ -53,9 +63,10 @@ async def _registration_mappings_by_product_model(
     return grouped
 
 
-def _model_response(model: ProductModel, mappings: list[dict]) -> dict:
+def _model_response(model: ProductModel, mappings: list[dict], identity: dict | None = None) -> dict:
     item = ProductModelResponse.model_validate(model).model_dump()
     item["registration_packages"] = mappings
+    item.update(identity or {})
     return item
 
 
@@ -64,10 +75,12 @@ async def get_models(
     series_id: int = None,
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    include_disabled: bool = False,
 ):
     """获取产品型号列表"""
-    query = select(ProductModel)
+    visibility = active_model_filter(include_disabled=include_disabled)
+    query = select(ProductModel).where(visibility)
 
     if series_id:
         query = query.where(ProductModel.series_id == series_id)
@@ -80,16 +93,51 @@ async def get_models(
         [int(item.id) for item in items],
     )
 
-    count_query = select(func.count()).select_from(ProductModel)
+    count_query = select(func.count()).select_from(ProductModel).where(visibility)
     if series_id:
         count_query = count_query.where(ProductModel.series_id == series_id)
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
+    identities = await model_identity_metadata(db, [int(item.id) for item in items])
+    # Resolve against all active models so pagination cannot hide ambiguities.
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter(include_disabled=True)))).scalars().all())
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name))).all()}
+    memberships, problems = read_subseries(catalog, parents)
     return ProductModelListResponse(
-        items=[_model_response(item, mappings.get(int(item.id), [])) for item in items],
+        items=[{**_model_response(item, mappings.get(int(item.id), []), identities.get(int(item.id))), "sub_series": memberships.get(item.id, [])} for item in items],
+        sub_series_problems=problems,
         total=total,
     )
+
+
+async def _subseries_catalog(db):
+    catalog = list((await db.execute(select(ProductModel).where(active_model_filter(include_disabled=True)).order_by(ProductModel.series_id, ProductModel.sort_order, ProductModel.id))).scalars().all())
+    parents = {row.id: row.name for row in (await db.execute(select(ProductSeries.id, ProductSeries.name).order_by(ProductSeries.id))).all()}
+    return catalog, parents
+
+
+@router.get("/subseries")
+async def get_shared_subseries(db: AsyncSession = Depends(get_db)):
+    catalog, parents = await _subseries_catalog(db)
+    try:
+        return get_subseries_editor(catalog, parents)
+    except SubseriesSourceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.put("/subseries")
+async def update_shared_subseries(data: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    catalog, parents = await _subseries_catalog(db)
+    try:
+        options = {'combinations': data['combinations']} if 'combinations' in data else {}
+        return save_subseries_editor(data.get('groups'), data.get('revision'), catalog, parents, **options)
+    except SubseriesSourceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except SubseriesConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/{model_id}", response_model=ProductModelResponse)
@@ -114,14 +162,19 @@ async def create_model(
     db: AsyncSession = Depends(get_db)
 ):
     """创建产品型号"""
+    await serialize_catalog_write(db, "product_models")
     # 检查系列是否存在
     result = await db.execute(select(ProductSeries).where(ProductSeries.id == data.series_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="产品系列不存在")
 
+    try:
+        name = await validate_manual_model_name(db, data.series_id, data.name)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     model = ProductModel(
         series_id=data.series_id,
-        name=data.name,
+        name=name,
         description=data.description,
         status=data.status or "生产中",
         column_start=data.column_start,
@@ -141,14 +194,19 @@ async def update_model(
     db: AsyncSession = Depends(get_db)
 ):
     """更新产品型号"""
-    result = await db.execute(select(ProductModel).where(ProductModel.id == model_id))
+    await serialize_catalog_write(db, "product_models")
+    result = await db.execute(select(ProductModel).where(ProductModel.id == model_id).execution_options(populate_existing=True))
     model = result.scalar_one_or_none()
 
     if not model:
         raise HTTPException(status_code=404, detail="产品型号不存在")
 
     if data.name is not None:
-        model.name = data.name
+        try:
+            name = await validate_manual_model_name(db, model.series_id, data.name, model)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await rename_model(db, model, name)
     if data.description is not None:
         model.description = data.description
     if data.status is not None:
@@ -161,18 +219,27 @@ async def update_model(
     return model
 
 
-@router.delete("/{model_id}")
-async def delete_model(
+@router.put("/{model_id}/enabled", response_model=ProductModelResponse)
+async def set_model_enabled(
     model_id: int,
+    data: ProductModelEnabledUpdate,
     db: AsyncSession = Depends(get_db)
 ):
-    """删除产品型号"""
+    """Preserve model identity, configuration and history when disabling."""
     result = await db.execute(select(ProductModel).where(ProductModel.id == model_id))
     model = result.scalar_one_or_none()
 
     if not model:
         raise HTTPException(status_code=404, detail="产品型号不存在")
 
-    await db.delete(model)
+    model.is_enabled = data.is_enabled
     await db.commit()
-    return {"message": "删除成功"}
+    await db.refresh(model)
+    return model
+
+
+@router.delete("/{model_id}")
+async def delete_model(model_id: int, db: AsyncSession = Depends(get_db)):
+    """Compatibility for older clients: deletion now only disables the model."""
+    await set_model_enabled(model_id, ProductModelEnabledUpdate(is_enabled=False), db)
+    return {"message": "已停用，配置和历史已保留"}

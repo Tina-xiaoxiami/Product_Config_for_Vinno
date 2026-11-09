@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { WORKSPACE_SECTIONS, workspaceForPath } from '../src/utils/workspaceNavigation.js'
 
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8')
@@ -12,30 +13,13 @@ test('knowledge hub is reachable from router and primary navigation', () => {
 
   assert.match(router, /path:\s*'knowledge'/)
   assert.match(router, /name:\s*'KnowledgeHub'/)
-  assert.match(layout, /index="\/knowledge"/)
-  assert.match(layout, />\s*产品知识库\s*</)
+  assert.equal(WORKSPACE_SECTIONS.find(section => section.path === '/knowledge')?.label, '产品知识库')
+  assert.match(layout, /v-for="section in WORKSPACE_SECTIONS"/)
 })
 
 
-test('knowledge hub exposes search, status filters, identity details and documents', () => {
-  const view = read('../src/views/KnowledgeHub.vue')
 
-  assert.match(view, /data-testid="knowledge-search"/)
-  assert.match(view, /data-testid="knowledge-status-filter"/)
-  assert.match(view, /data-testid="feature-knowledge-list"/)
-  assert.match(view, /中文曾用名/)
-  assert.match(view, /英文曾用名/)
-  assert.match(view, /aliasesByLanguage\(feature, 'cn'\)/)
-  assert.match(view, /aliasesByLanguage\(feature, 'en'\)/)
-  assert.match(view, /版本关系/)
-  assert.match(view, /关联功能/)
-  assert.match(view, /relationNote\(feature\)/)
-  assert.match(view, /个功能待确认/)
-  assert.match(view, /统计信息加载失败/)
-  assert.match(view, /data-testid="knowledge-document-list"/)
-  assert.match(view, /data-testid="document-preview-dialog"/)
-  assert.match(view, /<iframe/)
-})
+
 
 
 test('frontend API exposes knowledge feature, stats and document endpoints', () => {
@@ -48,40 +32,13 @@ test('frontend API exposes knowledge feature, stats and document endpoints', () 
 })
 
 
-test('knowledge hub separates domestic registration redlines from product strategy', () => {
-  const view = read('../src/views/KnowledgeHub.vue')
 
-  assert.match(view, /label="国内注册与策略"/)
-  assert.match(view, /data-testid="registration-model-select"/)
-  assert.match(view, /aria-label="国内产品型号"/)
-  assert.match(view, /data-testid="registration-probe-search"/)
-  assert.match(view, /data-testid="registration-status-filter"/)
-  assert.match(view, /aria-label="注册状态"/)
-  assert.match(view, /data-testid="effective-status-filter"/)
-  assert.match(view, /aria-label="最终判定"/)
-  assert.match(view, /data-testid="registration-strategy-table"/)
-  assert.match(view, /注册状态/)
-  assert.match(view, /选型类别（正式）/)
-  assert.match(view, /当前配置（辅助）/)
-  assert.match(view, /最终判定/)
-  assert.match(view, /X 标配/)
-  assert.match(view, /O 选配/)
-  assert.match(view, /Δ 招标支持/)
-  assert.match(view, /# 未注册/)
-  assert.match(view, /注册差异表原文/)
-  assert.match(view, /group\.source_document_id/)
-  assert.match(view, /getKnowledgeDocumentPreviewUrl/)
-  assert.match(view, /target="_blank"/)
-})
 
-test('knowledge hub reports multiple domestic certificates separately when unspecified', () => {
-  const view = read('../src/views/KnowledgeHub.vue')
 
-  assert.match(view, /按注册证分别展示/)
-  assert.match(view, /registrationGroups/)
-  assert.match(view, /registration_number/)
-  assert.match(view, /registration_package_name/)
-})
+
+
+
+
 
 
 test('frontend API exposes domestic registration query endpoints', () => {
@@ -106,8 +63,8 @@ test('base data management owns feature identity and registration master data', 
 
   assert.match(router, /path:\s*'registration-manage'/)
   assert.match(router, /name:\s*'RegistrationManage'/)
-  assert.match(layout, /index="\/registration-manage"/)
-  assert.match(layout, />\s*注册管理\s*</)
+  assert.equal(workspaceForPath('/registration-manage').sidebarGroup, '/manage')
+  assert.equal(workspaceForPath('/registration-manage').title, '注册管理')
   assert.match(featureView, /中文主名称/)
   assert.match(featureView, /英文主名称/)
   assert.match(featureView, /中文曾用名/)
@@ -115,7 +72,7 @@ test('base data management owns feature identity and registration master data', 
   assert.match(featureView, /IPN关系/)
   assert.match(featureView, /getFeatureMasterData/)
   assert.match(featureView, /updateFeatureMasterData/)
-  assert.match(registrationView, /注册数据由基础数据统一管理/)
+  assert.match(workspaceForPath('/registration-manage').description, /统一管理注册证/)
   assert.match(registrationView, /基础探头型号/)
   assert.match(registrationView, /getRegistrationModelProbes/)
   assert.match(api, /export const getFeatureMasterData/)
@@ -179,20 +136,12 @@ test('registration management supports paired upload mapping review and publish'
 test('product model table shows the registration certificate mapping', () => {
   const modelView = read('../src/views/Models.vue')
 
-  assert.match(modelView, /对应注册证/)
+  assert.match(read('../src/utils/tableColumnLayout.js'), /对应注册证/)
+  assert.match(modelView, /MODEL_TABLE_COLUMNS/)
   assert.match(modelView, /registration_packages/)
   assert.match(modelView, /registration_number/)
   assert.match(modelView, /registration_model_name/)
   assert.match(modelView, /mapping\.is_enabled/)
-})
-
-
-test('knowledge hub is a read-only aggregate linked to master-data maintenance', () => {
-  const view = read('../src/views/KnowledgeHub.vue')
-
-  assert.match(view, /基础数据统一维护/)
-  assert.match(view, /to="\/feature-manage"/)
-  assert.match(view, /to="\/registration-manage"/)
 })
 
 
@@ -222,8 +171,31 @@ test('knowledge hub exposes controlled document extraction and candidate evidenc
   assert.match(view, /材料候选依据/)
   assert.match(view, /候选内容不能直接作为正式结论/)
   assert.match(view, /作为答案草稿/)
-  assert.match(view, /提取正文/)
-  assert.match(view, /正文已提取/)
+  const documents = read('../src/components/KnowledgeDocumentsWorkspace.vue')
+  assert.match(documents, /提取正文/)
+  assert.match(documents, /正文已提取/)
   assert.match(api, /export const extractKnowledgeDocument/)
   assert.match(api, /export const getKnowledgeQuestionCandidates/)
+})
+
+
+test('knowledge hub keeps only query, history and parameter answer workspaces', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+  const tabs = [...view.matchAll(/<el-tab-pane label="([^"]+)" name="([^"]+)"/g)].map(match => [match[1], match[2]])
+  assert.deepEqual(tabs, [['问答查询', 'qa'], ['历史版本追溯', 'history'], ['参数型答案', 'parameters']])
+  assert.doesNotMatch(view, /feature-knowledge-list|registration-strategy-table|knowledge-feature-coverage/)
+  assert.match(read('../src/views/FeatureManage.vue'), /getFeatureMasterData/)
+  assert.match(read('../src/views/RegistrationManage.vue'), /getRegistrationDifferenceSummary/)
+  assert.match(read('../src/components/KnowledgeDocumentsWorkspace.vue'), /data-testid="knowledge-document-list"/)
+})
+
+test('knowledge hub still provides answer sources, publication and evidence review', () => {
+  const view = read('../src/views/KnowledgeHub.vue')
+  assert.match(view, /v-for="document in documents"/)
+  assert.match(view, /citation.preview_url/)
+  assert.match(view, /KnowledgeAnswerReviewDialog/)
+  assert.match(view, /questionDisplayText\(row\)/)
+  assert.match(view, /answerDisplayText\(qaResult.answer\)/)
+  assert.match(view, /revision.answer_text/)
+  assert.match(view, /loadDocuments\(\)/)
 })

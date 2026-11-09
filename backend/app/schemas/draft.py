@@ -3,7 +3,16 @@
 """
 from datetime import datetime
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List
+
+
+ConfigFieldName = Literal[
+    "current_config",
+    "final_config",
+    "selection_config",
+    "rd_status",
+]
+DraftChangeType = Literal["create", "update", "delete"]
 
 
 class DraftBatchBase(BaseModel):
@@ -31,6 +40,7 @@ class DraftSubmitRequest(BaseModel):
     version_number: Optional[str] = None
     version_name: Optional[str] = None
     description: Optional[str] = None
+    expected_signature: Optional[str] = None
     item_ids: Optional[List[int]] = None  # 部分提交时指定要提交的配置项ID列表，不传则提交全部
     model_ids: Optional[List[int]] = None  # 按机型过滤，仅提交指定机型的变更
 
@@ -38,8 +48,8 @@ class DraftSubmitRequest(BaseModel):
 class ConfigDraftBase(BaseModel):
     item_id: Optional[int] = None
     model_id: Optional[int] = None
-    change_type: str
-    field_name: Optional[str] = None
+    change_type: DraftChangeType
+    field_name: Optional[ConfigFieldName] = None
     new_value: Optional[str] = None
     old_value: Optional[str] = None
 
@@ -89,6 +99,7 @@ class BatchDiscardResponse(BaseModel):
 class BatchSubmitRequest(BaseModel):
     """批量提交请求"""
     batch_ids: List[str]
+    expected_signatures: Optional[dict[str, str]] = None
     version_number: Optional[str] = None
     description: Optional[str] = None
     version_name: Optional[str] = None

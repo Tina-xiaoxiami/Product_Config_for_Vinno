@@ -71,12 +71,14 @@ def _create_database(path):
             id INTEGER PRIMARY KEY,
             ipn TEXT,
             category TEXT,
-            zh_desc TEXT
+            zh_desc TEXT,
+            en_desc TEXT
         );
+        -- 探头的"英文描述"就是探头型号（与生产数据一致）：注册红线按它找候选 IPN
         INSERT INTO config_items VALUES
-            (10, '1000530', 'Probes', 'F2-5C探头'),
-            (11, '1000744', 'Probes', 'G1-4P探头'),
-            (12, '1000784', 'Probes', 'F4-9E探头');
+            (10, '1000530', 'Probes', 'F2-5C探头', 'F2-5C'),
+            (11, '1000744', 'Probes', 'G1-4P探头', 'G1-4P'),
+            (12, '1000784', 'Probes', 'F4-9E探头', 'F4-9E');
 
         CREATE TABLE probe_models (
             id INTEGER PRIMARY KEY,

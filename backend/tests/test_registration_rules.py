@@ -101,11 +101,11 @@ def test_registration_workbook_rejects_an_unknown_excluded_probe(tmp_path):
     [
         (False, "X", "X", "#", "registration_redline", True),
         (True, "O", "X", "O", "selection_config", True),
-        (True, "未定义", "Δ", "Δ", "current_config_aux", False),
+        (True, "未定义", "Δ", "未定义", "missing", False),
         (True, "", "#", "未定义", "missing", False),
     ],
 )
-def test_registration_redline_precedes_formal_and_auxiliary_product_strategy(
+def test_registration_redline_precedes_formal_selection_category(
     registered,
     selection_config,
     current_config,
@@ -122,3 +122,43 @@ def test_registration_redline_precedes_formal_and_auxiliary_product_strategy(
     assert result.effective_status == effective_status
     assert result.status_source == status_source
     assert result.is_formal is is_formal
+
+
+@pytest.mark.parametrize("current_config", ["X", "O", "Δ"])
+def test_current_config_never_decides_the_probe_verdict(current_config):
+    """研发当前配置只作备注，不得成为最终判定。"""
+
+    result = evaluate_probe_availability(
+        registered=True,
+        selection_config="未定义",
+        current_config=current_config,
+    )
+
+    assert result.effective_status == "未定义"
+    assert result.status_source == "missing"
+    assert result.is_formal is False
+    assert result.current_config_note == (
+        f"研发当前配置为 {current_config}，仅作备注，不参与判定"
+    )
+
+
+def test_formal_selection_verdict_notes_the_current_config():
+    result = evaluate_probe_availability(
+        registered=True,
+        selection_config="O",
+        current_config="Δ",
+    )
+
+    assert result.effective_status == "O"
+    assert result.status_source == "selection_config"
+    assert result.current_config_note == "研发当前配置为 Δ，仅作备注，不参与判定"
+
+
+def test_probe_without_formal_current_config_has_no_note():
+    result = evaluate_probe_availability(
+        registered=True,
+        selection_config="O",
+        current_config="",
+    )
+
+    assert result.current_config_note is None

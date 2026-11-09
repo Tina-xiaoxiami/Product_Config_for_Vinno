@@ -26,6 +26,10 @@ class ProductModelUpdate(BaseModel):
     sort_order: Optional[int] = None
 
 
+class ProductModelEnabledUpdate(BaseModel):
+    is_enabled: bool
+
+
 class ProductModelRegistrationPackage(BaseModel):
     registration_package_id: int
     country_code: str
@@ -38,10 +42,14 @@ class ProductModelRegistrationPackage(BaseModel):
 
 
 class ProductModelResponse(ProductModelBase):
+    is_enabled: bool = True
+    sub_series: List[str] = Field(default_factory=list)
     id: int
     series_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    source_uuid: Optional[str] = None
+    aliases: List[str] = Field(default_factory=list)
     registration_packages: List[ProductModelRegistrationPackage] = Field(
         default_factory=list
     )
@@ -51,5 +59,6 @@ class ProductModelResponse(ProductModelBase):
 
 
 class ProductModelListResponse(BaseModel):
+    sub_series_problems: List[str] = Field(default_factory=list)
     items: List[ProductModelResponse]
     total: int

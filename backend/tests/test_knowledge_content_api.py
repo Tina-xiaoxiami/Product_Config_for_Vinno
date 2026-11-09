@@ -2,9 +2,20 @@ import hashlib
 import sqlite3
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.services import knowledge_content
-from test_knowledge_qa_api import _client_for, _create_qa_database
+from test_knowledge_qa_api import _client_for, _create_qa_database, TEST_QUERY_SCOPE
+
+
+async def _unscoped_candidates(database_path, question):
+    # Raw material ranking remains available for maintenance; public queries are scoped.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    try:
+        async with async_sessionmaker(engine)() as session:
+            return await knowledge_content.find_candidate_evidence(session, question)
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -38,7 +49,7 @@ async def test_document_extraction_is_idempotent_and_feeds_pending_question_cand
         repeated = await client.post("/api/knowledge/documents/1/extract")
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10环境光自动亮度调节是标配吗？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10环境光自动亮度调节是标配吗？"},
         )
         candidates = await client.get(
             f"/api/knowledge/questions/{asked.json()['question_id']}/candidates"
@@ -58,6 +69,52 @@ async def test_document_extraction_is_idempotent_and_feeds_pending_question_cand
     assert candidates.json()["items"] == asked.json()["candidates"]
     assert documents.json()["items"][0]["extraction_status"] == "completed"
     assert documents.json()["items"][0]["chunk_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_document_extraction_stages_chunks_into_the_review_center(tmp_path):
+    database_path = tmp_path / "knowledge.db"
+    source_path = tmp_path / "whitepaper.txt"
+    source_path.write_text(
+        "显示器功能\n环境光自动亮度调节在V10系列为标配。",
+        encoding="utf-8",
+    )
+    _create_qa_database(database_path)
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        UPDATE knowledge_documents
+        SET file_path = ?, file_name = 'whitepaper.txt', mime_type = 'text/plain',
+            sha256 = ?
+        WHERE id = 1
+        """,
+        (str(source_path), hashlib.sha256(source_path.read_bytes()).hexdigest()),
+    )
+    connection.commit()
+    connection.close()
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        extracted = await client.post("/api/knowledge/documents/1/extract")
+        items = await client.get(
+            "/api/knowledge/review-items",
+            params={"data_type": "knowledge_document_chunk", "batch_id": 1},
+        )
+    await engine.dispose()
+
+    assert extracted.status_code == 200
+    chunk_count = extracted.json()["chunk_count"]
+    assert chunk_count >= 1
+    assert extracted.json()["review"] == {
+        "item_count": chunk_count,
+        "needs_review_count": 0,
+    }
+    assert items.status_code == 200
+    assert items.json()["total"] == chunk_count
+    staged = items.json()["items"][0]
+    assert staged["data_type"] == "knowledge_document_chunk"
+    assert staged["raw_payload"]["content"]
+    assert staged["source_ref"]
 
 
 @pytest.mark.asyncio
@@ -132,7 +189,7 @@ async def test_candidate_ranking_uses_confirmed_wording_and_centers_the_excerpt(
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10系列环境光自动调节亮度是标配吗？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10系列环境光自动调节亮度是标配吗？"},
         )
     await engine.dispose()
 
@@ -201,7 +258,7 @@ async def test_candidate_prefilter_skips_irrelevant_chunks_before_python_scoring
     async with client:
         asked = await client.post(
             "/api/knowledge/questions/ask",
-            json={"question": "V10环境光自动亮度调节是标配吗？"},
+            json={"scope": TEST_QUERY_SCOPE, "question": "V10环境光自动亮度调节是标配吗？"},
         )
     await engine.dispose()
 
@@ -211,7 +268,7 @@ async def test_candidate_prefilter_skips_irrelevant_chunks_before_python_scoring
 
 
 @pytest.mark.asyncio
-async def test_candidate_ranking_prefers_the_requested_software_version(tmp_path):
+async def test_unscoped_material_ranking_prefers_the_requested_software_version(tmp_path):
     database_path = tmp_path / "knowledge.db"
     _create_qa_database(database_path)
     connection = sqlite3.connect(database_path)
@@ -242,20 +299,13 @@ async def test_candidate_ranking_prefers_the_requested_software_version(tmp_path
     )
     connection.commit()
     connection.close()
-    client, engine = await _client_for(database_path)
+    asked = await _unscoped_candidates(database_path, 'V10系列1.14.80版本发布了哪些功能和变更？')
 
-    async with client:
-        asked = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "V10系列1.14.80版本发布了哪些功能和变更？"},
-        )
-    await engine.dispose()
-
-    assert asked.json()["candidates"][0]["document_id"] == 3
+    assert asked[0]["document_id"] == 3
 
 
 @pytest.mark.asyncio
-async def test_candidate_ranking_prefers_registration_sources_for_registration_intent(
+async def test_unscoped_material_ranking_prefers_registration_sources_for_registration_intent(
     tmp_path,
 ):
     database_path = tmp_path / "knowledge.db"
@@ -289,20 +339,13 @@ async def test_candidate_ranking_prefers_registration_sources_for_registration_i
     )
     connection.commit()
     connection.close()
-    client, engine = await _client_for(database_path)
+    asked = await _unscoped_candidates(database_path, 'VINNO 10E在湘证下是否支持I4-11T探头？')
 
-    async with client:
-        asked = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "VINNO 10E在湘证下是否支持I4-11T探头？"},
-        )
-    await engine.dispose()
-
-    assert asked.json()["candidates"][0]["document_id"] == 3
+    assert asked[0]["document_id"] == 3
 
 
 @pytest.mark.asyncio
-async def test_candidate_ranking_keeps_registration_evidence_in_requested_province(
+async def test_unscoped_material_ranking_keeps_registration_evidence_in_requested_province(
     tmp_path,
 ):
     database_path = tmp_path / "knowledge.db"
@@ -355,25 +398,15 @@ async def test_candidate_ranking_keeps_registration_evidence_in_requested_provin
     )
     connection.commit()
     connection.close()
-    client, engine = await _client_for(database_path)
+    xiang = await _unscoped_candidates(database_path, 'VINNO 9在湘证下是否支持B2-6C探头？')
+    su = await _unscoped_candidates(database_path, 'VINNO 9在苏证下是否支持B2-6C探头？')
 
-    async with client:
-        xiang = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "VINNO 9在湘证下是否支持B2-6C探头？"},
-        )
-        su = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "VINNO 9在苏证下是否支持B2-6C探头？"},
-        )
-    await engine.dispose()
-
-    assert xiang.json()["candidates"][0]["document_id"] == 2
-    assert su.json()["candidates"][0]["document_id"] == 3
+    assert xiang[0]["document_id"] == 2
+    assert su[0]["document_id"] == 3
 
 
 @pytest.mark.asyncio
-async def test_candidate_ranking_does_not_confuse_10e_with_10_expert(tmp_path):
+async def test_unscoped_material_ranking_does_not_confuse_10e_with_10_expert(tmp_path):
     database_path = tmp_path / "knowledge.db"
     _create_qa_database(database_path)
     connection = sqlite3.connect(database_path)
@@ -402,20 +435,13 @@ async def test_candidate_ranking_does_not_confuse_10e_with_10_expert(tmp_path):
     )
     connection.commit()
     connection.close()
-    client, engine = await _client_for(database_path)
+    response = await _unscoped_candidates(database_path, 'VINNO 10E在湘证下是否支持X10-23L探头？')
 
-    async with client:
-        response = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "VINNO 10E在湘证下是否支持X10-23L探头？"},
-        )
-    await engine.dispose()
-
-    assert response.json()["candidates"][0]["source_ref"] == "VINNO 10E行"
+    assert response[0]["source_ref"] == "VINNO 10E行"
 
 
 @pytest.mark.asyncio
-async def test_candidate_ranking_excludes_other_registration_product_unit(tmp_path):
+async def test_unscoped_material_ranking_excludes_other_registration_product_unit(tmp_path):
     database_path = tmp_path / "knowledge.db"
     _create_qa_database(database_path)
     connection = sqlite3.connect(database_path)
@@ -467,15 +493,80 @@ async def test_candidate_ranking_excludes_other_registration_product_unit(tmp_pa
     )
     connection.commit()
     connection.close()
-    client, engine = await _client_for(database_path)
+    response = await _unscoped_candidates(database_path, 'VINNO 9在湘证下是否支持B2-6C探头？')
 
-    async with client:
-        response = await client.post(
-            "/api/knowledge/questions/ask",
-            json={"question": "VINNO 9在湘证下是否支持B2-6C探头？"},
-        )
-    await engine.dispose()
-
-    document_ids = [item["document_id"] for item in response.json()["candidates"]]
+    document_ids = [item["document_id"] for item in response]
     assert document_ids[0] == 2
     assert 3 not in document_ids
+
+
+@pytest.mark.asyncio
+async def test_changed_source_requires_review_preserving_answer_and_history(tmp_path):
+    database = tmp_path / 'knowledge.db'
+    source = tmp_path / 'source.txt'
+    source.write_text('原文一：亮度调节功能。', encoding='utf-8')
+    _create_qa_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE knowledge_documents SET file_path = ?, mime_type = ?, sha256 = ? WHERE id = 1',
+                           (str(source), 'text/plain', hashlib.sha256(source.read_bytes()).hexdigest()))
+    client, engine = await _client_for(database)
+    async with client:
+        first = await client.post('/api/knowledge/documents/1/extract')
+        asked = await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '亮度调节功能是什么？'})
+        question_id = asked.json()['question_id']
+        payload = {'answer_text': '原答案', 'alias_questions': [], 'citations': [{'document_id': 1, 'source_ref': '第1节', 'excerpt': '原文一'}], 'change_note': '原审核说明'}
+        assert (await client.put(f'/api/knowledge/questions/{question_id}/answer', json=payload)).status_code == 200
+        forced = await client.post('/api/knowledge/documents/1/extract?force=true')
+        assert (await client.get(f'/api/knowledge/questions/{question_id}')).json()['answer']['review_status'] == 'published'
+        source.write_text('原文二：亮度调节功能有变化。', encoding='utf-8')
+        changed = await client.post('/api/knowledge/documents/1/extract')
+        detail = await client.get(f'/api/knowledge/questions/{question_id}')
+        query = await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '亮度调节功能是什么？'})
+        assert detail.json()['status'] == 'pending'
+        assert detail.json()['answer']['review_status'] == 'source_changed'
+        assert detail.json()['answer']['answer_text'] == '原答案'
+        assert detail.json()['answer']['change_note'] == '原审核说明'
+        assert detail.json()['answer']['citations'][0]['excerpt'] == '原文一'
+        assert query.json()['status'] == 'pending' and query.json()['answer'] is None
+        confirmed = await client.put(f'/api/knowledge/questions/{question_id}/answer', json=payload)
+        repeated = await client.post('/api/knowledge/documents/1/extract?force=true')
+        detail_again = await client.get(f'/api/knowledge/questions/{question_id}')
+        history = await client.get(f'/api/knowledge/questions/{question_id}/history')
+    await engine.dispose()
+    assert first.status_code == forced.status_code == changed.status_code == repeated.status_code == 200
+    assert confirmed.json()['answer']['version'] == 2
+    assert detail_again.json()['answer']['review_status'] == 'published'
+    assert [item['version'] for item in history.json()['items']] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_changed_source_failed_extraction_still_invalidates_answer_and_index(tmp_path):
+    database = tmp_path / 'knowledge.db'
+    source = tmp_path / 'source.txt'
+    source.write_text('此前的正文', encoding='utf-8')
+    _create_qa_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE knowledge_documents SET file_path = ?, mime_type = ?, sha256 = ? WHERE id = 1',
+                           (str(source), 'text/plain', hashlib.sha256(source.read_bytes()).hexdigest()))
+    client, engine = await _client_for(database)
+    async with client:
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 200
+        question_id = (await client.post('/api/knowledge/questions/ask', json={'scope': TEST_QUERY_SCOPE, 'question': '此前的正文是什么'})).json()['question_id']
+        await client.put(f'/api/knowledge/questions/{question_id}/answer', json={
+            'answer_text': '此前答案', 'citations': [{'document_id': 1, 'excerpt': '此前的正文'}], 'change_note': '原确认'})
+        source.write_text('', encoding='utf-8')
+        failed = await client.post('/api/knowledge/documents/1/extract')
+        detail = await client.get(f'/api/knowledge/questions/{question_id}')
+        candidates = await client.get(f'/api/knowledge/questions/{question_id}/candidates')
+        assert failed.status_code == 422
+        assert detail.json()['answer']['review_status'] == 'source_changed'
+        assert detail.json()['answer']['citations'][0]['excerpt'] == '此前的正文'
+        assert candidates.json()['items'] == []
+        with sqlite3.connect(database) as connection:
+            row = connection.execute('SELECT d.sha256, e.status, e.source_sha256 FROM knowledge_documents d JOIN knowledge_document_extractions e ON d.id=e.document_id WHERE d.id=1').fetchone()
+            assert row == (hashlib.sha256(b'').hexdigest(), 'failed', hashlib.sha256('此前的正文'.encode()).hexdigest())
+        # A second failed attempt sees the same baseline and does not alter the review state.
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 422
+        source.write_text('恢复后的新正文', encoding='utf-8')
+        assert (await client.post('/api/knowledge/documents/1/extract')).status_code == 200
+    await engine.dispose()

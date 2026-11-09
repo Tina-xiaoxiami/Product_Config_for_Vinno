@@ -9,6 +9,11 @@ from pathlib import Path
 import re
 import sqlite3
 
+from app.services.knowledge_evidence_review import (
+    change_reason, installed_modules, mark_changed_sqlite, TABLES_SQL,
+)
+from app.services.controlled_material_import import document_identity_indexes, match_document_identity
+
 
 @dataclass(frozen=True)
 class KnowledgeSource:
@@ -143,20 +148,32 @@ def import_knowledge_sources(
         "unchanged": 0,
     }
     connection = sqlite3.connect(Path(database_path))
+    connection.row_factory = sqlite3.Row
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
+        installed_modules({row[0] for row in connection.execute(TABLES_SQL)})
+        identity_rows = connection.execute(
+            'SELECT id, document_type, file_name, file_path, sha256 FROM knowledge_documents'
+        ).fetchall()
+        indexes = document_identity_indexes(identity_rows)
         for source in sources:
             file_path = str(source.path)
             digest = _sha256(source.path)
+            identity_status, identity = match_document_identity(source.path, digest, source.document_type, indexes)
+            if identity_status in {'duplicate_content', 'name_conflict'}:
+                counters[identity_status] = counters.get(identity_status, 0) + 1
+                continue
             existing = connection.execute(
                 """
                 SELECT id, document_type, title, file_name, file_path, version,
-                       market, country, product_series, mime_type, sha256
+                       market, country, product_series, mime_type, sha256,
+                       (SELECT source_sha256 FROM knowledge_document_extractions
+                        WHERE document_id = knowledge_documents.id)
                 FROM knowledge_documents
-                WHERE file_path = ?
+                WHERE id = ?
                 """,
-                (file_path,),
+                (identity['id'] if identity is not None else None,),
             ).fetchone()
             values = (
                 source.document_type,
@@ -170,6 +187,15 @@ def import_knowledge_sources(
                 source.mime_type,
                 digest,
             )
+            if existing is not None and (
+                (existing[10] and existing[10] != digest)
+                or (existing[11] and existing[11] != digest)
+            ):
+                # Preserve old chunks for audit, but neither search nor backfill may use them.
+                connection.execute(
+                    "UPDATE knowledge_document_extractions SET status = 'stale', updated_at = CURRENT_TIMESTAMP WHERE document_id = ? AND status = 'completed'",
+                    (existing[0],),
+                )
             if existing is None:
                 connection.execute(
                     """
@@ -181,21 +207,35 @@ def import_knowledge_sources(
                     values,
                 )
                 counters["inserted"] += 1
-            elif tuple(existing[1:]) != values:
+            elif tuple(existing[1:11]) != values:
                 connection.execute(
                     """
                     UPDATE knowledge_documents
                     SET document_type = ?, title = ?, file_name = ?, file_path = ?,
                         version = ?, market = ?, country = ?, product_series = ?,
-                        mime_type = ?, sha256 = ?, source_status = 'active',
+                        mime_type = ?, sha256 = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (*values, existing[0]),
                 )
+                old_hash = existing[10] or existing[11]
+                reason = change_reason(
+                    source_changed=bool(old_hash and old_hash != digest),
+                    scope_changed=tuple(existing[5:9]) != values[4:8],
+                )
+                if reason:
+                    mark_changed_sqlite(connection, existing[0], reason)
                 counters["updated"] += 1
             else:
                 counters["unchanged"] += 1
+            identity_row = connection.execute(
+                'SELECT id, document_type, file_name, file_path, sha256 FROM knowledge_documents WHERE file_path=?',
+                (file_path,),
+            ).fetchone()
+            if identity_row is not None:
+                identity_rows = [row for row in identity_rows if row['id'] != identity_row['id']] + [identity_row]
+                indexes = document_identity_indexes(identity_rows)
         connection.commit()
         return counters
     except Exception:

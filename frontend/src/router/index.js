@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { probeApplicationsRedirect } from '../utils/probeManagementNavigation'
 
 const routes = [
   {
@@ -6,14 +7,18 @@ const routes = [
     component: () => import('../views/Layout.vue'),
     children: [
       {
+        path: 'measurements',
+        name: 'MeasurementLibrary',
+        component: () => import('../views/MeasurementLibrary.vue'),
+        meta: { title: '测量库' }
+      },
+      {
         path: '',
         redirect: '/config'
       },
       {
         path: 'series',
-        name: 'Series',
-        component: () => import('../views/Series.vue'),
-        meta: { title: '系列管理' }
+        redirect: '/models'
       },
       {
         path: 'models',
@@ -34,6 +39,12 @@ const routes = [
         meta: { title: '配置对比' }
       },
       {
+        path: 'version-compare',
+        name: 'VersionCompare',
+        component: () => import('../views/VersionCompare.vue'),
+        meta: { title: '版本对比' }
+      },
+      {
         path: 'versions',
         name: 'Versions',
         component: () => import('../views/Versions.vue'),
@@ -43,19 +54,17 @@ const routes = [
         path: 'probe-models',
         name: 'ProbeModelsView',
         component: () => import('../views/ProbeModelsView.vue'),
-        meta: { title: '探头管理' }
+        meta: { title: '探头&应用' }
       },
       {
         path: 'applications',
         name: 'ApplicationsView',
-        component: () => import('../views/ApplicationsView.vue'),
-        meta: { title: '应用管理' }
+        redirect: probeApplicationsRedirect
       },
       {
         path: 'feature-manage',
         name: 'FeatureManage',
-        component: () => import('../views/FeatureManage.vue'),
-        meta: { title: '功能管理' }
+        redirect: '/template-features'
       },
       {
         path: 'registration-manage',
@@ -86,6 +95,13 @@ const routes = [
         name: 'KnowledgeHub',
         component: () => import('../views/KnowledgeHub.vue'),
         meta: { title: '产品知识库' }
+      }
+      ,
+      {
+        path: 'release',
+        name: 'ReleaseWorkspace',
+        component: () => import('../views/ReleaseWorkspace.vue'),
+        meta: { title: '功能发布' }
       }
     ]
   }

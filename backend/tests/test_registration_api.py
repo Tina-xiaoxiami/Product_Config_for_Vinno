@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 import sqlite3
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -20,7 +21,22 @@ from test_registration_packages import (
 
 
 async def _client_for(database_path):
+    from app import database
+
     engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+    # Registration-import fixtures intentionally start with only the fields
+    # their parser uses. The API lifespan also reads the complete item catalog.
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(config_items)')}
+        for name, definition in [
+            ('row_index', 'INTEGER NOT NULL DEFAULT 0'), ('rd_name', 'TEXT'),
+            ('v_code', 'TEXT'), ('created_at', 'DATETIME'), ('updated_at', 'DATETIME'),
+        ]:
+            if columns and name not in columns:
+                connection.execute(f'ALTER TABLE config_items ADD COLUMN {name} {definition}')
+    # This harness bypasses main's lifespan; apply the same startup upgrades.
+    with patch.object(database, "engine", engine):
+        await database.init_db()
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
     app.include_router(registration.router, prefix="/api/registrations")
@@ -82,7 +98,8 @@ def _activate_imported_package(database_path, workbook_path):
 
 
 @pytest.mark.asyncio
-async def test_registration_api_combines_redline_formal_strategy_and_current_auxiliary(tmp_path):
+async def test_registration_api_combines_redline_formal_strategy_and_current_auxiliary(tmp_path, monkeypatch):
+    monkeypatch.setenv("WHITEPAPER_SUBSERIES_FILE", str(tmp_path / "subseries.json"))
     database_path = tmp_path / "product_config.db"
     workbook_path = tmp_path / "registration.xlsx"
     _create_database(database_path)
@@ -109,6 +126,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
             "/api/models",
             params={"series_id": 1, "limit": 100},
         )
+        subseries_response = await client.get("/api/models/subseries")
     await engine.dispose()
 
     assert models_response.status_code == 200
@@ -133,6 +151,10 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
 
     assert probes_response.status_code == 200
     assert product_models_response.status_code == 200
+    assert all(item["sub_series"] == [] for item in product_models_response.json()["items"])
+    assert subseries_response.status_code == 200
+    assert subseries_response.json()["series"]
+    assert {item["id"] for item in subseries_response.json()["catalog"] if item["series_id"] == 1} == {item["id"] for item in product_models_response.json()["items"]}
     vinno10e = next(
         item for item in product_models_response.json()["items"] if item["id"] == 2
     )
@@ -160,7 +182,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "optional": 0,
         "tender": 0,
         "undefined": 2,
-        "auxiliary": 0,
+        "auxiliary": 1,
         "conflicts": 0,
     }
     f2 = next(
@@ -177,6 +199,7 @@ async def test_registration_api_combines_redline_formal_strategy_and_current_aux
         "effective_status": "#",
         "status_source": "registration_redline",
         "strategy_is_formal": True,
+        "current_config_note": "研发当前配置为 X，仅作备注，不参与判定",
         "conflict": False,
         "config_item_id": 10,
         "config_name": "F2-5C探头",
@@ -234,6 +257,7 @@ async def test_registration_api_filters_and_derived_models_keep_base_redline(tmp
     assert item["registration_status"] == "unregistered"
     assert item["effective_status"] == "#"
     assert item["current_config"] == "Δ"
+    assert item["current_config_note"] == "研发当前配置为 Δ，仅作备注，不参与判定"
     assert registration_models.status_code == 200
     assert [item["model_name"] for item in registration_models.json()["items"]] == [
         "VINNO 10",
@@ -321,6 +345,10 @@ async def test_registration_difference_summary_matches_original_compact_table(tm
     assert body["version_id"] == package["id"]
     assert body["total_models"] == 3
     assert body["total_probes"] == 3
+    # 差异对象口径：全部适用/存在差异按探头统计，而不是按机型
+    # （F2-5C 被 VINNO 10E 排除、G1-4P 与 F4-9E 被 VINNO 9 排除，三把探头均有差异）
+    assert body["all_applicable_probes"] == 0
+    assert body["different_probes"] == 3
     assert body["models"] == [
         {
             "registration_model_id": body["models"][0]["registration_model_id"],
@@ -587,3 +615,53 @@ async def test_registration_api_stages_pair_reviews_mapping_and_publishes(tmp_pa
     assert packages.json()["items"][0]["is_enabled"] is False
     assert configured.status_code == 200, configured.text
     assert configured.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_registration_difference_artifact_previews_as_sheets(tmp_path):
+    """xlsx 差异表可在应用内预览；原件下载地址保持不变。"""
+
+    database_path = tmp_path / "product_config.db"
+    workbook_path = tmp_path / "registration.xlsx"
+    _create_database(database_path)
+    _write_registration_workbook(workbook_path)
+    migrate_registration_schema(database_path)
+    import_domestic_registration_workbook(
+        database_path,
+        workbook_path,
+        source_document_id=1,
+    )
+    package = _activate_imported_package(database_path, workbook_path)
+    client, engine = await _client_for(database_path)
+
+    async with client:
+        preview = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/difference/sheets"
+        )
+        download = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/difference"
+        )
+        unknown_type = await client.get(
+            f"/api/registrations/package-versions/{package['id']}"
+            "/artifacts/unknown/sheets"
+        )
+        missing = await client.get(
+            "/api/registrations/package-versions/999/artifacts/difference/sheets"
+        )
+    await engine.dispose()
+
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["file_name"].endswith(".xlsx")
+    assert [sheet["name"] for sheet in body["sheets"]] == ["0729", "Sheet1"]
+    matrix, probes = body["sheets"]
+    assert matrix["truncated"] is False
+    assert ["序号", "型号", "不支持探头", "通道数"] in matrix["rows"]
+    assert ["2", "VINNO 10E", "F2-5C", "128"] in matrix["rows"]
+    assert probes["rows"][1] == ["F2-5C", "1000530", "1000530"]
+
+    assert download.status_code == 200
+    assert unknown_type.status_code == 404
+    assert missing.status_code == 404

@@ -177,3 +177,35 @@ def test_import_reports_changed_names_and_duplicate_content(tmp_path: Path) -> N
     connection = sqlite3.connect(database)
     assert connection.execute("SELECT COUNT(*) FROM knowledge_documents").fetchone()[0] == 2
     connection.close()
+
+
+def test_selected_materials_keep_explicit_unresolved_scope_without_scanning_others(tmp_path):
+    from dataclasses import replace
+    database = tmp_path / 'selected.db'
+    root = tmp_path / '受控材料'
+    source = _write(root, '发布记录/V6_ReleaseNote_1.14.61.pdf')
+    _write(root, '发布记录/unrelated_1.14.80.pdf')
+    _create_database(database)
+    discovered = next(x for x in discover_controlled_product_materials(root) if x.path == source.resolve())
+    selected = replace(discovered, market='unspecified', country=None, product_series='VINNO 6')
+    result = import_controlled_product_materials(database, root, apply=True, materials=[selected])
+    assert result.counts['scanned'] == result.counts['inserted'] == 1
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('select market,country,product_series from knowledge_documents').fetchone() == ('unspecified', None, 'VINNO 6')
+    assert import_controlled_product_materials(database, root, apply=True, materials=[selected]).counts['unchanged'] == 1
+
+
+def test_selected_materials_reject_outside_root_and_changed_hash_before_writing(tmp_path):
+    from dataclasses import replace
+    import pytest
+    database = tmp_path / 'selected.db'
+    root = tmp_path / '受控材料'
+    source = _write(root, '发布记录/V6_ReleaseNote_1.14.61.pdf')
+    _create_database(database)
+    selected = discover_controlled_product_materials(root)[0]
+    outside = _write(tmp_path, 'outside.pdf')
+    for invalid in [replace(selected, path=outside), replace(selected, sha256='0' * 64)]:
+        with pytest.raises(ValueError):
+            import_controlled_product_materials(database, root, apply=True, materials=[invalid])
+    with sqlite3.connect(database) as connection:
+        assert connection.execute('select count(*) from knowledge_documents').fetchone()[0] == 0

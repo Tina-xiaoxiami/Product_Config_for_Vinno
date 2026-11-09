@@ -1,11 +1,11 @@
 """
 配置项和配置值模型
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class ConfigItem(Base):
@@ -20,8 +20,8 @@ class ConfigItem(Base):
     ipn = Column(String(100), index=True)
     zh_desc = Column(Text)
     en_desc = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # 关系
     config_values = relationship("ConfigValue", back_populates="item", cascade="all, delete-orphan")
@@ -38,8 +38,8 @@ class ConfigValue(Base):
     final_config = Column(Text)        # 最终配置
     selection_config = Column(Text)    # 选型配置
     rd_status = Column(Text)           # 研发状态
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # 关系
     item = relationship("ConfigItem", back_populates="config_values")

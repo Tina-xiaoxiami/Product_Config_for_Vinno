@@ -174,3 +174,156 @@ def migrate_knowledge_document_paths(
         items=tuple(items),
         counts=dict(counts),
     )
+
+
+_ARTIFACT_COLUMNS = {
+    "certificate": ("certificate_artifact_path", "certificate_sha256"),
+    "difference": ("difference_artifact_path", "difference_sha256"),
+}
+
+
+@dataclass(frozen=True)
+class RegistrationArtifactPathMigrationItem:
+    version_id: int
+    artifact_type: str
+    file_name: str
+    source_path: Path
+    target_path: Path | None
+    status: str
+    expected_sha256: str | None
+    actual_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class RegistrationArtifactPathMigrationResult:
+    apply: bool
+    items: tuple[RegistrationArtifactPathMigrationItem, ...]
+    counts: dict[str, int]
+
+
+def _relative_below(path: Path, root: Path) -> Path | None:
+    try:
+        return path.relative_to(root)
+    except ValueError:
+        return None
+
+
+def migrate_registration_artifact_paths(
+    database_path: str | Path,
+    *,
+    source_root: str | Path,
+    target_root: str | Path,
+    apply: bool = False,
+) -> RegistrationArtifactPathMigrationResult:
+    """Repoint registration package artifacts from a legacy root to the vault root.
+
+    Unlike knowledge documents these paths are nested (``注册资料/CN/<证号>/…``), so the
+    relative path is preserved instead of being rebuilt from a type directory. The same
+    safety rule applies: the destination must already exist and match the registered
+    SHA-256, and no file is ever copied.
+    """
+
+    database = Path(database_path).expanduser().resolve()
+    source = Path(source_root).expanduser().resolve()
+    target = Path(target_root).expanduser().resolve()
+    counts: Counter[str] = Counter(scanned=0, ready=0, updated=0)
+    items: list[RegistrationArtifactPathMigrationItem] = []
+
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        if apply:
+            connection.execute("BEGIN IMMEDIATE")
+        rows = connection.execute(
+            """
+            SELECT id, certificate_artifact_path, certificate_sha256,
+                   difference_artifact_path, difference_sha256
+            FROM registration_package_versions
+            ORDER BY id
+            """
+        ).fetchall()
+
+        for row in rows:
+            for artifact_type, (path_column, sha_column) in _ARTIFACT_COLUMNS.items():
+                registered_raw = str(row[path_column] or "").strip()
+                if not registered_raw:
+                    continue
+                counts["scanned"] += 1
+                registered_path = Path(registered_raw).expanduser().resolve()
+                expected_digest = str(row[sha_column] or "").strip().casefold() or None
+                target_path: Path | None = None
+                actual_digest: str | None = None
+                relative = _relative_below(registered_path, source)
+                if _is_below(registered_path, target):
+                    status = "already_migrated"
+                elif relative is None:
+                    status = "outside_source_root"
+                elif not expected_digest:
+                    status = "missing_sha256"
+                else:
+                    target_path = target / relative
+                    if not target_path.is_file() or target_path.is_symlink():
+                        status = "target_missing"
+                    else:
+                        actual_digest = _sha256(target_path)
+                        if actual_digest.casefold() != expected_digest:
+                            status = "hash_mismatch"
+                        else:
+                            status = "ready"
+                            counts["ready"] += 1
+
+                if status != "ready":
+                    counts[status] += 1
+
+                item = RegistrationArtifactPathMigrationItem(
+                    version_id=int(row["id"]),
+                    artifact_type=artifact_type,
+                    file_name=registered_path.name,
+                    source_path=registered_path,
+                    target_path=target_path,
+                    status=status,
+                    expected_sha256=expected_digest,
+                    actual_sha256=actual_digest,
+                )
+
+                if apply and status == "ready" and target_path is not None:
+                    cursor = connection.execute(
+                        f"""
+                        UPDATE registration_package_versions
+                        SET {path_column} = ?
+                        WHERE id = ? AND {path_column} = ? AND {sha_column} = ?
+                        """,
+                        (
+                            str(target_path),
+                            int(row["id"]),
+                            str(row[path_column]),
+                            str(row[sha_column]),
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RuntimeError(
+                            "registration package version "
+                            f"{int(row['id'])} changed during migration"
+                        )
+                    counts["updated"] += 1
+                    item = RegistrationArtifactPathMigrationItem(
+                        **{**item.__dict__, "status": "updated"}
+                    )
+
+                items.append(item)
+
+        if apply:
+            connection.commit()
+    except Exception:
+        if apply:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    return RegistrationArtifactPathMigrationResult(
+        apply=apply,
+        items=tuple(items),
+        counts=dict(counts),
+    )
