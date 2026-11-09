@@ -24,6 +24,7 @@
               </div>
               <div class="version-actions">
                 <el-button size="small" @click="viewVersion(version)">查看详情</el-button>
+                <el-button size="small" @click="openCartRelease(version)">Cart 资料</el-button>
                 <el-button size="small" @click="openCompareDialog(version)">版本对比</el-button>
                 <el-button size="small" type="warning" @click="handleRollback(version)">回滚</el-button>
                 <el-button size="small" type="primary" link @click="handleEditVersion(version)">编辑</el-button>
@@ -51,6 +52,8 @@
         />
       </div>
     </el-card>
+
+    <CartReleaseDialog v-model="cartDialogVisible" :version="cartVersion" />
 
     <!-- 版本详情对话框 -->
     <el-dialog v-model="detailDialogVisible" :title="`版本详情 - ${currentVersion?.version_number}`" width="80%">
@@ -118,6 +121,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getSeriesList, getVersions, rollbackVersion, updateVersion, deleteVersion } from '../api/data'
 import { formatTime } from '../utils/modelHelpers'
+import CartReleaseDialog from '../components/CartReleaseDialog.vue'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 
 // 路由
@@ -130,6 +134,13 @@ const versions = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
+
+const cartDialogVisible = ref(false)
+const cartVersion = ref(null)
+const openCartRelease = version => {
+  cartVersion.value = version
+  cartDialogVisible.value = true
+}
 
 // 详情对话框
 const detailDialogVisible = ref(false)

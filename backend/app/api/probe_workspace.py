@@ -13,6 +13,7 @@ from app.models import ConfigVersion
 from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease
 from app.services import probe_workspace as service
 from app.services.config_publication import commit_configuration_publication
+from app.services.cart_release import save_cart_check
 from app.services.probe_workbook import export_workbook, import_workbook
 
 router = APIRouter()
@@ -195,7 +196,7 @@ async def publish(workspace_id: int, data: PublishInput, db=Depends(get_db)):
                                 snapshot_data=service.encode(series_data), row_count=len(snapshot['items']))
         db.add(version)
         try:
-            await db.flush()
+            await save_cart_check(db, version, 'probe')
         except IntegrityError as error:
             await db.rollback()
             raise HTTPException(409, '版本号已被占用，请重新核对发布预览') from error

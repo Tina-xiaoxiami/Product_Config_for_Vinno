@@ -20,7 +20,7 @@ class CitationSourceError(ValueError):
         self.status = status
 
 
-def _snapshot(path: Path, expected: str) -> bytes:
+def read_verified_source(path: Path, expected: str) -> bytes:
     try:
         if not path.is_absolute():
             raise OSError('unregistered path')
@@ -43,7 +43,7 @@ async def verified_original(db, document_id: int, version_id: str) -> tuple[dict
     if not row['sha256'] or row['sha256'] != version_id:
         raise CitationSourceError(409, '引用版本与当前登记不一致，请重新查询；未打开其他版本')
     document = dict(row)
-    data = await asyncio.to_thread(_snapshot, Path(document['file_path']), version_id)
+    data = await asyncio.to_thread(read_verified_source, Path(document['file_path']), version_id)
     return document, data
 
 

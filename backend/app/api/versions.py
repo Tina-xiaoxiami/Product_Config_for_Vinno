@@ -9,6 +9,7 @@ from typing import Optional
 import json
 from urllib.parse import quote
 
+from app.api.cart_release import router as cart_release_router
 from app.database import get_db
 from app.models import (
     ChangeLog,
@@ -33,20 +34,20 @@ from app.services.config_history import (
     build_snapshot_semantic_value_index,
     restore_series_snapshot,
 )
-from app.services.model_identity import normalize_snapshot
-from app.services.version_comparison import build_comparison_matrix, export_comparison_matrix
+from app.services.cart_release import has_cart_changes, save_cart_check
+from app.services.version_comparison import (
+    build_comparison_matrix, export_comparison_matrix, normalize_comparison_snapshot,
+)
 
 
 async def _comparison_snapshot(db, version):
     try:
-        snapshot = json.loads(version.snapshot_data)
-        for model in snapshot.get("models", []):
-            model["_comparison_name"] = model.get("name")
-        return await normalize_snapshot(db, version.series_id, snapshot)
+        return await normalize_comparison_snapshot(db, version.series_id, json.loads(version.snapshot_data))
     except ValueError as error:
         raise HTTPException(status_code=400, detail=f"版本快照身份无效：{error}") from error
 
 router = APIRouter()
+router.include_router(cart_release_router)
 
 
 @router.get("", response_model=ConfigVersionListResponse)
@@ -268,7 +269,8 @@ async def create_version(
     """创建新版本（从当前数据快照）"""
     # 检查系列是否存在
     result = await db.execute(select(ProductSeries).where(ProductSeries.id == data.series_id))
-    if not result.scalar_one_or_none():
+    series = result.scalar_one_or_none()
+    if not series:
         raise HTTPException(status_code=404, detail="产品系列不存在")
     await _ensure_no_pending_drafts(db, data.series_id)
 
@@ -319,7 +321,7 @@ async def create_version(
     # 如果已有版本，对比数据是否有变化
     if last_version:
         try:
-            prev_snapshot = await normalize_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
+            prev_snapshot = await normalize_comparison_snapshot(db, data.series_id, json.loads(last_version.snapshot_data))
             prev_item_index = build_snapshot_semantic_value_index(prev_snapshot)
             prev_value_map = {
                 identity: {
@@ -329,7 +331,7 @@ async def create_version(
                 for identity, item in prev_item_index.items()
             }
 
-            if prev_value_map == value_map:
+            if prev_value_map == value_map and not await has_cart_changes(prev_snapshot, snapshot, series.name):
                 raise HTTPException(
                     status_code=400,
                     detail="当前数据与上次版本无任何变化，无需创建新版本"
@@ -354,6 +356,7 @@ async def create_version(
 
     db.add(version)
     try:
+        await save_cart_check(db, version, "save")
         await commit_configuration_publication(db, {data.series_id})
     except IntegrityError as error:
         await db.rollback()
@@ -575,6 +578,7 @@ async def rollback_version(
         row_count=len(snapshot["items"])
     )
     db.add(new_version)
+    await save_cart_check(db, new_version, "rollback", rollback_target=target_version)
 
     await commit_configuration_publication(db, {target_version.series_id})
     await db.refresh(new_version)

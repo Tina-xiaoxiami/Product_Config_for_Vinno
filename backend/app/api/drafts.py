@@ -24,6 +24,7 @@ from app.utils import generate_next_version
 from app.services.config_publication import resolve_version_number as _resolve_version_number
 from app.services.config_publication import commit_configuration_publication
 
+from app.services.cart_release import save_cart_check
 from app.services.config_history import (
     build_series_snapshot,
     normalize_config_comparison_value,
@@ -718,6 +719,7 @@ async def submit_draft_batch(
         published_by="system"
     )
     db.add(version)
+    await save_cart_check(db, version, "draft")
 
     # 更新批次状态（部分提交后若还有剩余草稿则不标记为 submitted）
     if counts["total"] == 0:
@@ -822,6 +824,7 @@ async def _process_single_batch_submit(
         published_by="system"
     )
     db.add(version)
+    await save_cart_check(db, version, "draft")
 
     # 更新批次状态
     batch.status = "submitted"
