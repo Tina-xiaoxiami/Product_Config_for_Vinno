@@ -21,7 +21,15 @@ async def resolve_cart_fact(db, key: str, market: str, config_versions: dict) ->
     row = await db.get(KnowledgePublicFact, (key, market), populate_existing=True)
     if row is None:
         return None
-    return {"key": key, "market": market, "configuration_versions": config_versions, **json.loads(row.payload_json)}
+    payload = json.loads(row.payload_json)
+    resolution_key = (payload.get("issue") or {}).get("resolution_fact_key")
+    if resolution_key:
+        resolved = await db.get(KnowledgePublicFact, (resolution_key, market), populate_existing=True)
+        if resolved is not None:
+            replacement = json.loads(resolved.payload_json)
+            if replacement["status"] == "confirmed":
+                payload = replacement
+    return {"key": key, "market": market, "configuration_versions": config_versions, **payload}
 
 
 def _fact_payload(fact: dict) -> tuple[str, str, str]:
@@ -45,6 +53,9 @@ def _fact_payload(fact: dict) -> tuple[str, str, str]:
     elif status == "missing":
         if not issue or not _KEY.fullmatch(issue.get("root_key", "")) or not issue.get("detail") or value is not None:
             raise ValueError("缺失事实须提供根因键和原因")
+        resolution_key = issue.get("resolution_fact_key")
+        if resolution_key and (resolution_key == key or not _KEY.fullmatch(resolution_key)):
+            raise ValueError("关联的解决事实键无效")
     else:
         raise ValueError("未知事实状态")
     payload = {"status": status, "sources": sources, "issue": issue, "value": value,
@@ -70,7 +81,10 @@ async def apply_cart_facts(db, facts: list[dict]) -> dict:
     if len({(key, market) for key, market, _ in rows}) != len(rows):
         raise ValueError("同一批次存在重复事实及市场")
     changed = set()
+    affected_roots = set()
     for key, market, payload in rows:
+        current = await db.get(KnowledgePublicFact, (key, market), populate_existing=True)
+        previous_issue = json.loads(current.payload_json).get("issue") if current else None
         statement = insert(KnowledgePublicFact).values(fact_key=key, market=market, payload_json=payload)
         result = await db.execute(statement.on_conflict_do_update(
             index_elements=["fact_key", "market"], set_={"payload_json": statement.excluded.payload_json},
@@ -78,11 +92,22 @@ async def apply_cart_facts(db, facts: list[dict]) -> dict:
         ).returning(KnowledgePublicFact.fact_key))
         if result.scalar_one_or_none():
             changed.add(key)
-    if any(key.startswith(BATTERY_IDENTITY_PREFIX) for key in changed):
+            if previous_issue:
+                affected_roots.add(previous_issue["root_key"])
+            if key.startswith(BATTERY_IDENTITY_PREFIX):
+                affected_roots.add(f"component.identity:{key.removeprefix(BATTERY_IDENTITY_PREFIX)}")
+    if any(root.startswith("component.identity:") for root in affected_roots):
         from app.services.knowledge_configuration_answers import refresh_configuration_answers
 
         await refresh_configuration_answers(db, runtime=True)
-    return {"changed_fact_keys": sorted(changed), "cart_impacts": await refresh_cart_impact(db, changed)}
+    affected_keys = set(changed)
+    if changed:
+        records = await db.scalars(select(KnowledgePublicFact).execution_options(populate_existing=True))
+        for record in records:
+            issue = json.loads(record.payload_json).get("issue")
+            if issue and (issue["root_key"] in affected_roots or issue.get("resolution_fact_key") in changed):
+                affected_keys.add(record.fact_key)
+    return {"changed_fact_keys": sorted(changed), "cart_impacts": await refresh_cart_impact(db, affected_keys)}
 
 
 async def reviewed_battery_identities(db, market: str) -> list[dict]:
@@ -151,7 +176,7 @@ async def cart_fact_issues(db) -> list[dict]:
         KnowledgePublicFact.fact_key, KnowledgePublicFact.market
     ))).all()
     for fact in facts:
-        issue = json.loads(fact.payload_json).get("issue")
+        issue = (await resolve_cart_fact(db, fact.fact_key, fact.market, {})).get("issue")
         if issue:
             group = groups.setdefault(issue["root_key"], {**issue, "fact_keys": [], "impacts": []})
             if fact.fact_key not in group["fact_keys"]:
@@ -165,3 +190,24 @@ async def cart_fact_issues(db) -> list[dict]:
                 "market": row.market, "archive_key": row.archive_key, "pages": json.loads(row.pages_json),
             })
     return list(groups.values())
+
+
+def merge_configuration_issues(answer_issues: list[dict], cart_issues: list[dict]) -> list[dict]:
+    """A single decision per root with independent answer and Cart impact locations."""
+    grouped: dict[str, dict] = {}
+    for issues, channel in ((answer_issues, "answer_impacts"), (cart_issues, "cart_impacts")):
+        for issue in issues:
+            root = issue["root_key"]
+            group = grouped.setdefault(root, {"root_key": root, "kind": issue["kind"],
+                                             "details": [], "fact_keys": [], "answer_impacts": [], "cart_impacts": []})
+            if issue["kind"] == "owner_decision":
+                group["kind"] = "owner_decision"
+            if issue["detail"] not in group["details"]:
+                group["details"].append(issue["detail"])
+            for key in issue.get("fact_keys", []):
+                if key not in group["fact_keys"]:
+                    group["fact_keys"].append(key)
+            for impact in issue.get("impacts", []):
+                if impact not in group[channel]:
+                    group[channel].append(impact)
+    return [{**group, "detail": "；".join(group["details"])} for group in grouped.values()]
