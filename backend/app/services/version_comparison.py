@@ -3,6 +3,7 @@
 import json
 
 from app.services.config_history import build_snapshot_semantic_value_index
+from app.services.model_identity import normalize_snapshot
 
 NAME_FIELDS = ("rd_name", "zh_desc", "en_desc", "v_code", "ipn")
 FIELD_LABELS = {
@@ -11,6 +12,12 @@ FIELD_LABELS = {
     "rd_name": "研发名称", "zh_desc": "中文描述", "en_desc": "英文名称",
     "v_code": "V代码", "ipn": "IPN号",
 }
+
+
+async def normalize_comparison_snapshot(db, series_id, snapshot):
+    for model in snapshot.get("models", []):
+        model["_comparison_name"] = model.get("name")
+    return await normalize_snapshot(db, series_id, snapshot)
 
 
 def build_comparison_matrix(snapshot1, snapshot2, index1, index2, model_ids=None):

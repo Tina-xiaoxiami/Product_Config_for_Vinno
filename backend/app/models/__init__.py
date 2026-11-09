@@ -8,6 +8,7 @@ from app.models.probe_workspace import ProbeWorkspace, ProbeWorkspaceRelease, Pr
 from app.models.product_model import ProductModel
 from app.models.config import ConfigItem, ConfigValue
 from app.models.version import ConfigVersion, ChangeLog
+from app.models.cart_release import CartReleaseArtifact, CartReleaseCheck
 from app.models.draft import DraftBatch, ConfigDraft
 from app.models.import_history import ImportHistory
 from app.models.probe import (
@@ -63,6 +64,8 @@ __all__ = [
     "ConfigValue",
     "ConfigVersion",
     "ChangeLog",
+    "CartReleaseArtifact",
+    "CartReleaseCheck",
     "DraftBatch",
     "ConfigDraft",
     "ImportHistory",
