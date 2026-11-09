@@ -661,7 +661,6 @@ const saveAnswer = async () => {
   }
   answerSaving.value = true
   const dialogSession = answerDialogSessionId
-  const savedScope = knowledgeScopeFingerprint(knowledgeScopePayload(answerForm.value.scope))
   try {
     if (draft) {
       await reviseKnowledgeDraft(answerForm.value.question_id, {
@@ -675,6 +674,7 @@ const saveAnswer = async () => {
       await loadQaQuestions()
       return
     }
+    const savedScope = knowledgeScopeFingerprint(answerForm.value.scope)
     const saved = await publishKnowledgeAnswer(answerForm.value.question_id, {
       answer_text: answerForm.value.answer_text.trim(),
       alias_questions: parseQuestionAliases(answerForm.value.alias_text),

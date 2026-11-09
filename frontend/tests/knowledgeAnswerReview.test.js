@@ -1,3 +1,4 @@
+import { knowledgeScopeFingerprint, knowledgeScopePayload } from '../src/utils/knowledgeQueryScope.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -191,7 +192,7 @@ test('saving an unscoped draft uses draft revision and does not enter the publis
   const calls = []
   const context = {
     answerSaving: { value: false }, answerForm: { value: form }, answerDialogVisible: { value: true },
-    knowledgeScopeFingerprint: () => '', knowledgeScopePayload: () => null,
+    knowledgeScopeFingerprint, knowledgeScopePayload,
     reviseKnowledgeDraft: async (...args) => calls.push(args),
     publishKnowledgeAnswer: () => assert.fail('draft must not be published'),
     ElMessage: { success() {}, warning: assert.fail, error: assert.fail },
