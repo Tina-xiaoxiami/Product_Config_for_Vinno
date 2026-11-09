@@ -11,7 +11,6 @@
         <template v-else>
           <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
           <el-button size="small" @click="refreshData">刷新</el-button>
-          <el-button size="small" @click="openVersions">版本历史</el-button>
         </template>
     </ProbeManagementActions>
     <el-alert v-if="loadError" type="error" :closable="false" class="catalog-load-error"><template #title>{{ loadError }} <el-button link size="small" @click="refreshData">重试读取</el-button></template></el-alert>
@@ -34,14 +33,27 @@
           <div class="toolbar-right">
             <el-switch v-model="showRegular" size="small" active-text="常规" inactive-text="常规" style="margin-right:4px" />
             <el-switch v-model="showPOC" size="small" active-text="POC" inactive-text="POC" style="margin-right:4px" />
-            <TableColumnSettings :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
-            <div class="view-toggle" v-if="!editMode">
-              <el-radio-group v-model="showMode" size="small">
-                <el-radio value="auto">智能</el-radio>
-                <el-radio value="supported">显示支持</el-radio>
-                <el-radio value="excluded">显示排除</el-radio>
-              </el-radio-group>
-            </div>
+            <TableColumnSettings title="设置" :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout">
+              <template #options="{ openAfterClose }">
+                <div class="matrix-settings-options">
+                  <div class="matrix-settings-row">
+                    <el-select v-model="settingsFeatureId" filterable clearable size="small" aria-label="查找模板功能" placeholder="搜索功能名称或 IPN" class="settings-feature-select">
+                      <el-option v-for="feature in settingsFeatures" :key="feature.id" :label="feature.label" :value="feature.id" />
+                    </el-select>
+                    <el-button size="small" :disabled="!settingsFeatures.some(feature => feature.id === settingsFeatureId)" @click="editSettingsFeature(openAfterClose)">编辑显示名称</el-button>
+                  </div>
+                  <div v-if="!editMode" class="matrix-settings-row">
+                    <span>单元格显示</span>
+                    <el-radio-group v-model="showMode" size="small" aria-label="单元格显示方式">
+                      <el-radio value="auto">智能</el-radio>
+                      <el-radio value="supported">显示支持</el-radio>
+                      <el-radio value="excluded">显示排除</el-radio>
+                    </el-radio-group>
+                    <el-button size="small" @click="openAfterClose(openVersions)">版本历史</el-button>
+                  </div>
+                </div>
+              </template>
+            </TableColumnSettings>
           </div>
         </div>
         <div class="filter-row">
@@ -54,7 +66,7 @@
         </div>
 
         <div class="matrix-scroll-tools">
-          <span>{{ categories.length }} 个探头类别 · {{ filteredFeatures.length }} 个功能（可在列设置中显示或隐藏）</span>
+          <span>{{ categories.length }} 个探头类别 · {{ visibleFeatureCount }} 个可见功能</span>
           <el-button size="small" aria-label="向左查看功能" @click="scrollFeatures(-1)">←</el-button>
           <el-button size="small" aria-label="向右查看功能" @click="scrollFeatures(1)">→</el-button>
         </div>
@@ -74,7 +86,7 @@
                 <template #header>
                   <span class="matrix-feature-header">
                     <span class="matrix-feature-label" :title="column.label">{{ column.label }}</span>
-                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" />
+                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" :show-display-edit="false" />
                     <small v-if="column.feature.pending" class="catalog-preview-badge" title="待提交">待</small>
                   </span>
                 </template>
@@ -173,6 +185,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { featureCurrentName } from '../utils/featureNameStandard'
+import { openFeatureNameReview } from '../utils/featureNameReviewHost'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { ElMessage } from 'element-plus'
 import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
@@ -196,6 +209,15 @@ const featureSearch = ref('')
 const showRegular = ref(true)
 const showPOC = ref(true)
 const selectedGroupIds = ref([])
+const settingsFeatureId = ref(null)
+const settingsFeatures = computed(() => features.value.map(feature => ({
+  id: feature.id,
+  label: catalogFeatureLabel({ ...feature, name: featureCurrentName(feature.id, feature.name) })
+})))
+const editSettingsFeature = openAfterClose => {
+  const id = settingsFeatureId.value
+  openAfterClose(() => openFeatureNameReview(id, true))
+}
 
 const matrixTable = ref(null)
 const tableWrap = ref(null)
@@ -267,6 +289,7 @@ const displayColumnLayout = computed(() => columnLayout.value.map(column => ({ .
 const matrixSections = computed(() => templateMatrixSections(displayColumnLayout.value, filteredFeatures.value, featureGroups.value, {
   showRegular: showRegular.value, showPOC: showPOC.value
 }))
+const visibleFeatureCount = computed(() => matrixSections.value.reduce((count, section) => count + (section.columns?.length || 0), 0))
 
 // ---- group header coloring ----
 const groupColorMap = computed(() => probeGroupColors(featureGroups.value))
@@ -626,7 +649,9 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalog
 .filter-row { display:flex; align-items:center; gap:8px; padding:0 0 6px; flex-wrap:wrap; flex-shrink:0 }
 .group-filter-compact { display:inline-flex; flex-wrap:wrap; gap:2px }
 .group-filter-compact .el-checkbox { margin-right:0; white-space:nowrap }
-.view-toggle { flex-shrink: 0 }
+.matrix-settings-options { display: grid; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.matrix-settings-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.settings-feature-select { flex: 1 1 210px; min-width: 0; }
 .table-wrap { flex: 1 1 0; min-height: 120px; min-width: 0; overflow: hidden; }
 .matrix-scroll-tools { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-shrink: 0; margin-bottom: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
 .matrix-scroll-tools .el-button + .el-button { margin-left: 0; }
