@@ -34,7 +34,12 @@ watch(() => JSON.stringify([props.question, props.scope]), () => { controller.in
 watch(() => state.result, () => citationViewer.value?.close(), { flush: 'sync' })
 onMounted(() => controller.checkAvailability())
 onBeforeUnmount(() => controller.dispose())
-defineExpose({ run: () => controller.run(), state, closeCitation: () => citationViewer.value?.close() })
+const run = async () => {
+  if (state.available === null) await controller.checkAvailability()
+  if (state.available) return controller.run()
+  return false
+}
+defineExpose({ run, state, closeCitation: () => citationViewer.value?.close() })
 </script>
 
 <style scoped>

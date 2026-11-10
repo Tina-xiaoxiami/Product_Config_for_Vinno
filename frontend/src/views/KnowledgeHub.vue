@@ -530,7 +530,7 @@ const askQuestion = async () => {
     qaResult.value = result
     if (result.status === 'pending' && result.scope && !result.history_trace?.events?.length) {
       await nextTick()
-      if (requestId === qaAskRequestId && evidenceAnswer.value?.state.available) await evidenceAnswer.value.run()
+      if (requestId === qaAskRequestId && evidenceAnswer.value) await evidenceAnswer.value.run()
     }
   } catch (error) {
     if (requestId === qaAskRequestId && fingerprint === knowledgeScopeFingerprint(qaScope)) {
