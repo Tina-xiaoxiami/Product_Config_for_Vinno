@@ -98,6 +98,9 @@ async def test_reviewed_battery_identity_is_market_scoped_and_reuses_source_loca
             identity, = await facts.reviewed_battery_identities(db, "domestic")
             assert identity["ipn"] == "9000000" and identity["name"] == "V8BAT"
             assert "Example!A2:C2" in identity["evidence_reference"]
+            await facts.apply_cart_facts(db, [{**fact, "conditions": {**fact["conditions"], "model_ids": [12]}}])
+            assert await facts.reviewed_battery_identities(db, "domestic", 13) == []
+            assert await facts.reviewed_battery_identities(db, "domestic", 12) == [identity]
     finally:
         await engine.dispose()
 

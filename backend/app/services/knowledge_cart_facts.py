@@ -45,6 +45,10 @@ def _fact_payload(fact: dict) -> tuple[str, str, str]:
     display_value = fact.get("display_value", value if not conditions else None)
     if not isinstance(conditions, dict):
         raise ValueError("事实条件必须为对象")
+    model_ids = conditions.get("model_ids")
+    if key.startswith(BATTERY_IDENTITY_PREFIX) and model_ids is not None:
+        if not isinstance(model_ids, list) or any(type(model_id) is not int or model_id <= 0 for model_id in model_ids):
+            raise ValueError("电池物料适用范围须使用完整机型编号")
     if status == "confirmed":
         if value is None or display_value is None or issue or not sources:
             raise ValueError("已确认事实须有值及原件来源，带条件的事实须有完整展示值")
@@ -112,7 +116,7 @@ async def apply_cart_facts(db, facts: list[dict]) -> dict:
     return {"changed_fact_keys": sorted(changed), "cart_impacts": await refresh_cart_impact(db, affected_keys)}
 
 
-async def reviewed_battery_identities(db, market: str) -> list[dict]:
+async def reviewed_battery_identities(db, market: str, model_id: int | None = None) -> list[dict]:
     installed = (await db.execute(text("""
         SELECT 1 FROM sqlite_master WHERE name='knowledge_public_facts' AND type='table'
     """))).scalar_one_or_none()
@@ -126,6 +130,9 @@ async def reviewed_battery_identities(db, market: str) -> list[dict]:
     for row in rows:
         fact = json.loads(row.payload_json)
         if fact["status"] != "confirmed":
+            continue
+        applicable_models = (fact.get("conditions") or {}).get("model_ids")
+        if applicable_models is not None and model_id not in applicable_models:
             continue
         result.append({
             "ipn": row.fact_key.removeprefix(BATTERY_IDENTITY_PREFIX), "name": fact["value"],

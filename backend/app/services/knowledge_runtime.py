@@ -141,7 +141,7 @@ async def runtime_for_model(db, model_key: str, model: dict, version: dict, snap
         raise ParameterError("所选配置快照不包含此完整机型")
     from app.services.knowledge_cart_facts import reviewed_battery_identities, reviewed_component_exclusions
 
-    specs = await confirmed_component_specs(db) + await reviewed_battery_identities(db, model["market"])
+    specs = await confirmed_component_specs(db) + await reviewed_battery_identities(db, model["market"], model["id"])
     exclusions = await reviewed_component_exclusions(db, model["market"], model["id"])
     matched_batteries = battery_configuration(snapshot, model["id"], specs)
     batteries = [battery for battery in matched_batteries if battery["ipn"] not in exclusions]
