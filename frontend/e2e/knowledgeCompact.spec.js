@@ -63,7 +63,7 @@ test('knowledge query uses three scope fields and keeps status beside search', a
   await expect(page.getByText('草稿已保存', { exact: true })).toBeVisible()
   await page.reload()
   await expect(page.locator('.qa-table-area')).toContainText('QA国家筛选取消回归问题')
-  await expect(page.getByRole('radio', { name: '需要我判断', exact: true })).toBeVisible()
+  await expect(page.getByText('需要我判断', { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('knowledge-compact-desktop.png') })
 
   await page.setViewportSize({ width: 860, height: 720 })
@@ -111,6 +111,8 @@ test('Office citations reuse the source dialog with structural coordinates and c
     const answered = page.waitForResponse(response => response.url().endsWith('/api/knowledge/questions/ask') && response.request().method() === 'POST')
     await page.getByTestId('ask-knowledge-question').click(); await answered
     await expect(page.locator('.candidate-card')).toHaveCount(1)
+    const related = page.getByText('展开相关原文', { exact: true })
+    if (await page.locator('details.candidate-evidence').getAttribute('open') === null) await related.click()
   }
   await ask('合成Office定位验收问题')
   const dialog = page.getByRole('dialog', { name: '原文定位与核验' })

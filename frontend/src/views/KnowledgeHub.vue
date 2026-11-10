@@ -128,7 +128,7 @@
           </el-button>
         </article>
         <KnowledgeEvidenceAnswer v-show="qaResult?.status === 'pending'" ref="evidenceAnswer"
-          :question="qaResult?.question || qaQuestion" :scope="qaResult?.scope || null" />
+          :question="qaResult?.question || qaQuestion" :scope="evidenceQueryScope" />
 
         <section v-if="qaResult?.parameter_topics?.length" class="qa-parameter-topics" data-testid="qa-parameter-topics">
           <strong>可按配置查询的参数主题</strong>
@@ -411,6 +411,11 @@ const loadQaModels = async () => {
 }
 const qaAsking = ref(false)
 const qaResult = ref(null)
+const evidenceQueryScope = computed(() => {
+  const scope = qaResult.value?.scope
+  const selected = knowledgeScopePayload(scope || {})
+  return selected ? { ...selected, country: scope.country || null } : null
+})
 const qaStatus = ref('draft')
 const qaQuestions = ref([])
 const qaListLoading = ref(false)
