@@ -74,7 +74,7 @@ async def configuration_answers(
 ) -> list[dict] | None:
     """Return None only for ordinary QA, or a deterministic configuration result."""
     scope = scope or {}
-    runtime_text = re.sub(r"国内|海外|中国区|国外|\bchina\b|\boverseas?\b|\d+(?:\.\d+){2,3}(?:版本)?",
+    runtime_text = re.sub(r"国内|海外|中国区|国外|\bchina\b|\boverseas?\b|(?:在|软件版本)?\s*\d+(?:\.\d+){2,3}(?:版本|下)?",
                           "", question, flags=re.I) if unified else question
     model_key = runtime_question(runtime_text)
     if unified and model_key == "a5":
@@ -87,7 +87,7 @@ async def configuration_answers(
     if model_key and not scope.get("product_model_id") and model_key in {"v5iq", "v6iq"}:
         models = await runtime_models(db, model_key, scope)
         if not models:
-            measured, issue = await runtime_source(db, model_key)
+            measured, _ = await runtime_source(db, model_key)
             if measured:
                 return [{"kind": "runtime", "historical_model": model_key.upper(), "snapshot": None,
                          "rows": [], "historical_rows": measured, "issues": [],

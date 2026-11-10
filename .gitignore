@@ -43,6 +43,7 @@ release_attachments/
 .env.local
 backend/config/release_workbench.local.json
 backend/config/knowledge_evidence.local.json
+backend/config/cart_release.local.json
 
 # Detached local service state
 .runtime/

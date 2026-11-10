@@ -147,10 +147,11 @@ class Rules(StrictModel):
 
 
 def load_rules():
-    path = os.environ.get("CART_RELEASE_RULES_FILE")
-    if not path:
+    configured = os.environ.get("CART_RELEASE_RULES_FILE")
+    path = Path(configured) if configured else Path(__file__).resolve().parents[2] / "config" / "cart_release.local.json"
+    if not configured and not path.is_file():
         return Rules()
-    with Path(path).open("rb") as stream:
+    with path.open("rb") as stream:
         data = stream.read(128 * 1024 + 1)
     if len(data) > 128 * 1024:
         raise ValueError("Cart 规则文件过大")
