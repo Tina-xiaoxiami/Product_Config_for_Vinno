@@ -55,3 +55,6 @@ Cart 模板可以通过 `facts` 绑定公共事实键，通过 `watch_facts` 记
 公共事实服务拥有事实、来源及待决根因。Cart 将同一根因在各市场的页码和归档键回传。资料变动通过 `refresh_cart_for_facts(db, fact_keys)` 重新核验受影响的市场，调用方提交事务。候选内容相同会复用文件，来源版本有变时保留新的证据记录。历史接口为 `GET /api/versions/{version_id}/cart-release/history`。
 
 联动接口由知识侧的 `knowledge_cart_facts` 提供。其 `resolve_cart_fact(db, key, market, config_versions)` 返回事实状态、值和条件、原件版本及位置。需要合并核对的事实返回根因键，`link_cart_fact_impact(db, root_key, impact)` 接收市场、页码和归档键。
+
+
+联调时使用数据库副本，并由知识侧的 `scripts/apply_knowledge_facts.py` 导入受控事实文件。导入会在同一事务更新受影响的知识依据和 Cart 候选。当前成品仍由模板资料登记及哈希定位，候选记录显示相对上一份候选实际变更的页面。知识待决接口按根因同时返回受影响答案和 Cart 页。
