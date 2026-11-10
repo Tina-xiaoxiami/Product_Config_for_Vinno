@@ -15,7 +15,7 @@ from app.services.knowledge_scope_migration import has_monotonic_question_ids
 
 from app.services.knowledge_scope import (
     KnowledgeScopeError, KnowledgeScopeUnavailable, document_matches_scope, document_model_identity_unique,
-    compatible_scope_keys, missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
+    a_only_question, compatible_scope_keys, missing_scope_fields, resolve_query_scope, scope_expression, scope_key,
     scope_schema_ready, stored_scope,
 )
 
@@ -363,12 +363,17 @@ async def _checked_question_text(session: AsyncSession, question: dict, value: s
 
 
 async def save_answer_draft(
-    session: AsyncSession, question_id: int, *, expected_version: int, expected_draft_revision: int,
+    session: AsyncSession, question_id: int | None, *, expected_version: int, expected_draft_revision: int,
     question_text: str | None, answer_text: str, change_note: str,
-    alias_questions: list[str] | None, citations: list[dict] | None,
+    alias_questions: list[str] | None, citations: list[dict] | None, new_scope: dict | None = None,
 ) -> dict | None:
     await session.execute(text("BEGIN IMMEDIATE"))
     try:
+        if question_id is None:
+            resolved = await resolve_query_scope(session, new_scope)
+            if not resolved or len(normalize_question(question_text or "")) < 2:
+                raise KnowledgeQaError("保存草稿前请补齐问题及适用范围")
+            question_id = await ensure_question(session, question_text, scope_key(resolved), count_ask=False)
         question = await get_question(session, question_id)
         if question is None:
             await session.rollback()
@@ -398,7 +403,8 @@ async def save_answer_draft(
         raise
 
 
-async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None) -> dict:
+async def ask_question(session: AsyncSession, question_text: str, *, scope: dict | None = None,
+                       record_unanswered: bool = True) -> dict:
     cleaned = str(question_text or "").strip()
     normalized = normalize_question(cleaned)
     if len(normalized) < 2:
@@ -407,7 +413,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     if resolved_scope is None:
         return {"status": "needs_clarification", "question_id": None,
                 "question": cleaned, "match_type": "none", "similarity": 0.0,
-                "answer": None, "candidates": [], "scope": None,
+                "answer": None, "candidates": [], "scope": scope if not record_unanswered else None,
                 "missing_fields": missing_scope_fields(scope)}
     query_scope_key = scope_key(resolved_scope)
 
@@ -539,9 +545,17 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
             "matched_scope": item["scope"],
         }
 
-    question_id = await ensure_question(session, cleaned, query_scope_key, count_ask=True)
-    await session.commit()
-    item = await get_question(session, question_id)
+    item = None
+    if record_unanswered:
+        question_id = await ensure_question(session, cleaned, query_scope_key, count_ask=True)
+        await session.commit()
+        item = await get_question(session, question_id)
+    else:
+        existing_id = (await session.execute(text("""
+            SELECT id FROM knowledge_questions WHERE scope_key=:scope AND normalized_question=:normalized
+        """), {"scope": query_scope_key, "normalized": normalized})).scalar_one_or_none()
+        if existing_id is not None:
+            item = await get_question(session, existing_id)
     from app.services.knowledge_content import find_candidate_evidence
 
     pending_text = item["question_text"] if item else cleaned
@@ -550,7 +564,7 @@ async def ask_question(session: AsyncSession, question_text: str, *, scope: dict
     history_trace = await history_for_question(session, cleaned, resolved_scope)
     return {
         "status": "pending",
-        "question_id": question_id if item else None,
+        "question_id": item["id"] if item else None,
         "question": pending_text,
         "match_type": "none",
         "similarity": best_score,
@@ -571,6 +585,8 @@ async def list_questions(
     scope: dict | None = None,
     evidence_review: str | None = None,
     workflow: str | None = None,
+    all_scopes: bool = False,
+    managed: bool = False,
 ) -> tuple[list[dict], int]:
     cleaned_query = str(query or "").strip()
     resolved_scope = await resolve_query_scope(session, scope) if scope else None
@@ -605,7 +621,7 @@ async def list_questions(
     filters = f"""
         (:status IS NULL OR q.status = :status)
         AND ({"q.id IN :matched_ids" if cleaned_query else "1"})
-        AND ({"1" if evidence_review and not scope else scope_column + (" IN :scope_keys" if resolved_scope else " = :scope_key")})
+        AND ({"1" if (all_scopes or evidence_review) and not scope else scope_column + (" IN :scope_keys" if resolved_scope else " = :scope_key")})
     """
     if evidence_review:
         from app.services.knowledge_answer_review import evidence_review_filter
@@ -624,6 +640,10 @@ async def list_questions(
             ))"""
         elif workflow == "unanswered":
             filters += f" AND NOT ({working}) AND NOT EXISTS (SELECT 1 FROM knowledge_answers a WHERE a.question_id=q.id)"
+    if managed:
+        questions = (await session.execute(text("SELECT id,question_text FROM knowledge_questions"))).all()
+        params["excluded_ids"] = [row.id for row in questions if a_only_question(row.question_text)]
+        filters += " AND q.id NOT IN :excluded_ids"
     total_statement = text(f"SELECT COUNT(*) FROM knowledge_questions q WHERE {filters}")
     rows_statement = text(
             f"""
@@ -640,6 +660,9 @@ async def list_questions(
     if resolved_scope:
         total_statement = total_statement.bindparams(bindparam('scope_keys', expanding=True))
         rows_statement = rows_statement.bindparams(bindparam('scope_keys', expanding=True))
+    if managed:
+        total_statement = total_statement.bindparams(bindparam('excluded_ids', expanding=True))
+        rows_statement = rows_statement.bindparams(bindparam('excluded_ids', expanding=True))
     total_result = await session.execute(total_statement, params)
     rows_result = await session.execute(rows_statement, params)
     items = [await get_question(session, int(row.id), name_context=name_context) for row in rows_result]

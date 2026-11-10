@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import re
 
 from sqlalchemy import text
 
 from app.services.knowledge_parameters import ParameterError, answer_snapshot, preview
-from app.services.knowledge_runtime import runtime_for_model, runtime_models, runtime_question, series_market
+from app.services.knowledge_runtime import runtime_for_model, runtime_models, runtime_question, runtime_source, series_market
 
 _TABLE = "knowledge_configuration_answer_revisions"
 
@@ -69,15 +70,28 @@ async def _record(db, result: dict) -> int:
 
 async def configuration_answers(
     db, question: str, scope: dict | None, topics: list[dict], *, configuration_version_id: int | None = None,
+    unified: bool = False,
 ) -> list[dict] | None:
     """Return None only for ordinary QA, or a deterministic configuration result."""
     scope = scope or {}
-    model_key = runtime_question(question)
+    runtime_text = re.sub(r"国内|海外|中国区|国外|\bchina\b|\boverseas?\b|\d+(?:\.\d+){2,3}(?:版本)?",
+                          "", question, flags=re.I) if unified else question
+    model_key = runtime_question(runtime_text)
+    if unified and model_key == "a5":
+        return None
     if not model_key and (not topics or not scope.get("product_model_id")):
         return None
     history = await _installed(db)
     if not history:
         return None
+    if model_key and not scope.get("product_model_id") and model_key in {"v5iq", "v6iq"}:
+        models = await runtime_models(db, model_key, scope)
+        if not models:
+            measured, issue = await runtime_source(db, model_key)
+            if measured:
+                return [{"kind": "runtime", "historical_model": model_key.upper(), "snapshot": None,
+                         "rows": [], "historical_rows": measured, "issues": [],
+                         "scope_note": "仅列原表中的 IQ 型号实测。原表未登记市场及软件版本，当前配置身份待资料核实。"}]
     software_version = str(scope.get("software_version") or "").strip()
     explicit_snapshot = bool(configuration_version_id or software_version)
     if not explicit_snapshot:

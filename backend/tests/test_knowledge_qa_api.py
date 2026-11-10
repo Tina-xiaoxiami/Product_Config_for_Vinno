@@ -174,6 +174,35 @@ async def _client_for(database_path, *, migrate_scope=True):
 
 
 @pytest.mark.asyncio
+async def test_unified_question_infers_range_and_creates_only_explicit_saved_draft(tmp_path):
+    path = tmp_path / "unified.db"
+    _create_qa_database(path)
+    client, engine = await _client_for(path)
+    try:
+        async with client:
+            text = "国内 V10 在 1.14.80 的亮度如何调整？"
+            query = {"question": text, "unified": True}
+            for _ in range(2):
+                asked = await client.post("/api/knowledge/questions/ask", json=query)
+                assert asked.status_code == 200, asked.text
+                assert asked.json()["question_id"] is None
+                scope = asked.json()["scope"]
+                assert scope["product_model_id"] == 901 and scope["software_version"] == "1.14.80"
+            body = {"question_text": text, "answer_text": "按设置调节", "change_note": "据原文",
+                    "expected_version": 0, "scope": TEST_QUERY_SCOPE}
+            saved = await client.post("/api/knowledge/questions/draft", json=body)
+            assert saved.status_code == 200, saved.text
+            assert saved.json()["draft"]["revision"]
+            assert (await client.post("/api/knowledge/questions/draft", json=body)).status_code == 409
+            queue = (await client.get("/api/knowledge/questions", params={"workflow": "draft", "all_scopes": True})).json()
+            assert queue["total"] == 1 and queue["items"][0]["id"] == saved.json()["id"]
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT count(*) FROM knowledge_questions").fetchone()[0] == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_saved_draft_survives_restart_and_only_publication_advances_version(tmp_path):
     path = tmp_path / "persistent-draft.db"
     _create_qa_database(path)

@@ -13,5 +13,5 @@ export function knowledgeScopeFingerprint(form) {
 
 export function knowledgeScopeLabel(scope) {
   if (!scope) return '历史范围待核实'
-  return [scope.country ? `来源国家 ${scope.country}` : '', scope.market === 'domestic' ? '国内' : '海外', scope.model_name || scope.product_model_id, scope.software_version].filter(Boolean).join(' · ')
+  return [scope.country ? `来源国家 ${scope.country}` : '', { domestic: '国内', overseas: '海外' }[scope.market], scope.model_name || scope.product_model_id, scope.software_version].filter(Boolean).join(' · ')
 }

@@ -10,7 +10,7 @@ function setup() {
   const asks = [], queues = [], warnings = []
   const context = {
     qaScope: scope(), qaQuestion: { value: '功能如何操作？' }, qaQueueMode: { value: 'selected' },
-    qaResult: { value: null }, qaAsking: { value: false }, qaStatus: { value: 'pending' },
+    qaResult: { value: null }, qaAsking: { value: false }, qaStatus: { value: 'draft' },
     qaQuestions: { value: [] }, qaListLoading: { value: false },
     qaTotal: { value: 0 }, qaPage: { value: 1 }, qaPageSize: { value: 100 }, qaSearch: { value: '' }, qaEvidenceFilter: { value: 'all' },
     nextTick: fn => fn(), updateQaTableHeight() {},
@@ -45,7 +45,7 @@ test('query scope ignores country while preserving historical provenance in labe
 test('ask sends the selected scope and ignores a response after scope editing', async () => {
   const { context, asks, askQuestion, onQaScopeInput } = setup()
   const pending = askQuestion()
-  assert.deepEqual(asks[0].payload, { question: '功能如何操作？', scope: scope() })
+  assert.deepEqual(asks[0].payload, { question: '功能如何操作？', scope: scope(), unified: true })
   context.qaScope.software_version = '1.14.81'
   onQaScopeInput()
   asks[0].resolve({ status: 'answered', answer: { answer_text: 'old scope' } })
@@ -54,17 +54,19 @@ test('ask sends the selected scope and ignores a response after scope editing', 
   assert.equal(context.qaAsking.value, false)
 })
 
-test('incomplete scope makes no ask or queue request; history uses a separate explicit mode', async () => {
+test('incomplete scope is sent for inference without loading a selected-scope queue', async () => {
   const { context, asks, queues, warnings, askQuestion, loadQaQuestions } = setup()
   context.qaScope.software_version = ''
-  await askQuestion()
+  const asked = askQuestion()
+  assert.equal(asks[0].payload.scope.software_version, null)
+  asks[0].resolve({ status: 'needs_clarification', missing_fields: ['software_version'] })
+  await asked
   await loadQaQuestions()
-  assert.equal(asks.length, 0)
   assert.equal(queues.length, 0)
-  assert.ok(warnings.length)
+  assert.equal(warnings.length, 0)
   context.qaQueueMode.value = 'legacy'
   const loading = loadQaQuestions()
-  assert.deepEqual(queues[0].params, { status: 'pending', workflow: 'unanswered', limit: 100, skip: 0 })
+  assert.deepEqual(queues[0].params, { workflow: 'draft', limit: 100, skip: 0, managed: true })
   queues[0].resolve({ items: [{ id: 71, scope: null }] })
   await loading
   assert.equal(context.qaQuestions.value[0].id, 71)

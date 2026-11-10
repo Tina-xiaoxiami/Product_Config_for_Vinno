@@ -111,6 +111,7 @@ class KnowledgeQuestionAsk(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     scope: KnowledgeQueryScope | None = None
     configuration_version_id: int | None = Field(default=None, gt=0)
+    unified: bool = False
 
 
 class KnowledgeAnswerCitationInput(BaseModel):
@@ -127,6 +128,11 @@ class KnowledgeDraftAnswerRevision(BaseModel):
     change_note: str = Field(min_length=1, max_length=1000)
     alias_questions: list[str] | None = Field(default=None, max_length=50)
     citations: list[KnowledgeAnswerCitationInput] | None = Field(default=None, max_length=50)
+
+
+class KnowledgeNewDraft(KnowledgeDraftAnswerRevision):
+    question_text: str = Field(min_length=2, max_length=500)
+    scope: KnowledgeQueryScope
 
 
 class KnowledgeAnswerPublish(BaseModel):

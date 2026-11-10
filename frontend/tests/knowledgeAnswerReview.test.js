@@ -44,7 +44,7 @@ test('answer review status and stable table columns preserve full-answer access'
   const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
   assert.match(source, /data-testid="qa-answer-preview"/)
   assert.match(source, /data-testid="qa-answer-full"/)
-  assert.match(source, /data-testid="qa-needs-review"/)
+  assert.match(source, /value="judgement">需要我判断/)
   assert.match(source, /KnowledgeAnswerReviewDialog/)
 })
 
@@ -119,7 +119,7 @@ function queueActions() {
     loadQaReviewCount: async () => {} }
   const start = source.indexOf('const onAnswerReviewSaved =')
   const end = source.indexOf('const updateQaTableHeight =', start)
-  const actions = new Function(...Object.keys(context), `${source.slice(start, end)}; return { onAnswerReviewSaved, onQaQueueModeChange }`)(...Object.values(context))
+  const actions = new Function(...Object.keys(context), `${source.slice(start, end)}; return { onAnswerReviewSaved, searchQaQuestions }`)(...Object.values(context))
   return { ...actions, context, calls, source }
 }
 
@@ -129,12 +129,13 @@ test('saving a review restarts pagination before reloading a shrinking queue', a
   assert.equal(queue.calls[0].page, 1)
 })
 
-test('leaving review queue clears its status filter and hides the review-only funnel', () => {
+test('maintenance uses three separate workflow categories and resets pagination on change', () => {
   const queue = queueActions()
-  queue.onQaQueueModeChange()
-  assert.equal(queue.context.qaEvidenceFilter.value, 'all')
+  queue.searchQaQuestions()
   assert.equal(queue.calls[0].page, 1)
-  assert.match(queue.source, /<el-popover v-if="qaQueueMode === 'review'"/)
+  assert.match(queue.source, /value="draft">草稿/)
+  assert.match(queue.source, /value="answered">已发布/)
+  assert.match(queue.source, /value="judgement">需要我判断/)
 })
 
 

@@ -6,7 +6,7 @@
           <div class="qa-ask-heading">
             <div>
               <h3>直接提问</h3>
-              <p>查询已确认答案，或检索资料生成带原文依据的草稿；配置与参数按确定性规则查询，系统不会猜测缺失值。</p>
+              <p>直接输入问题。系统按识别范围查询配置、参数或原始资料，缺少条件时会提示。</p>
             </div>
             <el-tag type="success" effect="plain">受控知识</el-tag>
           </div>
@@ -37,7 +37,6 @@
           <div class="qa-ask-actions">
             <span>Ctrl + Enter 快速提问</span>
             <div class="qa-query-buttons">
-            <el-button size="small" :loading="evidenceAnswer?.state.loading" :disabled="!knowledgeScopePayload(qaScope) || evidenceAnswer?.state.checking || evidenceAnswer?.state.available !== true" @click="evidenceAnswer?.run()">查资料并生成草稿</el-button>
             <el-button
               data-testid="ask-knowledge-question"
               type="primary"
@@ -51,13 +50,11 @@
           </div>
         </section>
 
-        <KnowledgeEvidenceAnswer ref="evidenceAnswer" :question="qaQuestion" :scope="knowledgeScopePayload(qaScope)" />
-
         <article v-if="qaResult" class="qa-result" :class="qaResult.status">
           <div class="qa-result-heading">
             <div>
               <el-tag :type="['answered', 'configuration'].includes(qaResult.status) ? 'success' : 'warning'" effect="dark">
-                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'configuration' ? '当前配置查询' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '等待确认' }}
+                {{ qaResult.status === 'answered' ? '已有确认答案' : qaResult.status === 'configuration' ? '配置、参数及实测' : qaResult.status === 'needs_clarification' ? '请补充查询范围' : '资料查询' }}
               </el-tag>
               <span v-if="qaResult.match_type === 'similar'" class="similarity-note">
                 相似问法匹配 {{ Math.round(qaResult.similarity * 100) }}%
@@ -65,6 +62,7 @@
             </div>
             <span class="qa-question-text">{{ questionDisplayText(qaResult) }}</span>
           </div>
+          <p v-if="qaResult.scope" class="qa-scope-note">识别范围 {{ knowledgeScopeLabel(qaResult.scope) }}</p>
           <template v-if="qaResult.configuration_answers?.length">
             <KnowledgeConfigurationAnswer v-for="(result, index) in qaResult.configuration_answers"
               :key="result.revision_id || index" :result="result" />
@@ -78,8 +76,8 @@
               <span v-if="qaResult.matched_scope?.country">答案来源国家 {{ qaResult.matched_scope.country }}</span>
               <span v-if="qaResult.answer.change_note">{{ qaResult.answer.change_note }}</span>
             </div>
-            <div class="citation-section">
-              <span class="section-label">答案依据</span>
+            <details class="citation-section">
+              <summary class="section-label">展开答案依据</summary>
               <div v-if="qaResult.answer.citations.length" class="citation-list">
                 <div
                   v-for="citation in qaResult.answer.citations"
@@ -94,14 +92,16 @@
                 </div>
               </div>
               <span v-else class="empty-text">本答案由产品负责人确认，暂未绑定原文位置</span>
-            </div>
+            </details>
           </template>
           <template v-else-if="qaResult.status === 'needs_clarification'">
-            <p class="qa-pending-text">请补齐市场、完整机型和软件版本后重新查询；本次未创建问题或计入询问次数。</p>
+            <p class="qa-pending-text">还需补充 {{ (qaResult.missing_fields || []).map(field => scopeFieldLabels[field]).filter(Boolean).join("、") || "查询范围" }}。可在上方选择后继续。</p>
           </template>
+          <p v-else-if="qaResult.status === 'outside_scope'" class="qa-pending-text">这条问题属于 A 系列，超出当前维护范围。</p>
           <template v-else>
-            <p class="qa-pending-text">当前没有已确认答案，问题已记录。你可以在下方“待确认问题”中补充并发布。</p>
-            <div v-if="qaResult.candidates?.length" class="candidate-evidence">
+            <p class="qa-pending-text">可查阅下列原始资料，需要保留时选择编辑草稿。</p>
+            <details v-if="qaResult.candidates?.length" class="candidate-evidence">
+              <summary>展开相关原文</summary>
               <div class="candidate-heading">
                 <div>
                   <h4>材料候选依据</h4>
@@ -121,40 +121,59 @@
                 </span>
                 <p>{{ candidate.excerpt }}</p>
               </button>
-            </div>
+            </details>
           </template>
+          <el-button v-if="knowledgeScopePayload(qaResult.scope || {})" size="small" type="primary" plain @click="editQueryDraft">
+            {{ qaResult.answer ? '修订为草稿' : '编辑草稿' }}
+          </el-button>
         </article>
+        <KnowledgeEvidenceAnswer v-show="qaResult?.status === 'pending'" ref="evidenceAnswer"
+          :question="qaResult?.question || qaQuestion" :scope="qaResult?.scope || null" />
 
         <section v-if="qaResult?.parameter_topics?.length" class="qa-parameter-topics" data-testid="qa-parameter-topics">
           <strong>可按配置查询的参数主题</strong>
           <span>尚未匹配配置；选择主题后，明确配置快照和型号，再查看对应参数。</span>
           <el-button v-for="topic in qaResult.parameter_topics" :key="topic.id" size="small" type="primary" plain @click="openParameterTopic(topic.id)">{{ topic.name }} · 按配置查询</el-button>
         </section>
-        <KnowledgeHistoryTrace v-if="qaResult?.history_trace" :trace="qaResult.history_trace" />
+        <details v-if="qaResult?.history_trace?.events?.length" class="qa-result">
+          <summary>展开历史资料与版本记录</summary>
+          <KnowledgeHistoryTrace :trace="qaResult.history_trace" />
+        </details>
 
         <section class="qa-queue">
-          <div class="qa-queue-scope">
-            <el-radio-group v-model="qaQueueMode" size="small" aria-label="问题列表范围" @change="onQaQueueModeChange">
-              <el-radio-button value="selected">当前查询范围</el-radio-button>
-              <el-radio-button value="legacy">历史范围待核实</el-radio-button>
-              <el-radio-button value="review">答案核对</el-radio-button>
-            </el-radio-group>
-            <el-button data-testid="qa-needs-review" size="small" :type="qaQueueMode === 'review' && qaEvidenceFilter === 'needs_review' ? 'primary' : 'default'" @click="showPendingAnswerReviews">待核对<span v-if="qaReviewCount !== null"> {{ qaReviewCount }}</span></el-button>
-            <span>{{ qaQueueMode === 'review' ? '跨范围维护；逐项查看原答案、已有确认记录与本次核对结论。' : qaQueueMode === 'legacy' ? '保留原问题、答案与历史记录，核实范围后再用于正式查询。' : knowledgeScopePayload(qaScope) ? '仅列出当前范围的问题。' : '补齐查询范围后显示对应问题。' }}</span>
-          </div>
           <div class="qa-table-toolbar">
-            <el-radio-group v-if="qaQueueMode !== 'review'" v-model="qaStatus" size="small" aria-label="问答发布状态" @change="searchQaQuestions">
-              <el-radio-button value="pending">待回答</el-radio-button>
+            <el-radio-group v-model="qaStatus" size="small" aria-label="问答发布状态" @change="searchQaQuestions">
               <el-radio-button value="draft">草稿</el-radio-button>
               <el-radio-button value="answered">已发布</el-radio-button>
+              <el-radio-button value="judgement">需要我判断</el-radio-button>
             </el-radio-group>
+            <el-select v-if="qaStatus !== 'judgement'" v-model="qaQueueMode" size="small" aria-label="维护范围" style="width: 136px" @change="searchQaQuestions">
+              <el-option label="全部范围" value="all" />
+              <el-option label="当前查询范围" value="selected" />
+              <el-option label="历史范围待核实" value="legacy" />
+            </el-select>
             <el-input v-model="qaSearch" size="small" clearable placeholder="搜索问题" aria-label="搜索问答问题" @keyup.enter="searchQaQuestions" @clear="searchQaQuestions" />
             <el-button size="small" @click="searchQaQuestions">查询</el-button>
-            <el-button v-if="qaSearch || qaEvidenceFilter !== 'all'" size="small" @click="clearQaFilters">清除筛选</el-button>
-            <span class="qa-total">共 {{ qaTotal }} 条</span>
-            <TableColumnSettings :model-value="qaColumnLayout" :defaults="QA_COLUMNS" @update:model-value="applyQaColumnLayout" />
+            <el-button v-if="qaSearch" size="small" @click="clearQaFilters">清除筛选</el-button>
+            <span class="qa-total">共 {{ qaStatus === 'judgement' ? visibleDecisions.length : qaTotal }} 条</span>
+            <TableColumnSettings v-if="qaStatus !== 'judgement'" :model-value="qaColumnLayout" :defaults="QA_COLUMNS" @update:model-value="applyQaColumnLayout" />
           </div>
-          <div ref="qaTableArea" class="qa-table-area">
+          <div v-if="qaStatus === 'judgement'" v-loading="qaListLoading">
+            <el-table :data="visibleDecisions" size="small" border row-key="root_key" empty-text="当前没有需要你判断的事项">
+              <el-table-column label="待决事项" prop="detail" min-width="330" />
+              <el-table-column label="影响的答案及 Cart 页面" min-width="380">
+                <template #default="{ row }">
+                  <div v-for="impact in row.answer_impacts" :key="JSON.stringify(impact)">{{ impact.model }} · {{ impact.configuration_version?.version_number }}</div>
+                  <div v-for="impact in row.cart_impacts" :key="impact.archive_key">{{ impact.market === 'domestic' ? '国内' : '海外' }} Cart 第 {{ impact.pages.join('、') }} 页</div>
+                  <span v-if="!row.answer_impacts.length && !row.cart_impacts.length">{{ row.fact_keys.join('、') }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <details v-if="qaSourceGaps.length" class="qa-scope-note"><summary>资料缺口（{{ qaSourceGaps.length }}）</summary>
+              <ul><li v-for="gap in qaSourceGaps" :key="gap.root_key">{{ gap.detail }}</li></ul>
+            </details>
+          </div>
+          <div v-else ref="qaTableArea" class="qa-table-area">
           <el-table ref="qaTable" :key="qaColumnStructureKey" :data="qaQuestions" :height="qaTableHeight" @header-dragend="resizeQaColumn" v-loading="qaListLoading" row-key="id" border stripe size="small" data-table-id="knowledge-questions" empty-text="当前条件下暂无问题">
             <el-table-column type="expand" width="36">
               <template #default="{ row }">
@@ -173,14 +192,6 @@
               </template>
             </el-table-column>
             <el-table-column v-for="column in qaVisibleColumns" :key="column.key" :prop="column.key" :label="column.label" :width="column.width" :min-width="30" :fixed="column.fixed ? 'left' : false">
-              <template v-if="column.key === 'evidence_review'" #header>
-                <span class="qa-filter-header">{{ column.label }}
-                  <el-popover v-if="qaQueueMode === 'review'" trigger="click" placement="bottom-end" :width="230" :teleported="true">
-                    <template #reference><el-button text size="small" class="qa-filter-button" :class="{ active: qaEvidenceFilter !== 'all' }" :icon="Filter" aria-label="核对状态筛选" :title="qaEvidenceFilter === 'all' ? '核对状态：不限' : qaEvidenceFilter === 'needs_review' ? '核对状态：待核对' : '核对状态：已核对'" /></template>
-                    <div class="qa-filter-options"><span>选择后立即筛选</span><el-radio-group v-model="qaEvidenceFilter" @change="onQaEvidenceFilter"><el-radio value="all">不限</el-radio><el-radio value="needs_review">待核对</el-radio><el-radio value="reviewed">已核对</el-radio></el-radio-group></div>
-                  </el-popover>
-                </span>
-              </template>
               <template #default="{ row }">
                 <template v-if="column.key === 'answer'"><p data-testid="qa-answer-preview" class="qa-answer-preview">{{ answerPreviewText(queueAnswer(row)) || '尚无答案' }}</p><el-button v-if="row.answer || row.draft" size="small" link type="primary" @click="qaTable?.toggleRowExpansion(row)">全文</el-button></template>
                 <el-tag v-else-if="column.key === 'evidence_review'" size="small" :type="row.evidence_review?.status === 'needs_review' ? 'warning' : 'info'" effect="plain">{{ answerReviewLabel(row) }}</el-tag>
@@ -199,11 +210,11 @@
             </el-table-column>
           </el-table>
           </div>
-          <el-pagination v-if="qaTotal" v-model:current-page="qaPage" v-model:page-size="qaPageSize" :total="qaTotal" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" size="small" class="qa-pagination" @current-change="loadQaQuestions" @size-change="searchQaQuestions" />
+          <el-pagination v-if="qaStatus !== 'judgement' && qaTotal" v-model:current-page="qaPage" v-model:page-size="qaPageSize" :total="qaTotal" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" size="small" class="qa-pagination" @current-change="loadQaQuestions" @size-change="searchQaQuestions" />
         </section>
       </el-tab-pane>
 
-      <el-tab-pane label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
+      <el-tab-pane v-if="route.query.tab === 'history'" label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
       <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace ref="parameterWorkspace" /></el-tab-pane>
     </el-tabs>
 
@@ -331,13 +342,16 @@ import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
 import { knowledgeScopePayload, knowledgeScopeLabel, knowledgeScopeFingerprint } from '../utils/knowledgeQueryScope'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Filter, Plus, Search } from '@element-plus/icons-vue'
+import { Delete, Plus, Search } from '@element-plus/icons-vue'
 import TableColumnSettings from '../components/TableColumnSettings.vue'
 import KnowledgeAnswerReviewDialog from '../components/KnowledgeAnswerReviewDialog.vue'
 import { QA_COLUMNS, answerReviewLabel, canDeletePendingQuestion } from '../utils/knowledgeAnswerReview'
 import { loadColumnLayout, saveColumnLayout, normalizeColumnLayout } from '../utils/tableColumnLayout'
 import {
   askKnowledgeQuestion,
+  createKnowledgeDraft,
+  getKnowledgeQuestion,
+  getKnowledgeConfigurationIssues,
   getKnowledgeAnswerHistory,
   getKnowledgeDocuments,
   getKnowledgeQuestions,
@@ -377,7 +391,7 @@ const qaScope = reactive({ market: '', product_model_id: null, software_version:
 const qaModels = ref([])
 const qaModelsLoading = ref(false)
 const qaModelsError = ref(false)
-const qaQueueMode = ref('selected')
+const qaQueueMode = ref('all')
 const qaAvailableModels = computed(() => qaModels.value.filter(model => (
   !qaScope.market || model.series_name.endsWith(qaScope.market === 'domestic' ? '-China' : '-Oversea')
 )))
@@ -397,10 +411,13 @@ const loadQaModels = async () => {
 }
 const qaAsking = ref(false)
 const qaResult = ref(null)
-const qaStatus = ref('answered')
+const qaStatus = ref('draft')
 const qaQuestions = ref([])
 const qaListLoading = ref(false)
-const qaEvidenceFilter = ref('all'), qaReviewCount = ref(null), qaSearch = ref(''), qaTotal = ref(0), qaPage = ref(1), qaPageSize = ref(20)
+const qaSearch = ref(''), qaTotal = ref(0), qaPage = ref(1), qaPageSize = ref(20)
+const qaDecisions = ref([]), qaSourceGaps = ref([])
+const visibleDecisions = computed(() => qaDecisions.value.filter(row => JSON.stringify(row).toLowerCase().includes(qaSearch.value.trim().toLowerCase())))
+const scopeFieldLabels = { market: '市场', product_model_id: '完整机型', software_version: '软件版本' }
 const qaTable = ref(null), qaTableArea = ref(null), qaTableHeight = ref(360), answerReviewDialog = ref(null)
 const qaColumnStorageKey = 'knowledge-questions-column-layout-v1'
 const qaColumnStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }
@@ -410,10 +427,6 @@ const qaColumnStructureKey = computed(() => qaVisibleColumns.value.map(column =>
 const applyQaColumnLayout = value => { qaColumnLayout.value = normalizeColumnLayout(QA_COLUMNS, value); saveColumnLayout(qaColumnStorage, qaColumnStorageKey, qaColumnLayout.value, message => ElMessage.warning(message)) }
 const resizeQaColumn = (width, _old, column) => applyQaColumnLayout(qaColumnLayout.value.map(item => item.key === column.property ? { ...item, width } : item))
 const openAnswerReview = row => answerReviewDialog.value?.open(row)
-const loadQaReviewCount = async () => {
-  try { qaReviewCount.value = (await getKnowledgeQuestions({ status: 'answered', evidence_review: 'needs_review', limit: 1 })).total }
-  catch { qaReviewCount.value = null }
-}
 const deletingQuestionId = ref(null)
 const removePendingQuestion = async row => {
   if (!canDeletePendingQuestion(row) || deletingQuestionId.value !== null) return
@@ -438,12 +451,9 @@ const removePendingQuestion = async row => {
     deletingQuestionId.value = null
   }
 }
-const onAnswerReviewSaved = async () => { qaPage.value = 1; await Promise.all([loadQaQuestions(), loadQaReviewCount()]) }
+const onAnswerReviewSaved = async () => { qaPage.value = 1; await loadQaQuestions() }
 const searchQaQuestions = () => { qaPage.value = 1; loadQaQuestions() }
-const onQaQueueModeChange = () => { if (qaQueueMode.value !== 'review') qaEvidenceFilter.value = 'all'; searchQaQuestions() }
-const onQaEvidenceFilter = () => { qaQueueMode.value = 'review'; qaStatus.value = 'answered'; searchQaQuestions() }
-const showPendingAnswerReviews = () => { qaEvidenceFilter.value = 'needs_review'; onQaEvidenceFilter() }
-const clearQaFilters = () => { qaSearch.value = ''; qaEvidenceFilter.value = 'all'; searchQaQuestions() }
+const clearQaFilters = () => { qaSearch.value = ''; searchQaQuestions() }
 const updateQaTableHeight = () => { if (qaTableArea.value) qaTableHeight.value = Math.max(260, window.innerHeight - Math.max(0, qaTableArea.value.getBoundingClientRect().top) - 80) }
 let qaResizeObserver
 const answerDialogVisible = ref(false)
@@ -501,32 +511,22 @@ const askQuestion = async () => {
     ElMessage.warning('请输入问题')
     return
   }
-  const runtimeQuestion = /^(?:vinno)?(?:v10|v8|v6iq|v5iq|v6|v5|a5)的?(?:实测)?续航(?:时长)?(?:是多少|有多久|是多久|多久)?$/i
-    .test(question.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, ''))
-  const scope = knowledgeScopePayload(qaScope) || (runtimeQuestion ? {
-    market: qaScope.market || null, product_model_id: qaScope.product_model_id || null
-  } : null)
-  if (!scope) {
-    ElMessage.warning('请补齐市场、完整机型和软件版本')
-    return
+  const scope = {
+    market: qaScope.market || null, product_model_id: qaScope.product_model_id || null,
+    software_version: String(qaScope.software_version || '').trim() || null
   }
   const requestId = ++qaAskRequestId
   const fingerprint = knowledgeScopeFingerprint(qaScope)
   qaAsking.value = true
   qaResult.value = null
   try {
-    const result = await askKnowledgeQuestion({ question, scope })
+    const result = await askKnowledgeQuestion({ question, scope, unified: true })
     if (requestId !== qaAskRequestId || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaResult.value = result
-    if (result.status === 'configuration') return
-    qaQueueMode.value = 'selected'
-    qaEvidenceFilter.value = 'all'
-    qaPage.value = 1
-    if (qaResult.value.status === 'pending') {
-      qaStatus.value = 'pending'
-      ElMessage.info('尚无确认答案，已加入待确认问题')
+    if (result.status === 'pending' && result.scope && !result.history_trace?.events?.length) {
+      await nextTick()
+      if (requestId === qaAskRequestId && evidenceAnswer.value?.state.available) await evidenceAnswer.value.run()
     }
-    await loadQaQuestions()
   } catch (error) {
     if (requestId === qaAskRequestId && fingerprint === knowledgeScopeFingerprint(qaScope)) {
       ElMessage.error(error?.response?.data?.detail || '问题查询失败')
@@ -540,24 +540,27 @@ const loadQaQuestions = async () => {
   const requestId = ++qaQueueRequestId
   const scope = knowledgeScopePayload(qaScope)
   const mode = qaQueueMode.value
+  const status = qaStatus.value
   const fingerprint = knowledgeScopeFingerprint(qaScope)
-  if (mode === 'selected' && !scope) {
-    qaQuestions.value = []
-    qaTotal.value = 0
-    qaListLoading.value = false
-    return
-  }
   qaListLoading.value = true
   qaQuestions.value = []
   qaTotal.value = 0
   try {
-    const status = qaStatus.value
-    const result = await getKnowledgeQuestions({ limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value,
-      ...(mode === 'review' ? { status: 'answered' } : status === 'draft' ? { workflow: 'draft' } :
-        { status, ...(status === 'pending' ? { workflow: 'unanswered' } : {}) }),
+    if (status === 'judgement') {
+      const result = await getKnowledgeConfigurationIssues()
+      if (requestId === qaQueueRequestId) {
+        qaDecisions.value = result.items || []
+        qaSourceGaps.value = result.source_gaps || []
+      }
+      return
+    }
+    if (mode === 'selected' && !scope) return
+    const result = await getKnowledgeQuestions({
+      limit: qaPageSize.value, skip: (qaPage.value - 1) * qaPageSize.value, managed: true,
+      ...(status === 'draft' ? { workflow: 'draft' } : { status: 'answered' }),
       ...(qaSearch.value.trim() ? { q: qaSearch.value.trim() } : {}),
-      ...(mode === 'selected' ? scope : {}),
-      ...(mode === 'review' ? { evidence_review: qaEvidenceFilter.value } : {}) })
+      ...(mode === 'selected' ? scope : mode === 'all' ? { all_scopes: true } : {})
+    })
     if (requestId !== qaQueueRequestId || mode !== qaQueueMode.value || fingerprint !== knowledgeScopeFingerprint(qaScope)) return
     qaQuestions.value = result.items || []
     qaTotal.value = result.total || 0
@@ -632,7 +635,7 @@ const openAnswerDialog = async (question) => {
   answerDialogVisible.value = true
   answerCandidates.value = []
   candidateLoading.value = false
-  if (!question.scope) return
+  if (!question.scope || !question.id) return
   candidateLoading.value = true
   try {
     const result = await getKnowledgeQuestionCandidates(question.id)
@@ -648,6 +651,40 @@ const openAnswerDialog = async (question) => {
 const addCitation = () => answerForm.value.citations.push({ document_id: null, source_ref: '', excerpt: '' })
 const removeCitation = (index) => answerForm.value.citations.splice(index, 1)
 const parseQuestionAliases = (value) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
+
+const editQueryDraft = async () => {
+  const result = qaResult.value
+  try {
+    if (result.question_id) {
+      const existing = await getKnowledgeQuestion(result.question_id)
+      if (qaResult.value !== result) return
+      await openAnswerDialog(existing)
+      if (existing.draft || existing.answer) return
+    } else {
+      await openAnswerDialog({ question_text: result.question, scope: result.scope })
+    }
+    const claims = evidenceAnswer.value?.state.result?.claims || []
+    const configured = result.configuration_answers || []
+    const runtime = configured.flatMap(item => item.rows.filter(row => row.duration))
+    const cell = value => String(value || '—').replaceAll('|', '\\|').replaceAll('\n', ' ')
+    const runtimeTable = runtime.length ? [
+      '| 电池 | 探头 | 模式 | 实测时长 | 测试条件 |', '| --- | --- | --- | --- | --- |',
+      ...runtime.map(row => `| ${[row.battery, row.probe, row.mode, row.duration, row.conditions].map(cell).join(' | ')} |`)
+    ].join('\n') : ''
+    const summary = configured.flatMap(item => item.answer_text ? [item.answer_text] : []).join('\n')
+    const sources = [
+      ...claims.flatMap(claim => claim.citations.map(citation => ({
+        document_id: citation.document_id, source_ref: citation.source_ref || (citation.page ? `第 ${citation.page} 页` : ''),
+        excerpt: citation.quote
+      }))),
+      ...runtime.map(row => ({ document_id: row.document_id, source_ref: `工作表 ${row.sheet} · 第 ${row.row_number} 行`, excerpt: row.duration }))
+    ]
+    answerForm.value.answer_text = claims.map(claim => claim.text).join('\n\n') || [summary, runtimeTable].filter(Boolean).join('\n\n')
+    answerForm.value.citations = [...new Map(sources.map(source => [JSON.stringify([source.document_id, source.source_ref]), source])).values()]
+  } catch {
+    ElMessage.error('草稿编辑器暂时无法打开，请重试')
+  }
+}
 
 const requestAnswerClose = async (done = () => { answerDialogVisible.value = false }) => {
   if (answerSaving.value) return
@@ -676,7 +713,7 @@ const saveAnswer = async () => {
   answerSaving.value = true
   const dialogSession = answerDialogSessionId
   try {
-    const saved = await reviseKnowledgeDraft(form.question_id, {
+    const payload = {
       question_text: form.question_text.trim(),
       answer_text: form.answer_text.trim(),
       change_note: form.change_note.trim(),
@@ -684,13 +721,17 @@ const saveAnswer = async () => {
       expected_draft_revision: form.draft_revision,
       alias_questions: parseQuestionAliases(form.alias_text),
       citations: form.citations.map(citationInput)
-    })
+    }
+    const saved = form.question_id
+      ? await reviseKnowledgeDraft(form.question_id, payload)
+      : await createKnowledgeDraft({ ...payload, scope: { ...knowledgeScopePayload(form.scope), country: form.scope?.country } })
     if (dialogSession === answerDialogSessionId) {
+      form.question_id = saved.id ?? form.question_id
       form.draft_revision = saved.draft.revision
       form.source_changed = saved.draft.source_changed
       form.saved_citations = draftSourceCitations(saved.draft)
       savedAnswerFormState.value = answerFormState(form)
-      if (qaStatus.value === 'pending') qaStatus.value = 'draft'
+      qaStatus.value = 'draft'
       ElMessage.success('草稿已保存')
     }
     await loadQaQuestions()
@@ -762,7 +803,7 @@ const useCandidate = (candidate) => {
 }
 
 useWorkspaceRefresh(() => Promise.all([
-  loadQaModels(), loadQaQuestions(), loadDocuments(), loadQaReviewCount()
+  loadQaModels(), loadQaQuestions(), loadDocuments()
 ]), { canRefresh: () => !answerDialogVisible.value && !answerSaving.value })
 onMounted(() => {
   window.addEventListener('resize', updateQaTableHeight)

@@ -8,6 +8,7 @@
         {{ historyVisible ? '收起修订记录' : '配置答案修订记录' }}
       </el-button>
     </header>
+    <strong v-if="result.historical_model">{{ result.historical_model }} 历史实测</strong>
     <p v-if="result.scope_note" class="configuration-review">{{ result.scope_note }}</p>
     <p v-for="issue in result.issues" :key="issue" class="configuration-review">待核：{{ issue }}</p>
     <el-table v-if="result.kind === 'runtime' && result.rows.length" :data="result.rows" border size="small" max-height="360" aria-label="按配置匹配的实测续航">
@@ -36,7 +37,7 @@
       </el-table-column>
       <el-table-column label="依据" prop="evidence_reference" min-width="220" />
     </el-table>
-    <details v-if="result.historical_rows?.length">
+    <details v-if="result.historical_rows?.length" :open="!!result.historical_model">
       <summary>查看历史实测（当前配置未能匹配）</summary>
       <el-table :data="result.historical_rows" border size="small" max-height="330">
         <el-table-column label="电池" prop="battery" width="95" fixed />

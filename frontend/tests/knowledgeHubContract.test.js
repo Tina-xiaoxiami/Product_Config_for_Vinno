@@ -156,7 +156,7 @@ test('knowledge hub supports the confirmed Q&A feedback loop', () => {
   assert.match(view, /发布草稿/)
   assert.match(view, /答案依据/)
   assert.match(view, /变更说明/)
-  assert.match(view, /系统不会猜测/)
+  assert.match(view, /缺少条件时会提示/)
   assert.match(api, /export const askKnowledgeQuestion/)
   assert.match(api, /export const getKnowledgeQuestions/)
   assert.match(api, /export const publishKnowledgeAnswer/)
@@ -182,7 +182,7 @@ test('knowledge hub exposes controlled document extraction and candidate evidenc
 test('knowledge hub keeps only query, history and parameter answer workspaces', () => {
   const view = read('../src/views/KnowledgeHub.vue')
   const tabs = [...view.matchAll(/<el-tab-pane label="([^"]+)" name="([^"]+)"/g)].map(match => [match[1], match[2]])
-  assert.deepEqual(tabs, [['问答查询', 'qa'], ['历史版本追溯', 'history'], ['参数型答案', 'parameters']])
+  assert.deepEqual(tabs, [['问答查询', 'qa'], ['参数型答案', 'parameters']])
   assert.doesNotMatch(view, /feature-knowledge-list|registration-strategy-table|knowledge-feature-coverage/)
   assert.match(read('../src/views/FeatureManage.vue'), /getFeatureMasterData/)
   assert.match(read('../src/views/RegistrationManage.vue'), /getRegistrationDifferenceSummary/)

@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 SCOPE_FIELDS = ("country", "market", "product_model_id", "software_version")
 REQUIRED_SCOPE_FIELDS = ("market", "product_model_id", "software_version")
 STORED_FIELDS = {*SCOPE_FIELDS, "model_name", "series_name"}
+_A_SERIES = re.compile(r"(?<![a-z0-9])(?:vinno\s*)?a(?:\s*系列|[0-9]+[a-z]*)(?![a-z0-9])", re.I)
+_V_SERIES = re.compile(r"(?<![a-z0-9])(?:vinno\s+\d|v(?:\s*系列|\d))", re.I)
+
+
+def a_only_question(question: str) -> bool:
+    return bool(_A_SERIES.search(question) and not _V_SERIES.search(question))
 
 
 class KnowledgeScopeError(ValueError):
@@ -103,6 +109,52 @@ async def resolve_query_scope(session: AsyncSession, supplied: dict | None) -> d
         raise KnowledgeScopeError("所选完整机型不存在")
     _check_series_market(row.series_name, values["market"])
     return {**values, "model_name": row.name, "series_name": row.series_name}
+
+
+async def infer_question_scope(session: AsyncSession, question: str, supplied: dict | None) -> dict:
+    scope = {key: value for key, value in (supplied or {}).items() if value}
+    query = unicodedata.normalize("NFKC", question).casefold()
+    markets = {market for market, pattern in (
+        ("domestic", r"国内|中国区|\bchina\b"), ("overseas", r"海外|国外|\boverseas?\b"),
+    ) if re.search(pattern, query)}
+    versions = set(re.findall(r"(?<![\d.])\d+(?:\.\d+){2,3}(?![\d.])", query))
+    if len(markets) == 1:
+        if scope.get("market") and scope["market"] not in markets:
+            raise KnowledgeScopeError("问题中的市场与所选市场不同，请核对查询范围")
+        scope.setdefault("market", next(iter(markets)))
+    if len(versions) == 1:
+        if scope.get("software_version") and scope["software_version"] not in versions:
+            raise KnowledgeScopeError("问题中的软件版本与所选版本不同，请核对查询范围")
+        scope.setdefault("software_version", next(iter(versions)))
+    records = (await session.execute(text("""
+        SELECT p.id,p.name,s.name AS series_name FROM product_models p
+        JOIN product_series s ON s.id=p.series_id
+    """))).mappings().all()
+    matched = []
+    for model in records:
+        market = {"china": "domestic", "oversea": "overseas"}.get(model["series_name"].rsplit("-", 1)[-1].casefold())
+        if not market or scope.get("market", market) != market:
+            continue
+        if scope.get("product_model_id") == model["id"]:
+            scope.setdefault("market", market)
+        name = unicodedata.normalize("NFKC", model["name"]).strip().casefold()
+        parts = re.split(r"\s+", name)
+        pattern = r"\s*".join(map(re.escape, parts))
+        short = re.fullmatch(r"vinno\s+(\d[\w-]*)", name)
+        if short:
+            pattern = rf"(?:{pattern}|v{re.escape(short[1])})"
+        if re.search(rf"(?<![a-z0-9_]){pattern}(?![a-z0-9_])", query):
+            matched.append((len(name), model["id"], market))
+    if matched:
+        maximum = max(match[0] for match in matched)
+        best = [match for match in matched if match[0] == maximum]
+        selected = scope.get("product_model_id")
+        if selected and selected not in {match[1] for match in best}:
+            raise KnowledgeScopeError("问题中的机型与所选机型不同，请核对查询范围")
+        if not selected and len(best) == 1:
+            _, scope["product_model_id"], market = best[0]
+            scope.setdefault("market", market)
+    return scope
 
 
 def _normalized_values(values: dict) -> dict:

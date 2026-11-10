@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../src/views/KnowledgeHub.vue', import.meta
 test('returning to the knowledge workspace refreshes query data without duplicate catalog or registration reads', async () => {
   const start = source.indexOf('useWorkspaceRefresh(() => Promise.all([')
   const end = source.indexOf('\nonMounted(', start)
-  const names = ['loadQaModels', 'loadQaQuestions', 'loadDocuments', 'loadQaReviewCount',
+  const names = ['loadQaModels', 'loadQaQuestions', 'loadDocuments',
     'loadFeatureCoverage', 'loadFeatures', 'loadRegistrationModels']
   const calls = []
   let refresh, options
@@ -17,7 +17,7 @@ test('returning to the knowledge workspace refreshes query data without duplicat
   )
   assert.equal(options.canRefresh(), true)
   await refresh()
-  assert.deepEqual(calls, ['loadQaModels', 'loadQaQuestions', 'loadDocuments', 'loadQaReviewCount'])
+  assert.deepEqual(calls, ['loadQaModels', 'loadQaQuestions', 'loadDocuments'])
 })
 
 test('retired catalog and registration loaders are absent while the public read APIs remain available', () => {

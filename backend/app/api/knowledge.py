@@ -15,7 +15,7 @@ from app.services.knowledge_answer_review import (
     KnowledgeAnswerReviewError, KnowledgeAnswerReviewConflict,
     KnowledgeAnswerReviewUnavailable, review_answer,
 )
-from app.services.knowledge_scope import KnowledgeScopeError, KnowledgeScopeUnavailable
+from app.services.knowledge_scope import KnowledgeScopeError, KnowledgeScopeUnavailable, a_only_question, infer_question_scope, resolve_query_scope
 from app.schemas.knowledge import (
     DataReviewBatchConfirmRequest,
     DataReviewBatchConfirmResult,
@@ -36,6 +36,7 @@ from app.schemas.knowledge import (
     KnowledgeDraftAnswerRevision,
     KnowledgeDocumentExtractionItem,
     KnowledgeQuestionAsk,
+    KnowledgeNewDraft,
     KnowledgeQuestionDelete,
     KnowledgeQuestionItem,
     KnowledgeQuestionList,
@@ -203,16 +204,20 @@ async def ask_knowledge_question(
 ):
     try:
         scope = data.scope.model_dump() if data.scope else None
+        if data.unified:
+            if a_only_question(data.question):
+                return KnowledgeQuestionResult(status="outside_scope", question=data.question, match_type="none", similarity=0)
+            scope = await infer_question_scope(db, data.question, scope)
         topics = await topics_for_question(db, data.question)
         configured = await configuration_answers(
-            db, data.question, scope, topics, configuration_version_id=data.configuration_version_id,
+            db, data.question, scope, topics, configuration_version_id=data.configuration_version_id, unified=data.unified,
         )
         if configured is not None:
             return KnowledgeQuestionResult(
                 status="configuration", question=data.question, match_type="exact", similarity=1,
-                configuration_answers=configured,
+                configuration_answers=configured, scope=await resolve_query_scope(db, scope) if data.unified else None,
             )
-        result = await ask_question(db, data.question, scope=scope)
+        result = await ask_question(db, data.question, scope=scope, record_unanswered=not data.unified)
         result['parameter_topics'] = topics
         return KnowledgeQuestionResult(**result)
     except (KnowledgeQaError, KnowledgeScopeError) as exc:
@@ -251,13 +256,15 @@ async def get_knowledge_questions(
     software_version: str | None = Query(None, max_length=80),
     evidence_review: str | None = Query(None, pattern="^(all|needs_review|reviewed)$"),
     workflow: str | None = Query(None, pattern="^(draft|unanswered)$"),
+    all_scopes: bool = False,
+    managed: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     scope = {"country": country, "market": market, "product_model_id": product_model_id, "software_version": software_version}
     try:
         items, total = await list_questions(db, status=status, query=q, skip=skip, limit=limit,
                                             scope=scope if any(value is not None for value in scope.values()) else None,
-                                            evidence_review=evidence_review, workflow=workflow)
+                                            evidence_review=evidence_review, workflow=workflow, all_scopes=all_scopes, managed=managed)
     except KnowledgeScopeError as exc:
         raise HTTPException(status_code=503 if isinstance(exc, KnowledgeScopeUnavailable) else 422, detail=str(exc)) from exc
     return KnowledgeQuestionList(items=items, total=total, skip=skip, limit=limit)
@@ -313,6 +320,17 @@ async def update_answer_draft(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if item is None:
         raise HTTPException(status_code=404, detail="问题不存在")
+    return KnowledgeQuestionItem(**item)
+
+
+@router.post("/questions/draft", response_model=KnowledgeQuestionItem)
+async def create_scoped_answer_draft(data: KnowledgeNewDraft, db: AsyncSession = Depends(get_db)):
+    try:
+        values = data.model_dump()
+        scope = values.pop("scope")
+        item = await save_answer_draft(db, None, new_scope=scope, **values)
+    except (KnowledgeQaError, KnowledgeScopeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return KnowledgeQuestionItem(**item)
 
 
