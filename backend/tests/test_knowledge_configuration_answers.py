@@ -7,7 +7,7 @@ from openpyxl import Workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.knowledge import KnowledgeConfigurationAnswerRevision
+from app.models.knowledge import KnowledgeConfigurationAnswerRevision, KnowledgePublicFact
 from app.services.config_publication import commit_configuration_publication
 from app.services.knowledge_runtime import BATTERY_TEST
 from test_knowledge_qa_api import _client_for, _create_qa_database
@@ -91,6 +91,19 @@ async def test_runtime_tracks_config_publish_and_retains_previous_measurements(t
             assert "1.14.70" in no_match["issues"][0]
             history = await client.get("/api/knowledge/questions/configuration-history", params={"recipe": "runtime:v10", "model_id": 901})
             assert [item["revision_id"] for item in history.json()["items"]] == [latest["revision_id"], old["revision_id"]]
+            async with engine.begin() as connection:
+                await connection.run_sync(KnowledgePublicFact.__table__.create)
+            async with AsyncSession(engine) as db, db.begin():
+                await db.execute(text("""
+                    INSERT INTO knowledge_public_facts(fact_key,market,payload_json)
+                    VALUES ('component.excluded:901:2000000','domestic',:payload)
+                """), {"payload": json.dumps({"status": "confirmed", "display_value": "该机型不使用此电池"})})
+            corrected = await client.post("/api/knowledge/questions/ask", json={
+                **payload, "scope": {"market": "domestic", "software_version": "1.14.80"},
+            })
+            answer, = corrected.json()["configuration_answers"]
+            assert {row["ipn"] for row in answer["rows"]} == {"1001036"}
+            assert "该机型不使用此电池" in answer["scope_note"]
     finally:
         await engine.dispose()
 
@@ -135,6 +148,20 @@ async def test_parameter_question_reuses_existing_specs_and_current_snapshot(tmp
             selected, = result["rows"][0]["matches"]
             assert selected["usable"] and selected["values"] == {"capacity":6700}
             assert selected["evidence_reference"] == "规格书第 2 页"
+            async with engine.begin() as connection:
+                await connection.run_sync(KnowledgePublicFact.__table__.create)
+            async with AsyncSession(engine) as db, db.begin():
+                await db.execute(text("""
+                    INSERT INTO knowledge_public_facts(fact_key,market,payload_json)
+                    VALUES ('component.excluded:901:1001036','domestic',:payload)
+                """), {"payload": json.dumps({"status": "confirmed", "display_value": "该机型不使用此电池"})})
+            corrected = await client.post("/api/knowledge/questions/ask", json={
+                "question": "各型号电池容量是多少？",
+                "scope": {"market": "domestic", "product_model_id": 901, "software_version": "1.14.81"},
+            })
+            answer, = corrected.json()["configuration_answers"]
+            assert answer["rows"][0]["matches"] == []
+            assert "该机型不使用此电池" in answer["answer_text"]
     finally:
         await engine.dispose()
 

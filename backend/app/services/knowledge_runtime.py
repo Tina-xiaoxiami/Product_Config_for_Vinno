@@ -139,13 +139,16 @@ async def runtime_source(db, model_key: str) -> tuple[list[dict], str | None]:
 async def runtime_for_model(db, model_key: str, model: dict, version: dict, snapshot: dict) -> dict:
     if model["id"] not in {int(item["id"]) for item in snapshot["models"]}:
         raise ParameterError("所选配置快照不包含此完整机型")
-    from app.services.knowledge_cart_facts import reviewed_battery_identities
+    from app.services.knowledge_cart_facts import reviewed_battery_identities, reviewed_component_exclusions
 
     specs = await confirmed_component_specs(db) + await reviewed_battery_identities(db, model["market"])
-    batteries = battery_configuration(snapshot, model["id"], specs)
+    exclusions = await reviewed_component_exclusions(db, model["market"], model["id"])
+    matched_batteries = battery_configuration(snapshot, model["id"], specs)
+    batteries = [battery for battery in matched_batteries if battery["ipn"] not in exclusions]
+    notes = [exclusions[battery["ipn"]] for battery in matched_batteries if battery["ipn"] in exclusions]
     measurements, source_issue = await runtime_source(db, model_key)
     rows, issues, review_items = [], [source_issue] if source_issue else [], []
-    if not batteries:
+    if not batteries and not notes:
         issues.append("当前配置未登记可用于续航匹配的电池")
     for battery in batteries:
         matches = [row for row in measurements if row["battery"] == battery["battery"]]
@@ -163,4 +166,4 @@ async def runtime_for_model(db, model_key: str, model: dict, version: dict, snap
     return {"kind": "runtime", "model": model, "snapshot": version, "rows": rows, "issues": issues,
             "review_items": review_items,
             "historical_rows": measurements if not any(row.get("duration") for row in rows) else [],
-            "scope_note": "实测原表未登记市场和配置版本，时长仅适用于所列电池、探头和测试条件。"}
+            "scope_note": "。".join(notes + ["实测原表未登记市场和配置版本，时长仅适用于所列电池、探头和测试条件。"])}

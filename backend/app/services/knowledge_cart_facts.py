@@ -15,6 +15,7 @@ _KEY = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,159}")
 _SHA256 = re.compile(r"[a-f0-9]{64}")
 _CART_SERVICE = "app.services.cart_release"
 BATTERY_IDENTITY_PREFIX = "component.battery:"
+COMPONENT_EXCLUSION_PREFIX = "component.excluded:"
 
 
 async def resolve_cart_fact(db, key: str, market: str, config_versions: dict) -> dict | None:
@@ -96,7 +97,8 @@ async def apply_cart_facts(db, facts: list[dict]) -> dict:
                 affected_roots.add(previous_issue["root_key"])
             if key.startswith(BATTERY_IDENTITY_PREFIX):
                 affected_roots.add(f"component.identity:{key.removeprefix(BATTERY_IDENTITY_PREFIX)}")
-    if any(root.startswith("component.identity:") for root in affected_roots):
+    if (any(root.startswith("component.identity:") for root in affected_roots)
+            or any(key.startswith(COMPONENT_EXCLUSION_PREFIX) for key in changed)):
         from app.services.knowledge_configuration_answers import refresh_configuration_answers
 
         await refresh_configuration_answers(db, runtime=True)
@@ -130,6 +132,22 @@ async def reviewed_battery_identities(db, market: str) -> list[dict]:
             "evidence_reference": "；".join(f"{source.get('file_name', '')} {source['locator']}" for source in fact["sources"]),
         })
     return result
+
+
+async def reviewed_component_exclusions(db, market: str | None, model_id: int) -> dict[str, str]:
+    if market not in _MARKETS:
+        return {}
+    installed = (await db.execute(text("""
+        SELECT 1 FROM sqlite_master WHERE name='knowledge_public_facts' AND type='table'
+    """))).scalar_one_or_none()
+    if not installed:
+        return {}
+    prefix = f"{COMPONENT_EXCLUSION_PREFIX}{model_id}:"
+    rows = await db.scalars(select(KnowledgePublicFact).where(
+        KnowledgePublicFact.market == market, KnowledgePublicFact.fact_key.startswith(prefix),
+    ).order_by(KnowledgePublicFact.fact_key))
+    return {row.fact_key.removeprefix(prefix): fact["display_value"]
+            for row in rows if (fact := json.loads(row.payload_json))["status"] == "confirmed"}
 
 
 async def invalidate_cart_facts(db, document_id: int, previous_hash: str) -> dict:

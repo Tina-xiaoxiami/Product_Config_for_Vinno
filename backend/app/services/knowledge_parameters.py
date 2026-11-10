@@ -248,6 +248,9 @@ def _format_values(topic: dict, values: dict) -> str:
 
 
 async def preview(db: AsyncSession, topic_id: int, version_id: int, model_ids: list[int]) -> dict:
+    from app.services.knowledge_cart_facts import reviewed_component_exclusions
+    from app.services.knowledge_runtime import series_market
+
     topic = await _topic(db, topic_id)
     metadata, snapshot = await _snapshot(db, version_id)
     models = {int(model['id']): model['name'] for model in snapshot['models']}
@@ -258,7 +261,11 @@ async def preview(db: AsyncSession, topic_id: int, version_id: int, model_ids: l
     rows = []
     for model_id in dict.fromkeys(model_ids):
         matches, issues, statements = [], [], []
+        exclusions = await reviewed_component_exclusions(db, series_market(metadata["series"]), model_id)
         for spec in specs:
+            if spec['ipn'] in exclusions:
+                statements.append(exclusions[spec['ipn']])
+                continue
             item = items.get(('ipn', spec['ipn']))
             if item is None:
                 issues.append(f"IPN {spec['ipn']} 在此快照中无配置项")
