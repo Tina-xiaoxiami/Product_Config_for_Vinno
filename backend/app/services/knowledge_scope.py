@@ -14,7 +14,7 @@ SCOPE_FIELDS = ("country", "market", "product_model_id", "software_version")
 REQUIRED_SCOPE_FIELDS = ("market", "product_model_id", "software_version")
 STORED_FIELDS = {*SCOPE_FIELDS, "model_name", "series_name"}
 _A_SERIES = re.compile(r"(?<![a-z0-9])(?:vinno\s*)?a(?:\s*系列|[0-9]+[a-z]*)(?![a-z0-9])", re.I)
-_V_SERIES = re.compile(r"(?<![a-z0-9])(?:vinno\s+\d|v(?:\s*系列|\d))", re.I)
+_V_SERIES = re.compile(r"(?<![a-z0-9])(?:vinno\s*\d+|v(?:\s*系列|\d+(?:iq|pro|exp|[sep])?))(?![a-z0-9])", re.I)
 
 
 def a_only_question(question: str) -> bool:

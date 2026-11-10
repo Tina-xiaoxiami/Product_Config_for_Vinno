@@ -196,6 +196,14 @@ async def test_unified_question_infers_range_and_creates_only_explicit_saved_dra
             assert (await client.post("/api/knowledge/questions/draft", json=body)).status_code == 409
             queue = (await client.get("/api/knowledge/questions", params={"workflow": "draft", "all_scopes": True})).json()
             assert queue["total"] == 1 and queue["items"][0]["id"] == saved.json()["id"]
+            outside = await client.post("/api/knowledge/questions/ask", json={
+                "question": "A3 使用 V8BAT 或 V9BAT 的续航是多少？", "unified": True,
+            })
+            assert outside.json()["status"] == "outside_scope"
+            mixed = await client.post("/api/knowledge/questions/ask", json={
+                "question": "A3 和 V10 有什么区别？", "unified": True,
+            })
+            assert mixed.json()["status"] == "needs_clarification"
         with sqlite3.connect(path) as db:
             assert db.execute("SELECT count(*) FROM knowledge_questions").fetchone()[0] == 1
     finally:
