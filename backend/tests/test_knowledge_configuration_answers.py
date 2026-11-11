@@ -182,12 +182,23 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
     path = tmp_path / "reviewed-facts.db"
     _create_qa_database(path)
     client, engine = await _client_for(path)
-    citation = {"document_id": 1, "version_id": "a" * 64, "title": "原始配置", "locator": "Sheet1!A237:I237"}
+    source = tmp_path / "configuration.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "Sheet1"
+    workbook.active.append(["V30148", "N/A", "范围外"])
+    workbook.save(source)
+    version = sha256(source.read_bytes()).hexdigest()
+    citation = {"document_id": 1, "version_id": version, "title": "原始配置",
+                "file_name": source.name, "locator": "Sheet1!A1:B1"}
     try:
         with sqlite3.connect(path) as db:
-            db.execute("ALTER TABLE product_models ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1")
-            db.execute("ALTER TABLE product_models ADD COLUMN status TEXT")
+            for column in ("is_enabled INTEGER NOT NULL DEFAULT 1", "description TEXT", "status TEXT",
+                           "column_start INTEGER", "column_end INTEGER", "sort_order INTEGER", "config_group TEXT",
+                           "created_at TEXT", "updated_at TEXT"):
+                db.execute(f"ALTER TABLE product_models ADD COLUMN {column}")
             db.execute("CREATE TABLE config_versions(id INTEGER PRIMARY KEY, series_id INTEGER,version_number TEXT,snapshot_data TEXT)")
+            db.execute("UPDATE knowledge_documents SET file_name=?,file_path=?,sha256=? WHERE id=1",
+                       (source.name, str(source), version))
             db.execute("INSERT INTO config_versions VALUES (1,901,'1.14.82',?)",
                        (_snapshot(("1000349", "独立包装电池", "N/A")),))
         async with engine.begin() as connection:
@@ -216,7 +227,15 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
             assert result["answer_text"] == "VINNO 10 不搭配 V8BAT"
             assert result["snapshot"]["version_number"] == "1.14.82" and result["selection"] == "N/A"
             assert result["sources"][0]["locator"] == citation["locator"]
-            assert result["sources"][0]["preview_url"].endswith(citation["version_id"])
+            link = result["sources"][0]["evidence_url"]
+            assert link.endswith(version)
+            evidence = await client.get(link)
+            assert evidence.status_code == 200, evidence.text
+            assert evidence.json()["excerpts"] == [{
+                "locator": "Sheet1!A1:B1",
+                "cells": [{"address": "A1", "text": "V30148"}, {"address": "B1", "text": "N/A"}],
+            }]
+            assert (await client.get(link.replace(version, "b" * 64))).status_code == 409
             assert (await ask("A3 使用 V9BAT 的续航是多少？"))["status"] == "outside_scope"
             assert (await ask("Cart-F 的整车续航是多少？"))["missing_fields"] == ["market"]
             cart, = (await ask("海外 Cart-F 的整车续航是多少？"))["configuration_answers"]
