@@ -214,6 +214,8 @@ async def test_unified_question_infers_range_and_creates_only_explicit_saved_dra
 async def test_saved_draft_survives_restart_and_only_publication_advances_version(tmp_path):
     path = tmp_path / "persistent-draft.db"
     _create_qa_database(path)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE knowledge_documents SET sha256=? WHERE id=1", ("a" * 64,))
     client, engine = await _client_for(path)
     question = {"scope": TEST_QUERY_SCOPE, "question": "针增益功能适用什么配置？"}
     async with client:
@@ -263,6 +265,19 @@ async def test_saved_draft_survives_restart_and_only_publication_advances_versio
             assert published[0]["citations"][0]["source_ref"] == "第3页"
             assert published[1]["citations"][0]["source_ref"] == "第2页"
             assert [row["answer_text"] for row in history if row["review_status"] == "draft"] == ["修订二", "修订一"]
+
+            replay = await client.put(f"{url}/draft-answer", json={
+                **form, "expected_version": 2, "answer_text": "修订二",
+            })
+            assert replay.status_code == 200, replay.text
+            token = replay.json()["draft"]["revision"]
+            for _ in range(2):
+                duplicate = await client.put(f"{url}/answer", json={"draft_revision": token})
+                assert duplicate.status_code == 200, duplicate.text
+                assert duplicate.json()["answer"]["version"] == 2
+                assert duplicate.json()["draft"] is None
+            history = (await client.get(f"{url}/history")).json()["items"]
+            assert [row["version"] for row in history if row["review_status"] == "published"] == [2, 1]
     finally:
         await engine.dispose()
 
