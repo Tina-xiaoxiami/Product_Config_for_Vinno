@@ -203,6 +203,7 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
                        (_snapshot(("1000349", "独立包装电池", "N/A")),))
         async with engine.begin() as connection:
             await connection.run_sync(lambda sync: KnowledgePublicFact.__table__.create(sync))
+            await connection.run_sync(KnowledgeConfigurationAnswerRevision.__table__.create)
         async with AsyncSession(engine) as db:
             db.add_all([
                 KnowledgePublicFact(fact_key="component.excluded:901:1000349", market="domestic", payload_json=json.dumps({
@@ -236,6 +237,17 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
                 "cells": [{"address": "A1", "text": "V30148"}, {"address": "B1", "text": "N/A"}],
             }]
             assert (await client.get(link.replace(version, "b" * 64))).status_code == 409
+            for question in (
+                "V10 使用 V8BAT 的续航是多少？",
+                "国内 VINNO 10 搭配 V30148 的实测续航是多久？",
+            ):
+                runtime, = (await ask(question))["configuration_answers"]
+                assert runtime["answer_text"] == result["answer_text"]
+                assert runtime["selection"] == "N/A" and not runtime["rows"]
+                assert runtime["sources"][0]["evidence_url"] == link
+            general, = (await ask("国内 V10 的续航是多少？", {"software_version": "1.14.82"}))["configuration_answers"]
+            assert result["answer_text"] in general["scope_note"]
+            assert "当前配置未登记可用于续航匹配的电池" in general["issues"]
             assert (await ask("A3 使用 V9BAT 的续航是多少？"))["status"] == "outside_scope"
             assert (await ask("Cart-F 的整车续航是多少？"))["missing_fields"] == ["market"]
             cart, = (await ask("海外 Cart-F 的整车续航是多少？"))["configuration_answers"]
