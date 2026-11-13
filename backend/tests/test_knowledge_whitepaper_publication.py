@@ -122,5 +122,9 @@ async def test_sync_is_atomic_idempotent_and_pins_receipt(publication, tmp_path,
             files["pdf"].write_bytes(b"unpublished bytes")
             with pytest.raises(KnowledgeContentError, match="发布回执"):
                 await extract_registered_document(db, ident, force=True)
+            index = (await db.execute(text(
+                "SELECT status,source_sha256 FROM knowledge_document_extractions WHERE document_id=:id"
+            ), {"id": ident})).one()
+            assert index == ("stale", result["documents"][0]["sha256"])
     finally:
         await engine.dispose()

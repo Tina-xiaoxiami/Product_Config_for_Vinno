@@ -456,6 +456,15 @@ async def extract_registered_document(
                 raise KnowledgeContentError("既有发布回执与新回执摘要不一致")
             expected_sha256 = published_hash
     if expected_sha256 is not None and expected_sha256 != source_sha256:
+        if commit:
+            changed = await session.execute(text("""
+                UPDATE knowledge_document_extractions
+                SET status='stale', updated_at=CURRENT_TIMESTAMP
+                WHERE document_id=:id AND status='completed'
+            """), {"id": document_id})
+            if changed.rowcount:
+                await mark_changed_async(session, document_id, "source_changed")
+            await session.commit()
         raise KnowledgeContentError("原件与发布回执摘要不一致")
     current_result = await session.execute(
         text(
