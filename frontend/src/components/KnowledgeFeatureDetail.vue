@@ -60,7 +60,7 @@ const versions = ref([]), versionId = ref(null), versionsLoading = ref(false), v
 const state = reactive({}), workspace = createFeatureDetailWorkspace({ load: getKnowledgeFeatureDetail }, state)
 const catalogRequest = createLatestParameterRequest(), versionsRequest = createLatestParameterRequest()
 const scopedModels = computed(() => props.models.filter(model => !scope.market || model.series_name?.endsWith(scope.market === 'domestic' ? '-China' : '-Oversea')))
-const featureLabel = feature => `${feature.legacy_name} · ${feature.display_cn_name || feature.primary_cn_name || feature.primary_en_name || '名称待核'}${feature.ipns?.length ? ' · ' + feature.ipns.map(item => item.ipn).join(' / ') : ''}`
+const featureLabel = feature => `${feature.legacy_name} · ${feature.display_cn_name || feature.primary_cn_name || '名称待核'}${feature.primary_en_name ? ' · ' + feature.primary_en_name : ''}${feature.ipns?.length ? ' · ' + feature.ipns.map(item => item.ipn).join(' / ') : ''}`
 const relationLabel = value => ({ primary: '主功能', version_variant: '关联版本', related: '关联功能', parameter: '参数', component: '组合成员' }[value] || value)
 async function allPages(fetchPage) {
   const items = []

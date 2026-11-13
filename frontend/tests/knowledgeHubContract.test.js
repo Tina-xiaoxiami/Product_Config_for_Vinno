@@ -179,10 +179,10 @@ test('knowledge hub exposes controlled document extraction and candidate evidenc
 })
 
 
-test('knowledge hub keeps only query, history and parameter answer workspaces', () => {
+test('knowledge hub keeps query, feature detail, history and parameter workspaces', () => {
   const view = read('../src/views/KnowledgeHub.vue')
   const tabs = [...view.matchAll(/<el-tab-pane label="([^"]+)" name="([^"]+)"/g)].map(match => [match[1], match[2]])
-  assert.deepEqual(tabs, [['问答查询', 'qa'], ['参数型答案', 'parameters']])
+  assert.deepEqual(tabs, [['问答查询', 'qa'], ['功能详情', 'feature-detail'], ['参数型答案', 'parameters']])
   assert.doesNotMatch(view, /feature-knowledge-list|registration-strategy-table|knowledge-feature-coverage/)
   assert.match(read('../src/views/FeatureManage.vue'), /getFeatureMasterData/)
   assert.match(read('../src/views/RegistrationManage.vue'), /getRegistrationDifferenceSummary/)

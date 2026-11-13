@@ -1,4 +1,7 @@
 """Read-only composition of existing identity, snapshot and evidence rules."""
+import re
+import unicodedata
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +11,22 @@ from app.services.knowledge_parameters import SELECTION_LABELS, ParameterError, 
 from app.services.knowledge_query import get_feature_knowledge
 from app.services.knowledge_release_history import trace_release_history
 from app.services.knowledge_scope import missing_scope_fields, resolve_query_scope
+
+
+def _mentions_feature(excerpt: str, names: list[str]) -> bool:
+    content = unicodedata.normalize('NFKC', excerpt).casefold()
+    for name in names:
+        term = unicodedata.normalize('NFKC', name).strip().casefold()
+        if not term:
+            continue
+        pattern = r'\s*'.join(re.escape(part) for part in term.split())
+        if term[0].isascii() and term[0].isalnum():
+            pattern = r'(?<![a-z0-9])' + pattern
+        if term[-1].isascii() and term[-1].isalnum():
+            pattern += r'(?![a-z0-9])'
+        if re.search(pattern, content):
+            return True
+    return False
 
 
 async def feature_detail(
@@ -57,9 +76,12 @@ async def feature_detail(
         if any(row['status'] == 'missing' for row in rows):
             result['issues'].append('部分关联IPN未出现在该快照，不能据此判断不支持')
     # Names retrieve candidate text only; they never establish identity or applicability.
-    query = feature['legacy_name'] or feature['primary_cn_name'] or feature['primary_en_name']
+    query = feature['primary_en_name'] or feature['primary_cn_name'] or feature['legacy_name']
+    names = [str(feature.get(key) or '') for key in ('primary_en_name', 'primary_cn_name', 'legacy_name')]
+    names.extend(row['name'] for row in feature['names'])
     candidates = await find_candidate_evidence(db, query, scope=resolved, limit=12)
-    result['citations'] = [row for row in candidates if row.get('version_id')]
+    result['citations'] = [row for row in candidates if row.get('version_id')
+                           and _mentions_feature(row.get('excerpt') or '', names)]
     if not result['citations']:
         result['issues'].append('未找到当前机型与资料版本的可定位正文；不跨系列补全参数或说明')
     result['history'] = await trace_release_history(db, query, resolved)
