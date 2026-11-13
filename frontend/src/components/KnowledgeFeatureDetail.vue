@@ -7,12 +7,13 @@
         <el-option v-for="feature in features" :key="feature.id" :value="feature.id" :label="featureLabel(feature)" />
       </el-select>
       <el-select v-model="scope.market" clearable size="small" aria-label="详情市场" placeholder="市场" @change="onMarketChange"><el-option label="国内" value="domestic" /><el-option label="海外" value="overseas" /></el-select>
-      <el-select v-model="scope.product_model_id" filterable clearable size="small" aria-label="详情完整机型" placeholder="完整机型" @change="onModelChange"><el-option v-for="model in scopedModels" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" /></el-select>
+      <el-select v-model="scope.product_model_id" filterable clearable size="small" aria-label="详情完整机型" placeholder="完整机型" :loading="modelsLoading" @change="onModelChange"><el-option v-for="model in scopedModels" :key="model.id" :label="`${model.name} · ${model.series_name}`" :value="model.id" /></el-select>
       <el-input v-model="scope.software_version" size="small" aria-label="详情软件版本" placeholder="目标软件版本" maxlength="80" @input="workspace.invalidate" />
       <el-select v-model="versionId" filterable clearable size="small" aria-label="详情配置快照" placeholder="已发布配置快照" :loading="versionsLoading" :disabled="!scope.product_model_id" @change="workspace.invalidate"><el-option v-for="version in versions" :key="version.id" :value="version.id" :label="`${version.version_number}${version.version_name ? ' · ' + version.version_name : ''}`" /></el-select>
       <el-button size="small" type="primary" :disabled="!featureId" :loading="state.loading" @click="loadDetail">查看详情</el-button>
       <el-button size="small" :disabled="catalogLoading" @click="loadCatalog">刷新功能目录</el-button>
     </div>
+    <el-alert v-if="modelsError" title="机型目录加载失败，请重试后查询" type="error" :closable="false"><el-button size="small" :loading="modelsLoading" @click="emit('retry-models')">重新加载机型</el-button></el-alert>
     <el-alert v-if="catalogError" :title="catalogError" type="error" :closable="false" />
     <el-alert v-if="versionsError" :title="versionsError" type="error" :closable="false"><el-button size="small" @click="onModelChange">重试配置列表</el-button></el-alert>
     <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
@@ -52,8 +53,8 @@ import { getKnowledgeFeatures, getKnowledgeFeatureDetail, getVersions } from '..
 import { createFeatureDetailWorkspace } from '../utils/knowledgeFeatureDetail'
 import { createLatestParameterRequest, parameterFailure } from '../utils/knowledgeParameters'
 import { knowledgeScopeLabel } from '../utils/knowledgeQueryScope'
-const props = defineProps({ models: { type: Array, default: () => [] } })
-const emit = defineEmits(['citation'])
+const props = defineProps({ models: { type: Array, default: () => [] }, modelsLoading: Boolean, modelsError: Boolean })
+const emit = defineEmits(['citation', 'retry-models'])
 const featureId = ref(null), features = ref([]), catalogLoading = ref(false), catalogError = ref('')
 const scope = reactive({ market: '', product_model_id: null, software_version: '' })
 const versions = ref([]), versionId = ref(null), versionsLoading = ref(false), versionsError = ref('')

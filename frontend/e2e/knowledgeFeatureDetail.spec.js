@@ -55,3 +55,20 @@ test('feature scope, independent snapshot and citation return remain in one view
   expect(modelCalls).toBe(0)
   expect(errors).toEqual([])
 })
+
+test('failed model directory can be retried directly from feature detail', async ({ page }) => {
+  let failed = true, requests = 0
+  await page.route(/\/api\/models(?:\?|$)/, async route => {
+    if (route.request().method() !== 'GET') return route.continue()
+    requests++
+    if (failed) return route.fulfill({ status: 503, json: { detail: '目录暂不可用' } })
+    await route.continue()
+  })
+  await page.goto('/knowledge?tab=feature-detail')
+  const workspace = page.getByTestId('knowledge-feature-detail')
+  await expect(workspace).toContainText('机型目录加载失败')
+  failed = false
+  await workspace.getByRole('button', { name: '重新加载机型', exact: true }).click()
+  await expect(workspace.getByText('机型目录加载失败，请重试后查询', { exact: true })).toHaveCount(0)
+  expect(requests).toBeGreaterThan(1)
+})

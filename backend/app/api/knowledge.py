@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.knowledge_feature_detail import FeatureDetailRequest
 from app.services.knowledge_feature_detail import feature_detail
-from app.services.knowledge_parameters import ParameterError
-from app.services.knowledge_release_history import ReleaseHistoryError
+from app.services.knowledge_parameters import ParameterError, ParameterUnavailable
+from app.services.knowledge_release_history import ReleaseHistoryError, ReleaseHistoryUnavailable
 from app.database import get_db
 from app.services.knowledge_sources import CitationSourceError, answer_spreadsheet_citations, citation_evidence, verified_original
 from app.services.knowledge_answer_review import (
@@ -656,7 +656,8 @@ async def read_feature_detail(
         item = await feature_detail(db, feature_id, scope=data.scope.model_dump() if data.scope else None,
                                     configuration_version_id=data.configuration_version_id)
     except (KnowledgeScopeError, ParameterError, ReleaseHistoryError) as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+        status = 503 if isinstance(error, (KnowledgeScopeUnavailable, ParameterUnavailable, ReleaseHistoryUnavailable)) else 422
+        raise HTTPException(status_code=status, detail=str(error)) from error
     if item is None:
         raise HTTPException(status_code=404, detail='功能不存在')
     return item
