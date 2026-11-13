@@ -215,6 +215,7 @@
       </el-tab-pane>
 
       <el-tab-pane v-if="route.query.tab === 'history'" label="历史版本追溯" name="history"><KnowledgeReleaseHistoryWorkspace :models="qaModels" :current-scope="knowledgeScopePayload(qaScope)" :query="qaQuestion" /></el-tab-pane>
+      <el-tab-pane label="功能详情" name="feature-detail" lazy><KnowledgeFeatureDetail :models="qaModels" :models-loading="qaModelsLoading" :models-error="qaModelsError" @retry-models="loadQaModels" @citation="openCitation" /></el-tab-pane>
       <el-tab-pane label="参数型答案" name="parameters"><KnowledgeParameterWorkspace ref="parameterWorkspace" /></el-tab-pane>
     </el-tabs>
 
@@ -329,6 +330,7 @@
 <script setup>
 import KnowledgeHistoryTrace from '../components/KnowledgeHistoryTrace.vue'
 import KnowledgeReleaseHistoryWorkspace from '../components/KnowledgeReleaseHistoryWorkspace.vue'
+import KnowledgeFeatureDetail from '../components/KnowledgeFeatureDetail.vue'
 import KnowledgeParameterWorkspace from '../components/KnowledgeParameterWorkspace.vue' 
 import KnowledgeCitationViewer from '../components/KnowledgeCitationViewer.vue'
 import KnowledgeAnswerBody from '../components/KnowledgeAnswerBody.vue'
@@ -381,7 +383,7 @@ watch(() => route.query.tab, (tab) => {
   } else if (tab === 'documents') {
     router.replace({ path: '/release', query: { tab: 'documents' } })
   } else {
-    activeTab.value = ['qa', 'history', 'parameters'].includes(tab) ? tab : 'qa'
+    activeTab.value = ['qa', 'history', 'parameters', 'feature-detail'].includes(tab) ? tab : 'qa'
   }
 }, { immediate: true })
 const documents = ref([])
