@@ -157,3 +157,23 @@ async def test_detail_rejects_fuzzy_unrelated_sources_and_uses_approved_search_n
             result = await detail(db)
             assert [row['chunk_id'] for row in result['citations']] == [1]
             assert seen == ['VATT']
+
+@pytest.mark.asyncio
+async def test_detail_route_preserves_service_unavailable_status(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from app.api import knowledge
+    from app.database import get_db
+    from app.services.knowledge_scope import KnowledgeScopeUnavailable
+    async def unavailable(*args, **kwargs):
+        raise KnowledgeScopeUnavailable('查询范围服务未就绪')
+    monkeypatch.setattr(knowledge, 'feature_detail', unavailable)
+    async with client_for(tmp_path) as (_, factory):
+        app = FastAPI()
+        app.include_router(knowledge.router, prefix='/api/knowledge')
+        async def database():
+            async with factory() as db:
+                yield db
+        app.dependency_overrides[get_db] = database
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            assert (await client.post('/api/knowledge/features/1/detail', json={})).status_code == 503

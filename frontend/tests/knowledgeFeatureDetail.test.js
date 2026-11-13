@@ -43,3 +43,13 @@ test('feature detail lives in knowledge hub and reuses citation and history view
   assert.match(hub, /name="feature-detail"/)
   assert.match(hub, /@citation="openCitation"/)
 })
+
+test('detail model directory failures expose the shared retry action', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const source = await readFile(new URL('../src/components/KnowledgeFeatureDetail.vue', import.meta.url), 'utf8')
+  const hub = await readFile(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  assert.match(source, /v-if="modelsError"/)
+  assert.match(source, /emit\('retry-models'\)/)
+  assert.match(hub, /:models-error="qaModelsError"/)
+  assert.match(hub, /@retry-models="loadQaModels"/)
+})
