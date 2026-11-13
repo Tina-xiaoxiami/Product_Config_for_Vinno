@@ -144,14 +144,13 @@ test('settings edits a hidden and filtered feature without dropping unsaved sett
 })
 
 async function keepPageOnReload(page) {
-  const dialog = page.waitForEvent('dialog')
-  const reload = page.reload().catch(error => {
-    if (!error.message.includes('ERR_ABORTED')) throw error
-  })
-  const prompt = await dialog
+  const [prompt] = await Promise.all([
+    page.waitForEvent('dialog', { timeout: 5000 }),
+    // A rejected reload never commits a new document. Wait for the prompt instead.
+    page.evaluate(() => window.setTimeout(() => window.location.reload(), 0))
+  ])
   expect(prompt.type()).toBe('beforeunload')
   await prompt.dismiss()
-  await reload
 }
 
 test('matrix input survives rejected close, refresh and navigation', async ({ page }) => {
