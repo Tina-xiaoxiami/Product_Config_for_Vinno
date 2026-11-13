@@ -117,3 +117,25 @@ async def test_sources_reuse_same_scope_and_require_version_identity(tmp_path, m
             assert result['citations'][0]['source_ref'] == '第2页'
             assert calls[0][2] == calls[1][2] == result['scope']
             assert result['history']['assessment'] == 'no_record'
+
+@pytest.mark.asyncio
+async def test_public_detail_route_validates_scope_and_returns_missing_feature(tmp_path):
+    import httpx
+    from fastapi import FastAPI
+    from app.api.knowledge import router
+    from app.database import get_db
+    async with client_for(tmp_path) as (_, factory):
+        await seed(factory)
+        app = FastAPI()
+        app.include_router(router, prefix='/api/knowledge')
+        async def database():
+            async with factory() as db:
+                yield db
+        app.dependency_overrides[get_db] = database
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            response = await client.post('/api/knowledge/features/1/detail', json={'scope': SCOPE, 'configuration_version_id': 1})
+            assert response.status_code == 200, response.text
+            assert response.json()['configuration']['items'][0]['selection_config'] == 'X'
+            assert (await client.post('/api/knowledge/features/999/detail', json={})).status_code == 404
+            assert (await client.post('/api/knowledge/features/1/detail', json={'configuration_version_id': -1})).status_code == 422
+            assert (await client.post('/api/knowledge/features/1/detail', json={'scope': {**SCOPE, 'market': 'overseas'}, 'configuration_version_id': 1})).status_code == 422
