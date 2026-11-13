@@ -31,3 +31,15 @@ test('detail preserves explicit configuration version and reports failed reload'
   assert.match(state.error, /读取失败/)
   assert.equal(state.loading, false)
 })
+
+test('feature detail lives in knowledge hub and reuses citation and history views', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const source = await readFile(new URL('../src/components/KnowledgeFeatureDetail.vue', import.meta.url), 'utf8')
+  const hub = await readFile(new URL('../src/views/KnowledgeHub.vue', import.meta.url), 'utf8')
+  assert.match(source, /KnowledgeHistoryTrace/)
+  assert.match(source, /emit\('citation', citation\)/)
+  assert.match(source, /关联版本/)
+  assert.match(source, /候选原文/)
+  assert.match(hub, /name="feature-detail"/)
+  assert.match(hub, /@citation="openCitation"/)
+})
