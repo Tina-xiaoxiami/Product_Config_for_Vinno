@@ -9,13 +9,17 @@ from app.services.config_history import build_snapshot_item_comparison_index
 from app.services.knowledge_cart_facts import COMPONENT_EXCLUSION_PREFIX, resolve_cart_fact
 from app.services.knowledge_parameters import ParameterError, SELECTION_LABELS, answer_snapshot
 from app.services.knowledge_qa import normalize_question
+from app.services.knowledge_runtime import V8BAT_IPN, runtime_models
 
 _CART_RUNTIME = re.compile(r"cartf(?:的)?(?:整车)?(?:电池)?(?:实测)?续航(?:时长|时间)?(?:是多少|有多久|是多久|多久)?")
 _V8BAT_SELECTION = re.compile(
     r"(?:(?:vinno)?v?\d+[a-z]*的?)?(?:是否|能否|能|可以)?"
     r"(?:支持选配|支持|选配|搭配|用)(?:v8bat|v30148|(?:ipn)?1000349)(?:吗|么)?"
 )
-_V8BAT_IPN = "1000349"
+_V8BAT_RUNTIME = re.compile(
+    r"(?:(?:vinno|v)(?P<model>10|8|6iq|5iq|6|5))?(?:使用|搭配|用)"
+    r"(?:v8bat|v30148|(?:ipn)?1000349)的?(?:实测)?续航(?:时长|时间)?(?:是多少|有多久|是多久|多久)?"
+)
 
 
 def _source_links(sources, market, key):
@@ -38,7 +42,8 @@ async def reviewed_answer(db, question, scope, *, configuration_version_id=None)
         "", question, flags=re.I,
     ))
     cart_runtime = bool(_CART_RUNTIME.fullmatch(query))
-    if not cart_runtime and not _V8BAT_SELECTION.fullmatch(query):
+    battery_runtime = _V8BAT_RUNTIME.fullmatch(query)
+    if not cart_runtime and not battery_runtime and not _V8BAT_SELECTION.fullmatch(query):
         return None
     if not (await db.execute(text(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_public_facts'"
@@ -46,42 +51,67 @@ async def reviewed_answer(db, question, scope, *, configuration_version_id=None)
         return None
     market = scope.get("market")
     model_id = scope.get("product_model_id")
+    if battery_runtime and battery_runtime["model"] and not model_id and configuration_version_id is None:
+        # Evaluate each exact model separately. An excluded battery in one market
+        # cannot answer for another market with no reviewed fact.
+        models = await runtime_models(db, f"v{battery_runtime['model']}", scope)
+        results = []
+        for model in models:
+            result = await _battery_answer(db, model, scope, configuration_version_id)
+            if result is None or result["fact_status"] != "confirmed":
+                break
+            results.append(result)
+        else:
+            if results:
+                return {"status": "configuration", "configuration_answers": results}
     missing = ([] if market else ["market"]) + ([] if cart_runtime or model_id else ["product_model_id"])
     if missing:
         return {"status": "needs_clarification", "missing_fields": missing}
 
-    result = {"kind": "reviewed_fact", "market": market, "rows": [], "issues": []}
     if cart_runtime:
         key = "cart_f.battery_pack.runtime"
+        fact = await resolve_cart_fact(db, key, market, {})
+        if fact is None:
+            return None
+        result = _fact_answer(fact, market, key)
     else:
         from app.services.knowledge_configuration_answers import _model
 
         model = await _model(db, model_id, market)
         if model is None:
             return None
-        result["model"] = model
-        key = f"{COMPONENT_EXCLUSION_PREFIX}{model_id}:{_V8BAT_IPN}"
+        result = await _battery_answer(db, model, scope, configuration_version_id)
+        if result is None:
+            return None
+    return {"status": "configuration", "configuration_answers": [result]}
 
+
+async def _battery_answer(db, model, scope, configuration_version_id):
+    market = model["market"]
+    key = f"{COMPONENT_EXCLUSION_PREFIX}{model['id']}:{V8BAT_IPN}"
     fact = await resolve_cart_fact(db, key, market, {})
     if fact is None:
         return None
-    if not cart_runtime:
-        try:
-            metadata, snapshot = await answer_snapshot(
-                db, model["series_id"], configuration_version_id=configuration_version_id,
-                software_version=scope.get("software_version"),
-            )
-            item = build_snapshot_item_comparison_index(snapshot).get(("ipn", _V8BAT_IPN), {})
-            selection = item.get("values", {}).get(str(model_id), {}).get("selection_config")
-            result.update(snapshot=metadata, ipn=_V8BAT_IPN, selection=selection,
-                          selection_label=SELECTION_LABELS.get(selection, "不适用" if selection == "N/A" else "未登记"))
-        except (ParameterError, ValueError) as error:
-            result["issues"].append(str(error))
-    result.update(
-        answer_text=fact["display_value"] if fact["status"] == "confirmed" else fact["issue"]["detail"],
-        fact_status=fact["status"], sources=_source_links(fact.get("sources", []), market, key),
-    )
-    return {"status": "configuration", "configuration_answers": [result]}
+    result = _fact_answer(fact, market, key)
+    result["model"] = model
+    try:
+        metadata, snapshot = await answer_snapshot(
+            db, model["series_id"], configuration_version_id=configuration_version_id,
+            software_version=scope.get("software_version"),
+        )
+        item = build_snapshot_item_comparison_index(snapshot).get(("ipn", V8BAT_IPN), {})
+        selection = item.get("values", {}).get(str(model["id"]), {}).get("selection_config")
+        result.update(snapshot=metadata, ipn=V8BAT_IPN, selection=selection,
+                      selection_label=SELECTION_LABELS.get(selection, "不适用" if selection == "N/A" else "未登记"))
+    except (ParameterError, ValueError) as error:
+        result["issues"].append(str(error))
+    return result
+
+
+def _fact_answer(fact, market, key):
+    return {"kind": "reviewed_fact", "market": market, "rows": [], "issues": [],
+            "answer_text": fact["display_value"] if fact["status"] == "confirmed" else fact["issue"]["detail"],
+            "fact_status": fact["status"], "sources": _source_links(fact.get("sources", []), market, key)}
 
 
 async def reviewed_workbook_citation(db, market, key, source_index, version_id):

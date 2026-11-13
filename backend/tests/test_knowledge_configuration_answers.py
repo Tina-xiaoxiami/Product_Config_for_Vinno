@@ -13,10 +13,10 @@ from app.services.knowledge_runtime import BATTERY_TEST
 from test_knowledge_qa_api import _client_for, _create_qa_database
 
 
-def _snapshot(*batteries):
-    return json.dumps({"models": [{"id": 901, "name": "VINNO 10"}],
+def _snapshot(*batteries, model_id=901):
+    return json.dumps({"models": [{"id": model_id, "name": "VINNO 10"}],
                        "items": [{"ipn": ipn, "zh_desc": name,
-                                  "values": {"901": {"selection_config": selection}}}
+                                  "values": {str(model_id): {"selection_config": selection}}}
                                  for ipn, name, selection in batteries]})
 
 
@@ -202,7 +202,8 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
             db.execute("INSERT INTO config_versions VALUES (1,901,'1.14.82',?)",
                        (_snapshot(("1000349", "独立包装电池", "N/A")),))
         async with engine.begin() as connection:
-            await connection.run_sync(lambda sync: KnowledgePublicFact.__table__.create(sync))
+            await connection.run_sync(KnowledgePublicFact.__table__.create)
+            await connection.run_sync(KnowledgeConfigurationAnswerRevision.__table__.create)
         async with AsyncSession(engine) as db:
             db.add_all([
                 KnowledgePublicFact(fact_key="component.excluded:901:1000349", market="domestic", payload_json=json.dumps({
@@ -236,6 +237,29 @@ async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp
                 "cells": [{"address": "A1", "text": "V30148"}, {"address": "B1", "text": "N/A"}],
             }]
             assert (await client.get(link.replace(version, "b" * 64))).status_code == 409
+            unscoped = "V10 使用 V8BAT 的续航是多少？"
+            assert (await ask(unscoped))["status"] == "needs_clarification"
+            runtime, = (await ask("国内 VINNO 10 搭配 V30148 的实测续航是多久？"))["configuration_answers"]
+            assert runtime["answer_text"] == result["answer_text"]
+            assert runtime["selection"] == "N/A" and not runtime["rows"]
+            assert runtime["sources"][0]["evidence_url"] == link
+            async with AsyncSession(engine) as db, db.begin():
+                domestic = await db.get(KnowledgePublicFact, ("component.excluded:901:1000349", "domestic"))
+                overseas_payload = {**json.loads(domestic.payload_json), "conditions": {"model_id": 903}}
+                db.add(KnowledgePublicFact(fact_key="component.excluded:903:1000349", market="overseas",
+                                           payload_json=json.dumps(overseas_payload)))
+                await db.execute(text("INSERT INTO config_versions VALUES (2,902,'1.14.82',:data)"), {
+                    "data": _snapshot(("1000349", "独立包装电池", "N/A"), model_id=903),
+                })
+            both = (await ask(unscoped))["configuration_answers"]
+            assert [(item["market"], item["selection"], item["answer_text"]) for item in both] == [
+                ("domestic", "N/A", result["answer_text"]), ("overseas", "N/A", result["answer_text"]),
+            ]
+            general, = (await ask("国内 V10 的续航是多少？", {"software_version": "1.14.82"}))["configuration_answers"]
+            assert result["answer_text"] in general["scope_note"]
+            assert "当前配置未登记可用于续航匹配的电池" in general["issues"]
+            legacy, = (await ask("国内 V10 使用 V8BAT 或 V9BAT 的实测续航是多久？"))["configuration_answers"]
+            assert legacy["recipe"] == "runtime:v10" and result["answer_text"] in legacy["scope_note"]
             assert (await ask("A3 使用 V9BAT 的续航是多少？"))["status"] == "outside_scope"
             assert (await ask("Cart-F 的整车续航是多少？"))["missing_fields"] == ["market"]
             cart, = (await ask("海外 Cart-F 的整车续航是多少？"))["configuration_answers"]
