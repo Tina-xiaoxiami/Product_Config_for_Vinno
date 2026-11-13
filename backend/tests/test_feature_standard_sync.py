@@ -99,3 +99,16 @@ async def test_sync_cli_refuses_report_over_source_database(tmp_path,alias):
 def test_shared_version_note_is_not_a_function_identifier():
     plan=plan_standard_sync([{'cn_name':'应变分析','en_name':'Strain(V1)'}],{1:source(1,'Other(V1)','另一个分析','Other(V1)')})
     assert not plan['checked']
+
+
+def test_b_line_does_not_match_b_mode_by_derived_prefix():
+    b_mode = {'cn_name': 'B模式', 'en_name': 'B'}
+    b_line = {'cn_name': 'B线自动测量', 'en_name': 'Auto BLine'}
+    features = {
+        64: source(64, 'B线自动测量', 'B线自动测量', 'Auto BLine'),
+        172: source(172, 'B模式', 'B模式', 'B'),
+    }
+    plan = plan_standard_sync([b_mode, b_line], features)
+    assert [(row['feature_id'], row['en']) for row in plan['checked']] == [(64, 'Auto BLine'), (172, 'B')]
+    assert not plan['skipped']
+    assert plan_standard_sync([b_mode], {64: features[64]})['skipped'][0]['feature_id'] == 64

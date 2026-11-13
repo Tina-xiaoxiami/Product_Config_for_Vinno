@@ -6,6 +6,7 @@ const categories = Array.from({ length: 18 }, (_, i) => ({ id: i + 1000, name: `
 async function fixture(page) {
   // Real component and Element Plus layout with deterministic wide catalog data.
   let displayName = ''
+  const savedDrafts = []
   const nameDetail = () => ({ name: '功能 2', display_name: displayName, default_display_name: '功能 2', primary_cn_name: '功能 2', primary_en_name: 'Feature Two', checks: [] })
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -13,7 +14,11 @@ async function fixture(page) {
     if (path === '/api/template-features/catalog') data = { items: features, matrix_items: features, total: features.length, groups: [{id:10,name:'基础功能'},{id:20,name:'血流'}] }
     else if (path === '/api/probe-categories') data = { items: categories, total: categories.length }
     else if (/\/probe-categories\/\d+\/apps$/.test(path)) data = {regular:[{id:1,name:'很长的常规应用名称用于确认省略'}],poc:[]}
-    else if (path === '/api/template-features/drafts') data = { drafts: [], catalog_additions: [], total: 0 }
+    else if (path === '/api/template-features/drafts') data = { drafts: savedDrafts, catalog_additions: [], total: savedDrafts.length }
+    else if (path === '/api/template-features/save-draft') {
+      savedDrafts.push(route.request().postDataJSON())
+      data = {}
+    }
     else if (/^\/api\/template-features\/by-category\/\d+$/.test(path)) data = features.map(f => ({feature_id:f.id,default_support:'supported'}))
     else if (path === '/api/features/standards/reviews/1001') data = nameDetail()
     else if (path === '/api/features/standards/reviews/1001/display-name' && route.request().method() === 'PUT') {
@@ -136,4 +141,65 @@ test('settings edits a hidden and filtered feature without dropping unsaved sett
   await settings.getByRole('button', { name: '应用', exact: true }).click()
   await search.fill('770001')
   await expect(headers).toHaveText('Feature Two Custom')
+})
+
+async function keepPageOnReload(page) {
+  const dialog = page.waitForEvent('dialog')
+  const reload = page.reload().catch(error => {
+    if (!error.message.includes('ERR_ABORTED')) throw error
+  })
+  const prompt = await dialog
+  expect(prompt.type()).toBe('beforeunload')
+  await prompt.dismiss()
+  await reload
+}
+
+test('matrix input survives rejected close, refresh and navigation', async ({ page }) => {
+  await fixture(page)
+  await page.getByRole('button', { name: '编辑模式', exact: true }).click()
+  await page.locator('.tpl-cell').first().click()
+  const cell = page.locator('.el-popover:visible')
+  await cell.getByText('不支持', { exact: true }).click()
+  const warning = page.getByRole('dialog', { name: '未保存的修改', exact: true })
+  const keepEditing = warning.getByRole('button', { name: '继续编辑', exact: true })
+  await cell.getByRole('button', { name: '取消', exact: true }).click()
+  await keepEditing.click()
+  await expect(cell.getByRole('radio', { name: '不支持', exact: true })).toBeChecked()
+  await page.getByText('支持', { exact: true }).first().click()
+  await keepEditing.click()
+  await expect(cell.getByRole('radio', { name: '不支持', exact: true })).toBeChecked()
+  await cell.getByRole('button', { name: '确定', exact: true }).click()
+  await keepPageOnReload(page)
+  const pending = page.getByText('编辑中 — 1 项修改', { exact: true })
+  await expect(pending).toBeVisible()
+
+  const otherTab = page.getByRole('tab', { name: '探头&应用', exact: true })
+  await otherTab.click()
+  await keepEditing.click()
+  await expect(page).toHaveURL(/\/template-features$/)
+  await expect(pending).toBeVisible()
+
+  await page.getByRole('button', { name: '保存草稿', exact: true }).click()
+  await expect(page.getByText('已保存 1 条草稿，请提交后生效', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交并创建版本', exact: true })).toBeEnabled()
+  await otherTab.click()
+  await expect(page).toHaveURL(/\/probe-models$/)
+  await page.getByRole('tab', { name: '模板管理', exact: true }).click()
+  await expect(page.getByText(/1 条配置草稿待提交/)).toBeVisible()
+})
+
+test('unapplied column layout survives rejected refresh and Escape', async ({ page }) => {
+  await fixture(page)
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  const column = settings.getByRole('checkbox', { name: '显示功能 2', exact: true })
+  await column.locator('..').click()
+  await keepPageOnReload(page)
+  await expect(column).not.toBeChecked()
+  await page.keyboard.press('Escape')
+  const warning = page.getByRole('dialog', { name: '未应用的列设置', exact: true })
+  await warning.getByRole('button', { name: '继续设置', exact: true }).click()
+  await expect(column).not.toBeChecked()
+  await settings.getByRole('button', { name: '应用', exact: true }).click()
+  await expect(page.locator('.matrix-feature-label').filter({ hasText: /^功能 2$/ })).toHaveCount(0)
 })

@@ -1,5 +1,5 @@
 <template>
-  <el-button :icon="Setting" size="small" @click="open">{{ title }}</el-button>
+  <el-button :icon="Setting" size="small" :disabled="disabled" @click="open">{{ title }}</el-button>
   <el-dialog v-model="visible" :title="title" width="min(560px, calc(100vw - 32px))" :before-close="requestClose" @closed="finishClose">
     <div :class="{ 'settings-body': $slots.options }">
       <slot name="options" :open-after-close="openAfterClose" />
@@ -31,12 +31,14 @@ import { normalizeColumnLayout, moveLayoutColumn } from '../utils/tableColumnLay
 const props = defineProps({
   modelValue: { type: Array, required: true },
   defaults: { type: Array, required: true },
-  title: { type: String, default: '列设置' }
+  title: { type: String, default: '列设置' },
+  disabled: Boolean
 })
 const emit = defineEmits(['update:modelValue'])
 const visible = ref(false), draft = ref([]), baseline = ref(''), dragKey = ref(null)
 let afterClose = null
 const dirty = computed(() => JSON.stringify(draft.value) !== baseline.value)
+const hasUnappliedChanges = computed(() => visible.value && dirty.value)
 const open = () => { draft.value = props.modelValue.map(column => ({ ...column })); baseline.value = JSON.stringify(draft.value); visible.value = true }
 const move = (index, direction) => { const target = draft.value[index + direction]; if (target) draft.value = moveLayoutColumn(draft.value, draft.value[index].key, target.key) }
 const startDrag = (event, key) => { dragKey.value = key; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', key) }
@@ -60,6 +62,11 @@ const apply = () => {
   if (!draft.value.some(column => column.visible)) { ElMessage.warning('至少需要显示一列'); return }
   emit('update:modelValue', normalizeColumnLayout(props.defaults, draft.value)); visible.value = false
 }
+const closeForLeave = () => {
+  afterClose = null
+  visible.value = false
+}
+defineExpose({ hasUnappliedChanges, closeForLeave })
 </script>
 <style scoped>
 .layout-hint { font-size: 12px; color: var(--el-text-color-secondary); margin: 0 0 10px; }
