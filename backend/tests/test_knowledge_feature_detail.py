@@ -139,3 +139,21 @@ async def test_public_detail_route_validates_scope_and_returns_missing_feature(t
             assert (await client.post('/api/knowledge/features/999/detail', json={})).status_code == 404
             assert (await client.post('/api/knowledge/features/1/detail', json={'configuration_version_id': -1})).status_code == 422
             assert (await client.post('/api/knowledge/features/1/detail', json={'scope': {**SCOPE, 'market': 'overseas'}, 'configuration_version_id': 1})).status_code == 422
+
+@pytest.mark.asyncio
+async def test_detail_rejects_fuzzy_unrelated_sources_and_uses_approved_search_name(tmp_path, monkeypatch):
+    from app.services import knowledge_feature_detail as service
+    seen = []
+    async def candidates(db, query, **kwargs):
+        seen.append(query)
+        return [{'chunk_id': 1, 'version_id': 'a'*64, 'excerpt': 'VATT 超声衰减成像'},
+                {'chunk_id': 2, 'version_id': 'a'*64, 'excerpt': 'VAid Breast 乳腺'},
+                {'chunk_id': 3, 'version_id': 'a'*64, 'excerpt': 'NVATT2 unrelated'}]
+    monkeypatch.setattr(service, 'find_candidate_evidence', candidates)
+    async with client_for(tmp_path) as (_, factory):
+        await seed(factory)
+        async with factory() as db:
+            await db.execute(text("UPDATE features SET name='超声衰减成像', primary_en_name='VATT' WHERE id=1"))
+            result = await detail(db)
+            assert [row['chunk_id'] for row in result['citations']] == [1]
+            assert seen == ['VATT']
