@@ -422,6 +422,8 @@ async def extract_registered_document(
     document_id: int,
     *,
     force: bool = False,
+    commit: bool = True,
+    expected_sha256: str | None = None,
 ) -> dict | None:
     document_result = await session.execute(
         text(
@@ -442,6 +444,28 @@ async def extract_registered_document(
 
     extractor_version = document_extractor_version(path, document.mime_type)
     source_sha256 = await asyncio.to_thread(_file_sha256, path)
+    has_receipts = await session.scalar(text(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_whitepaper_publication_sources'"
+    ))
+    if has_receipts:
+        published_hash = await session.scalar(text(
+            "SELECT sha256 FROM knowledge_whitepaper_publication_sources WHERE document_id=:id"
+        ), {"id": document_id})
+        if published_hash is not None:
+            if expected_sha256 is not None and published_hash != expected_sha256:
+                raise KnowledgeContentError("既有发布回执与新回执摘要不一致")
+            expected_sha256 = published_hash
+    if expected_sha256 is not None and expected_sha256 != source_sha256:
+        if commit:
+            changed = await session.execute(text("""
+                UPDATE knowledge_document_extractions
+                SET status='stale', updated_at=CURRENT_TIMESTAMP
+                WHERE document_id=:id AND status='completed'
+            """), {"id": document_id})
+            if changed.rowcount:
+                await mark_changed_async(session, document_id, "source_changed")
+            await session.commit()
+        raise KnowledgeContentError("原件与发布回执摘要不一致")
     current_result = await session.execute(
         text(
             """
@@ -474,16 +498,19 @@ async def extract_registered_document(
     try:
         blocks = await asyncio.to_thread(extract_document_blocks, path, document.mime_type)
         if any(block.locator and block.locator.get("source_sha256") != source_sha256 for block in blocks):
-            raise KnowledgeContentError("Office原件在提取期间变化，请重新提取")
-        if extractor_version == OFFICE_EXTRACTOR_VERSION and await asyncio.to_thread(_file_sha256, path) != source_sha256:
-            raise KnowledgeContentError("Office原件在提取期间变化，请重新提取")
+            raise KnowledgeContentError("原件在提取期间变化，请重新提取")
+        if (expected_sha256 is not None or extractor_version == OFFICE_EXTRACTOR_VERSION) and await asyncio.to_thread(_file_sha256, path) != source_sha256:
+            raise KnowledgeContentError("原件在提取期间变化，请重新提取")
         chunks = build_document_chunks(blocks)
         if not chunks:
             raise KnowledgeContentError("未从原文件中提取到可检索正文")
     except Exception as exc:
         # Parsing failure does not make the old evidence current. Commit the
         # observed change and failed index together before reporting the error.
-        if (old_hash and old_hash != source_sha256) or current is None or current.status != "completed" or (current.source_sha256 and current.source_sha256 != source_sha256):
+        if commit and (
+            (old_hash and old_hash != source_sha256) or current is None or current.status != "completed"
+            or (current.source_sha256 and current.source_sha256 != source_sha256)
+        ):
             await _record_source_observation(session, document_id, old_hash, source_sha256)
             message = str(exc) if isinstance(exc, KnowledgeContentError) else "正文提取失败"
             await session.execute(
@@ -549,7 +576,8 @@ async def extract_registered_document(
             "chunk_count": len(chunks),
         },
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     result = await session.execute(
         text(
             """
