@@ -166,6 +166,15 @@ async def test_version_check_cross_series_retry_rollback_and_history(tmp_path, m
             assert rollback_check["status"] == "checked"
             assert rollback_check["origin"] == "rollback"
             assert rollback_check["rollback_target"]["id"] == 2
+            reused = await client.get(f"{rollback_url}/presentation")
+            assert reused.status_code == 200, reused.text
+            assert reused.content == result.content
+            assert reused.headers["x-cart-presentation-kind"] == "carried"
+            assert reused.headers["x-cart-source-config-id"] == str(second_id)
+            assert reused.headers["x-cart-source-config-version"] == generated["version"]["number"]
+            assert (await client.get(rollback_url)).json()["presentation"]["source"]["id"] == second_id
+            assert (await client.get(f"{rollback_url}/history")).json()["items"][0]["artifact_sha256"] is None
+
 
             # Reverting the global code and saving both series restores the original deck.
             async with session_factory() as db:
