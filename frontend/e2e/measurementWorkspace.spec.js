@@ -155,3 +155,78 @@ test('measurement drafts keep the initial display frozen and publish names, dict
   expect(workspace.changes.some(change => change.change_type === 'delete')).toBe(true)
   expect(errors).toEqual([])
 })
+
+test('two measurement batches keep their own drafts and drag order across reload and switching', async ({ page }) => {
+  test.setTimeout(120000)
+  const buffer = await readFile(fileURLToPath(new URL('./fixtures/measurement-human.xlsx', import.meta.url)))
+  const versions = ['isolated-order-older', 'isolated-order-newer']
+  const workspaces = []
+  for (const [index, version] of versions.entries()) {
+    const imported = await page.request.post('/api/measurements/import', { multipart: {
+      version, file: { name: 'measurement-human.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer }
+    } })
+    expect(imported.ok()).toBe(true)
+    const batchId = (await imported.json()).batch_id
+    const source = await (await page.request.get(`/api/measurements?batch_id=${batchId}`)).json()
+    const initialized = await page.request.post('/api/measurement-workspace/initialize', { data: { batch_id: batchId, expected_sha256: source.batch.sha256 } })
+    expect(initialized.ok()).toBe(true)
+    let workspace = await initialized.json()
+    const row = workspace.data.entries.find(item => item.kind === 'measurement' && item.item_id === 'Distance')
+    const edited = await page.request.post(`/api/measurement-workspace/${workspace.id}/edit`, { data: {
+      revision: workspace.revision, operation: 'rename_item', record_key: row.record_key,
+      cn_name: `距离草稿${index + 1}`, description: `Distance draft ${index + 1}`
+    } })
+    expect(edited.ok()).toBe(true)
+    workspace = await edited.json()
+    workspaces.push({ batchId, workspace })
+  }
+  await page.goto('/measurements')
+  const currentNames = async index => {
+    await page.getByPlaceholder('查找 Id、英文 UI 或中文 UI 名称').fill('Distance')
+    await expect(page.getByRole('cell', { name: `距离草稿${index}`, exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('cell', { name: `Distance draft ${index}`, exact: true }).first()).toBeVisible()
+  }
+  const openDictionary = async menu => {
+    await page.getByRole('button', { name: '管理 ▾', exact: true }).click()
+    await page.getByRole('menuitem', { name: menu, exact: true }).click()
+    return page.getByRole('dialog').filter({ has: page.getByRole('textbox', { name: '字典代码', exact: true }) })
+  }
+  await currentNames(2)
+  const expectedOrder = {}
+  for (const [menu, dimension] of [['应用字典', 'applications'], ['模式字典', 'modes']]) {
+    const dialog = await openDictionary(menu)
+    const handles = dialog.locator('[data-dictionary-code]')
+    const before = await handles.evaluateAll(nodes => nodes.map(node => node.dataset.dictionaryCode))
+    expect(before.length).toBeGreaterThan(1)
+    const saved = page.waitForResponse(response => response.url().endsWith('/edit') && response.request().method() === 'POST')
+    await handles.last().dragTo(handles.first())
+    expect((await saved).ok()).toBe(true)
+    expectedOrder[dimension] = [before.at(-1), ...before.slice(0, -1)]
+    await expect.poll(() => handles.evaluateAll(nodes => nodes.map(node => node.dataset.dictionaryCode))).toEqual(expectedOrder[dimension])
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  }
+  await page.reload()
+  await currentNames(2)
+  const switchTo = async index => {
+    await page.getByRole('button', { name: '管理 ▾', exact: true }).click()
+    await page.getByRole('menuitem', { name: '来源批次', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '来源批次', exact: true })
+    await dialog.locator('.batch-select').click()
+    await page.getByRole('option', { name: new RegExp(`${versions[index]}.*#${workspaces[index].batchId}$`) }).click()
+    await dialog.getByRole('button', { name: '切换批次', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    await currentNames(index + 1)
+  }
+  for (const [menu, dimension] of [['应用字典', 'applications'], ['模式字典', 'modes']]) {
+    const dialog = await openDictionary(menu)
+    await expect.poll(() => dialog.locator('[data-dictionary-code]').evaluateAll(nodes => nodes.map(node => node.dataset.dictionaryCode))).toEqual(expectedOrder[dimension])
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  }
+  await switchTo(0)
+  await switchTo(1)
+  for (const [menu, dimension] of [['应用字典', 'applications'], ['模式字典', 'modes']]) {
+    const dialog = await openDictionary(menu)
+    await expect.poll(() => dialog.locator('[data-dictionary-code]').evaluateAll(nodes => nodes.map(node => node.dataset.dictionaryCode))).toEqual(expectedOrder[dimension])
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  }
+})

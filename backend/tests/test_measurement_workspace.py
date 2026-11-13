@@ -509,3 +509,47 @@ async def test_dictionary_order_is_versioned_validated_and_undoable(api):
     workspace = await act(client, workspace, 'undo', change_key=workspace['changes'][0]['key'])
     assert [entry['code'] for entry in workspace['data']['modes']] == current
     assert not workspace['has_draft']
+
+
+@pytest.mark.asyncio
+async def test_batch_drafts_and_release_bilingual_matching_are_isolated(api):
+    """Measurement workspaces are batch-scoped; Release resolves its own feature names."""
+    import sqlite3
+    from tracker.database import Database
+
+    client, sessions = api
+    async with sessions() as db:
+        db.add(MeasurementBatch(id=2, version='2.0', sha256='b' * 64, source_file='other.xlsx', summary={}, warnings=[]))
+        db.add(MeasurementEntry(id=5, batch_id=2, kind='measurement', item_id='A/B.', cn_name='另一批次', description='Other', mode='Tissue', categories=['CARD'], source_sheet='Measures', source_row=2))
+        await db.commit()
+    first = await initialize(client)
+    response = await client.post(BASE + '/initialize', json={'batch_id': 2, 'expected_sha256': 'b' * 64})
+    assert response.status_code == 200, response.text
+    second = response.json()
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    connection.executescript('''
+        CREATE TABLE releases (id INTEGER, project_id INTEGER);
+        CREATE TABLE features (id INTEGER, project_id INTEGER, cn_name TEXT, en_name TEXT, category TEXT);
+        CREATE TABLE terms (id INTEGER, cn_name TEXT, en_name TEXT, category TEXT, needs_review INTEGER, entry_type TEXT);
+        INSERT INTO releases VALUES (1, 10);
+        INSERT INTO features VALUES (2, 10, '距离', 'Distance', '测量');
+    ''')
+    candidate = {'release_id': 1, 'title_cn': '新增距离测量', 'title_en': 'New Distance measurement'}
+    tracker = Database(':memory:')
+    expected = tracker._resolve_verified_feature_match(connection, candidate)
+    assert expected['id'] == 2 and expected['source'] == 'feature'
+    first = await edit(client, first, 'rename_item', record_key='source:1', cn_name='第一批草稿', description='First draft')
+    second = await edit(client, second, 'rename_item', record_key='source:5', cn_name='第二批草稿', description='Second draft')
+    for dimension in ('applications', 'modes'):
+        codes = [entry['code'] for entry in first['data'][dimension]]
+        first = await edit(client, first, 'reorder_dictionary', dimension=dimension, codes=codes[::-1])
+    for batch, expected_workspace in ((2, second), (1, first), (2, second)):
+        loaded = (await client.get(BASE, params={'batch_id': batch})).json()
+        assert loaded['id'] == expected_workspace['id']
+        assert loaded['data'] == expected_workspace['data']
+        assert loaded['has_draft'] is True
+        assert tracker._resolve_verified_feature_match(connection, candidate) == expected
+    assert first['data']['entries'][0]['cn_name'] == '第一批草稿'
+    assert second['data']['entries'][0]['cn_name'] == '第二批草稿'
+    connection.close()
