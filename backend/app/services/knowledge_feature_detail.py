@@ -79,9 +79,11 @@ async def feature_detail(
     query = feature['primary_en_name'] or feature['primary_cn_name'] or feature['legacy_name']
     names = [str(feature.get(key) or '') for key in ('primary_en_name', 'primary_cn_name', 'legacy_name')]
     names.extend(row['name'] for row in feature['names'])
-    candidates = await find_candidate_evidence(db, query, scope=resolved, limit=12)
+    candidates = await find_candidate_evidence(db, query, scope=resolved, limit=50, include_section_context=True)
     result['citations'] = [row for row in candidates if row.get('version_id')
-                           and _mentions_feature(row.get('excerpt') or '', names)]
+                           and _mentions_feature('\n'.join([row.get('section_name') or '', row.get('excerpt') or '']), names)]
+    if len(candidates) == 50:
+        result['issues'].append('候选原文已达50条展示上限，请打开原件查看完整章节')
     if not result['citations']:
         result['issues'].append('未找到当前机型与资料版本的可定位正文；不跨系列补全参数或说明')
     result['history'] = await trace_release_history(db, query, resolved)

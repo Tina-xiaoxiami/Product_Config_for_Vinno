@@ -783,6 +783,7 @@ async def find_candidate_evidence(
     *,
     limit: int = 5,
     scope: dict | None = None,
+    include_section_context: bool = False,
 ) -> list[dict]:
     if scope is not None:
         from app.services.knowledge_scope import document_model_identity_unique
@@ -793,10 +794,15 @@ async def find_candidate_evidence(
         f"prefilter_{index}": f"%{pair}%"
         for index, pair in enumerate(prefilter_pairs)
     }
+    # Only opt-in feature views use indexed DOCX heading context. Other readers
+    # keep their original content-only ranking and response contract.
+    section_sql = "CASE WHEN LOWER(document.file_name) LIKE '%.docx' THEN chunk.section_name ELSE NULL END"
+    section_column = f", {section_sql} AS feature_section" if include_section_context else ""
     prefilter_sql = ""
     if params:
         prefilter_sql = "AND (" + " OR ".join(
-            f"chunk.normalized_content LIKE :{name}" for name in params
+            (f"(chunk.normalized_content LIKE :{name} OR {section_sql} LIKE :{name})"
+             if include_section_context else f"chunk.normalized_content LIKE :{name}") for name in params
         ) + ")"
     if scope is not None:
         # Unknown model/software applicability is excluded rather than guessed.
@@ -812,7 +818,7 @@ async def find_candidate_evidence(
             f"""
             SELECT chunk.id AS chunk_id, chunk.document_id, document.title, CASE WHEN extraction.source_sha256 = document.sha256 THEN document.sha256 END AS version_id,
                    document.document_type, document.product_series,
-                   chunk.source_ref, chunk.page_number, chunk.content,
+                   chunk.source_ref, chunk.page_number, chunk.content {section_column},
                    COALESCE((
                        SELECT GROUP_CONCAT(
                            package.registration_number || ' ' ||
@@ -849,11 +855,12 @@ async def find_candidate_evidence(
     )
     candidates: list[dict] = []
     for row in result:
+        section = (row.feature_section or "") if include_section_context else ""
         registration_context = row.registration_context or ""
         product_series_context = "" if registration_context else (row.product_series or "")
         score = _candidate_score(
             question,
-            row.content,
+            f"{section}\n{row.content}" if section else row.content,
             (
                 f"{row.document_type} {row.title} {product_series_context} "
                 f"{'registration_package_scope ' if registration_context else ''}"
@@ -864,6 +871,7 @@ async def find_candidate_evidence(
             continue
         candidates.append(
             {
+                **({"section_name": section} if include_section_context else {}),
                 "chunk_id": int(row.chunk_id),
                 "document_id": int(row.document_id),
                 "document_title": row.title,
