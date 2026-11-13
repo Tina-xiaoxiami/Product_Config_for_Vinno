@@ -1,15 +1,18 @@
 <template>
-  <el-button :icon="Setting" size="small" @click="open">列设置</el-button>
-  <el-dialog v-model="visible" title="列设置" width="min(560px, calc(100vw - 32px))" :before-close="requestClose">
-    <p class="layout-hint">拖动或上下移动调整顺序；列宽单位为像素，固定列显示在左侧。</p>
-    <div class="layout-list">
-      <div v-for="(column, index) in draft" :key="column.key" class="layout-row" @dragover.prevent @drop.prevent="drop(column.key)">
-        <span class="drag-handle" draggable="true" @dragstart="startDrag($event, column.key)" @dragend="dragKey = null" aria-label="拖动调整列顺序">⠿</span>
-        <el-checkbox v-model="column.visible" :aria-label="'显示' + column.label">{{ column.label }}</el-checkbox>
-        <el-input-number v-model="column.width" :min="30" :step="10" size="small" controls-position="right" :aria-label="column.label + '列宽'" style="width: 88px; flex-shrink: 0" />
-        <el-checkbox v-model="column.fixed" :disabled="!column.visible" :aria-label="'固定' + column.label">固定</el-checkbox>
-        <el-button :icon="ArrowUp" size="small" :disabled="index === 0" :aria-label="'上移' + column.label" @click="move(index, -1)" />
-        <el-button :icon="ArrowDown" size="small" :disabled="index === draft.length - 1" :aria-label="'下移' + column.label" @click="move(index, 1)" />
+  <el-button :icon="Setting" size="small" :disabled="disabled" @click="open">{{ title }}</el-button>
+  <el-dialog v-model="visible" :title="title" width="min(560px, calc(100vw - 32px))" :before-close="requestClose" @closed="finishClose">
+    <div :class="{ 'settings-body': $slots.options }">
+      <slot name="options" :open-after-close="openAfterClose" />
+      <p class="layout-hint">拖动或上下移动调整顺序；列宽单位为像素，固定列显示在左侧。</p>
+      <div class="layout-list">
+        <div v-for="(column, index) in draft" :key="column.key" class="layout-row" @dragover.prevent @drop.prevent="drop(column.key)">
+          <span class="drag-handle" draggable="true" @dragstart="startDrag($event, column.key)" @dragend="dragKey = null" aria-label="拖动调整列顺序">⠿</span>
+          <el-checkbox v-model="column.visible" :aria-label="'显示' + column.label">{{ column.label }}</el-checkbox>
+          <el-input-number v-model="column.width" :min="30" :step="10" size="small" controls-position="right" :aria-label="column.label + '列宽'" style="width: 88px; flex-shrink: 0" />
+          <el-checkbox v-model="column.fixed" :disabled="!column.visible" :aria-label="'固定' + column.label">固定</el-checkbox>
+          <el-button :icon="ArrowUp" size="small" :disabled="index === 0" :aria-label="'上移' + column.label" @click="move(index, -1)" />
+          <el-button :icon="ArrowDown" size="small" :disabled="index === draft.length - 1" :aria-label="'下移' + column.label" @click="move(index, 1)" />
+        </div>
       </div>
     </div>
     <template #footer>
@@ -25,30 +28,51 @@ import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import { normalizeColumnLayout, moveLayoutColumn } from '../utils/tableColumnLayout'
-const props = defineProps({ modelValue: { type: Array, required: true }, defaults: { type: Array, required: true } })
+const props = defineProps({
+  modelValue: { type: Array, required: true },
+  defaults: { type: Array, required: true },
+  title: { type: String, default: '列设置' },
+  disabled: Boolean
+})
 const emit = defineEmits(['update:modelValue'])
 const visible = ref(false), draft = ref([]), baseline = ref(''), dragKey = ref(null)
+let afterClose = null
 const dirty = computed(() => JSON.stringify(draft.value) !== baseline.value)
+const hasUnappliedChanges = computed(() => visible.value && dirty.value)
 const open = () => { draft.value = props.modelValue.map(column => ({ ...column })); baseline.value = JSON.stringify(draft.value); visible.value = true }
 const move = (index, direction) => { const target = draft.value[index + direction]; if (target) draft.value = moveLayoutColumn(draft.value, draft.value[index].key, target.key) }
 const startDrag = (event, key) => { dragKey.value = key; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', key) }
 const drop = key => { if (dragKey.value) draft.value = moveLayoutColumn(draft.value, dragKey.value, key); dragKey.value = null }
-const requestClose = async done => {
+const requestClose = async (done, action = null) => {
   if (dirty.value) {
     try { await ElMessageBox.confirm('列设置尚未应用，确定放弃修改？', '未应用的列设置', { confirmButtonText: '放弃修改', cancelButtonText: '继续设置', type: 'warning' }) }
     catch { return }
   }
+  afterClose = action
   visible.value = false
   if (typeof done === 'function') done()
+}
+const openAfterClose = action => requestClose(undefined, action)
+const finishClose = () => {
+  const action = afterClose
+  afterClose = null
+  action?.()
 }
 const apply = () => {
   if (!draft.value.some(column => column.visible)) { ElMessage.warning('至少需要显示一列'); return }
   emit('update:modelValue', normalizeColumnLayout(props.defaults, draft.value)); visible.value = false
 }
+const closeForLeave = () => {
+  afterClose = null
+  visible.value = false
+}
+defineExpose({ hasUnappliedChanges, closeForLeave })
 </script>
 <style scoped>
 .layout-hint { font-size: 12px; color: var(--el-text-color-secondary); margin: 0 0 10px; }
 .layout-list { max-height: 55vh; overflow: auto; }
+.settings-body { max-height: 60vh; overflow: auto; }
+.settings-body .layout-list { max-height: none; overflow: visible; }
 .layout-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 38px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .layout-row > .el-checkbox:first-of-type { flex: 1 0 120px; min-width: 0; margin-right: 0; }
 .layout-row > .el-checkbox { margin-right: 0; }

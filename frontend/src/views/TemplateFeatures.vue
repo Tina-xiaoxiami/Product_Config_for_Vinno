@@ -5,13 +5,12 @@
         <el-button size="small" :disabled="loading || !!loadError || !featureCatalog" @click="openTemplateCatalog">从功能库添加</el-button>
         <template v-if="editMode">
           <el-tag size="small" type="warning">编辑中 — {{ pendingCount }} 项修改</el-tag>
-          <el-button size="small" type="primary" @click="saveChanges" :disabled="pendingCount === 0">保存草稿</el-button>
-          <el-button size="small" @click="cancelEdit">取消</el-button>
+          <el-button size="small" type="primary" @click="saveChanges" :loading="saving" :disabled="pendingCount === 0 || !!popoverKey">保存草稿</el-button>
+          <el-button size="small" @click="cancelEdit" :disabled="saving">取消</el-button>
         </template>
         <template v-else>
-          <el-button size="small" type="primary" @click="enterEditMode">编辑模式</el-button>
+          <el-button size="small" type="primary" @click="enterEditMode" :disabled="saving">编辑模式</el-button>
           <el-button size="small" @click="refreshData">刷新</el-button>
-          <el-button size="small" @click="openVersions">版本历史</el-button>
         </template>
     </ProbeManagementActions>
     <el-alert v-if="loadError" type="error" :closable="false" class="catalog-load-error"><template #title>{{ loadError }} <el-button link size="small" @click="refreshData">重试读取</el-button></template></el-alert>
@@ -19,8 +18,8 @@
     <el-card shadow="never" class="template-card">
       <div v-if="(draftTotal > 0 || catalogAdditionCount > 0) && !editMode" class="draft-bar">
         <span><strong>{{ draftTotal }}</strong> 条配置草稿待提交<span v-if="catalogAdditionCount"> · 新增功能 {{ catalogAdditionCount }} 项</span></span>
-        <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting">提交并创建版本</el-button>
-        <el-button size="small" type="danger" @click="discardDrafts">废弃全部</el-button>
+        <el-button size="small" type="primary" @click="submitDrafts" :loading="submitting" :disabled="saving">提交并创建版本</el-button>
+        <el-button size="small" type="danger" @click="discardDrafts" :disabled="saving">废弃全部</el-button>
       </div>
 
       <div class="matrix-container" v-loading="loading">
@@ -34,27 +33,40 @@
           <div class="toolbar-right">
             <el-switch v-model="showRegular" size="small" active-text="常规" inactive-text="常规" style="margin-right:4px" />
             <el-switch v-model="showPOC" size="small" active-text="POC" inactive-text="POC" style="margin-right:4px" />
-            <TableColumnSettings :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout" />
-            <div class="view-toggle" v-if="!editMode">
-              <el-radio-group v-model="showMode" size="small">
-                <el-radio value="auto">智能</el-radio>
-                <el-radio value="supported">显示支持</el-radio>
-                <el-radio value="excluded">显示排除</el-radio>
-              </el-radio-group>
-            </div>
+            <TableColumnSettings ref="columnSettings" title="设置" :disabled="!!popoverKey || saving" :model-value="displayColumnLayout" :defaults="columnDefaults" @update:model-value="applyColumnLayout">
+              <template #options="{ openAfterClose }">
+                <div class="matrix-settings-options">
+                  <div class="matrix-settings-row">
+                    <el-select v-model="settingsFeatureId" filterable clearable size="small" aria-label="查找模板功能" placeholder="搜索功能名称或 IPN" class="settings-feature-select">
+                      <el-option v-for="feature in settingsFeatures" :key="feature.id" :label="feature.label" :value="feature.id" />
+                    </el-select>
+                    <el-button size="small" :disabled="!settingsFeatures.some(feature => feature.id === settingsFeatureId)" @click="editSettingsFeature(openAfterClose)">编辑显示名称</el-button>
+                  </div>
+                  <div v-if="!editMode" class="matrix-settings-row">
+                    <span>单元格显示</span>
+                    <el-radio-group v-model="showMode" size="small" aria-label="单元格显示方式">
+                      <el-radio value="auto">智能</el-radio>
+                      <el-radio value="supported">显示支持</el-radio>
+                      <el-radio value="excluded">显示排除</el-radio>
+                    </el-radio-group>
+                    <el-button size="small" @click="openAfterClose(openVersions)">版本历史</el-button>
+                  </div>
+                </div>
+              </template>
+            </TableColumnSettings>
           </div>
         </div>
         <div class="filter-row">
-          <el-input v-model="featureSearch" placeholder="搜索功能名称或IPN" size="small" clearable style="width:160px" />
-          <el-checkbox v-model="selectAllGroups" :indeterminate="groupIndeterminate" size="small">全选</el-checkbox>
-          <el-checkbox-group v-model="selectedGroupIds" size="small" class="group-filter-compact">
+          <el-input v-model="featureSearch" :disabled="!!popoverKey" placeholder="搜索功能名称或IPN" size="small" clearable style="width:160px" />
+          <el-checkbox v-model="selectAllGroups" :disabled="!!popoverKey" :indeterminate="groupIndeterminate" size="small">全选</el-checkbox>
+          <el-checkbox-group v-model="selectedGroupIds" :disabled="!!popoverKey" size="small" class="group-filter-compact">
             <el-checkbox v-for="g in featureGroups" :key="g.id" :label="g.id" :value="g.id" size="small">{{ g.name }}</el-checkbox>
           </el-checkbox-group>
-          <el-button v-if="featureSearch && searchMatchGroups.length && searchMatchGroups.length !== selectedGroupIds.length" size="small" text type="primary" @click="selectSearchResults">选中搜索结果</el-button>
+          <el-button v-if="featureSearch && searchMatchGroups.length && searchMatchGroups.length !== selectedGroupIds.length" :disabled="!!popoverKey" size="small" text type="primary" @click="selectSearchResults">选中搜索结果</el-button>
         </div>
 
         <div class="matrix-scroll-tools">
-          <span>{{ categories.length }} 个探头类别 · {{ filteredFeatures.length }} 个功能（可在列设置中显示或隐藏）</span>
+          <span>{{ categories.length }} 个探头类别 · {{ visibleFeatureCount }} 个可见功能</span>
           <el-button size="small" aria-label="向左查看功能" @click="scrollFeatures(-1)">←</el-button>
           <el-button size="small" aria-label="向右查看功能" @click="scrollFeatures(1)">→</el-button>
         </div>
@@ -74,7 +86,7 @@
                 <template #header>
                   <span class="matrix-feature-header">
                     <span class="matrix-feature-label" :title="column.label">{{ column.label }}</span>
-                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" />
+                    <FeatureNameMark :feature-id="column.feature.id" :name="column.label" :show-display-edit="false" />
                     <small v-if="column.feature.pending" class="catalog-preview-badge" title="待提交">待</small>
                   </span>
                 </template>
@@ -85,23 +97,24 @@
                     :visible="popoverKey === `${cat.id}_${column.feature.id}`"
                     placement="bottom"
                     :width="260"
-                    @hide="popoverKey = ''"
                   >
                     <template #reference>
                       <div
                         class="tpl-cell"
                         :class="getCellClass(cat.id, column.feature.id)"
-                        @click="openPopover(cat.id, column.feature.id)"
+                        @click="openPopover(cat.id, column.feature.id, $event)"
+                        @keydown.esc.stop.prevent="closePopover"
+                        :tabindex="popoverKey === `${cat.id}_${column.feature.id}` ? 0 : undefined"
                         style="cursor:pointer"
                       ><div class="cell-apps" :title="getCellTooltip(cat.id, column.feature.id)" :class="{ 'is-all': isAllApps(cat.id, column.feature.id) }">{{ getCellDisplay(cat.id, column.feature.id) }}</div></div>
                     </template>
-                    <div>
+                    <div class="template-cell-editor" @keydown.esc.stop.prevent="closePopover">
                       <el-alert v-if="popUnknownExcludes.length" type="warning" :closable="false" :title="`旧排除名称无法对应：${popUnknownExcludes.join('、')}。请核对当前应用后保存。`" />
                       <el-checkbox v-if="popUnknownExcludes.length" v-model="popReplaceUnknown" size="small">以本次所选应用替换旧排除名称</el-checkbox>
                       <div v-if="popoverKey && (popOldStatus !== popStatus)" style="font-size:11px;color:#e6a23c;margin-bottom:6px;padding:4px 8px;background:#fdf6ec;border-radius:4px">
                         修改: {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popOldStatus] || popOldStatus }} → {{ {unsupported:'不支持',supported:'支持',conditional:'条件'}[popStatus] || popStatus }}
                       </div>
-                      <el-radio-group v-model="popStatus" size="small" style="margin-bottom:8px">
+                      <el-radio-group v-model="popStatus" @change="updatePopoverStatus" size="small" style="margin-bottom:8px">
                         <el-radio value="unsupported">不支持</el-radio>
                         <el-radio value="supported">支持 √</el-radio>
                         <el-radio value="conditional">条件 △</el-radio>
@@ -136,7 +149,7 @@
                         </div>
                       </div>
                       <div style="margin-top:10px;text-align:right">
-                        <el-button size="small" @click="popoverKey = ''">取消</el-button>
+                        <el-button size="small" @click="closePopover">取消</el-button>
                         <el-button size="small" type="primary" @click="applyPopover">确定</el-button>
                       </div>
                     </div>
@@ -171,10 +184,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onDeactivated, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { featureCurrentName } from '../utils/featureNameStandard'
+import { openFeatureNameReview } from '../utils/featureNameReviewHost'
 import { useWorkspaceRefresh } from '../utils/useWorkspaceRefresh'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { getProbeCategories, getTemplateFeatureCatalog, getTemplateFeatures } from '../api/data'
 import TemplateFeatureCatalogDialog from '../components/TemplateFeatureCatalogDialog.vue'
 import { catalogFeatureLabel, projectTemplateCatalog, catalogCellSource } from '../utils/templateFeatureCatalog'
@@ -189,6 +204,8 @@ const categories = ref([]); const features = ref([])
 const tplMap = ref({}); const loading = ref(false)
 const featureCatalog = ref(null), pendingMatrixCells = ref({}), pendingMatrixFeatureIds = ref(new Set()), catalogAdditionCount = ref(0), loadError = ref(''), catalogDialog = ref(null)
 const editMode = ref(false); const pendingChanges = reactive({})
+const saving = ref(false)
+const columnSettings = ref(null)
 const categoryAppsMap = ref({})
 const showMode = ref('auto')
 const featureGroups = ref([])
@@ -196,6 +213,15 @@ const featureSearch = ref('')
 const showRegular = ref(true)
 const showPOC = ref(true)
 const selectedGroupIds = ref([])
+const settingsFeatureId = ref(null)
+const settingsFeatures = computed(() => features.value.map(feature => ({
+  id: feature.id,
+  label: catalogFeatureLabel({ ...feature, name: featureCurrentName(feature.id, feature.name) })
+})))
+const editSettingsFeature = openAfterClose => {
+  const id = settingsFeatureId.value
+  openAfterClose(() => openFeatureNameReview(id, true))
+}
 
 const matrixTable = ref(null)
 const tableWrap = ref(null)
@@ -267,6 +293,7 @@ const displayColumnLayout = computed(() => columnLayout.value.map(column => ({ .
 const matrixSections = computed(() => templateMatrixSections(displayColumnLayout.value, filteredFeatures.value, featureGroups.value, {
   showRegular: showRegular.value, showPOC: showPOC.value
 }))
+const visibleFeatureCount = computed(() => matrixSections.value.reduce((count, section) => count + (section.columns?.length || 0), 0))
 
 // ---- group header coloring ----
 const groupColorMap = computed(() => probeGroupColors(featureGroups.value))
@@ -433,15 +460,33 @@ const getCellTooltip = (catId, featId) => {
 
 // ---- edit mode ----
 const enterEditMode = () => { editMode.value = true; Object.keys(pendingChanges).forEach(k => delete pendingChanges[k]) }
-const cancelEdit = () => {
+const discardMatrixInput = () => {
+  popoverKey.value = ''
+  cellTrigger = null
   editMode.value = false
   Object.keys(pendingChanges).forEach(k => delete pendingChanges[k])
   Object.keys(pendingExcludes).forEach(k => delete pendingExcludes[k])
 }
 const pendingCount = computed(() => Object.keys(pendingChanges).length)
+let confirmingDiscard = false
+const confirmDiscard = async () => {
+  if (confirmingDiscard) return false
+  confirmingDiscard = true
+  try {
+    await ElMessageBox.confirm('模板修改尚未保存或应用，是否放弃？', '未保存的修改', {
+      confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning'
+    })
+    return true
+  } catch { return false }
+  finally { confirmingDiscard = false }
+}
+const cancelEdit = async () => {
+  if (saving.value || ((pendingCount.value || popoverDirty.value) && !await confirmDiscard())) return
+  discardMatrixInput()
+}
 
 const openTemplateCatalog = () => {
-  if (pendingCount.value > 0) { ElMessage.warning('请先保存草稿或取消当前单元格修改，再从功能库添加'); return false }
+  if (saving.value || popoverKey.value || pendingCount.value > 0) { ElMessage.warning('请先保存草稿或取消当前单元格修改，再从功能库添加'); return false }
   if (loading.value || loadError.value || !featureCatalog.value) { ElMessage.warning('请先完成共用功能库读取'); return false }
   catalogDialog.value?.open()
   return true
@@ -466,9 +511,48 @@ const popUnknownExcludes = computed(() => {
   return popExcludes.value.filter(name => !names.includes(name))
 })
 const pendingExcludes = reactive({})
+const popoverBaseline = ref('')
+const snapshotPopover = () => JSON.stringify([
+  popStatus.value, popSupportedReg.value, popSupportedPoc.value, popSpecialTender.value, popReplaceUnknown.value
+])
+const popoverDirty = computed(() => !!popoverKey.value && snapshotPopover() !== popoverBaseline.value)
+let cellTrigger = null
+let outsideStart = ''
+let blockedCellClick = false
+const insideCell = target => cellTrigger?.contains(target) || target.closest?.('.template-cell-editor, .el-message-box')
+const trackCellPointer = event => {
+  blockedCellClick = false
+  outsideStart = event.button === 0 && popoverKey.value && !insideCell(event.target) ? popoverKey.value : ''
+}
+const closeCellFromOutside = event => {
+  const startedOutside = outsideStart === popoverKey.value
+  outsideStart = ''
+  if (!popoverKey.value || !startedOutside || insideCell(event.target) || confirmingDiscard) return
+  blockedCellClick = popoverDirty.value
+  void closePopover()
+}
+const preventCellClickThrough = event => {
+  if (!blockedCellClick || event.detail === 0) return
+  blockedCellClick = false
+  event.preventDefault()
+  event.stopPropagation()
+}
+const hidePopover = () => {
+  popoverKey.value = ''
+  cellTrigger?.focus({ preventScroll: true })
+  cellTrigger = null
+}
+const closePopover = async () => {
+  if (popoverDirty.value && !await confirmDiscard()) return false
+  hidePopover()
+  return true
+}
 
-const openPopover = (catId, featId) => {
+const openPopover = async (catId, featId, event) => {
   const key = `${catId}_${featId}`
+  const trigger = event?.currentTarget || null
+  if (saving.value || popoverKey.value === key || (popoverKey.value && !await closePopover())) return
+  cellTrigger = trigger
   popoverKey.value = key
   popReplaceUnknown.value = false
   popCatApps.value = categoryAppsMap.value[catId] || { regular: [], poc: [] }
@@ -512,6 +596,9 @@ const openPopover = (catId, featId) => {
     popSupportedPoc.value = pocNames.filter(n => !exSet.has(n) && !tender.includes(n))
   }
   popExcludes.value = (ex || []).filter(Boolean)
+  popoverBaseline.value = snapshotPopover()
+  await nextTick()
+  cellTrigger?.focus({ preventScroll: true })
 }
 
 // Per-group computed
@@ -536,7 +623,7 @@ function togglePocAll(val) {
   popSupportedPoc.value = [...set]
 }
 
-watch(popStatus, (val) => {
+function updatePopoverStatus(val) {
   const reg = popCatApps.value.regular.map(a => a.name)
   const poc = popCatApps.value.poc.map(a => a.name)
   if (val === 'unsupported' || (!reg.length && !poc.length)) {
@@ -550,7 +637,7 @@ watch(popStatus, (val) => {
     popSupportedReg.value = reg.filter(n => !exSet.has(n))
     popSupportedPoc.value = poc.filter(n => !exSet.has(n))
   }
-})
+}
 
 const applyPopover = () => {
   const [catId, featId] = popoverKey.value.split('_').map(Number)
@@ -565,10 +652,12 @@ const applyPopover = () => {
   ])]
   const tender = popSpecialTender.value ? ['__特殊应用__'] : []
   pendingExcludes[key] = { excludes: excludes.length ? excludes : [], tender }
-  popoverKey.value = ''
+  hidePopover()
 }
 
 const saveChanges = async () => {
+  if (saving.value || popoverKey.value || !pendingCount.value) return
+  saving.value = true
   let count = 0
   try {
     for (const [key, val] of Object.entries(pendingChanges)) {
@@ -582,11 +671,13 @@ const saveChanges = async () => {
     editMode.value = false; Object.keys(pendingChanges).forEach(k => { delete pendingChanges[k]; delete pendingExcludes[k] })
     if (!await loadData()) ElMessage.warning('草稿已保存，刷新失败，可点击刷新重试')
   } catch (e) { ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message)); console.error(e) }
+  finally { saving.value = false }
 }
 
 // ---- draft / version ----
 const draftTotal = ref(0); const submitting = ref(false); const versions = ref([]); const showVersions = ref(false)
 const submitDrafts = async () => {
+  if (saving.value) return
   submitting.value = true
   try {
     await api.post('/template-features/submit'); ElMessage.success('提交成功')
@@ -595,6 +686,7 @@ const submitDrafts = async () => {
   finally { submitting.value = false }
 }
 const discardDrafts = async () => {
+  if (saving.value) return
   try {
     await api.post('/template-features/discard'); ElMessage.success('已废弃')
     if (!await loadData()) ElMessage.warning('已废弃草稿，刷新失败，可点击刷新重试')
@@ -606,8 +698,38 @@ const rollback = async (row) => {
   try { await api.post(`/template-features/rollback/${row.id}`); ElMessage.success('回滚成功'); await loadData(); await loadVersions() } catch { ElMessage.error('回滚失败') }
 }
 
-const refreshData = () => loadData()
-useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalogDialog.value?.isOpen })
+const hasUnstoredChanges = () => pendingCount.value > 0 || popoverDirty.value || columnSettings.value?.hasUnappliedChanges
+const canDiscard = async () => !saving.value && (!hasUnstoredChanges() || await confirmDiscard())
+const discardPageInput = () => {
+  discardMatrixInput()
+  columnSettings.value?.closeForLeave()
+}
+const beforeUnload = event => {
+  if (saving.value || hasUnstoredChanges()) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+const refreshData = async () => {
+  if (!await canDiscard()) return
+  discardPageInput()
+  await loadData()
+}
+onBeforeRouteLeave(canDiscard)
+onDeactivated(discardPageInput)
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  document.addEventListener('pointerdown', trackCellPointer, true)
+  document.addEventListener('pointerup', closeCellFromOutside, true)
+  document.addEventListener('click', preventCellClickThrough, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnload)
+  document.removeEventListener('pointerdown', trackCellPointer, true)
+  document.removeEventListener('pointerup', closeCellFromOutside, true)
+  document.removeEventListener('click', preventCellClickThrough, true)
+})
+useWorkspaceRefresh(loadData, { canRefresh: () => !editMode.value && !hasUnstoredChanges() && !catalogDialog.value?.isOpen })
 </script>
 
 <style scoped>
@@ -626,7 +748,9 @@ useWorkspaceRefresh(refreshData, { canRefresh: () => !editMode.value && !catalog
 .filter-row { display:flex; align-items:center; gap:8px; padding:0 0 6px; flex-wrap:wrap; flex-shrink:0 }
 .group-filter-compact { display:inline-flex; flex-wrap:wrap; gap:2px }
 .group-filter-compact .el-checkbox { margin-right:0; white-space:nowrap }
-.view-toggle { flex-shrink: 0 }
+.matrix-settings-options { display: grid; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.matrix-settings-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.settings-feature-select { flex: 1 1 210px; min-width: 0; }
 .table-wrap { flex: 1 1 0; min-height: 120px; min-width: 0; overflow: hidden; }
 .matrix-scroll-tools { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-shrink: 0; margin-bottom: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
 .matrix-scroll-tools .el-button + .el-button { margin-left: 0; }
