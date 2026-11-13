@@ -1,14 +1,19 @@
 """Read, retry and backfill Cart release checks from configuration history."""
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import CartReleaseArtifact, CartReleaseCheck, ConfigVersion
+from app.models import CartReleaseCheck, ConfigVersion
 from app.services.cart_release import (
-    cart_check_history, check_payload, get_cart_check, refresh_cart_for_facts, reserve_cart_backfill, save_cart_check,
+    cart_check_history, check_payload, get_cart_check, presentation_for_check,
+    refresh_cart_for_facts, reserve_cart_backfill, save_cart_check,
 )
+
+from app.services.knowledge_sources import CitationSourceError
 
 
 router = APIRouter()
@@ -24,14 +29,15 @@ async def _version(db, version_id):
 
 @router.get("/{version_id}/cart-release")
 async def read_check(version_id: int, download: bool = False, db=Depends(get_db)):
-    check = await get_cart_check(db, await _version(db, version_id))
+    version = await _version(db, version_id)
+    check = await get_cart_check(db, version)
     if check is None:
         return {"status": "not_checked", "reason": "历史版本尚未检查，可补跑 Cart 检查"}
-    return _report(check, download)
+    return await _report(db, check, download, version=version)
 
 
-def _report(check, download):
-    result = check_payload(check)
+async def _report(db, check, download, *, version=None):
+    result = await _presentation_report(db, check, version=version)
     if download:
         return JSONResponse(result, headers={
             "Content-Disposition": f'attachment; filename="cart-config-{check.version_id}.json"',
@@ -49,8 +55,8 @@ async def retry_check(version_id: int, db=Depends(get_db)):
         check = await get_cart_check(db, version)
     else:
         check = await save_cart_check(db, version, "backfill")
-    result = check_payload(check)
     await db.commit()
+    result = await _presentation_report(db, check, version=version)
     return result
 
 
@@ -65,18 +71,34 @@ async def read_history(version_id: int, limit: int = Query(20, ge=1, le=100), db
 
 @router.get("/{version_id}/cart-release/presentation")
 async def download_presentation(version_id: int, db=Depends(get_db)):
-    check = await get_cart_check(db, await _version(db, version_id))
-    return await _presentation(db, check)
+    version = await _version(db, version_id)
+    return await _presentation(db, await get_cart_check(db, version), version=version)
 
 
-async def _presentation(db, check):
-    artifact = await db.get(CartReleaseArtifact, check.artifact_sha256) if check and check.artifact_sha256 else None
-    if artifact is None:
-        raise HTTPException(404, "该版本尚无 Cart PPT 候选")
-    market = check.report["market"]
-    return Response(artifact.data, media_type=PPTX_TYPE, headers={
-        "Content-Disposition": f'attachment; filename="cart-{market}-config-{check.version_id}-{artifact.sha256[:12]}-candidate.pptx"',
-    })
+async def _presentation_report(db, check, *, version=None):
+    result = check_payload(check)
+    try:
+        result["presentation"], _ = await presentation_for_check(db, check, version=version)
+    except CitationSourceError as error:
+        result["presentation_unavailable"] = str(error)
+    return result
+
+
+async def _presentation(db, check, *, version=None):
+    try:
+        presentation, data = await presentation_for_check(db, check, version=version, include_data=True)
+    except CitationSourceError as error:
+        raise HTTPException(error.status, str(error)) from error
+    source, kind = presentation["source"], presentation["kind"]
+    headers = {"X-Cart-Presentation-Kind": kind}
+    if source:
+        headers.update({"X-Cart-Source-Config-Id": str(source["id"]),
+                        "X-Cart-Source-Config-Version": quote(source["number"])})
+        filename = f"cart-{presentation['market']}-config-{source['id']}-{presentation['sha256'][:12]}-candidate.pptx"
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    else:
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(presentation['file'])}"
+    return Response(data, media_type=PPTX_TYPE, headers=headers)
 
 
 @router.post("/cart-release/backfill")
@@ -109,7 +131,7 @@ async def _archived_check(db, key):
 
 @router.get("/cart-release/archive/{key}")
 async def read_archived_check(key: str, download: bool = False, db=Depends(get_db)):
-    return _report(await _archived_check(db, key), download)
+    return await _report(db, await _archived_check(db, key), download)
 
 
 @router.get("/cart-release/archive/{key}/presentation")

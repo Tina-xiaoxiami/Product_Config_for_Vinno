@@ -8,6 +8,29 @@
         {{ historyVisible ? '收起修订记录' : '配置答案修订记录' }}
       </el-button>
     </header>
+    <template v-if="result.kind === 'reviewed_fact'">
+      <strong v-if="!result.model">{{ result.market === 'domestic' ? '国内' : '海外' }}</strong>
+      <strong :class="{ 'configuration-review': result.fact_status === 'missing' }">{{ result.answer_text }}</strong>
+      <span v-if="result.snapshot">IPN {{ result.ipn }} · 快照记录 {{ result.selection_label }}<template v-if="result.selection">（{{ result.selection }}）</template></span>
+      <details v-if="result.sources.length">
+        <summary>原文依据（{{ result.sources.length }}）</summary>
+        <ul>
+          <li v-for="(source, index) in result.sources" :key="index">
+            {{ source.title || source.file_name }} · {{ source.locator }}
+            <a v-if="source.preview_url" :href="source.preview_url" target="_blank" rel="noopener noreferrer">打开原件</a>
+            <el-button v-if="source.evidence_url" link size="small" type="primary" :loading="evidence[source.evidence_url]?.loading"
+              @click="openEvidence(source.evidence_url)">定位原表</el-button>
+            <p v-if="evidence[source.evidence_url]?.error" role="alert" class="configuration-review">{{ evidence[source.evidence_url].error }}</p>
+            <div v-for="excerpt in evidence[source.evidence_url]?.excerpts" :key="excerpt.locator">
+              <strong>{{ excerpt.locator }}</strong>
+              <ul>
+                <li v-for="cell in excerpt.cells" :key="cell.address">{{ cell.address }} · {{ cell.text }}</li>
+              </ul>
+            </div>
+          </li>
+        </ul>
+      </details>
+    </template>
     <strong v-if="result.historical_model">{{ result.historical_model }} 历史实测</strong>
     <p v-if="result.scope_note" class="configuration-review">{{ result.scope_note }}</p>
     <p v-for="issue in result.issues" :key="issue" class="configuration-review">待核：{{ issue }}</p>
@@ -67,12 +90,26 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { getKnowledgeConfigurationHistory } from '../api/knowledgeEvidence'
 
 const props = defineProps({ result: { type: Object, required: true } })
 const parameterMatches = computed(() => props.result.kind === 'parameter' ? props.result.rows.flatMap(row => row.matches || []) : [])
 const historyVisible = ref(false), historyLoading = ref(false), historyError = ref(''), history = ref([])
+const evidence = reactive({})
+async function openEvidence(url) {
+  if (evidence[url]?.loading) return
+  evidence[url] = { loading: true }
+  try {
+    const response = await fetch(url, { cache: 'no-store' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '暂时无法核验原表位置')
+    evidence[url] = { excerpts: data.excerpts }
+  } catch (error) {
+    evidence[url] = { error: error.message || '暂时无法核验原表位置' }
+  }
+}
+
 async function toggleHistory() {
   historyVisible.value = !historyVisible.value
   if (!historyVisible.value || historyLoading.value) return

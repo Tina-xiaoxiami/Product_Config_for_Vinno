@@ -699,6 +699,29 @@ async def validate_publication_scope(
             raise KnowledgeQaError("相似问法已归属于其他问题")
 
 
+async def _matches_published_draft(session, question, working, wording, answer_text, aliases, change_note):
+    answer = question["answer"]
+    if not answer or answer["review_status"] != "published":
+        return False
+    if (wording, answer_text, aliases, change_note) != (
+        question["question_text"], answer["answer_text"], question["alias_questions"], answer["change_note"],
+    ):
+        return False
+
+    def references(citations):
+        return [(row["document_id"], row.get("source_ref") or "", row.get("excerpt") or "")
+                for row in citations]
+
+    if references(working["citations"]) != references(answer["citations"]):
+        return False
+    if not working["citations"]:
+        return True
+    evidence = (await drafts.publication_evidence(session, question["id"])).get(answer["version"], {})
+    previous_hashes = [row.get("sha256") for row in evidence.get("citations", [])]
+    current_hashes = [row.get("sha256") for row in working["source_versions"]]
+    return bool(previous_hashes) and all(previous_hashes) and previous_hashes == current_hashes
+
+
 async def publish_answer(
     session: AsyncSession,
     *,
@@ -776,6 +799,15 @@ async def publish_answer(
         if not document_matches_scope(document._mapping, question["scope"]):
             raise KnowledgeQaError("引用资料尚未明确关联此市场、机型及软件版本，请先核实适用范围")
         resolved_citations.append({key: citation.get(key) for key in ("document_id", "source_ref", "excerpt")} | {"sort_order": index})
+
+    if draft_revision is not None and await _matches_published_draft(
+        session, question, working, wording, cleaned_answer, [alias for alias, _ in unique_aliases], change_note,
+    ):
+        await drafts.mark_published(session, draft_revision, question["answer"]["version"])
+        item = await get_question(session, question_id)
+        if commit:
+            await session.commit()
+        return item
 
     await drafts.freeze_evidence(session, question)
     answer_result = await session.execute(

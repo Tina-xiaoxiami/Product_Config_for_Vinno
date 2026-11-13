@@ -83,6 +83,7 @@ from app.services.knowledge_qa import (
 )
 from app.services.knowledge_parameters import topics_for_question
 from app.services.knowledge_configuration_answers import configuration_answer_history, configuration_answers
+from app.services.knowledge_reviewed_answers import reviewed_answer, reviewed_workbook_citation
 from app.services.knowledge_content import (
     KnowledgeContentError,
     KnowledgeDocumentMissingError,
@@ -208,6 +209,15 @@ async def ask_knowledge_question(
             if a_only_question(data.question):
                 return KnowledgeQuestionResult(status="outside_scope", question=data.question, match_type="none", similarity=0)
             scope = await infer_question_scope(db, data.question, scope)
+            reviewed = await reviewed_answer(
+                db, data.question, scope, configuration_version_id=data.configuration_version_id,
+            )
+            if reviewed is not None:
+                answered = reviewed["status"] == "configuration"
+                return KnowledgeQuestionResult(
+                    question=data.question, scope=scope, match_type="exact" if answered else "none",
+                    similarity=1 if answered else 0, **reviewed,
+                )
         topics = await topics_for_question(db, data.question)
         configured = await configuration_answers(
             db, data.question, scope, topics, configuration_version_id=data.configuration_version_id, unified=data.unified,
@@ -223,6 +233,22 @@ async def ask_knowledge_question(
     except (KnowledgeQaError, KnowledgeScopeError) as exc:
         await db.rollback()
         raise HTTPException(status_code=503 if isinstance(exc, KnowledgeScopeUnavailable) else 422, detail=str(exc)) from exc
+
+
+@router.get("/reviewed-facts/{market}/{key}/sources/{source_index}")
+async def locate_reviewed_fact_source(
+    market: str, key: str, source_index: int, response: Response,
+    version_id: str = Query(..., pattern=r"^[a-f0-9]{64}$"),
+    db: AsyncSession = Depends(get_db),
+):
+    if market not in {"domestic", "overseas"} or source_index < 0:
+        raise HTTPException(status_code=422, detail="市场或来源索引无效")
+    try:
+        result = await reviewed_workbook_citation(db, market, key, source_index, version_id)
+    except CitationSourceError as error:
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.get("/questions/configuration-history")

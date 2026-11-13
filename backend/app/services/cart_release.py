@@ -183,7 +183,7 @@ async def _assess(db, version, origin, previous_report, rollback_target, *, rule
         report["changes"] = changes(before, after, market, rules, include_models=prior is not None)
         if rules_error or (market and not rules.version):
             return {**report, "reason": "Cart 规则未配置或不可读取，无法完成核验"}, None
-        if not report["changes"] and not (has_binding and template.fact_keys):
+        if not report["changes"] and not has_binding:
             return {**report, "status": "checked", "reason": "已检查，未发现影响 Cart 发货资料的变更"}, None
         if not has_binding:
             return {**report, "reason": "系列或市场未与 Cart 模板绑定，适用型号及页码需核对"}, None
@@ -215,11 +215,13 @@ async def _assess(db, version, origin, previous_report, rollback_target, *, rule
         candidate = await _previous_check(db, version, market, template, artifact_only=True)
         if candidate:
             report["previous_candidate_key"] = candidate.version_key
-        if origin != "facts" and not report["changes"] and template.fact_keys:
+        if origin != "facts" and not report["changes"]:
             prior_check = await _previous_check(db, version, market, template, artifact_only=False)
-            if (prior_check and prior_check.report.get("baseline_changes") == report["baseline_changes"]
-                    and fact_state(prior_check.report.get("facts", {})) == fact_state(report["facts"])):
-                return {**report, "status": "checked", "reason": "已检查，本版本无需更新 Cart 文稿"}, None
+            if prior_check and _same_presentation_basis(prior_check.report, report):
+                if candidate and _same_presentation_basis(candidate.report, report):
+                    return {**report, "status": "checked", "reason": "已检查，本版本无需更新 Cart 文稿"}, None
+                if template.fact_keys and incomplete and not patches:
+                    return {**report, "status": "checked", "reason": "已检查，本版本无需更新 Cart 文稿"}, None
         if not patches:
             if incomplete:
                 return {**report, "reason": "Cart 事实或适用关系待核"}, None
@@ -249,6 +251,67 @@ async def _assess(db, version, origin, previous_report, rollback_target, *, rule
     if incomplete:
         return {**report, "status": "partial", "reason": "已生成已核实条目的候选，部分条目待核"}, content
     return {**report, "status": "generated", "reason": "已生成供核对的 PPT 候选"}, content
+
+
+def _same_presentation_basis(source, target):
+    def baselines(report):
+        return {name: refs["baseline"]["key"] for name, refs in report.get("context", {}).items()
+                if refs.get("baseline") and refs.get("target")}
+
+    source_baselines = baselines(source)
+    return (
+        bool(source_baselines)
+        and source_baselines == baselines(target)
+        and source.get("market") == target.get("market")
+        and source.get("ruleset") == target.get("ruleset")
+        and (source.get("template") or {}).get("sha256") == (target.get("template") or {}).get("sha256")
+        and source.get("baseline_changes") == target.get("baseline_changes")
+        and fact_state(source.get("facts", {})) == fact_state(target.get("facts", {}))
+    )
+
+
+async def presentation_for_check(db, check, *, version=None, include_data=False):
+    """Resolve an archived file or a verified carry-forward without writing a new check."""
+    if check is None:
+        raise CitationSourceError(404, "该配置版本尚未核对 Cart 发货资料")
+    report = check.report
+    if check.artifact_sha256:
+        source, kind = check, "candidate"
+    elif report["status"] == "checked":
+        # Older checks with no Cart changes exited before recording their evidence.
+        if version is not None and report.get("template") and not report.get("context"):
+            reviewed, content = await _assess(db, version, report["origin"], report, None)
+            if reviewed["status"] != "checked" or content is not None:
+                raise CitationSourceError(404, "历史检查缺少适用依据，请重新核对 Cart 文稿")
+            report = reviewed
+        key = report.get("previous_candidate_key")
+        source = await db.get(CartReleaseCheck, key) if key else None
+        if (source and source.artifact_sha256 and source.version_id < check.version_id
+                and _same_presentation_basis(source.report, report)):
+            kind = "carried"
+        elif report.get("reason") == "配置与已绑定快照一致，沿用原模板":
+            rules, rules_error = await _review_rules()
+            market = report["market"]
+            template = rules.templates.get(market)
+            if (rules_error or not template or template.sha256 != report["template"]["sha256"]
+                    or not report.get("context")):
+                raise CitationSourceError(404, "该版本绑定的同市场核验版 PPT 不可用")
+            data = await _template_bytes(db, market, template)
+            return {"kind": "template", "market": market, "source": None, "file": template.filename,
+                    "sha256": template.sha256,
+                    "baseline": {series: refs["baseline"] for series, refs in report["context"].items()}}, data
+        else:
+            raise CitationSourceError(404, "缺少可核验的同市场适用 Cart PPT，请核对原件和版本依据")
+    else:
+        raise CitationSourceError(404, report.get("reason") or "该版本尚无可下载的 Cart PPT")
+
+    column = CartReleaseArtifact.data if include_data else CartReleaseArtifact.sha256
+    stored = await db.scalar(select(column).where(CartReleaseArtifact.sha256 == source.artifact_sha256))
+    if stored is None:
+        raise CitationSourceError(404, "归档的 Cart PPT 文件缺失")
+    return {"kind": kind, "market": report["market"], "source": source.report["version"],
+            "source_series": source.report["series"], "source_status": source.report["status"],
+            "archive_key": source.version_key, "sha256": source.artifact_sha256}, stored if include_data else None
 
 
 def _affected_pages(report, content, prior):

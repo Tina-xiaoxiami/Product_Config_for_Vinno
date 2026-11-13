@@ -21,7 +21,8 @@ def identity_keys(value):
         values.add(value.split('(', 1)[0].strip())
     values.update(re.findall(r'\(([A-Za-z][A-Za-z0-9+\-]{0,30})\)', value))
     prefix = re.match(r'^([A-Za-z][A-Za-z0-9+\-]*)(?=[\u3400-\u9fff])', value)
-    if prefix:
+    # A single letter in a mixed label is not an explicit abbreviation (B线 is not B).
+    if prefix and len(prefix.group(1)) > 1:
         values.add(prefix.group(1))
     for text in list(values):
         trimmed = re.sub(r'^超声', '', text)

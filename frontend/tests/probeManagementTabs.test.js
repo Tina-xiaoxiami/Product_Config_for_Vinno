@@ -10,16 +10,19 @@ test('all management deep links share one sidebar selection and other pages reta
   for (const path of ['/config', '/knowledge', '/probe-config', '/feature-manage-extra']) assert.equal(probeManagementMenuPath(path), path)
 })
 test('template return uses the shared source refresh while retaining edits', async () => {
-  let refresh, canRefresh, loads = 0, drafts = 0
+  let refresh, canRefresh, loads = 0, drafts = 0, dirty = false
   const editMode = { value: false }, catalogDialog = { value: { isOpen: false } }
-  const code = template.slice(template.indexOf('useWorkspaceRefresh(refreshData'), template.indexOf('</script>'))
-  new Function('useWorkspaceRefresh', 'editMode', 'catalogDialog', 'refreshData', code)((callback, options) => {
+  const code = template.slice(template.indexOf('useWorkspaceRefresh(loadData'), template.indexOf('</script>'))
+  new Function('useWorkspaceRefresh', 'editMode', 'catalogDialog', 'loadData', 'hasUnstoredChanges', code)((callback, options) => {
     refresh = callback; canRefresh = options.canRefresh
-  }, editMode, catalogDialog, async () => { loads++; drafts++ })
+  }, editMode, catalogDialog, async () => { loads++; drafts++ }, () => dirty)
   if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = true
   if (canRefresh()) await refresh(); assert.equal(loads, 1)
   editMode.value = false
+  dirty = true
+  if (canRefresh()) await refresh(); assert.equal(loads, 1)
+  dirty = false
   if (canRefresh()) await refresh(); assert.equal(drafts, 2)
   catalogDialog.value.isOpen = true
   if (canRefresh()) await refresh(); assert.equal(loads, 2)
@@ -46,6 +49,7 @@ test('template editor initializes selections from the opened category, including
   const { expandCombinedName } = await import('../src/utils/probeSupport.js')
   const ref = value => ({ value })
   const context = {
+    saving: ref(false), popoverBaseline: ref(''), snapshotPopover: () => '', cellTrigger: null, nextTick: async () => {},
     popoverKey: ref(''), popOldStatus: ref(''), popStatus: ref('supported'), popExcludes: ref([]),
     popSupportedReg: ref([]), popSupportedPoc: ref([]), popSpecialTender: ref(false),
     popReplaceUnknown: ref(false),
@@ -57,7 +61,7 @@ test('template editor initializes selections from the opened category, including
   context.templateCell = key => context.tplMap.value[key]
   const block = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
   const open = new Function(...Object.keys(context), `${block}; return openPopover`)(...Object.values(context))
-  open(2, 9)
+  await open(2, 9)
   assert.deepEqual(context.popSupportedReg.value, ['胎心'])
   assert.deepEqual(context.popSupportedPoc.value, ['急诊'])
   assert.deepEqual(context.popExcludes.value, ['早孕', '中孕', '晚孕'])
@@ -67,6 +71,7 @@ test('opening and applying a template retains unresolved exclusions until explic
   const { expandCombinedName } = await import('../src/utils/probeSupport.js')
   const ref = value => ({ value })
   const context = {
+    saving: ref(false), popoverBaseline: ref(''), snapshotPopover: () => '', cellTrigger: null, nextTick: async () => {},
     popoverKey: ref(''), popOldStatus: ref(''), popStatus: ref('supported'), popExcludes: ref([]),
     popSupportedReg: ref([]), popSupportedPoc: ref([]), popSpecialTender: ref(false), popReplaceUnknown: ref(false),
     popCatApps: ref({ regular: [], poc: [] }), pendingChanges: {}, pendingExcludes: {},
@@ -79,12 +84,13 @@ test('opening and applying a template retains unresolved exclusions until explic
     return context.popExcludes.value.filter(name => !names.includes(name))
   } }
   context.templateCell = key => context.tplMap.value[key]
+  context.hidePopover = () => { context.popoverKey.value = '' }
   const openBlock = template.slice(template.indexOf('const openPopover ='), template.indexOf('// Per-group computed'))
   const applyBlock = template.slice(template.indexOf('const applyPopover ='), template.indexOf('const saveChanges ='))
   const actions = new Function(...Object.keys(context), `${openBlock};${applyBlock};return {openPopover,applyPopover}`)(...Object.values(context))
-  actions.openPopover(2, 9); actions.applyPopover()
+  await actions.openPopover(2, 9); actions.applyPopover()
   assert.deepEqual(context.pendingExcludes['2_9'].excludes, ['早', '中', '晚孕', '胎心'])
-  actions.openPopover(2, 9)
+  await actions.openPopover(2, 9)
   assert.equal(context.popReplaceUnknown.value, false)
   context.popSupportedReg.value = ['早孕']; context.popReplaceUnknown.value = true
   actions.applyPopover()

@@ -245,3 +245,14 @@ body .feature-image-comparison summary { cursor:pointer; color:var(--primary-str
 body .feature-comparison-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:12px; }
 body .feature-comparison-grid .feature-image-item { min-width:0; }
 body [data-illustration-status]:empty { display:none; }
+
+/* Separate current-feature provenance from the wider material search. */
+body .source-tool-hint { display: inline-block; margin-left: 12px; color: var(--ink-3); font-size: 12px; font-weight: 400; }
+body .scenario-answer > .feature-source-history { margin-top: 10px; padding: 8px 12px; background: var(--surface-2); }
+body .feature-source-history > summary, body .scenario-advanced > summary { cursor: pointer; }
+body .feature-source-history-content { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+body .feature-source-coverage { color: var(--ink-3); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
+body .scenario-advanced { margin-top: 10px; padding: 8px 12px; }
+@media (max-width: 600px) {
+  body .source-tool-hint { display: block; margin: 2px 0 0 14px; }
+}

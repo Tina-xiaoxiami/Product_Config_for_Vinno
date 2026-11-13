@@ -157,7 +157,7 @@ test('the template toolbar keeps local unsaved edits before opening the shared c
   const end = view.indexOf('\nconst refreshCatalogPreview =', start)
   assert.ok(start >= 0 && end > start, '功能库入口必须先检查本地未保存修改')
   let opens = 0, warnings = 0
-  const context = { pendingCount: { value: 1 }, loading: { value: false }, loadError: { value: '' }, featureCatalog: { value: catalog() },
+  const context = { pendingCount: { value: 1 }, saving: { value: false }, popoverKey: { value: '' }, loading: { value: false }, loadError: { value: '' }, featureCatalog: { value: catalog() },
     catalogDialog: { value: { open() { opens++ } } }, ElMessage: { warning() { warnings++ } } }
   const open = new Function(...Object.keys(context), `${view.slice(start, end)};return openTemplateCatalog`)(...Object.values(context))
   assert.equal(open(), false); assert.equal(opens, 0); assert.equal(warnings, 1)

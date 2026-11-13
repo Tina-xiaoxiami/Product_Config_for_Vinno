@@ -175,3 +175,72 @@ def test_confirmed_parameter_identity_can_match_generic_battery_but_conflicts_re
     assert battery["battery"] == "V9BAT" and battery["identity_sources"] == ["已核对物料主数据"]
     conflict, = battery_configuration(snapshot, 901, [spec, {**spec, "name":"V8BAT"}])
     assert conflict["battery"] is None and conflict["identity_issue"]
+
+
+@pytest.mark.asyncio
+async def test_unified_query_resolves_reviewed_component_and_cart_source_gap(tmp_path):
+    path = tmp_path / "reviewed-facts.db"
+    _create_qa_database(path)
+    client, engine = await _client_for(path)
+    source = tmp_path / "configuration.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "Sheet1"
+    workbook.active.append(["V30148", "N/A", "范围外"])
+    workbook.save(source)
+    version = sha256(source.read_bytes()).hexdigest()
+    citation = {"document_id": 1, "version_id": version, "title": "原始配置",
+                "file_name": source.name, "locator": "Sheet1!A1:B1"}
+    try:
+        with sqlite3.connect(path) as db:
+            for column in ("is_enabled INTEGER NOT NULL DEFAULT 1", "description TEXT", "status TEXT",
+                           "column_start INTEGER", "column_end INTEGER", "sort_order INTEGER", "config_group TEXT",
+                           "created_at TEXT", "updated_at TEXT"):
+                db.execute(f"ALTER TABLE product_models ADD COLUMN {column}")
+            db.execute("CREATE TABLE config_versions(id INTEGER PRIMARY KEY, series_id INTEGER,version_number TEXT,snapshot_data TEXT)")
+            db.execute("UPDATE knowledge_documents SET file_name=?,file_path=?,sha256=? WHERE id=1",
+                       (source.name, str(source), version))
+            db.execute("INSERT INTO config_versions VALUES (1,901,'1.14.82',?)",
+                       (_snapshot(("1000349", "独立包装电池", "N/A")),))
+        async with engine.begin() as connection:
+            await connection.run_sync(lambda sync: KnowledgePublicFact.__table__.create(sync))
+        async with AsyncSession(engine) as db:
+            db.add_all([
+                KnowledgePublicFact(fact_key="component.excluded:901:1000349", market="domestic", payload_json=json.dumps({
+                    "status": "confirmed", "value": "不适用", "display_value": "VINNO 10 不搭配 V8BAT",
+                    "conditions": {"model_id": 901}, "sources": [citation], "issue": None,
+                })),
+                KnowledgePublicFact(fact_key="cart_f.battery_pack.runtime", market="overseas", payload_json=json.dumps({
+                    "status": "missing", "value": None, "sources": [citation],
+                    "issue": {"root_key": "cart_f.runtime.source", "detail": "缺少现行整车放电报告"},
+                })),
+            ])
+            await db.commit()
+        async with client:
+            async def ask(question, scope=None):
+                response = await client.post("/api/knowledge/questions/ask", json={
+                    "question": question, "scope": scope, "unified": True,
+                })
+                assert response.status_code == 200, response.text
+                return response.json()
+
+            result, = (await ask("国内 VINNO 10 支持选配 V8BAT 吗？"))["configuration_answers"]
+            assert result["answer_text"] == "VINNO 10 不搭配 V8BAT"
+            assert result["snapshot"]["version_number"] == "1.14.82" and result["selection"] == "N/A"
+            assert result["sources"][0]["locator"] == citation["locator"]
+            link = result["sources"][0]["evidence_url"]
+            assert link.endswith(version)
+            evidence = await client.get(link)
+            assert evidence.status_code == 200, evidence.text
+            assert evidence.json()["excerpts"] == [{
+                "locator": "Sheet1!A1:B1",
+                "cells": [{"address": "A1", "text": "V30148"}, {"address": "B1", "text": "N/A"}],
+            }]
+            assert (await client.get(link.replace(version, "b" * 64))).status_code == 409
+            assert (await ask("A3 使用 V9BAT 的续航是多少？"))["status"] == "outside_scope"
+            assert (await ask("Cart-F 的整车续航是多少？"))["missing_fields"] == ["market"]
+            cart, = (await ask("海外 Cart-F 的整车续航是多少？"))["configuration_answers"]
+            assert cart["market"] == "overseas" and cart["answer_text"] == "缺少现行整车放电报告"
+            assert cart["sources"][0]["locator"] == citation["locator"]
+            assert (await ask("国内 Cart-F 的整车续航是多少？"))["configuration_answers"] == []
+    finally:
+        await engine.dispose()

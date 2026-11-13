@@ -43,7 +43,7 @@ function settings(confirm = async () => {}) {
   const context = {
     ref: value => ({value}), computed: fn => ({get value(){return fn()}}),
     defineProps: () => ({modelValue: normalizeColumnLayout(MODEL_TABLE_COLUMNS), defaults: MODEL_TABLE_COLUMNS}),
-    defineEmits: () => (...args) => emitted.push(args),
+    defineEmits: () => (...args) => emitted.push(args), defineExpose: () => {},
     ElMessage: {warning: message => warnings.push(message)},
     ElMessageBox: {confirm}, normalizeColumnLayout, moveLayoutColumn
   }
