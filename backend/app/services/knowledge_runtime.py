@@ -15,6 +15,7 @@ from app.services.workbook_preview import WorkbookPreviewError, read_cited_workb
 
 BATTERY_LABELS = {"v8bat": "V8BAT", "v9bat": "V9BAT", "v8电池": "V8BAT", "v9电池": "V9BAT"}
 BATTERY_TEST = "便携式机台BAT续航时间测试"
+V8BAT_IPN = "1000349"
 SUPPORTED_MODEL_NAMES = {
     "v10": {"v10", "vinno10"},
     "v8": {"v8", "vinno8"},
@@ -24,7 +25,10 @@ SUPPORTED_MODEL_NAMES = {
     "v6iq": {"v6iq", "vinno6iq"},
     "v5iq": {"v5iq", "vinno5iq"},
 }
-RUNTIME_QUESTION = re.compile(r"(?:vinno)?(v10|v8|v6iq|v5iq|v6|v5|a5)(?:的)?(?:实测)?续航(?:时长)?(?:是多少|有多久|是多久|多久)?")
+RUNTIME_QUESTION = re.compile(
+    r"(?:vinno)?(v10|v8|v6iq|v5iq|v6|v5|a5)(?:使用(?:v8bat或v9bat|v9bat或v8bat))?"
+    r"的?(?:实测)?续航(?:时长|时间)?(?:是多少|有多久|是多久|多久)?"
+)
 
 
 def runtime_question(question: str) -> str | None:
@@ -66,7 +70,7 @@ def battery_configuration(snapshot: dict, model_id: int, specs: list[dict] | Non
         matching_specs = [spec for spec in (specs or []) if spec["ipn"] == ipn
                           and normalize_question(spec["name"]) in BATTERY_LABELS]
         names = named_batteries | {BATTERY_LABELS[normalize_question(spec["name"])] for spec in matching_specs}
-        if not names and ipn != "1000349":
+        if not names and ipn != V8BAT_IPN:
             continue
         values = item.get("values", {})
         if not isinstance(values, dict) or not isinstance(values.get(str(model_id), {}), dict):
@@ -145,10 +149,11 @@ async def runtime_for_model(db, model_key: str, model: dict, version: dict, snap
     exclusions = await reviewed_component_exclusions(db, model["market"], model["id"])
     matched_batteries = battery_configuration(snapshot, model["id"], specs)
     batteries = [battery for battery in matched_batteries if battery["ipn"] not in exclusions]
-    notes = [exclusions[battery["ipn"]] for battery in matched_batteries if battery["ipn"] in exclusions]
+    battery_ipns = {battery["ipn"] for battery in matched_batteries} | {V8BAT_IPN}
+    notes = [note for ipn, note in exclusions.items() if ipn in battery_ipns]
     measurements, source_issue = await runtime_source(db, model_key)
     rows, issues, review_items = [], [source_issue] if source_issue else [], []
-    if not batteries and not notes:
+    if not batteries:
         issues.append("当前配置未登记可用于续航匹配的电池")
     for battery in batteries:
         matches = [row for row in measurements if row["battery"] == battery["battery"]]
