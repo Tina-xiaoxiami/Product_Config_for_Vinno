@@ -18,8 +18,8 @@ test('feature scope, independent snapshot and citation return remain in one view
     await route.fulfill({ json: { feature, status: 'ready', scope: { ...payload.scope, model_name: model.name, series_name: series.name }, issues: [], citations: [citation], history: null,
       configuration: { snapshot: { id: 28, version_number: '1.51.90-正式版' }, model, items: [{ ipn: '6000358', relation_type: 'primary', snapshot_name: '超声衰减成像', selection_config: 'O', selection_label: '选配', current_config_note: '研发备注' }] } } })
   })
-  await page.route(/\/api\/knowledge\/documents\/41\/evidence\?/, route => route.fulfill({ json: { document_id: 41, chunk_id: 76, version_id: sha, title: citation.document_title, source_ref: citation.source_ref, page: null, text: citation.excerpt, quote: null, preview_url: citation.preview_url,
-    verification: { source: 'hash_verified', extraction: 'hash_verified', quote: 'not_requested', structure: 'matched' },
+  await page.route(/\/api\/knowledge\/documents\/41\/evidence\?/, route => route.fulfill({ json: { document_id: 41, chunk_id: 76, version_id: sha, title: citation.document_title, source_ref: citation.source_ref, page: null, text: citation.excerpt, quote: null, model_answer_eligible: false, preview_url: `${citation.preview_url}?version_id=${sha}`,
+    verification: { source: 'hash_verified', extraction: 'hash_verified', quote: 'not_requested', structure: 'matched', visual: 'not_checked', human: 'not_reviewed' },
     locator: { schema_version: 1, format: 'docx', kind: 'paragraph', document_id: 41, source_sha256: sha, part: 'word/document.xml', body_index: 235, paragraph_index: 235 } } }))
   await page.goto('/knowledge?tab=feature-detail')
   const workspace = page.getByTestId('knowledge-feature-detail')
