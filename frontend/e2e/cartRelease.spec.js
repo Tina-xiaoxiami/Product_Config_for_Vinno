@@ -47,3 +47,24 @@ test('version history shows Cart evidence and offers candidate downloads after r
   const history = dialog.locator('details').filter({ hasText: '检查与候选历史' })
   await expect(history.getByRole('link', { name: /PPT 候选/ })).toBeVisible()
 })
+
+
+test('a checked version identifies and links its carried Cart presentation', async ({ page }) => {
+  const key = 'a'.repeat(64)
+  await page.route('**/api/series', route => route.fulfill({ json: { items: [{ id: 1, name: 'Example' }] } }))
+  await page.route('**/api/versions?*', route => route.fulfill({ json: {
+    items: [{ id: 2, version_number: '1.0.2', row_count: 1 }], total: 1
+  } }))
+  await page.route('**/api/versions/2/cart-release', route => route.fulfill({ json: {
+    status: 'checked', reason: '已检查，本版本无需更新 Cart 文稿',
+    market: 'overseas', series: 'Example', version: { number: '1.0.2', key },
+    presentation: { kind: 'carried', source_series: 'Example', source: { id: 1, number: '1.0.1' }, source_status: 'partial' },
+  } }))
+  await page.goto('/versions')
+  await page.getByRole('button', { name: 'Cart 资料' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Cart 发货资料 · 1.0.2' })
+  await expect(dialog.getByText(/PPT 沿用 Example · 1.0.1/)).toBeVisible()
+  await expect(dialog.getByRole('link', { name: '下载沿用 PPT' })).toHaveAttribute(
+    'href', '/api/versions/2/cart-release/presentation'
+  )
+})

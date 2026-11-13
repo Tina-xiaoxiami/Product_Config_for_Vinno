@@ -142,6 +142,18 @@ async def test_version_check_cross_series_retry_rollback_and_history(tmp_path, m
             assert changed_source["status"] == "pending"
             assert "原件版本已变化" in changed_source["reason"]
             template.write_bytes(source.getvalue())
+            baseline_url = "/api/versions/2/cart-release"
+            assert (await client.post(baseline_url)).json()["presentation"]["kind"] == "template"
+            baseline_download = await client.get(f"{baseline_url}/presentation")
+            assert baseline_download.status_code == 200
+            assert baseline_download.headers["x-cart-presentation-kind"] == "template"
+            assert baseline_download.content == source.getvalue()
+            template.unlink()
+            unavailable = await client.get(baseline_url)
+            assert "原件不可用" in unavailable.json()["presentation_unavailable"]
+            assert (await client.get(f"{baseline_url}/presentation")).status_code == 410
+            template.write_bytes(source.getvalue())
+
             retries = await asyncio.gather(client.post(check_url), client.post(check_url))
             assert retries[0].json() == retries[1].json()
             generated = retries[0].json()
@@ -174,6 +186,19 @@ async def test_version_check_cross_series_retry_rollback_and_history(tmp_path, m
             assert reused.headers["x-cart-source-config-version"] == generated["version"]["number"]
             assert (await client.get(rollback_url)).json()["presentation"]["source"]["id"] == second_id
             assert (await client.get(f"{rollback_url}/history")).json()["items"][0]["artifact_sha256"] is None
+            async with session_factory() as db:
+                from app.models import CartReleaseCheck
+
+                archived = await db.get(CartReleaseCheck, generated["archive_key"])
+                original_report = archived.report
+                archived.report = {**original_report, "market": "domestic"}
+                await db.commit()
+                unavailable = await client.get(f"{rollback_url}/presentation")
+                assert unavailable.status_code == 404
+                assert "同市场" in unavailable.json()["detail"]
+                archived.report = original_report
+                await db.commit()
+
 
 
             # Reverting the global code and saving both series restores the original deck.
@@ -336,7 +361,15 @@ async def test_source_changes_refresh_only_mapped_pages_and_preserve_cart_histor
                 assert unchanged.report["status"] == "checked"
                 assert unchanged.report["previous_candidate_key"] == third["archive_key"]
                 assert await refresh_cart_for_facts(db, {"example.identity"}) == []
+                unchanged_id = version.id
                 await db.commit()
+            endpoint = f"/api/versions/{unchanged_id}/cart-release/presentation"
+            for _ in range(2):
+                reused = await client.get(endpoint)
+                assert reused.status_code == 200 and reused.content == newer.content
+                assert reused.headers["x-cart-source-config-id"] == "1"
+            history = (await client.get(f"/api/versions/{unchanged_id}/cart-release/history")).json()["items"]
+            assert len(history) == 1 and history[0]["artifact_sha256"] is None
     finally:
         await engine.dispose()
 

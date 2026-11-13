@@ -12,6 +12,17 @@
           配置来源 {{ report.series }} · {{ report.previous?.number || '无前版' }} → {{ report.version.number }}
         </p>
         <p v-if="report.rollback_target">回滚目标 {{ report.rollback_target.number }}</p>
+        <p v-if="report.presentation?.kind === 'carried'">
+          PPT 沿用 {{ report.presentation.source_series }} · {{ report.presentation.source.number }}
+          <span v-if="report.presentation.source_status === 'partial'"> · 部分待核</span>
+        </p>
+        <p v-else-if="report.presentation?.kind === 'template'">
+          PPT 沿用 {{ report.presentation.file }}（{{ report.presentation.sha256.slice(0, 12) }}）
+          <span v-for="(source, series) in report.presentation.baseline" :key="series"> · {{ series }} {{ source.number }}</span>
+        </p>
+        <p v-else-if="report.presentation_unavailable && report.presentation_unavailable !== report.reason">
+          {{ report.presentation_unavailable }}
+        </p>
         <p v-if="report.template">当前成品依据 {{ report.template.file }} · {{ report.template.sha256?.slice(0, 12) }}</p>
         <ul v-if="report.template?.review_notes?.length" class="cart-notes">
           <li v-for="note in report.template.review_notes" :key="note">{{ note }}</li>
@@ -98,7 +109,10 @@
           {{ error ? '重新载入' : report.status === 'not_checked' ? '补跑检查' : '重新检查' }}
         </el-button>
         <a v-if="report?.version" :href="`${archiveUrl}?download=true`">下载变更记录</a>
-        <a v-if="report?.artifact_sha256" :href="`${archiveUrl}/presentation`">下载 PPT 候选</a>
+        <a v-if="['carried', 'template'].includes(report?.presentation?.kind)"
+          :href="`/api/versions/${version.id}/cart-release/presentation`">下载沿用 PPT</a>
+        <a v-else-if="report?.presentation?.kind === 'candidate' || (report?.artifact_sha256 && !report?.presentation_unavailable)"
+          :href="`${archiveUrl}/presentation`">下载 PPT 候选</a>
         <el-button size="small" @click="visible = false">关闭</el-button>
       </div>
     </template>
