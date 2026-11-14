@@ -36,7 +36,7 @@ async def feature_detail(
     feature = await get_feature_knowledge(db, feature_id)
     if feature is None:
         return None
-    result = {'feature': feature, 'scope': None, 'status': 'needs_scope',
+    result: dict = {'feature': feature, 'scope': None, 'status': 'needs_scope',
               'missing_fields': missing_scope_fields(scope), 'configuration': None,
               'citations': [], 'history': None, 'issues': []}
     resolved = await resolve_query_scope(db, scope)
@@ -68,7 +68,7 @@ async def feature_detail(
                          'status': 'matched' if item else 'missing',
                          'snapshot_name': (item or {}).get('zh_desc') or '',
                          'selection_config': selection,
-                         'selection_label': SELECTION_LABELS.get(selection, '正式选型未明确'),
+                         'selection_label': SELECTION_LABELS.get(selection or '', '正式选型未明确'),
                          'current_config_note': config.get('current_config') or ''})
         result['configuration'] = {'snapshot': metadata, 'model': model, 'items': rows}
         if not rows:
@@ -79,10 +79,21 @@ async def feature_detail(
     query = feature['primary_en_name'] or feature['primary_cn_name'] or feature['legacy_name']
     names = [str(feature.get(key) or '') for key in ('primary_en_name', 'primary_cn_name', 'legacy_name')]
     names.extend(row['name'] for row in feature['names'])
-    candidates = await find_candidate_evidence(db, query, scope=resolved, limit=50, include_section_context=True)
-    result['citations'] = [row for row in candidates if row.get('version_id')
-                           and _mentions_feature('\n'.join([row.get('section_name') or '', row.get('excerpt') or '']), names)]
-    if len(candidates) == 50:
+    # A hit for the English name does not imply that Chinese chapters were read.
+    # Bound searches to the three existing display names, not inferred aliases.
+    queries = dict.fromkeys(name.strip() for name in names[:3] if name.strip())
+    citations: dict[tuple[str, int], dict] = {}
+    limited = False
+    for term in queries:
+        candidates = await find_candidate_evidence(db, term, scope=resolved, limit=50, include_section_context=True)
+        limited = limited or len(candidates) == 50
+        for row in candidates:
+            if row.get('version_id') and _mentions_feature(
+                '\n'.join([row.get('section_name') or '', row.get('excerpt') or '']), names
+            ):
+                citations.setdefault((row['version_id'], row['chunk_id']), row)
+    result['citations'] = list(citations.values())[:50]
+    if limited or len(citations) > 50:
         result['issues'].append('候选原文已达50条展示上限，请打开原件查看完整章节')
     if not result['citations']:
         result['issues'].append('未找到当前机型与资料版本的可定位正文；不跨系列补全参数或说明')
