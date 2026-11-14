@@ -100,7 +100,7 @@ async def test_unknown_feature_and_invalid_snapshot(tmp_path):
 async def test_sources_reuse_same_scope_and_require_version_identity(tmp_path, monkeypatch):
     from app.services import knowledge_feature_detail as service
     calls = []
-    async def candidates(db, query, *, scope, limit):
+    async def candidates(db, query, *, scope, limit, include_section_context=False):
         calls.append(('source', query, scope))
         return [{'document_id': 1, 'chunk_id': 2, 'version_id': 'a'*64, 'source_ref': '第2页', 'excerpt': 'VATT'},
                 {'document_id': 3, 'chunk_id': 4, 'version_id': None}]
