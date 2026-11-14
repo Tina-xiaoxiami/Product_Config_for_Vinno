@@ -180,6 +180,23 @@ async def test_detail_combines_primary_languages_without_duplicate_citations(tmp
             assert [row['chunk_id'] for row in result['citations']] == [1, 2]
 
 @pytest.mark.asyncio
+async def test_bilingual_result_keeps_total_limit_and_reports_truncation(tmp_path, monkeypatch):
+    from app.services import knowledge_feature_detail as service
+    async def candidates(db, query, **kwargs):
+        start = 0 if query == 'VATT' else 25
+        return [{'chunk_id': i, 'version_id': 'a'*64, 'excerpt': 'VATT 超声衰减成像'}
+                for i in range(start, start + 50)]
+    monkeypatch.setattr(service, 'find_candidate_evidence', candidates)
+    async with client_for(tmp_path) as (_, factory):
+        await seed(factory)
+        async with factory() as db:
+            await db.execute(text("UPDATE features SET name='超声衰减成像', primary_en_name='VATT' WHERE id=1"))
+            result = await detail(db)
+            assert len(result['citations']) == 50
+            assert len({row['chunk_id'] for row in result['citations']}) == 50
+            assert any('50条' in issue for issue in result['issues'])
+
+@pytest.mark.asyncio
 async def test_detail_route_preserves_service_unavailable_status(tmp_path, monkeypatch):
     import httpx
     from fastapi import FastAPI
