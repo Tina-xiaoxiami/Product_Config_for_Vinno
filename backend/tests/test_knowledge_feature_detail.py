@@ -156,7 +156,28 @@ async def test_detail_rejects_fuzzy_unrelated_sources_and_uses_approved_search_n
             await db.execute(text("UPDATE features SET name='超声衰减成像', primary_en_name='VATT' WHERE id=1"))
             result = await detail(db)
             assert [row['chunk_id'] for row in result['citations']] == [1]
-            assert seen == ['VATT']
+            assert seen == ['VATT', '超声衰减成像']
+
+@pytest.mark.asyncio
+async def test_detail_combines_primary_languages_without_duplicate_citations(tmp_path, monkeypatch):
+    from app.services import knowledge_feature_detail as service
+    seen = []
+    shared = {'document_id': 1, 'chunk_id': 1, 'version_id': 'a'*64,
+              'excerpt': 'shear wave imaging 剪切波弹性成像'}
+    async def candidates(db, query, **kwargs):
+        seen.append(query)
+        if query == 'shear wave imaging':
+            return [shared]
+        return [shared, {'document_id': 2, 'chunk_id': 2, 'version_id': 'b'*64,
+                         'section_name': '剪切波弹性成像', 'excerpt': '支持可信度图显示'}]
+    monkeypatch.setattr(service, 'find_candidate_evidence', candidates)
+    async with client_for(tmp_path) as (_, factory):
+        await seed(factory)
+        async with factory() as db:
+            await db.execute(text("UPDATE features SET name='剪切波弹性成像', primary_cn_name='剪切波弹性成像', primary_en_name='shear wave imaging' WHERE id=1"))
+            result = await detail(db)
+            assert seen == ['shear wave imaging', '剪切波弹性成像']
+            assert [row['chunk_id'] for row in result['citations']] == [1, 2]
 
 @pytest.mark.asyncio
 async def test_detail_route_preserves_service_unavailable_status(tmp_path, monkeypatch):
