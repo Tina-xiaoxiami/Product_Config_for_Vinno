@@ -77,9 +77,9 @@ def test_whitepaper_uses_existing_title_version_when_label_is_empty(client,monke
     assert connection.get(BASE+'/scenario?project_id=1&task=whitepaper&q=VATT').status_code==200
 
 
-@pytest.mark.parametrize('latest_matches', [True, False])
+@pytest.mark.parametrize('latest_matches, index_matches', [(True, True), (False, True), (True, False)])
 def test_whitepaper_uses_latest_publication_in_same_model_and_market(
-    client, monkeypatch, tmp_path, latest_matches,
+    client, monkeypatch, tmp_path, latest_matches, index_matches,
 ):
     import json
 
@@ -117,9 +117,14 @@ def test_whitepaper_uses_latest_publication_in_same_model_and_market(
         hits.append({'canonical_document_id': doc_id, 'version': version, 'title': title,
                      'preview_id': source_id, 'scope': '国内 · ULTIMUS 6S',
                      'detail_evidence': {'source_id': source_id, 'locator': '段落 235'}})
-    monkeypatch.setattr('tracker.app.unified_search', lambda *a, **k: {'results': hits, 'total': len(hits)})
+    pages = []
+    def search(*args, **kwargs):
+        pages.append(kwargs['page'])
+        return {'results': hits, 'total': len(hits)}
+    monkeypatch.setattr('tracker.app.unified_search', search)
     index = wb.extensions['tracker_search_index']
-    monkeypatch.setattr(index, 'source_metadata', lambda _: {'file_sha256': 'registered-bytes'})
+    monkeypatch.setattr(index, 'source_metadata', lambda _: {
+        'file_sha256': 'registered-bytes' if index_matches else 'changed-bytes'})
     monkeypatch.setattr(index, 'source_path', lambda source_id: locations[int(source_id.split(':')[1])])
     monkeypatch.setattr('tracker.app.resolve_source_candidate',
                         lambda _, source_id, **kwargs: {'path': locations[int(source_id.split(':')[1])]})
@@ -127,7 +132,8 @@ def test_whitepaper_uses_latest_publication_in_same_model_and_market(
         'section': {'content': source_id, 'complete': True, 'locator': '段落 235'}})
 
     data = connection.get(BASE + '/scenario?project_id=1&task=whitepaper&q=VATT').json()['data']
-    if latest_matches:
+    assert pages == [1]
+    if latest_matches and index_matches:
         assert data['selected_document'] == 'canonical:107'
         assert data['section']['content'] == 'canonical:107:file'
     else:

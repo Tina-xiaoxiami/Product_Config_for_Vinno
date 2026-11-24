@@ -43,7 +43,9 @@ from tracker.services.workbench import (
     training_assets,
 )
 from tracker.services.search_index import SearchIndex
-from tracker.services.canonical_documents import CanonicalCatalogUnavailable, read_catalog
+from tracker.services.canonical_documents import (
+    CanonicalCatalogUnavailable, latest_whitepaper_publications, read_catalog,
+)
 from tracker.services.personal_workspace import PersonalWorkspace
 from tracker.services.document_registry import DocumentRegistry
 from tracker.services.search_maintenance import SearchMaintenance
@@ -516,7 +518,14 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             latest_versions[document['id']] = max((tuple(map(int, label.split('.'))) for label in labels if label), default=None)
             for version in versions:
                 document_versions[version['id']] = document
-        canonical_documents = {row['id']: row for row in read_catalog(search_roots()['canonical_database']).values()}
+        canonical_documents = {row['id']: row for row in read_catalog(
+            search_roots()['canonical_database'], include_publications=True).values()}
+        publications = latest_whitepaper_publications(canonical_documents)
+        document_choice = args.get('document', '')
+        if re.fullmatch(r'canonical:[0-9]{1,19}', document_choice):
+            selection = publications.get(int(document_choice.split(':')[1]))
+            if selection:
+                document_choice = f'canonical:{selection[0]}'
         def search_page(page, model):
             page_result = unified_search(database, search_index, product_strategy_reader, query=query,
                 sources={"release", "controlled"}, project_id=project, scope="current",
@@ -530,7 +539,17 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                 document = canonical or document_versions.get(item.get('document_version_id'))
                 if not document:
                     continue
-                item['_scenario_document_id'] = ('canonical:' if canonical else '') + str(document['id'])
+                document_id = document['id']
+                publication = publications.get(document_id) if canonical else None
+                if publication:
+                    representative, current_ids = publication
+                    if document_id not in current_ids:
+                        continue
+                    indexed = search_index.source_metadata(item['preview_id'])
+                    if not indexed or indexed['file_sha256'] != canonical['sha256']:
+                        continue
+                    document_id = representative
+                item['_scenario_document_id'] = ('canonical:' if canonical else '') + str(document_id)
                 item['_scenario_document_label'] = document['title']
                 version = item.get('version') or ''
                 if canonical:
@@ -540,6 +559,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
                     expected = latest_versions.get(document['id'])
                 if expected is not None and re.fullmatch(r'\d+(?:\.\d+)+', version) and tuple(map(int, version.split('.'))) == expected:
                     current_results.append(item)
+            page_result['scanned_results'] = len(page_result['results'])
             page_result['results'] = current_results
             return page_result
         def preview_section(source_id, locator, needle):
@@ -552,7 +572,7 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             except OSError:
                 return None
         result = feature_answer(database, project, query, args.get("model", ""), search_page,
-                                preview_section, '', args.get("document", ""), args.get("section", ""))
+                                preview_section, '', document_choice, args.get("section", ""))
         result['later_changes'] = []
         result['description'] = None
         return result

@@ -6,7 +6,9 @@ or equates a current file registration with an approved historical version.
 from __future__ import annotations
 
 from contextlib import closing
+import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
@@ -31,7 +33,7 @@ def normalized_path(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
 
 
-def read_catalog(database: str | Path | None) -> dict[str, dict[str, Any]]:
+def read_catalog(database: str | Path | None, *, include_publications: bool = False) -> dict[str, dict[str, Any]]:
     """Read a consistent registry snapshot; never create a missing database."""
     if database is None:
         return {}
@@ -40,8 +42,14 @@ def read_catalog(database: str | Path | None) -> dict[str, dict[str, Any]]:
         with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)) as connection:
             connection.row_factory = sqlite3.Row
             connection.execute('PRAGMA query_only = ON')
-            rows = connection.execute('''SELECT id, title, document_type, file_path,
-                version, market, product_series, sha256, source_status FROM knowledge_documents''').fetchall()
+            if include_publications:
+                connection.execute('BEGIN')
+                rows = connection.execute('SELECT * FROM knowledge_documents').fetchall()
+                publications = _read_whitepaper_publications(connection)
+            else:
+                rows = connection.execute('''SELECT id, title, document_type, file_path,
+                    version, market, product_series, sha256, source_status FROM knowledge_documents''').fetchall()
+                publications = {}
         catalog = {}
         for record in rows:
             if not Path(record['file_path']).expanduser().is_absolute():
@@ -50,11 +58,75 @@ def read_catalog(database: str | Path | None) -> dict[str, dict[str, Any]]:
             if key in catalog:
                 raise CanonicalCatalogUnavailable('主资料登记存在重复物理路径，请先核对登记；受控资料检索暂不可用。')
             catalog[key] = dict(record)
+            publication = publications.get(record['id'])
+            if publication:
+                catalog[key]['whitepaper_publication'] = publication['provenance']
+                catalog[key]['publication_sha256'] = publication['sha256']
         return catalog
     except CanonicalCatalogUnavailable:
         raise
     except (OSError, RuntimeError, sqlite3.Error, TypeError) as error:
         raise CanonicalCatalogUnavailable('主资料登记当前不可读取；受控资料检索已暂停，请恢复来源后更新索引。') from error
+
+
+def _read_whitepaper_publications(connection: sqlite3.Connection) -> dict[int, sqlite3.Row]:
+    if not connection.execute("""SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='knowledge_whitepaper_publication_sources'""").fetchone():
+        return {}
+    return {row['document_id']: row for row in connection.execute('''
+        SELECT document_id, sha256, provenance FROM knowledge_whitepaper_publication_sources
+    ''')}
+
+
+def _matches_publication_scope(document: dict[str, Any]) -> bool:
+    if not document['sha256'] or document.get('publication_sha256') != document['sha256']:
+        return False
+    try:
+        receipt = json.loads(document.get('whitepaper_publication') or '{}')
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(receipt, dict) or not receipt.get('publication'):
+        return False
+    scope = receipt.get('scope')
+    return isinstance(scope, dict) and all(scope.get(key) == document[field] for key, field in (
+        ('model_name', 'product_series'), ('market', 'market'), ('country', 'country'),
+        ('software_version', 'version'),
+    ))
+
+
+def latest_whitepaper_publications(
+    documents: dict[int, dict[str, Any]],
+) -> dict[int, tuple[int, frozenset[int]]]:
+    """Group versions of a title within the registered country, market and model."""
+    families: dict[tuple[str, str, str, str], list[tuple[tuple[int, ...], int]]] = {}
+    for doc_id, document in documents.items():
+        if document['document_type'] != 'whitepaper' or document['source_status'] != 'active':
+            continue
+        market, model, country = document['market'], document['product_series'], document.get('country')
+        version = document['version'] or ''
+        title = (document['title'] or '').strip()
+        if not (market and model and country and re.fullmatch(r'\d+(?:\.\d+)+', version)
+                and title.endswith(version)):
+            continue
+        stem = title[:-len(version)]
+        if not stem or stem[-1].isdigit():
+            continue
+        family = re.sub(r'[\s_]+', '', stem.rstrip(' _-')).casefold()
+        families.setdefault((market, country, model, family), []).append((tuple(map(int, version.split('.'))), doc_id))
+
+    latest_by_id = {}
+    for versions in families.values():
+        publications = [(version, doc_id) for version, doc_id in versions
+                        if 'whitepaper_publication' in documents[doc_id]]
+        if not publications:
+            continue
+        latest_version = max(version for version, _ in publications)
+        latest_ids = {doc_id for version, doc_id in publications if version == latest_version}
+        current_ids = frozenset(doc_id for doc_id in latest_ids if _matches_publication_scope(documents[doc_id]))
+        representative = min(current_ids or latest_ids, key=lambda doc_id: (
+            Path(documents[doc_id]['file_path']).suffix.casefold() != '.docx', doc_id))
+        latest_by_id.update({doc_id: (representative, current_ids) for _, doc_id in versions})
+    return latest_by_id
 
 
 def document_metadata(row: dict[str, Any]) -> dict[str, Any]:
