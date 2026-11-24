@@ -63,16 +63,19 @@ def feature_answer(database: Any, project_id: int, query: str, model: str,
     if target_version and target_key is None:
         raise ValueError('目标版本格式不正确。')
     page = 1
+    scanned = 0
     items: list[dict[str, Any]] = []
     result: dict[str, Any] = {}
     while page <= 5:
         result = search(page, model)
-        items.extend(result.get('results', []))
+        page_items = result.get('results', [])
+        items.extend(page_items)
+        scanned += result.get('scanned_results', len(page_items))
         model = result.get('whitepaper_models', {}).get('selected', model)
-        if len(items) >= result.get('total', 0):
+        if scanned >= result.get('total', 0):
             break
         page += 1
-    complete = len(items) >= result.get('total', 0) and not result.get('source_errors')
+    complete = scanned >= result.get('total', 0) and not result.get('source_errors')
     response: dict[str, Any] = {'models': result.get('whitepaper_models', {}), 'baseline': None,
                                 'section': None, 'later_changes': [], 'coverage_complete': complete,
                                 'source_errors': result.get('source_errors', {}), 'latest_certified': False,
