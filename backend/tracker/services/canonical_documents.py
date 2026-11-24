@@ -12,6 +12,8 @@ import re
 import sqlite3
 from typing import Any
 
+from tracker.services.document_scopes import whitepaper_model_key
+
 
 class CanonicalCatalogUnavailable(RuntimeError):
     """The authoritative lifecycle cannot be checked; do not revive cached files."""
@@ -112,7 +114,8 @@ def latest_whitepaper_publications(
         if not stem or stem[-1].isdigit():
             continue
         family = re.sub(r'[\s_]+', '', stem.rstrip(' _-')).casefold()
-        families.setdefault((market, country, model, family), []).append((tuple(map(int, version.split('.'))), doc_id))
+        families.setdefault((market, country, whitepaper_model_key(model), family), []).append(
+            (tuple(map(int, version.split('.'))), doc_id))
 
     latest_by_id = {}
     for versions in families.values():

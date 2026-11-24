@@ -11,6 +11,11 @@ MAX_MODEL_SCOPE_LENGTH = 5000
 _SCOPE_SEPARATOR = re.compile(r"[,，、;；/|]+")
 
 
+def whitepaper_model_key(name: str) -> str:
+    """Treat the full-width parentheses in legacy whitepaper labels as typography."""
+    return name.translate({ord("（"): "(", ord("）"): ")"}).casefold()
+
+
 def normalize_model_scope(value: str) -> str:
     """规范显式多机型分隔符，保留用户提供的机型，不推断简称。"""
     models = dict.fromkeys(" ".join(part.split()) for part in _SCOPE_SEPARATOR.split(str(value or "")))

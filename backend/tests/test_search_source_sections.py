@@ -898,6 +898,12 @@ def test_whitepaper_title_identification_and_long_registered_scope():
     assert result['total'] == 1 and result['whitepaper_models']['selected'] == value
 
 
+def test_whitepaper_model_key_normalizes_parentheses_without_merging_editions():
+    model_id = search_module._whitepaper_model_id
+    assert model_id('ULTIMUS 9E Super 科研版（URM）') == model_id('ULTIMUS 9E Super 科研版(URM)')
+    assert model_id('ULTIMUS 9E Super 科研版（URM）') != model_id('ULTIMUS 9E Super 科研版(非URM)')
+
+
 def test_verified_chapter_groups_require_same_file_project_language_and_full_content(tmp_path, monkeypatch):
     from tracker.services import release_section_groups as groups
     db, path, source_id, row_id = _fixture(tmp_path)

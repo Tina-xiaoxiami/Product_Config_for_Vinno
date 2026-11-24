@@ -64,7 +64,8 @@ def test_verify_frozen_publication_pair(publication, invalid):
 
 
 @pytest.mark.asyncio
-async def test_sync_is_atomic_idempotent_and_pins_receipt(publication, tmp_path, monkeypatch):
+@pytest.mark.parametrize("frozen_ids", [[], [1]])
+async def test_sync_is_atomic_idempotent_and_pins_receipt(publication, tmp_path, monkeypatch, frozen_ids):
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,13 +76,18 @@ async def test_sync_is_atomic_idempotent_and_pins_receipt(publication, tmp_path,
     from test_versions_api import _versions_harness
 
     root, task_path, receipt_path, task, receipt, files = publication
+    model_name = "Example 科研版(URM)" if frozen_ids else "Example"
+    task["rounds"][0]["snapshot"]["resolved"] = {"matrix": [
+        {"config_review": {"products": [{"product_id": "Example", "config_model": {"id": model_id}}]}}
+        for model_id in frozen_ids
+    ]}
     task_path.write_text(json.dumps(task))
     receipt_path.write_text(json.dumps(receipt))
     _, _, engine = await _versions_harness(tmp_path)
 
     async def scope(*args):
         return {"country": "CN", "market": "domestic", "product_model_id": 1,
-                "software_version": "1.0.0", "model_name": "Example", "series_name": "Example-China"}
+                "software_version": "1.0.0", "model_name": model_name, "series_name": "Example-China"}
 
     async def identity(*args):
         return True
@@ -128,3 +134,17 @@ async def test_sync_is_atomic_idempotent_and_pins_receipt(publication, tmp_path,
             assert index == ("stale", result["documents"][0]["sha256"])
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("frozen_ids", [[], [41], [40, 41]])
+def test_frozen_binding_rejects_unknown_or_wrong_edition(publication, frozen_ids):
+    root, task_path, receipt_path, task, receipt, _ = publication
+    task["rounds"][0]["snapshot"]["resolved"] = {"matrix": [
+        {"config_review": {"products": [{"product_id": "Example", "config_model": {"id": model_id}}]}}
+        for model_id in frozen_ids
+    ]}
+    task_path.write_text(json.dumps(task))
+    receipt_path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match="冻结机型"):
+        verified_publication(root, task_path, receipt_path, "Example", "Example-China", "1.0.0",
+                             model_id=40, require_frozen_model=True)

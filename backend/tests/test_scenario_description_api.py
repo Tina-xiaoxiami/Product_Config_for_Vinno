@@ -78,8 +78,12 @@ def test_whitepaper_uses_existing_title_version_when_label_is_empty(client,monke
 
 
 @pytest.mark.parametrize('latest_matches, index_matches', [(True, True), (False, True), (True, False)])
+@pytest.mark.parametrize('model_names', [
+    ('ULTIMUS 6S', 'ULTIMUS 6S'),
+    ('ULTIMUS 9E Super 科研版（URM）', 'ULTIMUS 9E Super 科研版(URM)'),
+])
 def test_whitepaper_uses_latest_publication_in_same_model_and_market(
-    client, monkeypatch, tmp_path, latest_matches, index_matches,
+    client, monkeypatch, tmp_path, latest_matches, index_matches, model_names,
 ):
     import json
 
@@ -97,15 +101,16 @@ def test_whitepaper_uses_latest_publication_in_same_model_and_market(
         registry.execute("""CREATE TABLE knowledge_whitepaper_publication_sources (
             document_id INTEGER PRIMARY KEY, sha256 TEXT, provenance TEXT)""")
         for doc_id, title, version, market, country in versioned_titles:
+            model_name = model_names[0] if doc_id == 66 else model_names[1]
             registry.execute("""INSERT INTO knowledge_documents
                 (id, title, document_type, file_path, version, market, product_series, sha256, source_status, country)
-                VALUES (?, ?, 'whitepaper', ?, ?, ?, 'ULTIMUS 6S', 'registered-bytes', 'active', ?)""",
-                (doc_id, title, str(locations[doc_id]), version, market, country))
+                VALUES (?, ?, 'whitepaper', ?, ?, ?, ?, 'registered-bytes', 'active', ?)""",
+                (doc_id, title, str(locations[doc_id]), version, market, model_name, country))
             if doc_id in (107, 109):
                 registry.execute('INSERT INTO knowledge_whitepaper_publication_sources VALUES (?, ?, ?)',
                     (doc_id, 'registered-bytes', json.dumps({
                         'publication': 'controlled-release',
-                        'scope': {'model_name': 'ULTIMUS 6S', 'market': market, 'country': country,
+                        'scope': {'model_name': model_name, 'market': market, 'country': country,
                                   'software_version': version},
                     })))
 

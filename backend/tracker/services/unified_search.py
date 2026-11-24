@@ -27,7 +27,9 @@ from tracker.services.search_index import (
     FileSnapshot, SearchIndex, SourceChangedDuringExtraction, extract_file, file_sha256, file_snapshot,
 )
 from tracker.services.search_sources import STRUCTURED_SOURCE_TYPES, search_structured_sources
-from tracker.services.document_scopes import matches_model_scope, normalize_model_scope, DOCUMENT_CATEGORIES
+from tracker.services.document_scopes import (
+    DOCUMENT_CATEGORIES, matches_model_scope, normalize_model_scope, whitepaper_model_key,
+)
 from tracker.services.section_cache import section_cache
 from tracker.services.release_section_groups import assign_release_section_groups
 from tracker.services.document_evidence import latest_extraction_review_hashes
@@ -988,7 +990,7 @@ def _whitepaper_model_id(name: str) -> str:
     normalized = name.casefold()
     if len(normalized) > 180:
         return 'model-sha256:' + sha256(normalized.encode('utf-8')).hexdigest()
-    return 'model:' + normalized
+    return 'model:' + whitepaper_model_key(name)
 
 
 def _whitepaper_model_labels(document: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -1038,6 +1040,8 @@ def unified_search(
             and not whitepaper_model.startswith('model:')
             and not re.fullmatch(r'model-sha256:[0-9a-f]{64}', whitepaper_model)):
         raise ValueError('不支持的白皮书型号。')
+    if whitepaper_model.startswith('model:'):
+        whitepaper_model = _whitepaper_model_id(whitepaper_model.removeprefix('model:'))
     if source_group not in groups or release_category not in categories:
         raise ValueError('不支持的资料来源或发布分类。')
     validate_search_task(task, version_from, version_to, versions)
