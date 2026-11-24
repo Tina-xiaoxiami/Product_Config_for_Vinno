@@ -23,7 +23,22 @@ def _one(records, key, value):
     return found[0]
 
 
-def verified_publication(root, task_path, receipt_path, product, series, version):
+def _verify_frozen_model(snapshot, product, model_id, required):
+    frozen_ids = set()
+    for row in (snapshot.get("resolved") or {}).get("matrix", []):
+        for entry in (row.get("config_review") or {}).get("products", []):
+            model = entry.get("config_model") or {}
+            if entry.get("product_id") != product or not model:
+                continue
+            if type(model.get("id")) is not int:
+                raise ValueError("回执任务的冻结机型 ID 无效")
+            frozen_ids.add(model["id"])
+    if (required or frozen_ids) and frozen_ids != {model_id}:
+        raise ValueError("回执产品的冻结机型与所选完整型号不唯一或不一致")
+
+
+def verified_publication(root, task_path, receipt_path, product, series, version, *,
+                         model_id=None, require_frozen_model=False):
     """Resolve the exact body PDF and Word from one controlled receipt."""
     root = (Path(root) / "白皮书").resolve()
     task_path, receipt_path = Path(task_path), Path(receipt_path)
@@ -47,6 +62,8 @@ def verified_publication(root, task_path, receipt_path, product, series, version
                 or result["artifact_hashes"] != saved["hashes"] or result["version"] != version
                 or round_["snapshot"]["changeset"]["config_versions"][series] != version):
             raise ValueError("构建、原件或冻结配置版本与所选范围不一致")
+        if model_id is not None or require_frozen_model:
+            _verify_frozen_model(round_["snapshot"], product, model_id, require_frozen_model)
 
         materials = []
         for kind, suffix in (("pdf", ".pdf"), ("docx", ".docx")):
@@ -82,12 +99,10 @@ async def sync_publication(db, root, task_path, receipt_path, product, supplied_
         if (not scope or not scope["country"] or a_only_question(scope["model_name"])
                 or a_only_question(product) or not await document_model_identity_unique(db, scope)):
             raise ValueError("请选择有明确国家、唯一完整型号的维护范围")
-        # The source task product must identify the same full model, or its exact
-        # short label without the manufacturer prefix (e.g. ULTIMUS 6S → 6S).
+        # Historical receipts with exact labels may not contain a frozen model ID.
+        # Different labels require the receipt's frozen model identity.
         model_name = scope["model_name"]
         labels = {model_name, model_name.removeprefix("ULTIMUS ")}
-        if product not in labels:
-            raise ValueError("回执产品与配置完整型号不一致")
         version = scope["software_version"]
         series_id = await db.scalar(text(
             "SELECT series_id FROM product_models WHERE id=:id AND is_enabled=1 AND COALESCE(status,'')<>'已合并'"
@@ -99,6 +114,7 @@ async def sync_publication(db, root, task_path, receipt_path, product, supplied_
             raise ValueError("正式配置快照未包含该完整机型")
         materials, publication = await asyncio.to_thread(
             verified_publication, root, task_path, receipt_path, product, scope["series_name"], version,
+            model_id=scope["product_model_id"], require_frozen_model=product not in labels,
         )
         rows = (await db.execute(text("SELECT * FROM knowledge_documents ORDER BY id"))).mappings().all()
         indexes = document_identity_indexes(rows)
